@@ -26,6 +26,14 @@ class GNSSReceiver {
     static constexpr uint32_t kVendorPowerOnDelayMs = 1000;
     static constexpr uint32_t kGenericPrePowerDelayMs = 100;
     static constexpr uint32_t kFixNotifyMinIntervalMs = 1000;
+    // If the vendor-specific init/liveness probe fails (e.g. the module is still warming up past
+    // ProbeLiveness()'s initial window), retry it periodically from Update() rather than leaving
+    // healthy_ permanently false until the next reboot. Bounded by kMaxUnhealthyRetries so a
+    // genuinely absent module doesn't stall the main loop indefinitely -- each retry costs up to
+    // SendInitCommands()'s own worst-case blocking time (see UbloxMAXM10::kProbeAttempts /
+    // kProbeTimeoutMs).
+    static constexpr uint32_t kUnhealthyRetryIntervalMs = 5000;
+    static constexpr uint32_t kMaxUnhealthyRetries = 5;
     static constexpr uint16_t kRxBufferSize = 2048;
     static constexpr uint16_t kRxBufferMask = kRxBufferSize - 1;
     static_assert((kRxBufferSize & kRxBufferMask) == 0, "GNSS RX buffer size must be a power of two.");
@@ -163,6 +171,10 @@ class GNSSReceiver {
     uint32_t uart_ready_timestamp_ms_ = 0;
     bool initializing_ = false;
     uint32_t power_on_timestamp_ms_ = 0;
+    // Timestamp of the last SendInitCommands() attempt (initial or retry) and how many retries
+    // (beyond the initial attempt) have been made since Init(). Reset in Init().
+    uint32_t last_init_attempt_timestamp_ms_ = 0;
+    uint32_t unhealthy_retry_count_ = 0;
     bool notify_observed_valid_ = false;
     bool notify_last_emitted_valid_ = false;
     bool notify_pending_ = false;

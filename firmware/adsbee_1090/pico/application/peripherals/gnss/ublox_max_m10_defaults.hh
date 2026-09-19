@@ -407,7 +407,11 @@ static constexpr UbloxCfgDefault kUbloxConfigDefaults[] = {
     {0x20a20003, 0x0ULL, 1},  // CFG-TXREADY-PIN (U1) = 0
     {0x30a20004, 0x0ULL, 2},  // CFG-TXREADY-THRESHOLD (U2) = 0
     {0x20a20005, 0x0ULL, 1},  // CFG-TXREADY-INTERFACE (E1) = 0 (I2C)
-    {0x40520001, 0x9600ULL, 4},  // CFG-UART1-BAUDRATE (U4) = 38400
+    // WARM-START PRESERVE: UART1 baud rate left to the user-configured/persisted value. Rewriting
+    // this to the factory default would fight the setting applied explicitly in
+    // UbloxMAXM10::SendInitCommands() and could desync the module's live baud from the local UART
+    // mid-init.
+    // {0x40520001, 0x9600ULL, 4},  // CFG-UART1-BAUDRATE (U4) = 38400
     {0x20520002, 0x1ULL, 1},  // CFG-UART1-STOPBITS (E1) = 1 (ONE)
     {0x20520003, 0x0ULL, 1},  // CFG-UART1-DATABITS (E1) = 0 (EIGHT)
     {0x20520004, 0x0ULL, 1},  // CFG-UART1-PARITY (E1) = 0 (NONE)
