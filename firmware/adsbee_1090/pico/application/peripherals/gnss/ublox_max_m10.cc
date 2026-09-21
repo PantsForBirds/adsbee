@@ -239,9 +239,10 @@ int32_t UbloxMAXM10::SyncConfigDefaults(uint32_t deadline_ms) {
         // Signed difference is overflow-safe for wrapping millisecond timestamps.
         if (static_cast<int32_t>(get_time_since_boot_ms() - deadline_ms) >= 0) {
             CONSOLE_WARNING("UbloxMAXM10::SyncConfigDefaults",
-                            "Config pass exceeded %lu ms budget after %lu/%u keys; module unresponsive, aborting.",
+                            "Config pass exceeded %lu ms budget after %lu/%u keys (%u read-backs failed so far); "
+                            "module unresponsive, aborting.",
                             static_cast<unsigned long>(kInitConfigBudgetMs), static_cast<unsigned long>(i),
-                            static_cast<unsigned>(kNumUbloxConfigDefaults));
+                            static_cast<unsigned>(kNumUbloxConfigDefaults), num_read_fail);
             return -1;
         }
         const UbloxCfgDefault& d = kUbloxConfigDefaults[i];
@@ -294,6 +295,21 @@ bool UbloxMAXM10::SendInitCommands() {
     // if the module already has them, VALSET is harmless. (Kept as unconditional writes rather than
     // read-modify-write since they're few and none is warm-start-sensitive.)
     uint8_t layers = kCfgLayerRam | kCfgLayerBbr;
+
+    // Sync the module's UART1 baud rate to the user-configured/persisted setting, since
+    // CFG-UART1-BAUDRATE is excluded from kUbloxConfigDefaults (see WARM-START PRESERVE note there)
+    // to avoid fighting this value. Read-modify-write like SyncConfigDefaults(): only actually issue
+    // the VALSET when the value differs. We already probed successfully at this same rate
+    // (GetDefaultBaudrate() returns the settings value), so this is normally a true no-op -- and it
+    // must stay that way, because even a same-value VALSET on this key can make the module briefly
+    // reset/re-latch its UART, corrupting the NMEA-enable writes that immediately follow.
+    {
+        uint64_t current_baudrate = 0;
+        uint32_t target_baudrate = settings_manager.settings.baud_rates[SettingsManager::kGNSSUART];
+        if (!CfgValGet(kCfgUart1Baudrate, 4, current_baudrate) || current_baudrate != target_baudrate) {
+            CfgValSetU4(kCfgUart1Baudrate, target_baudrate, layers);
+        }
+    }
 
     // NMEA sentence selection.
     ApplyRuntimeMessageConfig(layers);

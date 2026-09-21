@@ -118,7 +118,14 @@ class UbloxMAXM10 : public GNSSReceiver {
     bool CfgValSetE1(uint32_t key, uint8_t v, uint8_t layers) { return CfgValSet(key, v, 1, layers); }
 
    protected:
-    uint32_t GetDefaultBaudrate() const override { return kDefaultBaudrate; }
+    // Probe/bring up the UART at the user-configured/persisted baud rate, not the module's factory
+    // default. Once a module has been configured (its baud persists in battery-backed RAM), it keeps
+    // running at whatever rate it was last set to -- using the factory default here instead would
+    // mismatch the module's actual running baud and break comms after the first successful config.
+    // Mirrors GenericGNSSReceiver::GetDefaultBaudrate().
+    uint32_t GetDefaultBaudrate() const override {
+        return settings_manager.settings.baud_rates[SettingsManager::kGNSSUART];
+    }
     bool SendInitCommands() override;
     void ResendRuntimeConfig() override;
 

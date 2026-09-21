@@ -42,18 +42,20 @@ bool GNSSReceiver::Init() {
 
     SetEnable(false);
 
+    // ClaimUart() already brings the hardware up at GetDefaultBaudrate() so we can talk to the
+    // receiver. Do not also route through comms_manager.SetBaudRate() here: that call persists its
+    // argument into settings_manager.settings.baud_rates[kGNSSUART], which would silently overwrite
+    // the user-configured/persisted baud rate with the receiver's hardcoded probing default on every
+    // boot.
     ClaimUart();
-
-
-
-    // Match our UART baud to the receiver's default so we can talk to it.
-    comms_manager.SetBaudRate(SettingsManager::kGNSSUART, GetDefaultBaudrate());
     EnableRxInterrupt();
 
     // Do not send anything here. Update() starts a generic receiver's passive probe immediately and
     // applies the non-blocking power-on delay only to vendor-specific initialization commands.
     healthy_ = false;
     power_on_timestamp_ms_ = get_time_since_boot_ms();
+    last_init_attempt_timestamp_ms_ = power_on_timestamp_ms_;
+    unhealthy_retry_count_ = 0;
     initializing_ = true;
     notify_observed_valid_ = false;
     notify_last_emitted_valid_ = false;
@@ -129,6 +131,31 @@ bool GNSSReceiver::Update() {
         // Initialization/probing can consume measurable time. Refresh the clock used for fix
         // freshness and notification rate limiting before continuing this update.
         now_ms = get_time_since_boot_ms();
+        last_init_attempt_timestamp_ms_ = now_ms;
+    } else if (active_ && !healthy_ && unhealthy_retry_count_ < kMaxUnhealthyRetries &&
+               now_ms - last_init_attempt_timestamp_ms_ >= kUnhealthyRetryIntervalMs) {
+        // The initial probe (in the initializing_ block above) only gets one early window right
+        // after power-on. A module that's still finishing its cold start past that window would
+        // otherwise be permanently marked unhealthy for the rest of this boot even once it starts
+        // answering. Retry periodically, bounded by kMaxUnhealthyRetries, so it can still be
+        // detected and configured (e.g. NMEA sentence selection, AssistNow) once it wakes up.
+        unhealthy_retry_count_++;
+        healthy_ = SendInitCommands();
+        if (healthy_) {
+            CONSOLE_INFO("GNSSReceiver::Update",
+                         "GNSS module responded on retry %lu/%lu; configured at %lu baud.",
+                         static_cast<unsigned long>(unhealthy_retry_count_),
+                         static_cast<unsigned long>(kMaxUnhealthyRetries),
+                         static_cast<unsigned long>(GetDefaultBaudrate()));
+        } else {
+            CONSOLE_WARNING("GNSSReceiver::Update", "GNSS module still not responding (retry %lu/%lu).",
+                            static_cast<unsigned long>(unhealthy_retry_count_),
+                            static_cast<unsigned long>(kMaxUnhealthyRetries));
+        }
+
+        // SendInitCommands() may parse NMEA/consume measurable time; refresh the clock as above.
+        now_ms = get_time_since_boot_ms();
+        last_init_attempt_timestamp_ms_ = now_ms;
     }
 
     // Stamp the parser with the current time so applied fixes carry a freshness timestamp.
@@ -227,8 +254,9 @@ void GNSSReceiver::SuspendForUartHandover() {
 void GNSSReceiver::ResumeAfterUartHandover() {
     if (!suspended_) return;  // Not handed over.
     // Re-claim the GNSS pins and re-init uart0 (the flasher's DeInit() called uart_deinit(uart0)).
+    // See the comment in Init(): ClaimUart() already sets the hardware baud, so don't also route
+    // through comms_manager.SetBaudRate() here and clobber the persisted setting.
     ClaimUart();
-    comms_manager.SetBaudRate(SettingsManager::kGNSSUART, GetDefaultBaudrate());
     EnableRxInterrupt();
     // The module kept running throughout, so no re-power/boot delay is needed. Re-assert only the
     // runtime message-output config (cheap, non-destructive) so NMEA output resumes.

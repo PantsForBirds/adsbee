@@ -160,15 +160,19 @@ class CommsManager {
     inline bool SetBaudRate(SettingsManager::SerialInterface iface, uint32_t baudrate) {
         switch (iface) {
             case SettingsManager::kCommsUART:
-                // Save the actual set valuecomms_uart_baud_rate as comms_uart_baudrate_.
-                settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kCommsUART] =
-                    uart_set_baudrate(config_.comms_uart_handle, baudrate);
+                // Program the hardware, but persist the requested baudrate (not the
+                // hardware-rounded value uart_set_baudrate() returns) so settings round-trip
+                // exactly.
+                uart_set_baudrate(config_.comms_uart_handle, baudrate);
+                settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kCommsUART] = baudrate;
                 return true;
                 break;
             case SettingsManager::kGNSSUART:
-                // Save the actual set value as gnss_uart_baudrate_.
-                settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART] =
-                    uart_set_baudrate(config_.gnss_uart_handle, baudrate);
+                // Program the hardware, but persist the requested baudrate (not the
+                // hardware-rounded value uart_set_baudrate() returns) so settings round-trip
+                // exactly.
+                uart_set_baudrate(config_.gnss_uart_handle, baudrate);
+                settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART] = baudrate;
                 return true;
                 break;
             default:
