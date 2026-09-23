@@ -32,7 +32,7 @@ TEST(ModeSIdentityReplyPacket, JasonPlaynePackets) {
     EXPECT_TRUE(packet.is_valid);
     EXPECT_EQ(packet.utility_message, ModeSIdentityReplyPacket::UtilityMessageType::kUtilityMessageNoInformation);
     EXPECT_FALSE(packet.has_alert);
-    EXPECT_EQ(packet.squawk, 03751u);
+    EXPECT_EQ(packet.squawk, 3751u);
     EXPECT_FALSE(packet.is_airborne);
     EXPECT_TRUE(packet.airborne_state_known);
     EXPECT_EQ(packet.icao_address, 0x7C1474u);
@@ -46,7 +46,7 @@ TEST(ModeSIdentityReplyPacket, JasonPlaynePackets) {
     EXPECT_EQ(packet.downlink_request,
               ModeSIdentityReplyPacket::DownlinkRequest::kDownlinkRequestCommBBroadcastMessage1Available);
     EXPECT_FALSE(packet.has_alert);
-    EXPECT_EQ(packet.squawk, 00664u);
+    EXPECT_EQ(packet.squawk, 664u);
     EXPECT_TRUE(packet.is_airborne);
     EXPECT_TRUE(packet.airborne_state_known);
     EXPECT_EQ(packet.icao_address, 0x7C7181u);
@@ -58,7 +58,7 @@ TEST(ModeSIdentityReplyPacket, JasonPlaynePackets) {
     EXPECT_EQ(packet.downlink_request,
               ModeSIdentityReplyPacket::DownlinkRequest::kDownlinkRequestCommBBroadcastMessage1Available);
     EXPECT_FALSE(packet.has_alert);
-    EXPECT_EQ(packet.squawk, 00664u);
+    EXPECT_EQ(packet.squawk, 664u);
     EXPECT_FALSE(packet.is_airborne);
     EXPECT_FALSE(packet.airborne_state_known);  // FS=0b101: state is ambiguous, do not trust is_airborne.
     EXPECT_TRUE(packet.has_ident);
@@ -69,7 +69,7 @@ TEST(ModeSIdentityReplyPacket, JasonPlaynePackets) {
     EXPECT_EQ(packet.downlink_request,
               ModeSIdentityReplyPacket::DownlinkRequest::kDownlinkRequestCommBBroadcastMessage1Available);
     EXPECT_TRUE(packet.has_alert);
-    EXPECT_EQ(packet.squawk, 00664u);
+    EXPECT_EQ(packet.squawk, 664u);
     EXPECT_FALSE(packet.is_airborne);
     EXPECT_FALSE(packet.airborne_state_known);  // FS=0b100: state is ambiguous, do not trust is_airborne.
     EXPECT_TRUE(packet.has_ident);

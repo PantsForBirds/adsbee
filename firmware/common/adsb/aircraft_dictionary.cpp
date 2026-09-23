@@ -1236,11 +1236,18 @@ bool UATAircraft::ApplyUATADSBModeStatus(const DecodedUATADSBPacket::UATModeStat
         strncpy(callsign, callsign_temp, UATAircraft::kCallSignMaxNumChars);
         callsign[UATAircraft::kCallSignMaxNumChars] = '\0';
     } else {
-        // Callsign field encodes a squawk code.
-        squawk = 0;
+        // Callsign field encodes a squawk code. Squawk digits are 0-7, so ignore a malformed field.
+        uint16_t squawk_temp = 0;
+        bool squawk_valid = true;
         for (uint16_t i = 0; i < kSquawkNumDigits; i++) {
-            squawk *= 10;
-            squawk += (callsign_temp[i] - '0');
+            if (callsign_temp[i] < '0' || callsign_temp[i] > '7') {
+                squawk_valid = false;
+                break;
+            }
+            squawk_temp = squawk_temp * 10 + (callsign_temp[i] - '0');
+        }
+        if (squawk_valid) {
+            squawk = squawk_temp;
         }
     }
 

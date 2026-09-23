@@ -22,5 +22,5 @@ while (True):
         print(f"{msg.ICAO_address:10x}|{msg.lat / 1e7:+10.4f}|{msg.lon / 1e7:+10.4f}|{msg.altitude_type:10x}|"\
                 f"{msg.altitude / 1e3:10.2f}|{msg.heading / 100:10.4f}|{msg.hor_velocity / 100:10}|"\
                 f"{msg.ver_velocity / 100:10}|{msg.callsign:10}|{msg.emitter_type:10}|{msg.tslc:10}|{msg.flags:10b}|"\
-                f"{msg.squawk:10o}")
+                f"{msg.squawk:10d}")
         msg = mavlink_connection.recv_match(type=MAVLINK_PACKET_TYPE_LIST, blocking=True)

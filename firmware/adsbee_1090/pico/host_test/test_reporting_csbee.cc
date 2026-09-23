@@ -27,7 +27,7 @@ TEST(CSBeeUtils, ModeSAircraftToCSBeeString) {
     aircraft.transponder_capability = ModeSADSBPacket::Capability::kCALevel2PlusTransponderOnSurfaceCanSetCA7;
     aircraft.icao_address = 0x12345E;
     strcpy(aircraft.callsign, "ABCDEFG");
-    aircraft.squawk = 01234;
+    aircraft.squawk = 1234;
     aircraft.emitter_category = ADSBTypes::kEmitterCategoryGliderSailplane;
     aircraft.baro_altitude_ft = 1000;
     aircraft.gnss_altitude_ft = 997;
@@ -110,7 +110,7 @@ TEST(CSBeeUtils, UATAircraftToCSBeeString) {
     aircraft.transponder_capability = ModeSADSBPacket::Capability::kCALevel2PlusTransponderOnSurfaceCanSetCA7;
     aircraft.icao_address = 0x12345E;
     strcpy(aircraft.callsign, "ABCDEFG");
-    aircraft.squawk = 01234;
+    aircraft.squawk = 1234;
     aircraft.emitter_category = ADSBTypes::kEmitterCategoryGliderSailplane;
     aircraft.baro_altitude_ft = 1000;
     aircraft.gnss_altitude_ft = 997;

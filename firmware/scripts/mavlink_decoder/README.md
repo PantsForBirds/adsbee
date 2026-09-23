@@ -50,4 +50,4 @@ ICAO Addr |Latitude  |Longitude |Alt Type  |Alt (m)   |Hdg (deg) |Hvel (m/s)|Vve
 | Type | ADS-B emitter category (MAVLink `ADSB_EMITTER_TYPE` enum) |
 | TSLC (sec) | Time since last communication, in seconds |
 | Flags | MAVLink `ADSB_FLAGS` bitmask (binary) |
-| Squawk | Transponder squawk code (octal) |
+| Squawk | Transponder squawk code (e.g. 7700) |

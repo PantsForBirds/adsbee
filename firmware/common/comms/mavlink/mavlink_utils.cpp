@@ -79,7 +79,7 @@ mavlink_adsb_vehicle_t ModeSAircraftToMAVLINKADSBVehicleMessage(const ModeSAircr
     if (strnlen(aircraft.callsign, ModeSAircraft::kCallSignMaxNumChars) > ModeSAircraft::kCallSignMinNumChars) {
         flags |= ADSB_FLAGS_VALID_CALLSIGN;
     }
-    if (aircraft.squawk > 0) {
+    if (aircraft.squawk != ADSBTypes::kSquawkCodeNotYetReceived) {
         flags |= ADSB_FLAGS_VALID_SQUAWK;
     }
     if (aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroVerticalRateValid) ||
@@ -110,7 +110,7 @@ mavlink_adsb_vehicle_t ModeSAircraftToMAVLINKADSBVehicleMessage(const ModeSAircr
                                            : aircraft.baro_vertical_rate_fpm) *
                              100);
     adsb_vehicle_msg.flags = flags;
-    adsb_vehicle_msg.squawk = aircraft.squawk;
+    adsb_vehicle_msg.squawk = aircraft.squawk != ADSBTypes::kSquawkCodeNotYetReceived ? aircraft.squawk : 0;
     adsb_vehicle_msg.altitude_type =
         static_cast<uint8_t>(use_gnss_altitude ? kMAVLINKAltitudeTypeGNSS : kMAVLINKAltitudeTypeBaro);
     // Fill out callsign later.
@@ -147,7 +147,7 @@ mavlink_adsb_vehicle_t UATAircraftToMAVLINKADSBVehicleMessage(const UATAircraft 
     if (strnlen(aircraft.callsign, UATAircraft::kCallSignMaxNumChars) > UATAircraft::kCallSignMinNumChars) {
         flags |= ADSB_FLAGS_VALID_CALLSIGN;
     }
-    if (aircraft.squawk > 0) {
+    if (aircraft.squawk != ADSBTypes::kSquawkCodeNotYetReceived) {
         flags |= ADSB_FLAGS_VALID_SQUAWK;
     }
     if (aircraft.HasBitFlag(UATAircraft::BitFlag::kBitFlagBaroVerticalRateValid) ||
@@ -179,7 +179,7 @@ mavlink_adsb_vehicle_t UATAircraftToMAVLINKADSBVehicleMessage(const UATAircraft 
                                            : aircraft.baro_vertical_rate_fpm) *
                              100);
     adsb_vehicle_msg.flags = flags;
-    adsb_vehicle_msg.squawk = aircraft.squawk;
+    adsb_vehicle_msg.squawk = aircraft.squawk != ADSBTypes::kSquawkCodeNotYetReceived ? aircraft.squawk : 0;
     adsb_vehicle_msg.altitude_type =
         static_cast<uint8_t>(use_gnss_altitude ? kMAVLINKAltitudeTypeGNSS : kMAVLINKAltitudeTypeBaro);
     // Fill out callsign later.
