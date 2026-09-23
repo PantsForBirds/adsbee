@@ -1,5 +1,6 @@
 #include <stdio.h>  // for printing
 
+#include <cmath>     // for lroundf
 #include <cstring>   // for strcat
 #include <iostream>  // for AT command ingestion
 
@@ -915,8 +916,18 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
             "Requires at least two arguments: AT+TX_CW=<band [SUBG LRLF LRHF]>,<freq_MHz>[,<power_dBm> (LRLF/LRHF "
             "only)].");
     }
-    uint16_t freq_mhz = 0;
-    CPP_AT_TRY_ARG2NUM(1, freq_mhz);
+    // Frequency accepts fractional MHz (e.g. 2400.1) so the LR2021 bands can be swept at sub-MHz steps for
+    // filter characterization. It is rounded to the nearest kHz to keep float error out of the Hz value.
+    float freq_mhz_f = 0.0f;
+    CPP_AT_TRY_ARG2NUM(1, freq_mhz_f);
+    if (!(freq_mhz_f >= 0.0f) || freq_mhz_f > 65535.0f) {
+        CPP_AT_ERROR("Invalid frequency '%s'.", args[1].data());
+    }
+    uint32_t freq_khz = (uint32_t)lroundf(freq_mhz_f * 1000.0f);
+    uint32_t freq_hz = freq_khz * 1000u;
+    uint16_t freq_mhz = (uint16_t)(freq_khz / 1000u);  // Truncated whole-MHz value for range checks and SUBG.
+    uint16_t freq_frac_khz = (uint16_t)(freq_khz % 1000u);
+    bool freq_is_whole_mhz = (freq_frac_khz == 0);
 
     // Optional third argument: TX power in dBm (LR2021 bands only). Range is band-specific and validated
     // in the per-band branches below. Defaults to 0 dBm.
@@ -935,6 +946,9 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     // Dispatch on band, validating the frequency before keying up the radio.
     enum CwBand { kBandSubG, kBandLrLf, kBandLrHf } band;
     if (args[0].compare("SUBG") == 0) {
+        if (!freq_is_whole_mhz) {
+            CPP_AT_ERROR("SUBG CW frequency must be a whole number of MHz.");
+        }
         if (freq_mhz < kSubGMinMHz || freq_mhz > kSubGMaxMHz) {
             CPP_AT_ERROR("Frequency %u MHz out of range for SUBG (%u-%u MHz).", freq_mhz, kSubGMinMHz, kSubGMaxMHz);
         }
@@ -947,27 +961,29 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
             CPP_AT_ERROR("Failed to start CW on SUBG.");
         }
     } else if (args[0].compare("LRLF") == 0) {
-        if (freq_mhz < kLrLfMinMHz || freq_mhz > kLrLfMaxMHz) {
-            CPP_AT_ERROR("Frequency %u MHz out of range for LRLF (%u-%u MHz).", freq_mhz, kLrLfMinMHz, kLrLfMaxMHz);
+        if (freq_khz < (uint32_t)kLrLfMinMHz * 1000u || freq_khz > (uint32_t)kLrLfMaxMHz * 1000u) {
+            CPP_AT_ERROR("Frequency %u.%03u MHz out of range for LRLF (%u-%u MHz).", freq_mhz, freq_frac_khz,
+                         kLrLfMinMHz, kLrLfMaxMHz);
         }
         if (power_arg < kLrLfMinPowerDbm || power_arg > kLrLfMaxPowerDbm) {
             CPP_AT_ERROR("Power %ld dBm out of range for LRLF (%ld to %ld dBm).", (long)power_arg,
                          (long)kLrLfMinPowerDbm, (long)kLrLfMaxPowerDbm);
         }
         band = kBandLrLf;
-        if (!adsbee.lr2021.StartCwTone(/*use_hf_path=*/false, (uint32_t)freq_mhz * 1000000u, power_dbm)) {
+        if (!adsbee.lr2021.StartCwTone(/*use_hf_path=*/false, freq_hz, power_dbm)) {
             CPP_AT_ERROR("Failed to start CW on LRLF.");
         }
     } else if (args[0].compare("LRHF") == 0) {
-        if (freq_mhz < kLrHfMinMHz || freq_mhz > kLrHfMaxMHz) {
-            CPP_AT_ERROR("Frequency %u MHz out of range for LRHF (%u-%u MHz).", freq_mhz, kLrHfMinMHz, kLrHfMaxMHz);
+        if (freq_khz < (uint32_t)kLrHfMinMHz * 1000u || freq_khz > (uint32_t)kLrHfMaxMHz * 1000u) {
+            CPP_AT_ERROR("Frequency %u.%03u MHz out of range for LRHF (%u-%u MHz).", freq_mhz, freq_frac_khz,
+                         kLrHfMinMHz, kLrHfMaxMHz);
         }
         if (power_arg < kLrHfMinPowerDbm || power_arg > kLrHfMaxPowerDbm) {
             CPP_AT_ERROR("Power %ld dBm out of range for LRHF (%ld to %ld dBm).", (long)power_arg,
                          (long)kLrHfMinPowerDbm, (long)kLrHfMaxPowerDbm);
         }
         band = kBandLrHf;
-        if (!adsbee.lr2021.StartCwTone(/*use_hf_path=*/true, (uint32_t)freq_mhz * 1000000u, power_dbm)) {
+        if (!adsbee.lr2021.StartCwTone(/*use_hf_path=*/true, freq_hz, power_dbm)) {
             CPP_AT_ERROR("Failed to start CW on LRHF.");
         }
     } else {
@@ -977,8 +993,8 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     if (band == kBandSubG) {
         CPP_AT_PRINTF("Transmitting CW on %s at %u MHz. Press any key to stop.\r\n", args[0].data(), freq_mhz);
     } else {
-        CPP_AT_PRINTF("Transmitting CW on %s at %u MHz, %d dBm. Press any key to stop.\r\n", args[0].data(), freq_mhz,
-                      power_dbm);
+        CPP_AT_PRINTF("Transmitting CW on %s at %u.%03u MHz, %d dBm. Press any key to stop.\r\n", args[0].data(),
+                      freq_mhz, freq_frac_khz, power_dbm);
     }
 
     // Block until any key is received, petting the watchdog so we don't reset during transmission.
@@ -1275,7 +1291,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 2,
      .max_args = 3,
      .help_string = "AT+TX_CW=<band [SUBG LRLF LRHF]>,<freq_MHz>[,<power_dBm>]\r\n\tTransmit an unmodulated CW "
-                    "carrier until a key is pressed.\r\n\tSUBG=CC1314, LRLF/LRHF=LR2021 low/high band. Power "
+                    "carrier until a key is pressed.\r\n\tSUBG=CC1314 (whole MHz only), LRLF/LRHF=LR2021 low/high band "
+                    "(fractional MHz accepted, 1 kHz resolution, e.g. 2400.1). Power "
                     "(default 0 dBm) applies to LR2021 bands only: LRLF -9..22 dBm, LRHF -19..12 dBm.\r\n\tSUBG "
                     "power is fixed at +12 dBm by the SmartRF TX power table; a power argument is an error.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTxCWCallback, comms_manager)},
