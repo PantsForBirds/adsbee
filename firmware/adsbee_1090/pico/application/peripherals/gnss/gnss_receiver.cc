@@ -213,7 +213,12 @@ bool GNSSReceiver::Update() {
         notify_observed_valid_ = current_fix_valid;
         notify_pending_ = !notify_has_emitted_ || current_fix_valid != notify_last_emitted_valid_;
     }
-    if (settings_manager.settings.gnss_notify && notify_pending_ &&
+    // Respect AT+PROTOCOL_OUT=CONSOLE,NONE the same way aircraft data reporting does: an unsolicited
+    // GNSS_FIX line on the console can otherwise corrupt an in-progress binary transfer (e.g. AT+OTA=WRITE).
+    bool console_reporting_enabled =
+        settings_manager.settings.reporting_protocols[SettingsManager::SerialInterface::kConsole] !=
+        SettingsManager::ReportingProtocol::kNoReports;
+    if (settings_manager.settings.gnss_notify && console_reporting_enabled && notify_pending_ &&
         (!notify_has_emitted_ || now_ms - notify_last_timestamp_ms_ >= kFixNotifyMinIntervalMs)) {
         const GNSSFix& f = parser_.fix();
         char utc_time[9] = "--:--:--";
