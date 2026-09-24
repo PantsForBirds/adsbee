@@ -5,6 +5,66 @@
 #endif
 #include "comms.hh"
 
+bool SettingsManager::Sanitize() {
+    bool changed = false;
+
+    if (settings.log_level >= LogLevel::kNumLogLevels) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "log_level %u out of range, resetting to kWarnings.",
+                      settings.log_level);
+        settings.log_level = LogLevel::kWarnings;
+        changed = true;
+    }
+
+    for (uint16_t i = 0; i < SerialInterface::kNumSerialInterfaces; i++) {
+        if (settings.reporting_protocols[i] >= ReportingProtocol::kNumProtocols) {
+            CONSOLE_ERROR("SettingsManager::Sanitize", "reporting_protocols[%u]=%u out of range, resetting to kNoReports.",
+                          i, settings.reporting_protocols[i]);
+            settings.reporting_protocols[i] = ReportingProtocol::kNoReports;
+            changed = true;
+        }
+    }
+    for (uint16_t i = 0; i < Settings::kMaxNumFeeds; i++) {
+        if (settings.feed_protocols[i] >= ReportingProtocol::kNumProtocols) {
+            CONSOLE_ERROR("SettingsManager::Sanitize", "feed_protocols[%u]=%u out of range, resetting to kNoReports.",
+                          i, settings.feed_protocols[i]);
+            settings.feed_protocols[i] = ReportingProtocol::kNoReports;
+            changed = true;
+        }
+    }
+
+    if (settings.subg_mode >= kNumSubGHzRadioModes) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "subg_mode %u out of range, resetting to kSubGHzRadioModeUATRx.",
+                      settings.subg_mode);
+        settings.subg_mode = SubGHzRadioMode::kSubGHzRadioModeUATRx;
+        changed = true;
+    }
+    if (settings.subg_enabled != EnableState::kEnableStateExternal &&
+        settings.subg_enabled != EnableState::kEnableStateDisabled &&
+        settings.subg_enabled != EnableState::kEnableStateEnabled) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "subg_enabled %d out of range, resetting to kEnableStateEnabled.",
+                      settings.subg_enabled);
+        settings.subg_enabled = EnableState::kEnableStateEnabled;
+        changed = true;
+    }
+
+    if (settings.gnss_receiver_type != kGNSSReceiverNone && settings.gnss_receiver_type != kGNSSReceiverGeneric &&
+        settings.gnss_receiver_type != kGNSSReceiverUBXMIA) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "gnss_receiver_type %u out of range, resetting to kGNSSReceiverNone.",
+                      settings.gnss_receiver_type);
+        settings.gnss_receiver_type = kGNSSReceiverNone;
+        changed = true;
+    }
+
+    if (settings.rx_position.source >= RxPosition::kNumPositionSources) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "rx_position.source %u out of range, resetting to kPositionSourceLowestAircraft.",
+                      settings.rx_position.source);
+        settings.rx_position.source = RxPosition::kPositionSourceLowestAircraft;
+        changed = true;
+    }
+
+    return changed;
+}
+
 // NOTE: This function needs to be updated separately for ESP32.
 void SettingsManager::Print() {
     char print_buf[500];

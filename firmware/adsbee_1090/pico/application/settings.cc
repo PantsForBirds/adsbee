@@ -64,6 +64,7 @@ bool SettingsManager::Load() {
     }
 
     // Handle a stored settings version that doesn't match the current firmware.
+    bool needs_persist = false;
     if (settings.settings_version != kSettingsVersion) {
         // Snapshot the raw stored bytes before we overwrite `settings` (the blob we just read IS the old struct; its
         // first field, settings_version, is at offset 0 in every version).
@@ -99,7 +100,19 @@ bool SettingsManager::Load() {
             }
         }
 
-        // Persist the migrated (or reset) settings so subsequent boots match the current version.
+        needs_persist = true;
+    }
+
+    // Clamp any out-of-range enum field (from migration ambiguity, EEPROM/flash corruption, etc.) before anything
+    // downstream -- including the ESP32, which receives `settings` from us over SPI at boot and calls Print()
+    // immediately -- can index a kXxxStrs[] table with it and crash. See the Sanitize() doc comment in settings.hh.
+    if (Sanitize()) {
+        needs_persist = true;
+    }
+
+    // Persist if migration/reset/sanitization changed anything, so subsequent boots match the current version and
+    // don't re-trigger the same fix-up every time.
+    if (needs_persist) {
         if (bsp.has_eeprom && !eeprom.Save(settings)) {
             CONSOLE_ERROR("settings.cc::Load", "Failed to save settings after version change.");
             return false;

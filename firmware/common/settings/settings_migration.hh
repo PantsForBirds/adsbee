@@ -21,6 +21,19 @@ class SettingsMigrator {
     // The oldest stored version this utility can migrate from.
     static constexpr uint32_t kOldestMigratableVersion = 12;
 
+    // NOTE on v14 -> v15: firmware between commits e1f28fe7 and this fix silently inserted gnss_enabled/
+    // gnss_receiver_type/gnss_notify into the live struct WITHOUT bumping kSettingsVersion (see settings_v14::Settings
+    // in settings_versions.hh for the full story). Devices that ran that firmware and saved settings now have an
+    // on-flash blob tagged version 14 whose true byte layout no longer matches settings_v14 -- it already matches the
+    // *current* (v15) layout, just with garbage/misaligned values in gnss_enabled and every field after it (subg_mode
+    // onward), because they were read through the wrong-sized struct at least once. Since the version tag can't
+    // distinguish a genuine pre-drift v14 blob from an already-drift-corrupted one, MigrateV14ToV15 makes the
+    // textbook assumption that a "v14" blob is byte-true settings_v14 -- this is correct for any device untouched by
+    // the drifted firmware, and is what makes all *future* upgrades safe now that kSettingsVersion actually changes.
+    // It cannot losslessly recover a blob that was already corrupted by the drifted firmware: those devices will
+    // need someone to re-check the 1090/Sub-GHz/GNSS enable flags once after applying this fix, but will not corrupt
+    // further.
+
     /**
      * Migrates a stored settings blob at `from_version` forward to the current kSettingsVersion layout.
      * @param[in] blob Raw stored settings bytes (starts with the uint32_t settings_version at offset 0).
@@ -35,9 +48,10 @@ class SettingsMigrator {
    private:
     // Per-version upgrade steps, chained: each takes the frozen layout of version N and produces version N+1. Steps that
     // land on an intermediate frozen version write that frozen struct; only the final step (the one that reaches the
-    // current version) writes the live SettingsManager::Settings. To add v15: freeze v14 in settings_versions.hh, change
-    // MigrateV13ToV14 to emit settings_v14::Settings, add MigrateV14ToV15 emitting the live struct, and extend
-    // Migrate()'s dispatch with a `case 14:`.
+    // current version) writes the live SettingsManager::Settings. To add v16: freeze v15 in settings_versions.hh, change
+    // MigrateV14ToV15 to emit settings_v15::Settings, add MigrateV15ToV16 emitting the live struct, and extend
+    // Migrate()'s dispatch with a `case 15:`.
     static void MigrateV12ToV13(const settings_v12::Settings& in, settings_v13::Settings& out);
-    static void MigrateV13ToV14(const settings_v13::Settings& in, SettingsManager::Settings& out);
+    static void MigrateV13ToV14(const settings_v13::Settings& in, settings_v14::Settings& out);
+    static void MigrateV14ToV15(const settings_v14::Settings& in, SettingsManager::Settings& out);
 };

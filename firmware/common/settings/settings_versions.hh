@@ -14,10 +14,10 @@
  *     literals. This makes each snapshot immune to any future change in the live Settings struct or its enums/constants.
  *   - Once a version is frozen here it is NEVER edited again. The byte layout is locked with static_asserts.
  *
- * RECIPE when bumping kSettingsVersion (e.g. 13 -> 14):
- *   1. Copy the CURRENT live SettingsManager::Settings layout into a new `namespace settings_v13` snapshot here
+ * RECIPE when bumping kSettingsVersion (e.g. 14 -> 15):
+ *   1. Copy the CURRENT live SettingsManager::Settings layout into a new `namespace settings_v14` snapshot here
  *      (translating enum members to their underlying types, hardcoding constants), and lock it with static_asserts.
- *   2. Add a `MigrateV13ToV14()` step and extend the dispatcher in settings_migration.cpp.
+ *   2. Add a `MigrateV14ToV15()` step and extend the dispatcher in settings_migration.cpp.
  */
 namespace settings_v12 {
 
@@ -177,3 +177,107 @@ static_assert(offsetof(Settings, feed_receiver_ids) == 976, "v13 feed_receiver_i
 static_assert(offsetof(Settings, rx_position) == 1058, "v13 rx_position offset drift.");
 
 }  // namespace settings_v13
+
+/**
+ * v14 layout: v13 plus the Remote ID *transmit* settings (remote_id_tx_*) appended after the receive settings, plus
+ * `led_enabled` inserted earlier (between watchdog_timeout_sec and log_level). This is the layout that shipped with
+ * kSettingsVersion == 14 from commit 82f9813e ("Add Remote ID reception #202") until commit e1f28fe7 ("John/jacob
+ * gnss #205") inserted `gnss_enabled`/`gnss_receiver_type`/`gnss_notify` into the live struct WITHOUT bumping
+ * kSettingsVersion or adding a migration step -- meaning on-flash v14 blobs from before e1f28fe7 were read straight
+ * into the new, larger, shifted struct with no migration, corrupting every field from `gnss_enabled` onward
+ * (including subg_rx_enabled, subg_enabled, remote_id_*, feed_*, mavlink_*, and rx_position). This snapshot exists so
+ * that migration can be added retroactively at v15.
+ */
+namespace settings_v14 {
+
+// v14 array-size constants (hardcoded; identical to v12/v13's, plus the Remote ID ID length).
+static constexpr uint16_t kHostnameMaxLen = 32;
+static constexpr uint16_t kWiFiSSIDMaxLen = 31;
+static constexpr uint16_t kWiFiPasswordMaxLen = 63;
+static constexpr uint16_t kNumSerialInterfaces = 3;
+static constexpr uint16_t kMaxNumFeeds = 10;
+static constexpr uint16_t kFeedURIMaxNumChars = 63;
+static constexpr uint16_t kFeedReceiverIDNumBytes = 8;
+static constexpr uint16_t kRemoteIDIDMaxLen = 20;
+
+// Unchanged from v12/v13, but re-declared so this snapshot stays self-contained.
+struct CoreNetworkSettings {
+    bool esp32_enabled;
+    char hostname[kHostnameMaxLen + 1];
+    bool wifi_ap_enabled;
+    uint8_t wifi_ap_channel;
+    char wifi_ap_ssid[kWiFiSSIDMaxLen + 2];
+    char wifi_ap_password[kWiFiPasswordMaxLen + 2];
+    bool wifi_sta_enabled;
+    char wifi_sta_ssid[kWiFiSSIDMaxLen + 2];
+    char wifi_sta_password[kWiFiPasswordMaxLen + 2];
+    bool ethernet_enabled;
+    uint32_t crc32;
+};
+
+struct __attribute__((packed)) RxPosition {
+    uint8_t source;
+    float latitude_deg;
+    float longitude_deg;
+    int32_t gnss_altitude_ft;
+    int32_t baro_altitude_ft;
+    float heading_deg;
+    int32_t speed_kts;
+    uint32_t icao_address;
+};
+
+// Byte-identical copy of the v14 Settings layout (kSettingsVersion == 14, pre-GNSS). Enum members are stored as their
+// v14 underlying integer types: LogLevel/ReportingProtocol : uint16_t, EnableState : int8_t, SubGHzRadioMode : uint8_t.
+struct alignas(4) Settings {
+    uint32_t settings_version;
+    CoreNetworkSettings core_network_settings;
+    bool r1090_rx_enabled;
+    int32_t tl_offset_mv;
+    bool r1090_bias_tee_enabled;
+    uint32_t watchdog_timeout_sec;
+    bool led_enabled;  // Added prior to v14 (commit d9bd04cd).
+    // (post-v14 inserts gnss_enabled, gnss_receiver_type, gnss_notify here -- the bug this snapshot exists to fix.)
+    uint16_t log_level;
+    uint16_t reporting_protocols[kNumSerialInterfaces];
+    uint32_t baud_rates[kNumSerialInterfaces];
+    int8_t subg_enabled;
+    bool subg_rx_enabled;
+    bool subg_bias_tee_enabled;
+    uint8_t subg_mode;
+    bool remote_id_rx_enabled;
+    uint8_t remote_id_transports;
+    bool remote_id_tx_enabled;         // Added in v14.
+    uint8_t remote_id_tx_transports;   // Added in v14.
+    uint8_t remote_id_tx_uas_id_type;  // Added in v14.
+    uint8_t remote_id_tx_ua_type;      // Added in v14.
+    char remote_id_tx_uas_id[kRemoteIDIDMaxLen + 1];      // Added in v14.
+    char remote_id_tx_operator_id[kRemoteIDIDMaxLen + 1];  // Added in v14.
+    char feed_uris[kMaxNumFeeds][kFeedURIMaxNumChars + 1];
+    uint16_t feed_ports[kMaxNumFeeds];
+    bool feed_is_active[kMaxNumFeeds];
+    uint16_t feed_protocols[kMaxNumFeeds];
+    uint8_t feed_receiver_ids[kMaxNumFeeds][kFeedReceiverIDNumBytes];
+    uint8_t mavlink_system_id;
+    uint8_t mavlink_component_id;
+    RxPosition rx_position;
+};
+
+// Lock the v14 byte layout (measured from the real pre-GNSS v14 struct at commit 82f9813e). Same rules as v12/v13:
+// never "fix" these by editing the numbers -- a failure means the snapshot no longer matches the true historical
+// layout.
+static_assert(sizeof(CoreNetworkSettings) == 240, "v14 CoreNetworkSettings must be 240 bytes.");
+static_assert(sizeof(RxPosition) == 29, "v14 RxPosition must be 29 bytes.");
+static_assert(sizeof(Settings) == 1140, "v14 Settings must be 1140 bytes.");
+static_assert(offsetof(Settings, core_network_settings) == 4, "v14 CoreNetworkSettings offset drift.");
+static_assert(offsetof(Settings, r1090_rx_enabled) == 244, "v14 r1090_rx_enabled offset drift.");
+static_assert(offsetof(Settings, led_enabled) == 260, "v14 led_enabled offset drift.");
+static_assert(offsetof(Settings, log_level) == 262, "v14 log_level offset drift.");
+static_assert(offsetof(Settings, subg_mode) == 287, "v14 subg_mode offset drift.");
+static_assert(offsetof(Settings, remote_id_rx_enabled) == 288, "v14 remote_id_rx_enabled offset drift.");
+static_assert(offsetof(Settings, remote_id_tx_enabled) == 290, "v14 remote_id_tx_enabled offset drift.");
+static_assert(offsetof(Settings, feed_uris) == 336, "v14 feed_uris offset drift.");
+static_assert(offsetof(Settings, feed_receiver_ids) == 1026, "v14 feed_receiver_ids offset drift.");
+static_assert(offsetof(Settings, mavlink_system_id) == 1106, "v14 mavlink_system_id offset drift.");
+static_assert(offsetof(Settings, rx_position) == 1108, "v14 rx_position offset drift.");
+
+}  // namespace settings_v14
