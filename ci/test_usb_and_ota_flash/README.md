@@ -62,3 +62,9 @@ Invoked from the `hardware_test` job in
 self-hosted runner with real ADSBee hardware attached. The workflow derives
 `--expected-version` from `firmware/common/coprocessor/object_dictionary.cpp`
 so the version check always matches the build under test.
+
+**Currently disabled.** While the HIL fixture is down the job is gated on the
+`HIL_ENABLED` repository variable and marked `continue-on-error`, so it is
+skipped and cannot fail a CI build. Re-enable it by setting `HIL_ENABLED=true`
+(Settings → Secrets and variables → Actions → Variables) and removing the
+temporary lines in the `hardware_test` job.

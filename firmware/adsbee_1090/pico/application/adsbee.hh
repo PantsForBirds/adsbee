@@ -22,6 +22,9 @@ class ADSBee {
     static constexpr uint16_t kModeSPacketQueueDepth = 200;
     static constexpr uint16_t kRawUATADSBPacketQueueDepth = 50;
     static constexpr uint16_t kRawUATUplinkPacketQueueDepth = 4;
+    // Remote ID packets pulled from the ESP32 over SPI, waiting to be decoded into the aircraft dictionary. The ESP32
+    // already rate-limits these to ~1 Hz per drone, so a shallow queue suffices.
+    static constexpr uint16_t kRawRemoteIDPacketQueueDepth = 16;
 
     static constexpr uint16_t kTLMaxPWMCount = 5000;  // Clock is 125MHz, shoot for 25kHz PWM.
     static constexpr int kVDDMV = 3300;               // [mV] Voltage of positive supply rail.
@@ -38,13 +41,35 @@ class ADSBee {
                // to the maximum value that the trigger level could be moved (up or down) when exploring a neighbor
                // state.
 
+    static constexpr uint16_t kADCReadySpinLimit =
+        200;  // Max iterations to wait for a foreign ADC conversion (~2us) to finish before starting the RSSI read.
+
     static constexpr uint32_t kMLATCounterWrapIntervalMs =
         0xFFFFFF / 48'000;  // [ms] How often a 48MHz 24-bit counter wraps (period in ms).
 
-    static constexpr int32_t kNoiseFloorExpoFilterPercent =
-        50;  // [%] Weight to use for low pass expo filter of noise floor ADC counts. 0 = no filter, 100 = hold value.
+    /**
+     * Noise floor estimation. The RSSI ADC input is sampled from the main loop between packets and low-pass filtered
+     * to approximate the receiver noise floor, which anchors the trigger level (noise floor + TL offset) and is the
+     * reference for reported packet signal quality (sigq).
+     */
     static constexpr uint32_t kNoiseFloorADCSampleIntervalMs =
-        1;  // [ms] Interval between ADC samples to approximate noise floor value.
+        1;  // [ms] Minimum interval between RSSI ADC samples used for the noise floor estimate.
+    static constexpr uint32_t kNoiseFloorDemodGuardUs =
+        200;  // [us] Discard samples taken this soon after a demodulation began: covers the longest packet (~120us)
+              // plus the RSSI line's RC decay (10k / 1nF, ~50us) back down to the noise floor.
+    static constexpr uint32_t kNoiseFloorMaxHoldMs =
+        1000;  // [ms] If no sample has been accepted for this long (receiver constantly demodulating), stop applying
+               // kNoiseFloorDemodGuardUs (but still never sample during a demodulation) so the estimate can't stall.
+    static constexpr uint16_t kNoiseFloorFilterShift =
+        6;  // Low pass filter weight is 1/2^kNoiseFloorFilterShift: time constant of ~64 accepted samples (>=64ms).
+    static constexpr uint16_t kNoiseFloorFixedPointShift =
+        8;  // Fractional bits of the filter accumulator, so a small filter weight doesn't truncate away sub-mV steps.
+    static constexpr int32_t kNoiseFloorOutlierMV =
+        150;  // [mV] (~9dB) Samples this far from the current estimate are rejected: above it they are pulses (e.g.
+              // packets whose preamble didn't trigger a demodulation), below it glitched conversions...
+    static constexpr uint16_t kNoiseFloorMaxConsecutiveOutliers =
+        32;  // ...unless this many consecutive samples were rejected, in which case the floor itself moved (e.g. bias
+             // tee powered an external LNA on or off) and samples are accepted again so the estimate can track.
 
     static constexpr uint32_t kSubGRadioFailRebootIntervalMs = 10'000;
     static constexpr uint32_t kSubGRadioFailRebootPowerOffDurationMs = 20;
@@ -56,6 +81,8 @@ class ADSBee {
      * want to capture the demodulation start time and RSSI pretty promptly. Demod complete interrupt is lowest priority
      * because a filled state machine can wait a little before being digested.
      */
+    static constexpr uint8_t kNoDemodStateMachine = 0xFF;  // demod_pin_to_sm_index_ value for non-demod GPIOs.
+
     static constexpr uint kMLATCounterWrapInterruptPriority = 0;
     static constexpr uint kGPIOInterruptPriority = 1;
     static constexpr uint kDemodCompleteInterruptPriority = 2;
@@ -150,6 +177,13 @@ class ADSBee {
     void FlashStatusLED(uint32_t led_on_ms = kStatusLEDOnMs);
 
     /**
+     * Forced status LED blink for test fixtures (AT+LED_BLINK): always lights the LED, bypassing the LED_ENABLE
+     * setting until the blink expires. Non-blocking.
+     * @param[in] duration_ms Number of milliseconds to turn the LED on for.
+     */
+    void ForceBlinkStatusLED(uint32_t duration_ms);
+
+    /**
      * Creates a composite timestamp using the current value of the SysTick timer (running at 125MHz) and the SysTick
      * wrap counter to simulate a timer running at 48MHz (which matches the frequency of the preamble detector PIO).
      * @param[in] num_bits Number of bits to mask the counter value to. Defaults to full resolution.
@@ -175,11 +209,17 @@ class ADSBee {
     uint16_t GetMLATJitterPWMSliceCounts();
 
     /**
-     * Returns the power level of the noise floor (signal strength sampled mostly during non-decode intervals and then
-     * low-pass filtered).
+     * Returns the power level of the noise floor (RSSI sampled between packets and then low-pass filtered).
      * @retval Power level of the noise floor, in dBm.
      */
     int GetNoiseFloordBm();
+
+    /**
+     * Returns the noise floor estimate as a voltage at the RSSI ADC input, in the same units as the trigger level
+     * offset (the trigger level is noise floor + TL offset).
+     * @retval Noise floor RSSI voltage, in milliVolts.
+     */
+    int GetNoiseFloorMilliVolts();
 
     /**
      * Get the current temperature used in learning trigger level (simulated annealing). A temperature of 0 means
@@ -337,7 +377,9 @@ class ADSBee {
      * @param[in] on True to turn on the LED, false to turn it off. Ignored if LEDs are disabled.
      */
     inline void SetStatusLED(bool on) {
-        gpio_put(config_.r1090_led_pin, (on && settings_manager.settings.led_enabled) ? 1 : 0);
+        // led_force_blink_ bypasses the LED_ENABLE gate during a forced blink (AT+LED_BLINK), and also keeps a packet
+        // flash arriving mid-forced-blink from re-gating the pin off.
+        gpio_put(config_.r1090_led_pin, (on && (settings_manager.settings.led_enabled || led_force_blink_)) ? 1 : 0);
     }
 
     /**
@@ -392,6 +434,8 @@ class ADSBee {
         {.buf_len_num_elements = kRawUATADSBPacketQueueDepth, .buffer = raw_uat_adsb_packet_queue_buffer_});
     PFBQueue<RawUATUplinkPacket> raw_uat_uplink_packet_queue = PFBQueue<RawUATUplinkPacket>(
         {.buf_len_num_elements = kRawUATUplinkPacketQueueDepth, .buffer = raw_uat_uplink_packet_queue_buffer_});
+    PFBQueue<RawRemoteIDPacket> raw_remote_id_packet_queue = PFBQueue<RawRemoteIDPacket>(
+        {.buf_len_num_elements = kRawRemoteIDPacketQueueDepth, .buffer = raw_remote_id_packet_queue_buffer_});
 
     AircraftDictionary aircraft_dictionary;
     CC1312 subg_radio_ll = CC1312({});
@@ -426,7 +470,17 @@ class ADSBee {
     uint16_t mlat_jitter_counts_on_demod_begin_[BSP::kMaxNumDemodStateMachines] = {0};
     uint16_t mlat_jitter_counts_on_fifo_pull_[BSP::kMaxNumDemodStateMachines] = {0};
 
+    // Maps a demod GPIO number to its state machine index (kNoDemodStateMachine for other GPIOs). Built in PIOInit().
+    uint8_t demod_pin_to_sm_index_[NUM_BANK0_GPIOS];
+
+    // OnDemodComplete() duration statistics, only maintained when DEBUG_ISR_TIMING is defined.
+    uint32_t isr_count_ = 0;
+    uint32_t isr_duration_sum_counts_ = 0;
+    uint16_t isr_duration_max_counts_ = 0;
+
     uint32_t led_on_timestamp_ms_ = 0;
+    uint32_t led_on_duration_ms_ = kStatusLEDOnMs;
+    bool led_force_blink_ = false;  // True while a forced blink (bypassing LED_ENABLE) is active.
 
     uint16_t tl_pwm_slice_ = 0;
     uint16_t tl_pwm_chan_ = 0;
@@ -455,6 +509,7 @@ class ADSBee {
     // Buffer where packets are stored while incoming from the CC1312.
     RawUATADSBPacket raw_uat_adsb_packet_queue_buffer_[kRawUATADSBPacketQueueDepth];
     RawUATUplinkPacket raw_uat_uplink_packet_queue_buffer_[kRawUATUplinkPacketQueueDepth];
+    RawRemoteIDPacket raw_remote_id_packet_queue_buffer_[kRawRemoteIDPacketQueueDepth];
 
     uint32_t last_aircraft_dictionary_update_timestamp_ms_ = 0;
     uint32_t last_rx_position_update_timestamp_ms_ = 0;
@@ -466,8 +521,17 @@ class ADSBee {
 
     uint32_t subg_radio_last_update_timestamp_ms_ = 0;
 
-    int32_t noise_floor_mv_;
+    // Noise floor estimate. The filter runs on noise_floor_mv_fp_ (mV << kNoiseFloorFixedPointShift); noise_floor_mv_
+    // mirrors it as a plain integer for the ISR (sigq) and status reporting.
+    int32_t noise_floor_mv_fp_ = 0;
+    volatile int32_t noise_floor_mv_ = 0;
+    bool noise_floor_initialized_ = false;
+    uint16_t noise_floor_consecutive_outliers_ = 0;
     uint32_t noise_floor_last_sample_timestamp_ms_ = 0;
+    uint32_t noise_floor_last_accepted_timestamp_ms_ = 0;
+    uint32_t demod_pins_mask_ = 0;  // GPIO bitmask of the demod pins, built in Init(). HI = demodulation in progress.
+    // Written by OnDemodBegin() (ISR core), read by UpdateNoiseFloor() (main loop) to reject contaminated samples.
+    volatile uint32_t last_demod_begin_timestamp_us_ = 0;
 
     /** 978MHz Receiver Parameters **/
 };

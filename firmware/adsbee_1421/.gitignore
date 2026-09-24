@@ -1,0 +1,5 @@
+# Core dumps escaping the containers.
+**core
+# picotool source/build cache (see build.sh: PICOTOOL_FETCH_FROM_GIT_PATH). Lives outside
+# build/ so `./build.sh clean programmer` does not force a re-download.
+.picotool/

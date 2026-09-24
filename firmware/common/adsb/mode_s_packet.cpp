@@ -213,18 +213,14 @@ uint32_t DecodedModeSPacket::CalculateCRC24(uint16_t packet_len_bits) const {
 void DecodedModeSPacket::ConstructModeSPacket() {
     if (raw.buffer_len_bytes != RawModeSPacket::kExtendedSquitterPacketLenBytes &&
         raw.buffer_len_bytes != RawModeSPacket::kSquitterPacketLenBytes) {
-        snprintf(debug_string, kDebugStrLen,
-                 "Byte number mismatch while decoding packet. Expected %d or %d but got %d!\r\n",
-                 RawModeSPacket::kExtendedSquitterPacketLenBytes, RawModeSPacket::kSquitterPacketLenBytes,
-                 raw.buffer_len_bytes);
-
-        return;  // leave is_valid as false
+        return;  // Invalid length; leave is_valid as false.
     }
 
     downlink_format = raw.buffer[0] >> 27;
     uint16_t buffer_len_bits = raw.buffer_len_bytes * kBitsPerByte;
     uint32_t calculated_checksum = CalculateCRC24(buffer_len_bits);
     uint32_t parity_value = Get24BitsFromWordBuffer(buffer_len_bits - BITS_PER_WORD_24, raw.buffer);
+    crc_syndrome = calculated_checksum ^ parity_value;
 
     switch (static_cast<DownlinkFormat>(downlink_format)) {
         case kDownlinkFormatShortRangeAirToAirSurveillance:  // DF = 0
@@ -260,11 +256,8 @@ void DecodedModeSPacket::ConstructModeSPacket() {
             icao_address = raw.buffer[0] & 0xFFFFFF;
             if (calculated_checksum == parity_value) {
                 is_valid = true;  // mark packet as valid if CRC matches the parity bits
-            } else {
-                // is_valid is set to false by default
-                snprintf(debug_string, kDebugStrLen, "Invalid checksum, expected %06lx but calculated %06lx.\r\n",
-                         parity_value, calculated_checksum);
             }
+            // Otherwise is_valid stays false and crc_syndrome can be used for error correction.
         }
     }
 }

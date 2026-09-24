@@ -3,8 +3,7 @@
 
 #include <stdint.h>
 
-#include <algorithm>  // For std::copy.
-#include <cstring>    // For memcpy.
+#include <type_traits>  // For std::is_trivially_copyable.
 
 #include "pfb_mutex.hh"
 
@@ -25,13 +24,16 @@ class PFBQueue {
      * error, which is caused by two PFBQueues sharing the same buffer, and both trying to free it when they are
      * destroyed.
      * @param[in] config_in Defines length of the buffer, and points to the buffer of size buf_len_num_elements if
-     * PFBQueue should work with a pre-allocated buffer. If config_in.buffer is left as nullptr, a buffer will be
-     * dynamically allocated of size buf_len_num_elements * sizeof(T).
+     * PFBQueue should work with a pre-allocated buffer (which must hold buf_len_num_elements constructed T objects).
+     * If config_in.buffer is left as nullptr, an array of buf_len_num_elements default-constructed T objects will be
+     * dynamically allocated.
+     * Elements are stored with T's copy assignment (not memcpy), so non-trivially-copyable element types such as
+     * structs holding a std::function are supported.
      * @retval PFBQueue object.
      */
     PFBQueue(PFBQueueConfig config_in) : config_(config_in), buffer_length_(config_in.buf_len_num_elements) {
         if (config_.buffer == nullptr) {
-            config_.buffer = (T*)malloc(sizeof(T) * buffer_length_);
+            config_.buffer = new T[buffer_length_];
             buffer_was_dynamically_allocated_ = true;
         }
         if (config_.is_thread_safe) {
@@ -44,7 +46,7 @@ class PFBQueue {
      */
     ~PFBQueue() {
         if (buffer_was_dynamically_allocated_ && config_.buffer != nullptr) {
-            free(config_.buffer);
+            delete[] config_.buffer;
             config_.buffer = nullptr;  // Prevent double free in case of shallow copy.
         }
     }
@@ -67,7 +69,7 @@ class PFBQueue {
      * @param[in] element Object to push onto the back of the buffer.
      * @retval True if succeeded, false if the buffer is full.
      */
-    bool Enqueue(T element) {
+    bool Enqueue(const T& element) {
         if (config_.is_thread_safe) PFB_MUTEX_LOCK(mutex_);
         if (is_full_) {
             if (!config_.overwrite_when_full) {
@@ -79,8 +81,7 @@ class PFBQueue {
             }
         }
 
-        // config_.buffer[tail_] = element;
-        memcpy((uint8_t*)(&config_.buffer[tail_]), (uint8_t*)(&element), sizeof(T));
+        config_.buffer[tail_] = element;
         tail_ = IncrementIndex(tail_);
 
         if (tail_ == head_) {
@@ -102,8 +103,12 @@ class PFBQueue {
             if (config_.is_thread_safe) PFB_MUTEX_UNLOCK(mutex_);
             return false;
         }
-        // element = config_.buffer[head_];
-        memcpy((uint8_t*)(&element), (uint8_t*)(&config_.buffer[head_]), sizeof(T));
+        element = config_.buffer[head_];
+        if constexpr (!std::is_trivially_copyable<T>::value) {
+            // Release whatever the vacated slot owned (e.g. a std::function target) instead of holding it until the
+            // slot is overwritten.
+            config_.buffer[head_] = T();
+        }
         head_ = IncrementIndex(head_);
         is_full_ = false;
         if (config_.is_thread_safe) PFB_MUTEX_UNLOCK(mutex_);
@@ -122,7 +127,7 @@ class PFBQueue {
             if (config_.is_thread_safe) PFB_MUTEX_UNLOCK(mutex_);
             return false;
         }
-        memcpy((uint8_t*)(&element), (uint8_t*)(&config_.buffer[IncrementIndex(head_, index)]), sizeof(T));
+        element = config_.buffer[IncrementIndex(head_, index)];
         if (config_.is_thread_safe) PFB_MUTEX_UNLOCK(mutex_);
         return true;
     }

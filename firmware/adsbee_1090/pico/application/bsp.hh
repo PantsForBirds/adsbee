@@ -42,6 +42,10 @@ class BSP {
         SettingsManager::DeviceInfo device_info;
         if (settings_manager.GetDeviceInfo(device_info)) {
             switch (device_info.GetPartNumber()) {
+                case SettingsManager::DeviceInfo::kPNADSBeeWinglet:
+                    gnss_module_type = kGNSSModuleUbloxMAXM10;
+                    [[fallthrough]];  // Winglet is a 1090 variant with a MAX-M10 populated; shares ESP32 / Sub-GHz
+                                      // support below.
                 case SettingsManager::DeviceInfo::kPNADSBee1090:
                 case SettingsManager::DeviceInfo::kPNADSBee1090U:
                 case SettingsManager::DeviceInfo::kPNADSBee1090UIndoorPoEFeeder:
@@ -65,6 +69,14 @@ class BSP {
     }
 
     bool has_eeprom = false;
+
+    // GNSS module populated on this board, selected from the part number in the constructor switch above.
+    enum GNSSModuleType : uint8_t {
+        kGNSSModuleNone = 0,     // No GNSS module populated.
+        kGNSSModuleGeneric,      // Generic receiver emitting standard NMEA messages.
+        kGNSSModuleUbloxMAXM10,  // u-blox MAX-M10(S).
+    };
+    GNSSModuleType gnss_module_type = kGNSSModuleNone;  // Default: no module.
 
     uint16_t gnss_uart_tx_pin = 0;
     uint16_t gnss_uart_rx_pin = 1;

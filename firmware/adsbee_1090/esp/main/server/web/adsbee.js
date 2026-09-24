@@ -1,6 +1,7 @@
 const METRIC_UNITS = {
     'num_mode_s_aircraft': 'aircraft',
-    'num_uat_aircraft':    'aircraft',
+    'num_uat_aircraft': 'aircraft',
+    'num_remote_id_aircraft': 'drones',
 };
 
 class ConsoleWebSocket {
@@ -138,9 +139,15 @@ class ConsoleWebSocket {
 }
 
 class SparklineChart {
-    constructor(id, windowSeconds = 20) {
+    // options.zeroBaseline (default true): scale from 0 to the max value, for rates and counts.
+    // options.zeroBaseline = false: autoscale between the min and max visible values (for levels such as the noise
+    // floor, which never approach 0), padded so a flat trace sits mid-chart. options.minSpan is the smallest
+    // full-scale range in that mode, so sub-LSB jitter doesn't fill the chart.
+    constructor(id, windowSeconds = 20, options = {}) {
         this.svg = document.getElementById(id);
         this.windowSeconds = windowSeconds;
+        this.zeroBaseline = options.zeroBaseline !== false;
+        this.minSpan = options.minSpan || 0;
         this.buffer = [];
         this.valueEl = this.svg.parentNode.querySelector('.metric-value');
         this._createPaths();
@@ -165,9 +172,9 @@ class SparklineChart {
         this._rafId = requestAnimationFrame(tick);
     }
 
-    push(value, unit = 'msg/s') {
+    push(value, unit = 'msg/s', displayText = null) {
         this.buffer.push({ value, ts: performance.now() });
-        this.valueEl.textContent = `${value} ${unit}`;
+        this.valueEl.textContent = displayText ?? `${value} ${unit}`;
         const cutoff = performance.now() - (this.windowSeconds + 5) * 1000;
         while (this.buffer.length > 1 && this.buffer[0].ts < cutoff) this.buffer.shift();
     }
@@ -188,10 +195,20 @@ class SparklineChart {
         }
         if (pts.length < 2) return;
 
-        const max = Math.max(...pts.map(p => p.value), 1);
+        const values = pts.map(p => p.value);
+        let min = 0;
+        let max = Math.max(...values, 1);
+        if (!this.zeroBaseline) {
+            min = Math.min(...values);
+            max = Math.max(...values);
+            const pad = Math.max((max - min) * 0.25, this.minSpan / 2);
+            min -= pad;
+            max += pad;
+        }
+        const span = max - min || 1;
         const toXY = p => [
             ((p.ts - startMs) / windowMs) * 100,
-            30 - (p.value / max) * 28,
+            30 - ((p.value - min) / span) * 28,
         ];
         const coords = pts.map(toXY);
         const lineCmds = coords.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
@@ -207,7 +224,7 @@ class SparklineChart {
 }
 
 class MetricCard {
-    constructor(container, label, unit = 'msg/s', feedSlot = null) {
+    constructor(container, label, unit = 'msg/s', feedSlot = null, chartOptions = {}) {
         this.container = container;
         this.label = label;
         this.unit = unit;
@@ -230,7 +247,7 @@ class MetricCard {
 `;
         this.card = card;
         this.container.appendChild(card);
-        this.chart = new SparklineChart(this.id);
+        this.chart = new SparklineChart(this.id, 20, chartOptions);
     }
 
     destroy() {
@@ -242,8 +259,9 @@ class MetricCard {
         return label.replace(/[^a-zA-Z0-9]/g, '-');
     }
 
-    update(value) {
-        this.chart.push(value, this.unit);
+    // displayText overrides the "<value> <unit>" readout while value still drives the sparkline.
+    update(value, displayText = null) {
+        this.chart.push(value, this.unit, displayText);
     }
 }
 
@@ -255,7 +273,9 @@ class MetricsWebSocket {
             'feed': {},
             'receiver': {}
         };
+        this.noiseFloorCard = null;
         this.feedSlotMap = {};
+        this.onGNSSStatus = null;
         this.connect();
         this.feedsCountEl = document.getElementById('feed-count');
         this.container = document.getElementById('metrics-container');
@@ -274,6 +294,20 @@ class MetricsWebSocket {
             }
             this.cards[parentLabel][label].update(value);
         });
+    }
+
+    // Live 1090 noise floor from the RP2040, shown as a sparkline card alongside the receiver metrics. The sparkline
+    // plots the RSSI voltage (finer than the integer dBm reading and in the same units as the TL offset), while the
+    // readout shows both.
+    updateNoiseFloorCard(rp2040Status) {
+        if (!rp2040Status || rp2040Status.noise_floor_mv === undefined) return;
+        if (!this.noiseFloorCard) {
+            const container = document.getElementById('receiver-metrics-container');
+            this.noiseFloorCard = new MetricCard(container, 'noise_floor', 'dBm', null,
+                { zeroBaseline: false, minSpan: 50 });
+        }
+        this.noiseFloorCard.update(rp2040Status.noise_floor_mv,
+            `${rp2040Status.noise_floor_dbm} dBm (${rp2040Status.noise_floor_mv} mV)`);
     }
 
     updateFeedCards(data) {
@@ -307,11 +341,17 @@ class MetricsWebSocket {
 
             // Add status information
             Object.entries(status).forEach(([key, value]) => {
+                if (key === 'noise_floor_mv') return;  // Folded into the noise_floor_dbm row.
                 let displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 let displayValue = value;
 
                 // Format specific values
-                if (key.includes('uptime_ms')) {
+                if (key === 'noise_floor_dbm') {
+                    displayKey = 'Noise Floor';
+                    displayValue = status.noise_floor_mv !== undefined
+                        ? `${value} dBm (${status.noise_floor_mv} mV)`
+                        : `${value} dBm`;
+                } else if (key.includes('uptime_ms')) {
                     displayKey = 'Uptime';
                     displayValue = `${Math.floor(value / 1000)}s`;
                 } else if (key.includes('temperature')) {
@@ -326,6 +366,10 @@ class MetricsWebSocket {
                 } else if (key.includes('heap_largest_free_block_bytes')) {
                     displayKey = 'Largest Free Block';
                     displayValue = `${value} B`;
+                } else if (key === 'enabled' || key === 'fix_valid') {
+                    displayValue = value ? 'Yes' : 'No';
+                } else if (key === 'latitude_deg' || key === 'longitude_deg') {
+                    displayValue = Number(value).toFixed(6);
                 }
 
                 statusHtml += `<div class="status-item">
@@ -391,6 +435,10 @@ class MetricsWebSocket {
                     const deviceStatus = data['device_status'];
                     // console.log('Device Status:', deviceStatus);
                     this.updateDeviceStatus(deviceStatus);
+                    this.updateNoiseFloorCard(deviceStatus.rp2040);
+                    if (deviceStatus.gnss && this.onGNSSStatus) {
+                        this.onGNSSStatus(deviceStatus.gnss);
+                    }
                 }
             } catch (error) {
                 console.error('Error parsing WebSocket message:', error);
@@ -418,13 +466,7 @@ class MetricsWebSocket {
 
 class FeedEditor {
     static PROTOCOLS = ['NONE', 'RAW', 'BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK',
-                        'CSBEE', 'MAVLINK1', 'MAVLINK2', 'GDL90', 'AIRCRAFT_JSON'];
-
-    static parseFeedResponse(text) {
-        const m = text.match(/\+FEED=(\d+)\(INDEX\),([^,]*)\(URI\),(\d+)\(PORT\),(\d+)\(ACTIVE\),(\w+)\(PROTOCOL\)/);
-        if (!m) return null;
-        return { index: +m[1], uri: m[2], port: +m[3], active: m[4] === '1', protocol: m[5] };
-    }
+        'CSBEE', 'MAVLINK1', 'MAVLINK2', 'GDL90', 'AIRCRAFT_JSON'];
 
     static async open(feedSlot) {
         const modal = document.getElementById('feed-modal');
@@ -466,7 +508,7 @@ class FeedEditor {
     }
 
     static async remove() {
-        const slot     = document.getElementById('feed-slot').value;
+        const slot = document.getElementById('feed-slot').value;
         const statusEl = document.getElementById('feed-modal-status');
         statusEl.textContent = 'Removing...';
         try {
@@ -480,10 +522,10 @@ class FeedEditor {
     }
 
     static async save() {
-        const slot     = document.getElementById('feed-slot').value;
-        const uri      = document.getElementById('feed-uri').value.trim();
-        const port     = document.getElementById('feed-port').value;
-        const active   = document.getElementById('feed-active').checked ? 1 : 0;
+        const slot = document.getElementById('feed-slot').value;
+        const uri = document.getElementById('feed-uri').value.trim();
+        const port = document.getElementById('feed-port').value;
+        const active = document.getElementById('feed-active').checked ? 1 : 0;
         const protocol = document.getElementById('feed-protocol').value;
         const statusEl = document.getElementById('feed-modal-status');
 
@@ -549,17 +591,6 @@ class ADSBeeAT {
 
     getMsTimestamp() {
         return Math.floor((Date.now() - this.connectTimestamp));
-    }
-
-    async getUptimeSec() {
-        const response = await this.sendCmd('AT+UPTIME?\r\n', 0, true, true, '+UPTIME');
-        for (const line of response) {
-            const match = line.match(/\+UPTIME=(\d+)/);
-            if (match) {
-                return parseInt(match[1]);
-            }
-        }
-        return null;
     }
 
     async flushInputBuffer(flushTimeoutMs = 10) {
@@ -760,8 +791,13 @@ class ADSBeeAT {
     async otaWriteFile(file) {
         const HEADER_SIZE_BYTES = 5 * 4;
         const APP_OFFSET_BYTES = 4 * 1024;
-        // Going larger than this can cause the heap to explode on the ESP32.
-        const WRITE_CHUNK_BYTES = 0x1000 * 3;
+        // Each chunk is received on the ESP32 as one WebSocket frame, which callocs a contiguous buffer of the chunk
+        // size. With Bluetooth Remote ID enabled the ESP32-S3's internal heap is tight and fragmented (largest free
+        // block can be ~10 KB even with ~25 KB free), so a large chunk fails to allocate and aborts the OTA. Keep this
+        // small AND a multiple of the 4096-Byte flash sector size (chunk offsets must stay sector-aligned for the
+        // retry-erase path below). One sector (4096) allocates reliably under fragmentation; it was previously 3 sectors
+        // (12288), which no longer fits.
+        const WRITE_CHUNK_BYTES = 0x1000;
         const MAX_ATTEMPTS_PER_CHUNK = 3;
 
         const partition = await this.otaGetFlashPartition();
@@ -1081,6 +1117,49 @@ function acAltColor(altFt) {
     return `hsl(${hue.toFixed(1)}, 90%, 55%)`;
 }
 
+// Preferred pointing/steering direction: ground track when available, else
+// true/magnetic heading — the emitter sends exactly one of the three keys
+// (surface aircraft typically report a heading rather than a track).
+function acDirection(ac) {
+    return ac.track ?? ac.true_heading ?? ac.mag_heading ?? null;
+}
+
+// Velocity vectors are drawn in screen space (zoom-invariant): pixel length
+// proportional to the reported speed — about one icon width (32 px) at
+// 250 kt, clamped so taxiing traffic stays visible and jets don't dominate.
+const kVectorPxPerKt = 0.128;
+const kVectorMinPx = 8;
+const kVectorMaxPx = 80;
+
+// Trails coalesce consecutive same-colour points into a single polyline, but the
+// altitude gradient above is continuous, so adjacent points almost never match
+// exactly. Quantizing to 500 ft bins first (about 3 hue degrees — imperceptible)
+// is what lets level flight collapse to one polyline instead of hundreds.
+const kTrailAltBucketFt = 500;
+function trailColor(altFt) {
+    return acAltColor(altFt == null ? null : Math.round(altFt / kTrailAltBucketFt) * kTrailAltBucketFt);
+}
+
+// With traces enabled every aircraft gets a trail, so unselected ones are capped
+// well short of kMaxTrailPoints to bound the work on a busy receiver. The selected
+// aircraft still draws its full history.
+const kTrailAllMaxPoints = 100;
+
+// Map display options persist across reloads. Storage can throw (private mode,
+// disabled cookies), so both sides are defensive.
+function readMapFlag(key, dflt) {
+    try {
+        const v = localStorage.getItem(key);
+        return v == null ? dflt : v === 'true';
+    } catch (_) {
+        return dflt;
+    }
+}
+
+function writeMapFlag(key, on) {
+    try { localStorage.setItem(key, on ? 'true' : 'false'); } catch (_) { }
+}
+
 // ─── AircraftWebSocket ────────────────────────────────────────────────────────
 class AircraftWebSocket {
     constructor(url) {
@@ -1101,10 +1180,10 @@ class AircraftWebSocket {
         }, 60000);
         if (this.paused) return;
         this.ws = new WebSocket(this.url);
-        this.ws.onopen  = () => console.log('[AircraftWS] connected');
+        this.ws.onopen = () => console.log('[AircraftWS] connected');
         this.ws.onmessage = (ev) => {
             if (!this.onMessage) return;
-            try { this.onMessage(JSON.parse(ev.data)); } catch (_) {}
+            try { this.onMessage(JSON.parse(ev.data)); } catch (_) { }
         };
         this.ws.onclose = () => {
             clearInterval(this.pingInterval);
@@ -1115,7 +1194,7 @@ class AircraftWebSocket {
         this.ws.onerror = (e) => console.error('[AircraftWS] error', e);
     }
 
-    pause()  { this.paused = true;  clearTimeout(this._timer); if (this.ws) this.ws.close(); }
+    pause() { this.paused = true; clearTimeout(this._timer); if (this.ws) this.ws.close(); }
     resume() { if (!this.paused) return; this.paused = false; this._connect(); }
     close(code, reason) { this.paused = true; clearTimeout(this._timer); if (this.ws) this.ws.close(code, reason); }
 }
@@ -1123,10 +1202,19 @@ class AircraftWebSocket {
 // ─── AircraftStore ────────────────────────────────────────────────────────────
 const kMaxTrailPoints = 500;
 
+// Open Drone ID (Broadcast Remote ID) enum labels, indexed by the raw value in the rid_id_type / rid_ua_type fields.
+const RID_ID_TYPE_STRINGS = ['None', 'Serial Number', 'CAA Registration', 'UTM (USS) Assigned', 'Specific Session'];
+const RID_UA_TYPE_STRINGS = [
+    'None', 'Aeroplane', 'Helicopter/Multirotor', 'Gyroplane', 'Hybrid Lift', 'Ornithopter', 'Glider', 'Kite',
+    'Free Balloon', 'Captive Balloon', 'Airship', 'Free Fall/Parachute', 'Rocket', 'Tethered Powered Aircraft',
+    'Ground Obstacle', 'Other'
+];
+
 class AircraftStore {
     constructor() {
         this.aircraft = new Map();  // hex → latest merged data
-        this.trails   = new Map();  // hex → [{lat, lon, alt}]
+        this.trails = new Map();  // hex → [{lat, lon, alt}]
+        this.trailRev = new Map();  // hex → bump count, so the map can skip redrawing unchanged trails
         this.lastSeen = new Map();  // hex → Date.now() timestamp
     }
 
@@ -1140,6 +1228,7 @@ class AircraftStore {
             t.push({ lat: ac.lat, lon: ac.lon, alt: ac.alt_baro ?? null });
             if (t.length > kMaxTrailPoints) t.shift();
             this.trails.set(ac.hex, t);
+            this.trailRev.set(ac.hex, (this.trailRev.get(ac.hex) ?? 0) + 1);
         }
     }
 
@@ -1150,6 +1239,7 @@ class AircraftStore {
             if ((this.lastSeen.get(hex) ?? 0) < cutoff) {
                 this.aircraft.delete(hex);
                 this.trails.delete(hex);
+                this.trailRev.delete(hex);
                 this.lastSeen.delete(hex);
             }
         }
@@ -1158,6 +1248,7 @@ class AircraftStore {
     clearAll() {
         this.aircraft.clear();
         this.trails.clear();
+        this.trailRev.clear();
         this.lastSeen.clear();
     }
 
@@ -1167,16 +1258,42 @@ class AircraftStore {
 // ─── RadarMap ─────────────────────────────────────────────────────────────────
 class RadarMap {
     constructor(containerId, store) {
-        this.containerId        = containerId;
-        this.store              = store;
-        this.map                = null;
-        this.markers            = new Map();   // hex → L.Marker
-        this.trailLines         = new Map();   // hex → L.LayerGroup
-        this.selectedHex        = null;
+        this.containerId = containerId;
+        this.store = store;
+        this.map = null;
+        this.markers = new Map();   // hex → L.Marker
+        this.trailLines = new Map();   // hex → L.LayerGroup
+        this.trailDrawnRev = new Map();      // hex → store.trailRev value the drawn trail was built from
+        this.trailDrawnOpacity = new Map();  // hex → opacity it was drawn at (selection changes it)
+        this.receiverMarker = null;
+        this.receiverStatus = null;
+        this.selectedHex = null;
         this.onSelectionChanged = null;        // (hex | null) → void
-        this._ready             = false;
-        this._offline           = false;
-        this._autoCenter        = true;
+        this._ready = false;
+        this._offline = false;
+        this._autoCenter = true;
+        // Velocity vectors default on; traces default off, since a trail per aircraft is
+        // a busy view. Both persist across reloads.
+        this.showVectors = readMapFlag('showVelocityVectors', true);
+        this.showAllTrails = readMapFlag('showAllTrails', false);
+    }
+
+    setShowVectors(on) {
+        this.showVectors = on;
+        writeMapFlag('showVelocityVectors', on);
+        this.update();  // apply now rather than waiting for the next 1 Hz tick
+    }
+
+    setShowAllTrails(on) {
+        this.showAllTrails = on;
+        writeMapFlag('showAllTrails', on);
+        if (!on) {
+            // Drop every trail but the selected aircraft's, which is drawn either way.
+            for (const hex of [...this.trailLines.keys()]) {
+                if (hex !== this.selectedHex) this._clearTrail(hex);
+            }
+        }
+        this.update();
     }
 
     async init() {
@@ -1202,7 +1319,7 @@ class RadarMap {
             document.head.appendChild(link);
             const script = document.createElement('script');
             script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-            script.onload  = () => { clearTimeout(tid); resolve(); };
+            script.onload = () => { clearTimeout(tid); resolve(); };
             script.onerror = () => { clearTimeout(tid); reject(); };
             document.head.appendChild(script);
         });
@@ -1220,14 +1337,71 @@ class RadarMap {
         if (this.map) setTimeout(() => this.map.invalidateSize(), 0);
     }
 
-    _makeIcon(color, track, isGround, isSelected) {
-        const ring = isSelected ? '<circle cx="16" cy="16" r="15" fill="none" stroke="white" stroke-width="2" opacity="0.7"/>' : '';
+    setReceiverStatus(status) {
+        this.receiverStatus = status;
+        if (!this._ready) return;
+
+        const lat = Number(status?.latitude_deg);
+        const lon = Number(status?.longitude_deg);
+        const positionValid = status?.enabled === true && status?.fix_valid === true &&
+            Number.isFinite(lat) && Number.isFinite(lon) &&
+            lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+
+        if (!positionValid) {
+            if (this.receiverMarker) {
+                this.receiverMarker.remove();
+                this.receiverMarker = null;
+            }
+            return;
+        }
+
+        if (this.receiverMarker) {
+            this.receiverMarker.setLatLng([lat, lon]);
+        } else {
+            this.receiverMarker = L.circleMarker([lat, lon], {
+                radius: 7,
+                color: '#1a1a1a',
+                weight: 2,
+                fillColor: '#ffcb00',
+                fillOpacity: 1,
+            }).addTo(this.map).bindTooltip('Receiver position', { direction: 'top' });
+        }
+    }
+
+    _makeIcon(color, track, isGround, isSelected, isDrone, gs) {
+        if (isDrone) {
+            // Remote ID drones get a distinct quadcopter marker (four rotors) in a fixed accent color so they stand out
+            // from ADS-B / UAT aircraft. Not rotated (Remote ID track is often unavailable or noisy at low speed), and
+            // for the same reason they get no velocity vector — an unreliable heading would point it the wrong way.
+            const ring = isSelected ? '<circle cx="16" cy="16" r="15" fill="none" stroke="white" stroke-width="2" opacity="0.7"/>' : '';
+            const dfill = '#c026d3';  // magenta accent.
+            const rotor = (cx, cy) => `<circle cx="${cx}" cy="${cy}" r="4" fill="${dfill}" stroke="rgba(0,0,0,0.5)" stroke-width="1"/>`;
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">` +
+                ring +
+                `<line x1="9" y1="9" x2="23" y2="23" stroke="${dfill}" stroke-width="2"/>` +
+                `<line x1="23" y1="9" x2="9" y2="23" stroke="${dfill}" stroke-width="2"/>` +
+                rotor(9, 9) + rotor(23, 9) + rotor(9, 23) + rotor(23, 23) +
+                `</svg>`;
+            return L.divIcon({ html: svg, className: '', iconSize: [32, 32], iconAnchor: [16, 16] });
+        }
+        // The velocity vector is part of the marker SVG itself: SVG pixels are
+        // screen pixels, so it is zoom-invariant by construction, always moves
+        // with the icon, and needs no separate map layer. The 192x192 SVG
+        // overflows the 32x32 icon box (centers aligned); pointer events stay
+        // limited to the icon box + aircraft shape so hitboxes don't balloon.
+        const ring = isSelected ? '<circle cx="96" cy="96" r="15" fill="none" stroke="white" stroke-width="2" opacity="0.7"/>' : '';
         const fill = isGround ? '#888888' : color;
-        const rot  = (track != null) ? track : 0;
-        const svg  = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">` +
+        const rot = (track != null) ? track : 0;
+        const lenPx = (this.showVectors && gs > 0)
+            ? Math.min(kVectorMaxPx, Math.max(kVectorMinPx, gs * kVectorPxPerKt)) : 0;
+        const vec = lenPx
+            ? `<line x1="96" y1="82" x2="96" y2="${(82 - lenPx).toFixed(1)}" stroke="${fill}" stroke-width="2" opacity="0.8"/>`
+            : '';
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" style="position:absolute;left:-80px;top:-80px;pointer-events:none">` +
             ring +
-            `<g transform="rotate(${rot},16,16)">` +
-            `<polygon points="16,2 23,27 16,22 9,27" fill="${fill}" stroke="rgba(0,0,0,0.5)" stroke-width="1.2"/>` +
+            `<g transform="rotate(${rot},96,96)">` +
+            vec +
+            `<polygon points="96,82 103,107 96,102 89,107" style="pointer-events:auto" fill="${fill}" stroke="rgba(0,0,0,0.5)" stroke-width="1.2"/>` +
             `</g></svg>`;
         return L.divIcon({ html: svg, className: '', iconSize: [32, 32], iconAnchor: [16, 16] });
     }
@@ -1260,6 +1434,9 @@ class RadarMap {
             this.trailLines.get(hex).remove();
             this.trailLines.delete(hex);
         }
+        // Forget the cache keys too, or the next _drawTrail would skip the rebuild.
+        this.trailDrawnRev.delete(hex);
+        this.trailDrawnOpacity.delete(hex);
     }
 
     update() {
@@ -1269,10 +1446,11 @@ class RadarMap {
         for (const ac of this.store.all()) {
             if (ac.lat == null || ac.lon == null) continue;
             live.add(ac.hex);
-            const color    = acAltColor(ac.alt_baro);
+            const isDrone = ac.type === 'remote_id';
+            const color = acAltColor(ac.alt_baro ?? ac.alt_geom);
             const isGround = !!ac.on_ground;
-            const isSel    = ac.hex === this.selectedHex;
-            const icon     = this._makeIcon(color, ac.track, isGround, isSel);
+            const isSel = ac.hex === this.selectedHex;
+            const icon = this._makeIcon(color, acDirection(ac), isGround, isSel, isDrone, ac.gs);
 
             if (this.markers.has(ac.hex)) {
                 const m = this.markers.get(ac.hex);
@@ -1287,6 +1465,12 @@ class RadarMap {
             }
         }
 
+        // `live` is exactly the aircraft with a position, which is exactly what has
+        // a trail. _drawTrail no-ops for any whose trail is already current.
+        if (this.showAllTrails) {
+            for (const hex of live) this._drawTrail(hex);
+        }
+
         // Refresh trail and info panel for selected aircraft each tick
         if (this.selectedHex && this.store.aircraft.has(this.selectedHex)) {
             this._drawTrail(this.selectedHex);
@@ -1295,14 +1479,16 @@ class RadarMap {
         }
 
         // Auto-fit view on first aircraft
-        if (this._autoCenter && this.markers.size > 0) {
+        if (this._autoCenter && (this.markers.size > 0 || this.receiverMarker)) {
             try {
-                const bounds = L.featureGroup([...this.markers.values()]).getBounds();
+                const mapLayers = [...this.markers.values()];
+                if (this.receiverMarker) mapLayers.push(this.receiverMarker);
+                const bounds = L.featureGroup(mapLayers).getBounds();
                 if (bounds.isValid()) {
                     this.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 9 });
                     this._autoCenter = false;
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
 
         // Remove markers for gone aircraft
@@ -1316,58 +1502,93 @@ class RadarMap {
         }
     }
 
+    // Rebuilding a trail is the expensive part of a tick, so this does two things
+    // to stay affordable once every aircraft has one: it skips outright when
+    // nothing about the trail changed, and it merges consecutive points of the
+    // same (quantized) altitude colour into one multi-point polyline instead of
+    // emitting one polyline per segment.
     _drawTrail(hex) {
         if (!this._ready) return;
+        const isSel = (hex === this.selectedHex);
+        const rev = this.store.trailRev.get(hex) ?? 0;
+        // Selection changes the opacity, so it belongs in the cache key alongside rev.
+        const opacity = isSel ? 0.75 : 0.35;
+        if (this.trailDrawnRev.get(hex) === rev && this.trailDrawnOpacity.get(hex) === opacity) return;
+
         this._clearTrail(hex);
-        const pts = this.store.trails.get(hex);
+        let pts = this.store.trails.get(hex);
         if (!pts || pts.length < 2) return;
+        if (!isSel && pts.length > kTrailAllMaxPoints) pts = pts.slice(-kTrailAllMaxPoints);
+
         const group = L.layerGroup().addTo(this.map);
-        for (let i = 0; i < pts.length - 1; i++) {
-            const p1 = pts[i], p2 = pts[i + 1];
-            L.polyline([[p1.lat, p1.lon], [p2.lat, p2.lon]], {
-                color: acAltColor(p1.alt), weight: 2, opacity: 0.75
-            }).addTo(group);
+        const emit = (run, color) => {
+            if (run.length >= 2) {
+                L.polyline(run.map(p => [p.lat, p.lon]), { color, weight: 2, opacity }).addTo(group);
+            }
+        };
+        let run = [pts[0]];
+        let runColor = trailColor(pts[0].alt);
+        for (let i = 1; i < pts.length; i++) {
+            const c = trailColor(pts[i].alt);
+            run.push(pts[i]);  // the boundary point joins both runs, so the trail stays unbroken
+            if (c !== runColor) {
+                emit(run, runColor);
+                run = [pts[i]];
+                runColor = c;
+            }
         }
+        emit(run, runColor);
+
         this.trailLines.set(hex, group);
+        this.trailDrawnRev.set(hex, rev);
+        this.trailDrawnOpacity.set(hex, opacity);
     }
 
     _showInfoPanel(ac) {
-        const panel  = document.getElementById('aircraft-sidebar');
-        const title  = document.getElementById('sidebar-title');
+        const panel = document.getElementById('aircraft-sidebar');
+        const title = document.getElementById('sidebar-title');
         const fields = document.getElementById('sidebar-fields');
         if (!panel) return;
         if (title) title.textContent = (ac.flight || '').trim() || ac.hex;
 
         const defs = [
-            ['hex',          'ICAO',          v => v],
-            ['flight',       'Callsign',      v => v.trim() || null],
-            ['squawk',       'Squawk',        v => v],
-            ['type',         'Type',          v => v],
-            ['category',     'Category',      v => v],
-            ['on_ground',    'On ground',     v => v ? 'Yes' : null],
-            ['alt_baro',     'Alt baro',      v => v.toLocaleString() + ' ft'],
-            ['alt_geom',     'Alt geom',      v => v.toLocaleString() + ' ft'],
-            ['gs',           'Speed',         v => Math.round(v) + ' kt'],
-            ['track',        'Track',         v => v.toFixed(1) + '°'],
-            ['mag_heading',  'Mag heading',   v => v.toFixed(1) + '°'],
-            ['true_heading', 'True heading',  v => v.toFixed(1) + '°'],
-            ['baro_rate',    'Vert rate',     v => v.toLocaleString() + ' fpm'],
-            ['geom_rate',    'Geom rate',     v => v.toLocaleString() + ' fpm'],
-            ['lat',          'Latitude',      v => v.toFixed(5)],
-            ['lon',          'Longitude',     v => v.toFixed(5)],
-            ['rssi',         'RSSI',          v => v.toFixed(1) + ' dBm'],
-            ['messages',     'Messages',      v => v.toLocaleString()],
-            ['nic',          'NIC',           v => String(v)],
-            ['nic_baro',     'NIC baro',      v => String(v)],
-            ['nac_p',        'NAC p',         v => String(v)],
-            ['nac_v',        'NAC v',         v => String(v)],
-            ['sil',          'SIL',           v => String(v)],
-            ['gva',          'GVA',           v => String(v)],
-            ['sda',          'SDA',           v => String(v)],
-            ['version',      'ADS-B version', v => String(v)],
-            ['alert',        'Alert',         v => v ? 'Yes' : null],
-            ['spi',          'SPI (Ident)',   v => v ? 'Yes' : null],
-            ['emergency',    'Emergency',     v => v],
+            ['hex', 'ICAO', v => v],
+            ['flight', 'Callsign', v => v.trim() || null],
+            ['squawk', 'Squawk', v => v],
+            ['type', 'Type', v => v],
+            ['category', 'Category', v => v],
+            ['on_ground', 'On ground', v => v ? 'Yes' : null],
+            ['alt_baro', 'Alt baro', v => v.toLocaleString() + ' ft'],
+            ['alt_geom', 'Alt geom', v => v.toLocaleString() + ' ft'],
+            ['gs', 'Speed', v => Math.round(v) + ' kt'],
+            ['track', 'Track', v => v.toFixed(1) + '°'],
+            ['mag_heading', 'Mag heading', v => v.toFixed(1) + '°'],
+            ['true_heading', 'True heading', v => v.toFixed(1) + '°'],
+            ['baro_rate', 'Vert rate', v => v.toLocaleString() + ' fpm'],
+            ['geom_rate', 'Geom rate', v => v.toLocaleString() + ' fpm'],
+            ['lat', 'Latitude', v => v.toFixed(5)],
+            ['lon', 'Longitude', v => v.toFixed(5)],
+            ['rssi', 'RSSI', v => v.toFixed(1) + ' dBm'],
+            ['messages', 'Messages', v => v.toLocaleString()],
+            ['nic', 'NIC', v => String(v)],
+            ['nic_baro', 'NIC baro', v => String(v)],
+            ['nac_p', 'NAC p', v => String(v)],
+            ['nac_v', 'NAC v', v => String(v)],
+            ['sil', 'SIL', v => String(v)],
+            ['gva', 'GVA', v => String(v)],
+            ['sda', 'SDA', v => String(v)],
+            ['version', 'ADS-B version', v => String(v)],
+            ['alert', 'Alert', v => v ? 'Yes' : null],
+            ['spi', 'SPI (Ident)', v => v ? 'Yes' : null],
+            ['emergency', 'Emergency', v => v],
+            // Broadcast Remote ID (drone) fields.
+            ['rid_uas_id', 'UAS ID', v => v.trim() || null],
+            ['rid_id_type', 'UAS ID type', v => RID_ID_TYPE_STRINGS[v] || String(v)],
+            ['rid_ua_type', 'UA type', v => RID_UA_TYPE_STRINGS[v] || String(v)],
+            ['rid_operator_id', 'Operator ID', v => v.trim() || null],
+            ['rid_operator_lat', 'Operator lat', v => v.toFixed(5)],
+            ['rid_operator_lon', 'Operator lon', v => v.toFixed(5)],
+            ['rid_height', 'Height AGL/ATO', v => v.toLocaleString() + ' ft'],
         ];
 
         const rows = [];
@@ -1397,12 +1618,12 @@ const kNumericSortKeys = new Set(['alt_baro', 'gs', 'track', 'lat', 'lon', 'rssi
 
 class AircraftTable {
     constructor(tbodyId, store, onSelect) {
-        this.tbody       = document.getElementById(tbodyId);
-        this.store       = store;
-        this.onSelect    = onSelect;   // (hex) → void
+        this.tbody = document.getElementById(tbodyId);
+        this.store = store;
+        this.onSelect = onSelect;   // (hex) → void
         this.selectedHex = null;
-        this.sortKey     = 'alt_baro';
-        this.sortDir     = 'desc';
+        this.sortKey = 'alt_baro';
+        this.sortDir = 'desc';
 
         // Wire header click handlers
         const thead = this.tbody && this.tbody.closest('table').querySelector('thead');
@@ -1459,25 +1680,25 @@ class AircraftTable {
         const seen = new Set();
         for (const ac of acs) {
             seen.add(ac.hex);
-            const cs    = (ac.flight || '').trim();
-            const type  = ac.type    ?? '';
-            const sqwk  = ac.squawk  ?? '';
-            const alt   = ac.alt_baro != null ? ac.alt_baro.toLocaleString() : '';
-            const gs    = ac.gs       != null ? Math.round(ac.gs)            : '';
-            const hdg   = ac.track    != null ? Math.round(ac.track) + '°'  : '';
-            const lat   = ac.lat      != null ? ac.lat.toFixed(4)            : '';
-            const lon   = ac.lon      != null ? ac.lon.toFixed(4)            : '';
-            const rssi  = ac.rssi     != null ? ac.rssi.toFixed(1)           : '';
+            const cs = (ac.flight || '').trim();
+            const type = ac.type ?? '';
+            const sqwk = ac.squawk ?? '';
+            const alt = ac.alt_baro != null ? ac.alt_baro.toLocaleString() : '';
+            const gs = ac.gs != null ? Math.round(ac.gs) : '';
+            const hdg = ac.track != null ? Math.round(ac.track) + '°' : '';
+            const lat = ac.lat != null ? ac.lat.toFixed(4) : '';
+            const lon = ac.lon != null ? ac.lon.toFixed(4) : '';
+            const rssi = ac.rssi != null ? ac.rssi.toFixed(1) : '';
             const color = acAltColor(ac.alt_baro);
 
             if (rows.has(ac.hex)) {
                 const r = rows.get(ac.hex);
                 const c = r.querySelectorAll('td');
                 c[0].style.color = color; c[0].textContent = ac.hex;
-                c[1].textContent = cs;   c[2].textContent = type;
+                c[1].textContent = cs; c[2].textContent = type;
                 c[3].textContent = sqwk; c[4].textContent = alt;
-                c[5].textContent = gs;   c[6].textContent = hdg;
-                c[7].textContent = lat;  c[8].textContent = lon;
+                c[5].textContent = gs; c[6].textContent = hdg;
+                c[7].textContent = lat; c[8].textContent = lon;
                 c[9].textContent = rssi;
                 r.classList.toggle('trail-active', this.selectedHex === ac.hex);
             } else {

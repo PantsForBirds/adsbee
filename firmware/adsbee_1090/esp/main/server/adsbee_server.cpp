@@ -8,6 +8,7 @@
 #include "gdl90/gdl90_utils.hh"
 #include "json_utils.hh"
 #include "pico.hh"
+#include "remote_id/remote_id_manager.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
 #include "task_priorities.hh"
@@ -18,7 +19,7 @@
 static const uint16_t kGDL90Port = 4000;
 
 static const uint16_t kNetworkConsoleWelcomeMessageMaxLen = 1000;
-static const uint16_t kNetworkMetricsMessageMaxLen = 1500;
+static const uint16_t kNetworkMetricsMessageMaxLen = 2048;
 
 /* obsolete */
 static const uint16_t kNetworkControlPort = 3333;  // NOTE: This must match the port number used in index.html!
@@ -43,6 +44,8 @@ extern const uint8_t style_css_start[] asm("_binary_style_css_start");
 extern const uint8_t style_css_end[] asm("_binary_style_css_end");
 extern const uint8_t adsbee_js_start[] asm("_binary_adsbee_js_start");
 extern const uint8_t adsbee_js_end[] asm("_binary_adsbee_js_end");
+extern const uint8_t settings_js_start[] asm("_binary_settings_js_start");
+extern const uint8_t settings_js_end[] asm("_binary_settings_js_end");
 extern const uint8_t favicon_png_start[] asm("_binary_favicon_png_start");
 extern const uint8_t favicon_png_end[] asm("_binary_favicon_png_end");
 
@@ -122,6 +125,12 @@ bool ADSBeeServer::Update() {
     pico.UpdateLED();
 
     uint32_t timestamp_ms = get_time_since_boot_ms();
+
+    // Ingest any Broadcast Remote ID advertisements received on the BLE/WiFi radios into the local aircraft dictionary
+    // (and forward rate-limited copies up to the RP2040), then service the WiFi channel hopper. Done on this task so all
+    // aircraft-dictionary mutation stays single-threaded.
+    remote_id_manager.ServiceIngestQueue();
+    remote_id_manager.Update();
 
     // Prune aircraft dictionary. Need to do this up front so that we don't end up with a negative timestamp delta
     // caused by packets being ingested more recently than the timestamp we take at the beginning of this function.
@@ -301,6 +310,18 @@ bool ADSBeeServer::ReportGDL90() {
     CommsManager::NetworkMessage message;
     message.port = kGDL90Port;
 
+    // Build the ownship report up front from the receiver position pushed up by the RP2040. Its validity also
+    // drives the heartbeat's GPS Position Valid flag, which some EFBs require before they will show ownship.
+    const ObjectDictionary::RP2040DeviceStatus& rp2040_status = object_dictionary.composite_device_status.rp2040;
+    GDL90Reporter::GDL90TargetReportData ownship_data;
+    bool have_position = GDL90Reporter::BuildOwnshipReportData(ownship_data, rp2040_status.rx_position,
+                                                               rp2040_status.rx_position_available);
+
+    // Heartbeat status flags are sticky members of the shared GDL90Reporter, so set them on every report.
+    gdl90.gnss_position_valid = have_position;
+    gdl90.utc_timing_is_valid = rp2040_status.gnss_utc_time_valid;
+    gdl90.maintenance_required = false;
+
     // Heartbeat Message
     message.len = gdl90.WriteGDL90HeartbeatMessage(
         message.data, CommsManager::NetworkMessage::kMaxLenBytes, get_time_since_boot_ms() / 1000,
@@ -311,22 +332,6 @@ bool ADSBeeServer::ReportGDL90() {
     message.len = 0;
 
     // Ownship Report
-    GDL90Reporter::GDL90TargetReportData ownship_data = {};
-    memcpy(ownship_data.callsign, "ADSBEE  ", sizeof(ownship_data.callsign) - 1);
-    ownship_data.address_type = GDL90Reporter::GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress;
-    SettingsManager::RxPosition& rx_position = object_dictionary.composite_device_status.rp2040.rx_position;
-    ownship_data.participant_address = 0x0;
-    if (rx_position.source == SettingsManager::RxPosition::PositionSource::kPositionSourceAircraftMatchingICAO) {
-        // Only send ownship data with a position if we are tracking an aircraft.
-        ownship_data.latitude_deg = rx_position.latitude_deg;
-        ownship_data.longitude_deg = rx_position.longitude_deg;
-        ownship_data.altitude_ft = rx_position.baro_altitude_ft;
-        ownship_data.speed_kts = rx_position.speed_kts;
-        ownship_data.direction_deg = rx_position.heading_deg;
-        ownship_data.participant_address = rx_position.icao_address;
-        ownship_data.SetMiscIndicator(GDL90Reporter::GDL90TargetReportData::kMiscIndicatorTTIsTrueTrackAngle, false,
-                                      false);
-    }
     message.len = gdl90.WriteGDL90TargetReportMessage(message.data, CommsManager::NetworkMessage::kMaxLenBytes,
                                                       ownship_data, true);
     comms_manager.WiFiAccessPointSendMessageToAllStations(message);
@@ -361,6 +366,13 @@ bool ADSBeeServer::ReportGDL90() {
                    uat_aircraft->latitude_deg, uat_aircraft->longitude_deg, uat_aircraft->baro_altitude_ft);
             aircraft_msg_buf_len =
                 gdl90.WriteGDL90TargetReportMessage(aircraft_msg_buf, sizeof(aircraft_msg_buf), *uat_aircraft, false);
+        } else if (RemoteIDAircraft* remote_id_aircraft = get_if<RemoteIDAircraft>(&(itr.second)); remote_id_aircraft) {
+            if (!remote_id_aircraft->HasBitFlag(RemoteIDAircraft::kBitFlagPositionValid)) {
+                // Don't report drones without a valid position.
+                continue;
+            }
+            aircraft_msg_buf_len = gdl90.WriteGDL90TargetReportMessage(aircraft_msg_buf, sizeof(aircraft_msg_buf),
+                                                                       *remote_id_aircraft, false);
         } else {
             CONSOLE_WARNING("CommsManager::ReportGDL90", "Unknown aircraft type in dictionary for UID 0x%lx.",
                             itr.first);
@@ -513,6 +525,13 @@ static esp_err_t css_handler(httpd_req_t* req) {
 static esp_err_t adsbee_js_handler(httpd_req_t* req) {
     httpd_resp_set_type(req, "application/javascript");
     httpd_resp_send(req, (const char*)adsbee_js_start, adsbee_js_end - adsbee_js_start - 1);
+    return ESP_OK;
+}
+
+static esp_err_t settings_js_handler(httpd_req_t* req) {
+    httpd_resp_set_type(req, "application/javascript");
+    // EMBED_TXTFILES null-terminates the embedded file; don't send the terminator.
+    httpd_resp_send(req, (const char*)settings_js_start, settings_js_end - settings_js_start - 1);
     return ESP_OK;
 }
 
@@ -669,14 +688,27 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              "}, \"device_status\": { ");
     // Device Status
+    const ObjectDictionary::RP2040DeviceStatus& rp2040_status = object_dictionary.composite_device_status.rp2040;
+    char gnss_utc_time[9] = "--:--:--";
+    if (rp2040_status.gnss_utc_time_valid) {
+        snprintf(gnss_utc_time, sizeof(gnss_utc_time), "%02u:%02u:%02u",
+                 static_cast<unsigned>(rp2040_status.gnss_utc_hour % 24),
+                 static_cast<unsigned>(rp2040_status.gnss_utc_minute % 60),
+                 static_cast<unsigned>(rp2040_status.gnss_utc_second % 61));
+    }
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              "\"rp2040\": { \"uptime_ms\": %lu, \"core_0_usage_percent\": %u, "
-             "\"core_1_usage_percent\": %u, \"temperature_deg_c\": %d }",
-             object_dictionary.composite_device_status.rp2040.timestamp_ms,
-             object_dictionary.composite_device_status.rp2040.core_0_usage_percent,
-             object_dictionary.composite_device_status.rp2040.core_1_usage_percent,
-             object_dictionary.composite_device_status.rp2040.temperature_deg_c);
+             "\"core_1_usage_percent\": %u, \"temperature_deg_c\": %d, \"noise_floor_dbm\": %d, "
+             "\"noise_floor_mv\": %u }",
+             rp2040_status.timestamp_ms, rp2040_status.core_0_usage_percent, rp2040_status.core_1_usage_percent,
+             rp2040_status.temperature_deg_c, rp2040_status.noise_floor_dbm, rp2040_status.noise_floor_mv);
+    snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
+             kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
+             ", \"gnss\": { \"enabled\": %s, \"fix_valid\": %s, \"latitude_deg\": %.6f, "
+             "\"longitude_deg\": %.6f, \"utc_time\": \"%s\" }",
+             rp2040_status.gnss_enabled ? "true" : "false", rp2040_status.gnss_fix_valid ? "true" : "false",
+             rp2040_status.gnss_latitude_deg, rp2040_status.gnss_longitude_deg, gnss_utc_time);
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              ", \"subg\": { \"uptime_ms\": %lu, \"user_core_usage_percent\": %u, "
@@ -704,6 +736,9 @@ bool ADSBeeServer::TCPServerInit() {
     config.stack_size = kHTTPServerStackSizeBytes;
     // config.task_caps = MALLOC_CAP_IRAM_8BIT;
     config.max_open_sockets = 16;  // Must be <= CONFIG_LWIP_MAX_SOCKETS - 3 (currently 20 - 3 = 17).
+    // 9 URIs are registered below (6 HTTP + 3 websocket); the default limit is 8 and a
+    // failed registration aborts boot via ESP_ERROR_CHECK.
+    config.max_uri_handlers = 16;
     config.close_fn = ws_close_fd;
     config.lru_purge_enable =
         true;  // Allow purging of the least recently used connections when max clients is reached.
@@ -748,6 +783,16 @@ bool ADSBeeServer::TCPServerInit() {
                              .handle_ws_control_frames = false,
                              .supported_subprotocol = nullptr};
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &adsbee_js));
+
+    // Settings GUI JavaScript URI handler
+    httpd_uri_t settings_js = {.uri = "/settings.js",
+                               .method = HTTP_GET,
+                               .handler = settings_js_handler,
+                               .user_ctx = NULL,
+                               .is_websocket = false,
+                               .handle_ws_control_frames = false,
+                               .supported_subprotocol = nullptr};
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_js));
 
     // Favicon URI handler
     httpd_uri_t favicon = {.uri = "/favicon.png",
@@ -824,6 +869,8 @@ void ADSBeeServer::SendAircraftJSONMessages() {
             len = WriteAircraftJSONModeSAircraftStr(json_buf, *ac);
         } else if (UATAircraft* ac = get_if<UATAircraft>(&itr.second); ac) {
             len = WriteAircraftJSONUATAircraftStr(json_buf, *ac);
+        } else if (RemoteIDAircraft* ac = get_if<RemoteIDAircraft>(&itr.second); ac) {
+            len = WriteAircraftJSONRemoteIDAircraftStr(json_buf, *ac);
         }
         if (len > 0) {
             network_aircraft.BroadcastMessage(json_buf, len);

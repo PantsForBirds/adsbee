@@ -6,8 +6,14 @@
 
 class SPICoprocessorPacket {
    public:
-    static constexpr uint16_t kSPITransactionMaxLenBytes =
-        4096;  // Default max is 4096 Bytes on ESP32 (with DMA) and 4096 Bytes on RP2040.
+    // Sizes the DMA-capable SPI transaction buffers on both the ESP32 (spi_rx_buf_/spi_tx_buf_, MALLOC_CAP_DMA) and the
+    // RP2040. Reduced from 4096 to 2048 to reclaim ~4 KB of the scarce internal DMA pool on the PSRAM-less ESP32-S3
+    // (Bluetooth Remote ID leaves it tight). The largest single object transferred is a 2000-byte
+    // CompositeArray::RawPackets, which still fits in one transaction's data capacity (kDataMaxLenBytes = 2048 - 6 - 2 =
+    // 2040 B); a static_assert in composite_array.cpp enforces this. Larger logical objects are chunked by
+    // SPICoprocessor::Read/Write, so nothing breaks — including OTA (RP2040 image writes are local flash; ESP32/CC1312
+    // are flashed over UART, independent of this link).
+    static constexpr uint16_t kSPITransactionMaxLenBytes = 2048;
     static_assert(kSPITransactionMaxLenBytes % 4 == 0);  // Make sure it's word-aligned.
 
     /** NOTE: Packets should not be used outside of the SPICoprocessorInterface class and its children, they are only

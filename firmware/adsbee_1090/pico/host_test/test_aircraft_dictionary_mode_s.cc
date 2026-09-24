@@ -724,11 +724,11 @@ TEST(AircraftDictionary, MetricsToJSON) {
                                            .raw_extended_squitter_frames = 30,
                                            .valid_extended_squitter_frames = 16,
                                            .demods_1090 = 50,
-                                           .raw_squitter_frames_by_source = {2, 3, 5},
-                                           .valid_squitter_frames_by_source = {1, 2, 4},
-                                           .raw_extended_squitter_frames_by_source = {10, 11, 9},
-                                           .valid_extended_squitter_frames_by_source = {3, 5, 8},
-                                           .demods_1090_by_source = {19, 10, 21}};
+                                           .raw_squitter_frames_by_source = {2, 3, 5, 0},
+                                           .valid_squitter_frames_by_source = {1, 2, 4, 0},
+                                           .raw_extended_squitter_frames_by_source = {10, 11, 9, 0},
+                                           .valid_extended_squitter_frames_by_source = {3, 5, 8, 0},
+                                           .demods_1090_by_source = {19, 10, 21, 0}};
     char buf[AircraftDictionary::Metrics::kMetricsJSONMaxLen] = {'\0'};
     const char* expected_result =
         "{ \"raw_squitter_frames\": 10, \
@@ -736,14 +736,15 @@ TEST(AircraftDictionary, MetricsToJSON) {
 \"raw_extended_squitter_frames\": 30, \
 \"valid_extended_squitter_frames\": 16, \
 \"demods_1090\": 50, \
-\"raw_squitter_frames_by_source\": [2, 3, 5], \
-\"valid_squitter_frames_by_source\": [1, 2, 4], \
-\"raw_extended_squitter_frames_by_source\": [10, 11, 9], \
-\"valid_extended_squitter_frames_by_source\": [3, 5, 8], \
-\"demods_1090_by_source\": [19, 10, 21], \
+\"raw_squitter_frames_by_source\": [2, 3, 5, 0], \
+\"valid_squitter_frames_by_source\": [1, 2, 4, 0], \
+\"raw_extended_squitter_frames_by_source\": [10, 11, 9, 0], \
+\"valid_extended_squitter_frames_by_source\": [3, 5, 8, 0], \
+\"demods_1090_by_source\": [19, 10, 21, 0], \
 \"raw_uat_adsb_frames\": 0, \"valid_uat_adsb_frames\": 0, \
 \"raw_uat_uplink_frames\": 0, \"valid_uat_uplink_frames\": 0, \
-\"num_mode_s_aircraft\": 0, \"num_uat_aircraft\": 0\
+\"raw_remote_id_frames\": 0, \"valid_remote_id_frames\": 0, \
+\"num_mode_s_aircraft\": 0, \"num_uat_aircraft\": 0, \"num_remote_id_aircraft\": 0\
 }";
     EXPECT_EQ(metrics.ToJSON(buf, AircraftDictionary::Metrics::kMetricsJSONMaxLen), strlen(expected_result));
     EXPECT_STREQ(buf, expected_result);

@@ -41,6 +41,7 @@ class SettingsManager {
         kMAVLINK2,
         kGDL90,
         kAircraftJSON,
+        kGDL90NoUATUplink,  // Appended (not next to kGDL90): values are flash-persisted, don't renumber.
         kNumProtocols
     };
     static constexpr uint16_t kReportingProtocolStrMaxLen = 30;
@@ -54,12 +55,27 @@ class SettingsManager {
         kEnableStateEnabled = 1
     };
 
+    enum GNSSReceiverType : uint8_t {
+        kGNSSReceiverNone = 0,
+        kGNSSReceiverGeneric,
+        kGNSSReceiverUBXMIA,
+    };
+
     // Mode setting for the Sub-GHz radio.
     enum SubGHzRadioMode : uint8_t {
         kSubGHzRadioModeUATRx = 0,  // UAT mode (978MHz receiver).
         kNumSubGHzRadioModes
     };
     static const char kSubGHzModeStrs[kNumSubGHzRadioModes][kSubGHzModeStrMaxLen];
+
+    // Broadcast Remote ID transports, as a bitmask stored in Settings::remote_id_transports. Whether a requested
+    // transport actually runs additionally depends on the hardware build (PSRAM vs not) and the WiFi/ethernet state;
+    // the ESP32 reports the resolved live state back in ObjectDictionary::ESP32DeviceStatus::remote_id_status.
+    enum RemoteIDTransport : uint8_t {
+        kRemoteIDTransportBLE4 = 1 << 0,        // Bluetooth 4 legacy advertising (1M PHY).
+        kRemoteIDTransportBLE5Long = 1 << 1,    // Bluetooth 5 Long Range (Coded PHY S=8) extended advertising.
+        kRemoteIDTransportWiFiBeacon = 1 << 2,  // WiFi beacon vendor-specific IE.
+    };
 
     // Receiver position settings.
     struct __attribute__((packed)) RxPosition {
@@ -85,6 +101,26 @@ class SettingsManager {
         uint32_t icao_address =
             0;  // ICAO address to use for position bootstrap when source is kPositionSourceICAO, or the ICAO of the
                 // lowest plane being tracked when source is kPositionSourceLowestAircraft.
+
+        /**
+         * Whether a position resolved from `source` describes THIS device, and may therefore be broadcast as our own
+         * position (currently: Remote ID transmit).
+         *
+         * Only kPositionSourceFixed (a coordinate the operator entered for this device) and kPositionSourceGNSS (this
+         * device's own fix) qualify. The aircraft-derived sources carry a *received* aircraft's position:
+         * kPositionSourceLowestAircraft and kPositionSourceAircraftMatchingICAO copy the lat/lon of a tracked Mode S /
+         * UAT target. Broadcasting one of those would assert "this is where I am" using a real, possibly crewed
+         * aircraft's coordinate -- placing a fabricated drone, and a fabricated operator location, on top of it. They
+         * are legitimate as a *receiver* reference position (range calculations, CPR decoding), never as a transmitted
+         * one. kPositionSourceNone carries no position at all.
+         *
+         * Lives here, rather than beside the transmitter, because both processors need the same answer: the ESP32
+         * enforces it (RemoteIDTransmitter::RefreshFromDeviceState) and the RP2040 warns about it from the AT console.
+         * A static member function adds no storage, so the packed layout above is unaffected.
+         */
+        static bool MayBeTransmittedAsOwnPosition(PositionSource source) {
+            return source == kPositionSourceFixed || source == kPositionSourceGNSS;
+        }
     };
 
     // This struct contains nonvolatile settings that should persist across reboots but may be overwritten during a
@@ -100,6 +136,8 @@ class SettingsManager {
         static constexpr uint16_t kWiFiMaxNumClients = 6;
         static constexpr uint32_t kDefaultCommsUARTBaudrate = 115200;
         static constexpr uint32_t kDefaultGNSSUARTBaudrate = 9600;
+        // Open Drone ID UAS ID / Operator ID string length (ODID_ID_SIZE in opendroneid.h).
+        static constexpr uint16_t kRemoteIDIDMaxLen = 20;
         static constexpr uint16_t kMaxNumFeeds = 10;
         static constexpr uint16_t kFeedURIMaxNumChars = 63;
         static constexpr uint16_t kFeedReceiverIDNumBytes = 8;
@@ -177,6 +215,9 @@ class SettingsManager {
         bool led_enabled = true;  // Set to false to disable all hardware status/activity LEDs.
         bool feeds_enabled = true;  // Master switch: set to false to disable all outbound network feeds (no data
                                     // leaves the device to the internet). Overrides per-feed feed_is_active[].
+        bool gnss_enabled = false;
+        GNSSReceiverType gnss_receiver_type = kGNSSReceiverNone;
+        bool gnss_notify = false;
 
         // CommunicationsManager settings
         LogLevel log_level = LogLevel::kWarnings;
@@ -197,6 +238,40 @@ class SettingsManager {
         bool subg_bias_tee_enabled = false;
         SubGHzRadioMode subg_mode = SubGHzRadioMode::kSubGHzRadioModeUATRx;  // Default to UAT mode (978MHz receiver).
 
+        // Remote ID (Broadcast Drone ID, ASTM F3411) receive settings. EXPERIMENTAL: not yet a stable part of the
+        // system, and these settings may change. Reception happens on the ESP32 over BLE/WiFi; see
+        // firmware/adsbee_1090/esp/main/remote_id/. Which transports actually run also depends on the hardware build and
+        // the WiFi/ethernet state (the ESP32 reports the live state back via ESP32DeviceStatus::remote_id_status).
+        bool remote_id_rx_enabled = false;  // Master enable for Remote ID reception. Off by default.
+        // Bitmask of RemoteIDTransport values the user wants enabled (subject to the constraints above).
+        uint8_t remote_id_transports = SettingsManager::kRemoteIDTransportBLE4 |
+                                       SettingsManager::kRemoteIDTransportBLE5Long |
+                                       SettingsManager::kRemoteIDTransportWiFiBeacon;
+
+        // Remote ID transmit settings. EXPERIMENTAL: not yet a stable part of the system, and these settings may
+        // change. The ADSBee can act as a Broadcast Remote ID transmitter, either as a bench test transmitter for
+        // checking Remote ID receiver performance, or mounted on a drone as a combined ADS-B receiver and Remote ID
+        // transmitter. Transmission uses the same radios as reception and needs no WiFi AP/STA.
+        // The transmitted UA position comes from rx_position (AT+RX_POSITION), but ONLY from the sources that describe
+        // this device: kPositionSourceFixed (a bench transmitter's entered coordinate) and kPositionSourceGNSS (this
+        // device's own fix). The aircraft-derived sources carry a *received* aircraft's position and are never
+        // transmitted -- see RxPosition::MayBeTransmittedAsOwnPosition.
+        bool remote_id_tx_enabled = false;  // Master enable for Remote ID transmission. Off by default.
+        // Bitmask of RemoteIDTransport values to advertise on. All methods by default so the device is useful as a
+        // test transmitter against any receiver; narrow it to test one method at a time.
+        uint8_t remote_id_tx_transports = SettingsManager::kRemoteIDTransportBLE4 |
+                                          SettingsManager::kRemoteIDTransportBLE5Long |
+                                          SettingsManager::kRemoteIDTransportWiFiBeacon;
+        // ODID_idtype_t: 1 = serial number (ANSI/CTA-2063-A), 2 = CAA registration, 3 = UTM UUID, 4 = session ID.
+        uint8_t remote_id_tx_uas_id_type = 1;
+        // ODID_uatype_t: 1 = aeroplane, 2 = helicopter/multirotor, ... 15 = other.
+        uint8_t remote_id_tx_ua_type = 2;
+        // UAS ID (serial / registration) advertised in the Basic ID message. Empty means "derive from this device's
+        // serial number at runtime" so the unit is a usable test transmitter with no configuration.
+        char remote_id_tx_uas_id[kRemoteIDIDMaxLen + 1];
+        // Operator ID advertised in the Operator ID message. Empty means the message is not transmitted.
+        char remote_id_tx_operator_id[kRemoteIDIDMaxLen + 1];
+
         // Feed settings
         char feed_uris[kMaxNumFeeds][kFeedURIMaxNumChars + 1];
         uint16_t feed_ports[kMaxNumFeeds];
@@ -215,6 +290,12 @@ class SettingsManager {
          * Default constructor.
          */
         Settings() {
+            // Remote ID transmit identity strings default to empty: an empty UAS ID means "derive from this device's
+            // serial number at runtime" (see the Remote ID transmitter), and an empty operator ID suppresses the
+            // Operator ID message.
+            memset(remote_id_tx_uas_id, '\0', sizeof(remote_id_tx_uas_id));
+            memset(remote_id_tx_operator_id, '\0', sizeof(remote_id_tx_operator_id));
+
 #ifdef ON_PICO
             DeviceInfo device_info;
             if (GetDeviceInfo(device_info)) {
@@ -272,6 +353,12 @@ class SettingsManager {
         }
     };
 
+    // Maximum number of sinks that can be passed to CommsManager::UpdateReporting() in a single call:
+    // serial interfaces on the Pico, IP feeds on the ESP32. Per-protocol sink arrays are sized with this.
+    static constexpr uint16_t kMaxNumReportSinks = Settings::kMaxNumFeeds > SerialInterface::kNumSerialInterfaces
+                                                       ? Settings::kMaxNumFeeds
+                                                       : SerialInterface::kNumSerialInterfaces;
+
     // This struct contains device information that should persist across firmware upgrades.
     struct DeviceInfo {
         // NOTE: Lengths do not include null terminator.
@@ -291,7 +378,8 @@ class SettingsManager {
             kPNADSBee1090UIndoorPoEFeeder = 40250002,  // ADSBee 1090U Indoor PoE Feeder
             kPNADSBeem1090 = 10250007,                 // ADSBee m1090
             kPNADSBeem1090EvalBoard = 10250013,        // ADSBee m1090 Eval Board
-            kPNGS3MPoE = 40250001                      // GS3M PoE
+            kPNGS3MPoE = 40250001,                     // GS3M PoE
+            kPNADSBeeWinglet = 10260008,               // ADSBee Winglet
         };
 
         enum ADSBee1090RFFrontendVersion : uint8_t {
@@ -409,6 +497,9 @@ class SettingsManager {
                         return kADSBee1090RFFrontendV3;
                     }
                     break;
+                case kPNADSBeeWinglet:
+                    return kADSBee1090RFFrontendV3;
+                    break;
             }
             // Default to V1 for unknown part numbers, since that's the most common and safest assumption.
             return kADSBee1090RFFrontendV1;
@@ -436,6 +527,24 @@ class SettingsManager {
                 return "0";
             default:
                 return "?";
+        }
+    }
+
+    /**
+     * Helper function for converting a GNSSReceiverType to its AT command value string. Returns "NONE" for
+     * out-of-range values (e.g. from a corrupted settings blob) so the AT dump stays replayable.
+     * @param[in] type GNSSReceiverType to convert to a string.
+     * @retval String representation of the GNSSReceiverType, as it would be used in an AT command.
+     */
+    static inline const char* GNSSReceiverTypeToStr(GNSSReceiverType type) {
+        switch (type) {
+            case kGNSSReceiverGeneric:
+                return "GENERIC";
+            case kGNSSReceiverUBXMIA:
+                return "UBX_MIA";
+            case kGNSSReceiverNone:
+            default:
+                return "NONE";
         }
     }
 

@@ -1,0 +1,9 @@
+# Partition table for the Remote-ID-enabled ESP32-S3 build on 4 MB flash (Config 2: ESP32-S3-MINI-1U-N4R2, PSRAM).
+# 4 MB flash is tight once the NimBLE + WiFi + coexistence stacks are included. The factory app gets ~2.9 MB, which must
+# fit the full BLE + WiFi image (measure at M0/M4; strip logging / web assets if it overflows). No OTA, no coredump
+# partition (reclaim the space for the app). NVS/phy_init match the stock layout.
+# Build:  idf.py -DSDKCONFIG_DEFAULTS="sdkconfig;sdkconfig.psram" build
+# Name,   Type, SubType,  Offset,   Size,    Flags
+nvs,      data, nvs,      ,         0x6000,
+phy_init, data, phy,      ,         0x1000,
+factory,  app,  factory,  ,         0x2E0000,

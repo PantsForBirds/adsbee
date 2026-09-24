@@ -1,7 +1,8 @@
 #pragma once
 
 #include "aircraft_dictionary.hh"
-#include "macros.hh"  // for MIN macro.
+#include "macros.hh"    // for MIN macro.
+#include "settings.hh"  // for SettingsManager::RxPosition.
 
 // GDL90 is implemented based on this spec:
 // https://www.faa.gov/sites/faa.gov/files/air_traffic/technology/adsb/archival/GDL90_Public_ICD_RevA.PDF
@@ -164,6 +165,34 @@ class GDL90Reporter {
      */
     uint16_t WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes,
                                            const GDL90TargetReportData& data, bool ownship = false);
+
+    // Ground speed above which the ownship is flagged as airborne in the ownship report's misc indicators.
+    static constexpr int32_t kOwnshipAirborneSpeedKts = 30;
+
+    /**
+     * Whether a receiver position source describes THIS device's own movement and may be reported as GDL90 ownship.
+     * Only GNSS and a tracked aircraft with a matching ICAO address qualify. A fixed coordinate or the lowest tracked
+     * aircraft is a receiver location for CPR decoding, not an ownship position.
+     * @param[in] source Receiver position source.
+     * @retval True if the source may populate the ownship report.
+     */
+    static bool IsValidOwnshipSource(SettingsManager::RxPosition::PositionSource source);
+
+    /**
+     * Populate an ownship report from the receiver position. This is the single builder for every GDL90 emitter (feed
+     * sinks and the WiFi AP broadcast) so they cannot disagree about what counts as ownship.
+     *
+     * When no usable position exists, data is left as the GDL90 "no position" report (callsign and address type only,
+     * lat/lon/NIC zero) rather than sending 0,0 as a real fix.
+     * @param[out] data Target report data to fill. Callsign and address type are always written.
+     * @param[in] rx_position Receiver position to report.
+     * @param[in] rx_position_available Whether rx_position currently holds a fresh position.
+     * @retval True if data carries a valid ownship position (also the value for the heartbeat's GPS Position Valid
+     * flag), false otherwise.
+     */
+    static bool BuildOwnshipReportData(GDL90TargetReportData& data, const SettingsManager::RxPosition& rx_position,
+                                       bool rx_position_available);
+
     /**
      * Write a GDL90 message for ownship or traffic data. This function calls the version that takes a
      * GDL90TargetReportData object, and is provided for convenience when sending Aircraft from an AircraftDictionary.
@@ -175,6 +204,9 @@ class GDL90Reporter {
     uint16_t WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes, const ModeSAircraft& aircraft,
                                            bool ownship = false);
     uint16_t WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes, const UATAircraft& aircraft,
+                                           bool ownship = false);
+    // Broadcast Remote ID drone reported as a GDL90 traffic target (emitter category 14 = UAV, self-assigned address).
+    uint16_t WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes, const RemoteIDAircraft& aircraft,
                                            bool ownship = false);
 
     // Bit Flags for Message ID 0 (Heartbeat).

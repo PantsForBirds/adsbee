@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/png" href="favicon.png">
     <script src="adsbee.js"></script>
+    <script src="settings.js"></script>
 </head>
 
 <body>
@@ -15,7 +16,8 @@
         <div class="tab-bar-tabs">
             <span class="tab-logo">ADSBee</span>
             <button class="tab-btn active" data-tab="console" onclick="switchTab('console')">Console</button>
-            <button class="tab-btn" data-tab="radar" onclick="switchTab('radar')">Radar</button>
+            <button class="tab-btn" data-tab="map" onclick="switchTab('map')">Map</button>
+            <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
         <div class="tab-bar-controls">
             <span class="theme-toggle-label">&#9788;</span>
@@ -81,11 +83,17 @@
         </div>
     </div>
 
-    <!-- Radar tab -->
-    <div id="tab-radar" class="tab-content">
-        <div id="radar-left">
+    <!-- Map tab -->
+    <div id="tab-map" class="tab-content">
+        <div id="map-left">
             <div id="map-container">
                 <div id="map"></div>
+                <!-- Sibling of #map rather than a Leaflet control: staying outside the
+                     Leaflet container keeps clicks from reaching its drag/zoom handlers. -->
+                <div id="map-options" class="map-options">
+                    <label><input type="checkbox" id="velocityVectorToggle" checked> Velocity lines</label>
+                    <label><input type="checkbox" id="allTrailsToggle"> Traces</label>
+                </div>
             </div>
             <div id="resize-handle" title="Drag to resize"></div>
             <div id="aircraft-table-container">
@@ -115,6 +123,16 @@
             </div>
             <div id="sidebar-fields"></div>
         </div>
+    </div>
+
+    <!-- Settings tab -->
+    <div id="tab-settings" class="tab-content">
+        <div class="settings-save-bar">
+            <button id="settings-save-btn" class="tools-button" disabled>Save</button>
+            <button id="settings-refresh-btn" class="tools-button">Refresh</button>
+            <span id="settings-status" class="settings-status"></span>
+        </div>
+        <div id="settings-form"></div>
     </div>
 
     <!-- Feed editor modal -->
@@ -189,63 +207,103 @@
         let currentCommand = '';
         let cursorPosition = 0;
 
-        const MAX_CONSOLE_LINES = 500;
+        // The console holds at most this many lines; the oldest are dropped as new ones
+        // arrive. Output is stored as one <div> per line under #terminal-content, so both
+        // appending and trimming are O(1) — appending to innerHTML instead would
+        // re-serialize the whole console on every line and bog down under a firehose
+        // (AIRCRAFT_JSON emits hundreds of lines/second).
+        const MAX_CONSOLE_LINES = 1000;
 
-        function trimConsole() {
-            const content = terminalContent.innerHTML;
-            const matches = [...content.matchAll(/<br>/g)];
-            if (matches.length > MAX_CONSOLE_LINES) {
-                const excess = matches.length - MAX_CONSOLE_LINES;
-                const cutPos = matches[excess].index + 4; // skip past the '<br>'
-                terminalContent.innerHTML = content.substring(cutPos);
+        const ANSI_COLORS = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
+        const ANSI_BRIGHT_COLORS = ['gray', 'lightcoral', 'lightgreen', 'lightyellow', 'lightblue', 'lightpink', 'lightcyan', 'white'];
+
+        let terminalLineEl = null;    // line element currently being written to
+        let terminalLineCount = 0;
+        let terminalAnsiColor = null; // active ANSI color, carried across line boundaries
+
+        // Depends on #terminal-content holding nothing but line elements: the prompt lives
+        // in a sibling .input-line outside it, so dropping firstChild can never eat it.
+        function newTerminalLine() {
+            const el = document.createElement('div');
+            el.className = 'terminal-line';
+            terminalContent.appendChild(el);
+            terminalLineCount++;
+            while (terminalLineCount > MAX_CONSOLE_LINES) {
+                terminalContent.removeChild(terminalContent.firstChild);
+                terminalLineCount--;
+            }
+            terminalLineEl = el;
+        }
+
+        // Append a run of plain text to the open line, wrapping it in a colored span if an
+        // ANSI color is active. Consecutive runs of the same color coalesce into one span.
+        function writeTerminalText(str) {
+            if (!terminalLineEl) newTerminalLine();
+            if (!str) return;
+            if (!terminalAnsiColor) {
+                terminalLineEl.appendChild(document.createTextNode(str));
+                return;
+            }
+            const last = terminalLineEl.lastChild;
+            if (last && last.nodeType === Node.ELEMENT_NODE && last.dataset.ansi === terminalAnsiColor) {
+                last.appendChild(document.createTextNode(str));
+            } else {
+                const span = document.createElement('span');
+                span.style.color = terminalAnsiColor;
+                span.dataset.ansi = terminalAnsiColor;  // lets the next run coalesce into this span
+                span.textContent = str;
+                terminalLineEl.appendChild(span);
             }
         }
 
-        function appendToTerminal(text) {
-            // Escape HTML entities to prevent angle brackets from being interpreted as tags
-            function escapeHtml(str) {
-                return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Write a chunk that may contain newlines, opening a new line element at each '\n'.
+        function writeTerminalChunk(chunk) {
+            if (!terminalLineEl) newTerminalLine();  // so a leading '\n' still yields a blank line
+            const parts = chunk.split('\n');
+            writeTerminalText(parts[0]);
+            for (let i = 1; i < parts.length; i++) {
+                newTerminalLine();
+                writeTerminalText(parts[i]);
             }
+        }
 
-            // Process ANSI escape sequences for colors
+        // Scrolling to the bottom forces a layout, so coalesce it to once per frame rather
+        // than once per appended line.
+        let terminalScrollPending = false;
+        function scheduleTerminalScroll() {
+            if (terminalScrollPending) return;
+            terminalScrollPending = true;
+            requestAnimationFrame(() => {
+                terminalScrollPending = false;
+                terminal.scrollTop = terminal.scrollHeight;
+            });
+        }
+
+        function appendToTerminal(text) {
+            // Process ANSI escape sequences for colors. Text between sequences is written as
+            // DOM text nodes, which escape HTML entities by construction.
             const ansiRegex = /\x1b\[([0-9;]*)m/g;
-            let processedText = text;
             let lastIndex = 0;
-            let result = '';
-
             let match;
             while ((match = ansiRegex.exec(text)) !== null) {
-                // Add text before the escape sequence (escaped)
-                result += escapeHtml(text.slice(lastIndex, match.index));
+                writeTerminalChunk(text.slice(lastIndex, match.index));
 
                 const codes = match[1].split(';').map(code => parseInt(code) || 0);
-
-                // Handle color codes
                 for (const code of codes) {
                     if (code === 0) {
-                        // Reset - close any open spans
-                        result += '</span>';
+                        terminalAnsiColor = null;  // reset
                     } else if (code >= 30 && code <= 37) {
-                        // Foreground colors
-                        const colors = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
-                        result += `<span style="color: ${colors[code - 30]}">`;
+                        terminalAnsiColor = ANSI_COLORS[code - 30];
                     } else if (code >= 90 && code <= 97) {
-                        // Bright foreground colors
-                        const brightColors = ['gray', 'lightcoral', 'lightgreen', 'lightyellow', 'lightblue', 'lightpink', 'lightcyan', 'white'];
-                        result += `<span style="color: ${brightColors[code - 90]}">`;
+                        terminalAnsiColor = ANSI_BRIGHT_COLORS[code - 90];
                     }
                 }
 
                 lastIndex = ansiRegex.lastIndex;
             }
 
-            // Add remaining text (escaped)
-            result += escapeHtml(text.slice(lastIndex));
-            processedText = result;
-
-            terminalContent.innerHTML += processedText;
-            trimConsole();
-            terminal.scrollTop = terminal.scrollHeight;
+            writeTerminalChunk(text.slice(lastIndex));
+            scheduleTerminalScroll();
         }
 
         function focusTerminal() {
@@ -415,6 +473,7 @@
         let aircraftStore = null;
         let acTable = null;
         let aircraftUpdateTimer = null;
+        let latestGNSSStatus = null;
 
         function switchTab(name) {
             document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -425,16 +484,49 @@
             });
 
             if (name === 'console') {
+                settingsTab.leave();
                 if (aircraftWebSocket) aircraftWebSocket.pause();
                 clearInterval(aircraftUpdateTimer);
                 aircraftUpdateTimer = null;
                 consoleWebSocket.resume();
                 metricsWebSocket.resume();
                 focusTerminal();
-            } else if (name === 'radar') {
+            } else if (name === 'map') {
+                settingsTab.leave();
                 consoleWebSocket.pause();
-                metricsWebSocket.pause();
+                metricsWebSocket.resume();
                 initRadar().catch(e => console.error('Radar init error:', e));
+            } else if (name === 'settings') {
+                // The terminal's console socket is paused so the settings AT traffic
+                // (broadcast to every /console client) never reaches the visible terminal.
+                if (aircraftWebSocket) aircraftWebSocket.pause();
+                clearInterval(aircraftUpdateTimer);
+                aircraftUpdateTimer = null;
+                consoleWebSocket.pause();
+                metricsWebSocket.resume();
+                settingsTab.enter();
+            }
+        }
+
+        // Each checkbox is synced to the map's restored setting before its listener is
+        // attached, so a persisted choice survives a reload instead of being overwritten
+        // by the markup's default checked state.
+        function initMapOptions(map) {
+            // Nothing to control when the map failed to load and the offline banner is showing.
+            const panel = document.getElementById('map-options');
+            if (panel && map._offline) {
+                panel.style.display = 'none';
+                return;
+            }
+            const vecToggle = document.getElementById('velocityVectorToggle');
+            if (vecToggle) {
+                vecToggle.checked = map.showVectors;
+                vecToggle.addEventListener('change', () => map.setShowVectors(vecToggle.checked));
+            }
+            const trailsToggle = document.getElementById('allTrailsToggle');
+            if (trailsToggle) {
+                trailsToggle.checked = map.showAllTrails;
+                trailsToggle.addEventListener('change', () => map.setShowAllTrails(trailsToggle.checked));
             }
         }
 
@@ -447,6 +539,8 @@
                     if (acTable) acTable.setSelected(hex);
                 };
                 await radarMap.init();
+                initMapOptions(radarMap);
+                if (latestGNSSStatus) radarMap.setReceiverStatus(latestGNSSStatus);
             } else {
                 radarMap.invalidate();
             }
@@ -481,6 +575,10 @@
         // Initialize on Console tab
         consoleWebSocket = new ConsoleWebSocket(WS_CONFIG.console_ws_url);
         metricsWebSocket = new MetricsWebSocket(WS_CONFIG.metrics_ws_url);
+        metricsWebSocket.onGNSSStatus = (status) => {
+            latestGNSSStatus = status;
+            if (radarMap) radarMap.setReceiverStatus(status);
+        };
         focusTerminal();
 
         function initResizeHandle() {

@@ -67,8 +67,12 @@ class ObjectDictionary {
         kAddrCompositeArrayRawPackets = 0x10,  // Single endpoint for reading / writing raw ADSB and UAT packets.
         kAddrESP32RebootInfo = 0x11,           // ESP32 last reset reason and optional core dump summary.
         kAddrESP32TriggerAbort = 0x12,         // Debug only: trigger abort() on the ESP32 to test core dump.
+        kAddrLEDBlink = 0x13,  // Force-blink the slave's LED: uint32_t duration_ms, bypasses led_enabled.
         kNumAddrs
     };
+
+    // Maximum duration for a forced LED blink via kAddrLEDBlink (shared with the AT+LED_BLINK master-side check).
+    static constexpr uint32_t kLEDBlinkMaxDurationMs = 60'000;
 
     // Commands are written from Master to Slave.
     enum SCCommand : uint8_t {
@@ -122,6 +126,19 @@ class ObjectDictionary {
         uint8_t core_1_usage_percent = 0;
         SettingsManager::RxPosition rx_position;  // Current receiver position.
         bool rx_position_available = false;
+        bool gnss_enabled = false;
+        bool gnss_fix_valid = false;
+        float gnss_latitude_deg = 0.0f;
+        float gnss_longitude_deg = 0.0f;
+        bool gnss_utc_time_valid = false;
+        uint8_t gnss_utc_hour = 0;
+        uint8_t gnss_utc_minute = 0;
+        uint8_t gnss_utc_second = 0;
+        uint16_t gnss_utc_millisecond = 0;
+        // 1090MHz receiver noise floor estimate (RSSI sampled between packets and low-pass filtered). The trigger
+        // level sits at noise_floor_mv + TL offset.
+        uint16_t noise_floor_mv = 0;
+        int16_t noise_floor_dbm = 0;
     };
 
     struct __attribute__((__packed__)) ESP32DeviceStatus {
@@ -138,6 +155,15 @@ class ObjectDictionary {
         uint16_t num_queued_sc_command_requests = 0;  // Number of SCCommand requests queued for the master.
         uint32_t num_queued_network_console_rx_chars =
             0;  // Number incoming of characters waiting to be read by the RP2040 from the ESP32's network console.
+
+        // Length in bytes (including the CompositeArray header) of Remote ID packets the ESP32 has received over
+        // BLE/WiFi and has queued for the RP2040 to pull from kAddrCompositeArrayRawPackets. Header-only (== 8) means
+        // nothing pending. See the ESP32->RP2040 forwarding path in peripherals/esp32/esp32.cc.
+        uint16_t pending_raw_packets_len_bytes = 0;
+        // Bitfield reporting the live Remote ID receiver AND transmitter state (see RemoteIDManager::Status). Lets the
+        // RP2040 explain, e.g., "Remote ID requested but blocked because WiFi is enabled on a non-PSRAM build" in
+        // AT+REMOTE_ID? / AT+REMOTE_ID_TX?.
+        uint16_t remote_id_status = 0;
     };
 
     /**
@@ -293,7 +319,7 @@ class ObjectDictionary {
      * @retval Number of bytes written to the buffer.
      */
     uint16_t PackLogMessages(uint8_t* buf, uint16_t buf_len, PFBQueue<ObjectDictionary::LogMessage>& log_message_queue,
-                             uint16_t num_messages);
+                             uint16_t num_messages, uint16_t offset = 0);
 
     /**
      * Unpacks a buffer of log messages into an array.

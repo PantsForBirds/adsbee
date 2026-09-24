@@ -3,6 +3,7 @@ if (TARGET application)
     target_sources(application PRIVATE
         settings_strs.cpp
         settings.cpp
+        settings_migration.cpp
     )
     target_include_directories(application PRIVATE
         .
@@ -21,6 +22,7 @@ elseif (TARGET host_test OR TARGET host_test_fpu)
             target_sources(${_test_tgt} PRIVATE
                 settings_strs.cpp
                 settings.cpp
+                settings_migration.cpp
             )
             target_include_directories(${_test_tgt} PRIVATE
                 .

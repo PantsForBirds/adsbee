@@ -18,6 +18,7 @@
 #include "pico/unique_id.h"
 #include "settings.hh"
 #include "spi_coprocessor.hh"  // For init / de-init before and after flashing ESP32.
+#include "gnss_interface.hh"   // For parking/restoring the GNSS UART around ESP32 flashing.
 
 #ifdef HARDWARE_UNIT_TESTS
 #include "hardware_unit_tests.hh"
@@ -147,6 +148,59 @@ CPP_AT_CALLBACK(CommsManager::ATBiasTeeEnableCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+CPP_AT_CALLBACK(CommsManager::ATLEDBlinkCallback) {
+    switch (op) {
+        case '=': {
+            uint32_t duration_ms;
+            CPP_AT_TRY_ARG2NUM(0, duration_ms);
+            if (duration_ms == 0 || duration_ms > ObjectDictionary::kLEDBlinkMaxDurationMs) {
+                CPP_AT_ERROR("Duration must be 1-%lu ms.", (unsigned long)ObjectDictionary::kLEDBlinkMaxDurationMs);
+            }
+            // Parse all LED tokens before blinking anything so an invalid token doesn't half-execute the command.
+            bool blink_1090 = false, blink_subg = false, blink_network = false;
+            for (uint16_t i = 1; i < num_args; i++) {
+                if (args[i].compare("1090") == 0) {
+                    blink_1090 = true;
+                } else if (args[i].compare("SUBG") == 0) {
+                    blink_subg = true;
+                } else if (args[i].compare("NETWORK") == 0) {
+                    blink_network = true;
+                } else if (args[i].compare("ALL") == 0) {
+                    blink_1090 = blink_subg = blink_network = true;
+                } else {
+                    CPP_AT_ERROR("Invalid LED '%.*s'. Must be 1090, SUBG, NETWORK, or ALL.", (int)args[i].length(),
+                                 args[i].data());
+                }
+            }
+            // Fire all requested LEDs, collecting failures. LEDs that already fired are not rolled back.
+            char failures[64] = "";
+            if (blink_1090) {
+                adsbee.ForceBlinkStatusLED(duration_ms);
+            }
+            if (blink_subg) {
+                if (!adsbee.subg_radio.IsEnabled()) {
+                    strcat(failures, " SUBG(disabled)");
+                } else if (!adsbee.subg_radio.Write(ObjectDictionary::kAddrLEDBlink, duration_ms, true)) {
+                    strcat(failures, " SUBG(write failed)");
+                }
+            }
+            if (blink_network) {
+                if (!esp32.IsEnabled()) {
+                    strcat(failures, " NETWORK(disabled)");
+                } else if (!esp32.Write(ObjectDictionary::kAddrLEDBlink, duration_ms, true)) {
+                    strcat(failures, " NETWORK(write failed)");
+                }
+            }
+            if (failures[0] != '\0') {
+                CPP_AT_ERROR("Failed to blink:%s.", failures);
+            }
+            CPP_AT_SUCCESS();
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 CPP_AT_CALLBACK(CommsManager::ATLEDEnableCallback) {
     switch (op) {
         case '?':
@@ -190,6 +244,90 @@ CPP_AT_CALLBACK(CommsManager::ATFeedEnableCallback) {
             break;
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATGNSSCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d,%s,%d", settings_manager.settings.gnss_enabled,
+                              GNSSModuleTypeToStr(SettingsToGNSSModuleType(settings_manager.settings.gnss_receiver_type)),
+                              settings_manager.settings.gnss_notify);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=': {
+            if (!CPP_AT_HAS_ARG(0)) {
+                CPP_AT_ERROR("Requires AT+GNSS=<0|1>[,<NONE|GENERIC|UBX_MIA>[,<0|1>]].");
+            }
+
+            bool enabled;
+            if (args[0].compare("0") == 0) {
+                enabled = false;
+            } else if (args[0].compare("1") == 0) {
+                enabled = true;
+            } else {
+                CPP_AT_ERROR("GNSS enable must be 0 or 1.");
+            }
+
+            // With no explicit type, preserve the configured receiver selection. Enabling is not
+            // allowed when the saved type is NONE because there is no receiver implementation to use.
+            BSP::GNSSModuleType type =
+                SettingsToGNSSModuleType(settings_manager.settings.gnss_receiver_type);
+            if (CPP_AT_HAS_ARG(1)) {
+                if (args[1].compare("NONE") == 0) {
+                    type = BSP::kGNSSModuleNone;
+                } else if (args[1].compare("GENERIC") == 0) {
+                    type = BSP::kGNSSModuleGeneric;
+                } else if (args[1].compare("UBX_MIA") == 0) {
+                    type = BSP::kGNSSModuleUbloxMAXM10;
+                } else {
+                    CPP_AT_ERROR("GNSS type must be NONE, GENERIC, or UBX_MIA.");
+                }
+            } else if (enabled && type == BSP::kGNSSModuleNone) {
+                CPP_AT_ERROR("Cannot enable GNSS while the saved type is NONE; specify GENERIC or UBX_MIA.");
+            }
+
+            bool notify = false;
+            if (CPP_AT_HAS_ARG(2)) {
+                if (args[2].compare("0") == 0) {
+                    notify = false;
+                } else if (args[2].compare("1") == 0) {
+                    notify = true;
+                } else {
+                    CPP_AT_ERROR("GNSS notify must be 0 or 1.");
+                }
+            }
+
+            if (!ConfigureGNSSReceiver(enabled, type)) {
+                settings_manager.settings.gnss_enabled = enabled;
+                settings_manager.settings.gnss_receiver_type = GNSSModuleTypeToSettings(type);
+                settings_manager.settings.gnss_notify = notify;
+                CPP_AT_ERROR("GNSS receiver did not initialize successfully.");
+            }
+            settings_manager.settings.gnss_enabled = enabled && type != BSP::kGNSSModuleNone;
+            settings_manager.settings.gnss_receiver_type = GNSSModuleTypeToSettings(type);
+            settings_manager.settings.gnss_notify = notify;
+            CPP_AT_SUCCESS();
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATGNSSFixCallback) {
+    if (op != '?') {
+        CPP_AT_ERROR("Only AT+GNSS_FIX? is supported.");
+    }
+
+    const NMEAParser::GNSSFix& fix = gnss->fix();
+    char utc_time[9] = "--:--:--";
+    if (fix.utc_time_valid) {
+        snprintf(utc_time, sizeof(utc_time), "%02u:%02u:%02u", fix.utc_hour, fix.utc_minute, fix.utc_second);
+    }
+    CPP_AT_CMD_PRINTF("=%d,%.6f,%.6f,%ld,%.1f,%ld,%u,%s,%lu", gnss->HasValidFix(), fix.latitude_deg,
+                      fix.longitude_deg, static_cast<long>(fix.altitude_ft), fix.heading_deg,
+                      static_cast<long>(fix.speed_kts), static_cast<unsigned int>(fix.num_satellites), utc_time,
+                      static_cast<unsigned long>(gnss->pps_count()));
+    CPP_AT_SILENT_SUCCESS();
 }
 
 CPP_AT_CALLBACK(CommsManager::ATBootloader) {
@@ -373,6 +511,10 @@ CPP_AT_CALLBACK(CommsManager::ATESP32FlashCallback) {
     if (!esp32.DeInit()) {
         CPP_AT_ERROR("CommsManager::ATESP32FlashCallback", "Error while de-initializing ESP32 before flashing.");
     }
+    // The ESP32 flasher and the GNSS module share uart0 (on different pins). Release the GNSS pins
+    // so the module's NMEA/UBX stream can't corrupt the ESP-ROM bootloader handshake. No-op if GNSS
+    // is absent/inactive. The module stays powered so it hot-starts on resume.
+    gnss->SuspendForUartHandover();
     // Manually stop and start core 1 and watchdog instead of using FlashSafe() and FlashUnsafe() since we aren't
     // actually writing to RP2040 flash memory and we want printouts to work over the USB console.
     StopCore1();
@@ -380,6 +522,9 @@ CPP_AT_CALLBACK(CommsManager::ATESP32FlashCallback) {
     bool flashed_successfully = esp32_flasher.FlashESP32();
     adsbee.EnableWatchdog();
     StartCore1();
+    // Re-claim uart0 for the GNSS module (FlashESP32() deinit'd it) and resume NMEA output. Do this
+    // whether or not the flash succeeded so GNSS always comes back.
+    gnss->ResumeAfterUartHandover();
     if (!flashed_successfully) {
         CPP_AT_ERROR("CommsManager::ATESP32FlashCallback", "Error while flashing ESP32.");
     }
@@ -447,12 +592,151 @@ CPP_AT_CALLBACK(CommsManager::ATEthernetCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+CPP_AT_CALLBACK(CommsManager::ATRemoteIDCallback) {
+    switch (op) {
+        case '?':
+            // Report the requested settings plus the ESP32's resolved live status bitfield (why RID may not be running).
+            // remote_id_status is cached on the low-level ESP32 slave interface (esp32_ll) by ESP32::Update(); the
+            // high-level SPICoprocessor `esp32` only inherits the base interface, which does not carry it.
+            CPP_AT_CMD_PRINTF("=%d,0x%02X(TRANSPORTS),0x%02X(ESP32_STATUS)",
+                              settings_manager.settings.remote_id_rx_enabled,
+                              settings_manager.settings.remote_id_transports, esp32_ll.remote_id_status);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (!CPP_AT_HAS_ARG(0)) {
+                CPP_AT_ERROR("Requires at least one argument. AT+REMOTE_ID=<enabled>[,<transport_mask>]");
+            }
+            CPP_AT_TRY_ARG2NUM(0, settings_manager.settings.remote_id_rx_enabled);
+            if (CPP_AT_HAS_ARG(1)) {
+                CPP_AT_TRY_ARG2NUM(1, settings_manager.settings.remote_id_transports);
+            }
+            CPP_AT_CMD_PRINTF(": remote_id_rx_enabled: %d, transports: 0x%02X\r\n",
+                              settings_manager.settings.remote_id_rx_enabled,
+                              settings_manager.settings.remote_id_transports);
+            CPP_AT_SUCCESS();
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+// Warns when Remote ID transmit is enabled alongside a receiver position source that may not be broadcast. A Remote ID
+// broadcast asserts "this is where I am", so only FIXED (an operator-entered coordinate for this device) and GNSS (this
+// device's own fix) are transmitted; the aircraft-derived sources carry a *received* aircraft's position, and the ESP32
+// suppresses them, transmitting an unknown position instead. Printed rather than logged so it reaches whichever
+// interface issued the command regardless of log level. Advisory only: the setting still takes effect.
+static void WarnIfRemoteIDTxPositionSourceNotTransmittable() {
+    if (!settings_manager.settings.remote_id_tx_enabled) return;
+    SettingsManager::RxPosition::PositionSource source = adsbee.rx_position.source;
+    if (SettingsManager::RxPosition::MayBeTransmittedAsOwnPosition(source)) return;
+    CPP_AT_PRINTF(
+        "WARNING: Remote ID transmit is enabled but AT+RX_POSITION source is %s, which is not this device's own "
+        "position and will NOT be transmitted. An unknown position will be broadcast instead. Use AT+RX_POSITION=FIXED "
+        "or AT+RX_POSITION=GNSS to transmit a position.\r\n",
+        SettingsManager::RxPosition::kPositionSourceStrs[source]);
+}
+
+void ATRemoteIDTxHelpCallback() {
+    CPP_AT_PRINTF(
+        "\t[EXPERIMENTAL] Remote ID is not yet a stable part of the system; its settings and behavior may change in "
+        "future firmware.\r\n"
+        "\tAT+REMOTE_ID_TX=<enabled>[,<transport_mask>[,<uas_id>[,<id_type>[,<ua_type>[,<operator_id>]]]]]\r\n"
+        "\tTransmit Broadcast Remote ID (drone ID) from this device, for use as a Remote ID test transmitter or as a "
+        "combined ADS-B receiver / Remote ID transmitter on a drone. No WiFi AP/STA is required.\r\n"
+        "\ttransport_mask bits: 1=BT4 legacy, 2=BT5 Long Range, 4=WiFi beacon (default 7 = all methods).\r\n"
+        "\tuas_id = UAS serial / registration, up to %d chars ('-' to clear and use this device's serial).\r\n"
+        "\tid_type = [1 SERIAL, 2 CAA_REGISTRATION, 3 UTM_UUID, 4 SESSION_ID].\r\n"
+        "\tua_type = [1 AEROPLANE, 2 HELICOPTER_MULTIROTOR, ... 15 OTHER].\r\n"
+        "\toperator_id = operator registration, up to %d chars ('-' to clear).\r\n"
+        "\tThe transmitted position comes from AT+RX_POSITION, but ONLY from the FIXED and GNSS sources, which\r\n"
+        "\tdescribe this device. The aircraft-derived sources (LOWEST, ICAO) carry a received aircraft's position;\r\n"
+        "\tbroadcasting those would place a fabricated drone on a real aircraft, so an unknown position is sent\r\n"
+        "\tinstead.\r\n"
+        "\tAT+REMOTE_ID_TX?\r\n\tQuery transmit settings and the ESP32's live status bitfield.",
+        SettingsManager::Settings::kRemoteIDIDMaxLen, SettingsManager::Settings::kRemoteIDIDMaxLen);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATRemoteIDTxCallback) {
+    switch (op) {
+        case '?':
+            // Report the requested settings plus the ESP32's resolved live status bitfield (the high byte carries the
+            // transmit state; see RemoteIDManager::Status).
+            CPP_AT_CMD_PRINTF("=%d,0x%02X(TRANSPORTS),%s(UAS_ID),%d(ID_TYPE),%d(UA_TYPE),%s(OPERATOR_ID),0x%04X(ESP32_STATUS)",
+                              settings_manager.settings.remote_id_tx_enabled,
+                              settings_manager.settings.remote_id_tx_transports,
+                              settings_manager.settings.remote_id_tx_uas_id[0] == '\0'
+                                  ? "(device serial)"
+                                  : settings_manager.settings.remote_id_tx_uas_id,
+                              settings_manager.settings.remote_id_tx_uas_id_type,
+                              settings_manager.settings.remote_id_tx_ua_type,
+                              settings_manager.settings.remote_id_tx_operator_id[0] == '\0'
+                                  ? "(none)"
+                                  : settings_manager.settings.remote_id_tx_operator_id,
+                              esp32_ll.remote_id_status);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=': {
+            if (!CPP_AT_HAS_ARG(0)) {
+                CPP_AT_ERROR("Requires at least one argument. AT+REMOTE_ID_TX=<enabled>[,<transport_mask>]");
+            }
+            CPP_AT_TRY_ARG2NUM(0, settings_manager.settings.remote_id_tx_enabled);
+            if (CPP_AT_HAS_ARG(1)) {
+                CPP_AT_TRY_ARG2NUM(1, settings_manager.settings.remote_id_tx_transports);
+            }
+            if (CPP_AT_HAS_ARG(2)) {
+                // "-" clears the UAS ID, which makes the transmitter fall back to this device's own serial number.
+                if (args[2].compare("-") == 0) {
+                    memset(settings_manager.settings.remote_id_tx_uas_id, '\0',
+                           sizeof(settings_manager.settings.remote_id_tx_uas_id));
+                } else {
+                    if (args[2].length() > SettingsManager::Settings::kRemoteIDIDMaxLen) {
+                        CPP_AT_ERROR("UAS ID must be %d characters or fewer, got %d.",
+                                     SettingsManager::Settings::kRemoteIDIDMaxLen, args[2].length());
+                    }
+                    memset(settings_manager.settings.remote_id_tx_uas_id, '\0',
+                           sizeof(settings_manager.settings.remote_id_tx_uas_id));
+                    strncpy(settings_manager.settings.remote_id_tx_uas_id, args[2].data(), args[2].length());
+                }
+            }
+            if (CPP_AT_HAS_ARG(3)) {
+                CPP_AT_TRY_ARG2NUM(3, settings_manager.settings.remote_id_tx_uas_id_type);
+            }
+            if (CPP_AT_HAS_ARG(4)) {
+                CPP_AT_TRY_ARG2NUM(4, settings_manager.settings.remote_id_tx_ua_type);
+            }
+            if (CPP_AT_HAS_ARG(5)) {
+                if (args[5].compare("-") == 0) {
+                    memset(settings_manager.settings.remote_id_tx_operator_id, '\0',
+                           sizeof(settings_manager.settings.remote_id_tx_operator_id));
+                } else {
+                    if (args[5].length() > SettingsManager::Settings::kRemoteIDIDMaxLen) {
+                        CPP_AT_ERROR("Operator ID must be %d characters or fewer, got %d.",
+                                     SettingsManager::Settings::kRemoteIDIDMaxLen, args[5].length());
+                    }
+                    memset(settings_manager.settings.remote_id_tx_operator_id, '\0',
+                           sizeof(settings_manager.settings.remote_id_tx_operator_id));
+                    strncpy(settings_manager.settings.remote_id_tx_operator_id, args[5].data(), args[5].length());
+                }
+            }
+            // Push the new transmit configuration to the ESP32, which owns the radios.
+            settings_manager.SyncToCoprocessors();
+            CPP_AT_CMD_PRINTF(": remote_id_tx_enabled: %d, transports: 0x%02X\r\n",
+                              settings_manager.settings.remote_id_tx_enabled,
+                              settings_manager.settings.remote_id_tx_transports);
+            WarnIfRemoteIDTxPositionSourceNotTransmittable();
+            CPP_AT_SUCCESS();
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 void ATFeedHelpCallback() {
     CPP_AT_PRINTF(
         "\tAT+FEED=<index>,<uri>,<port>,<active>,<protocol>\r\n\tSet details for a "
         "network feed.\r\n\tindex = [0-%d], uri = ip address or URL, feed_port = [0-65535], "
         "active = [0 1], protocol = [BEAST BEAST_RAW].\r\n\t\r\n\tAT+FEED?\r\n\tPrint details for all "
-        "feeds.\r\n\t\r\n\tAT+FEED?<index>\r\n\tPrint details for a specific feed.\r\n\tfeed_index = [0-%d]",
+        "feeds.\r\n\t\r\n\tAT+FEED?<index>\r\n\tPrint details for a specific feed.\r\n\tfeed_index = [0-%d]\r\n",
         SettingsManager::Settings::kMaxNumFeeds - 1, SettingsManager::Settings::kMaxNumFeeds - 1);
 }
 
@@ -868,7 +1152,7 @@ CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
     }
     CPP_AT_PRINTF("\r\n\t<protocol> = ");
     for (uint16_t protocol = 0; protocol < SettingsManager::kNumProtocols; protocol++) {
-        CPP_AT_PRINTF("\t\t%s ", SettingsManager::kReportingProtocolStrs[protocol]);
+        CPP_AT_PRINTF("\r\n\t\t%s ", SettingsManager::kReportingProtocolStrs[protocol]);
     }
     CPP_AT_PRINTF("\r\n\tQuery the reporting protocol used on all interfaces:\r\n");
     CPP_AT_PRINTF("\tAT+PROTOCOL_OUT?\r\n\tPROTOCOL_OUT=<iface>,<protocol>\r\n\t...\r\n");
@@ -1072,11 +1356,84 @@ CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
                 }
             }
             settings_manager.SyncToCoprocessors();
+            WarnIfRemoteIDTxPositionSourceNotTransmittable();
             CPP_AT_SUCCESS();
             break;
         }
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+// Escapes src for embedding inside a JSON string literal (backslash, double quote;
+// control characters are dropped — settings strings shouldn't contain them). Truncates
+// to fit dest. Returns dest so it can be used inline in a printf argument list.
+static const char* JSONEscapeStr(const char* src, char* dest, size_t dest_size) {
+    size_t o = 0;
+    for (size_t i = 0; src[i] != '\0'; i++) {
+        char c = src[i];
+        if (c == '"' || c == '\\') {
+            if (o + 3 >= dest_size) break;
+            dest[o++] = '\\';
+            dest[o++] = c;
+        } else if ((unsigned char)c >= 0x20) {
+            if (o + 2 >= dest_size) break;
+            dest[o++] = c;
+        }
+    }
+    dest[o] = '\0';
+    return dest;
+}
+
+// Prints all settings as one JSON object on a single line: SETTINGS={"CMD":[...],...}.
+// Each value is an array ordered to match the web settings GUI's field list for that
+// command (the writable AT= args plus query-only extras like live status, minus the
+// redacted WiFi STA password), using the same value representations as the individual
+// AT queries (enum strings, 0/1 booleans). Emitted in multiple printf calls to stay
+// under kPrintfBufferMaxSize. Keep in sync with SETTINGS_SCHEMA_1090 in
+// esp/main/server/web/settings.js when adding commands.
+static void PrintSettingsJSON() {
+    char esc[2 * SettingsManager::Settings::kWiFiPasswordMaxLen + 2];
+    const SettingsManager::Settings& s = settings_manager.settings;
+    const SettingsManager::Settings::CoreNetworkSettings& cns = s.core_network_settings;
+
+    CPP_AT_PRINTF("SETTINGS={");
+    CPP_AT_PRINTF("\"BAUD_RATE\":[%lu,%lu],",
+                  (unsigned long)s.baud_rates[SettingsManager::SerialInterface::kCommsUART],
+                  (unsigned long)s.baud_rates[SettingsManager::SerialInterface::kGNSSUART]);
+    CPP_AT_PRINTF("\"BIAS_TEE_ENABLE\":[%d,%d],", adsbee.BiasTeeIsEnabled(), s.subg_bias_tee_enabled);
+    CPP_AT_PRINTF("\"ETHERNET\":[%d],", cns.ethernet_enabled);
+    CPP_AT_PRINTF("\"ESP32_ENABLE\":[%d],", esp32.IsEnabled());
+    CPP_AT_PRINTF("\"GNSS\":[%d,\"%s\",%d],", s.gnss_enabled,
+                  GNSSModuleTypeToStr(SettingsToGNSSModuleType(s.gnss_receiver_type)), s.gnss_notify);
+    CPP_AT_PRINTF("\"HOSTNAME\":[\"%s\"],", JSONEscapeStr(cns.hostname, esc, sizeof(esc)));
+    CPP_AT_PRINTF("\"LED_ENABLE\":[%d],", s.led_enabled);
+    CPP_AT_PRINTF("\"LOG_LEVEL\":[\"%s\"],", SettingsManager::kConsoleLogLevelStrs[s.log_level]);
+    CPP_AT_PRINTF("\"MAVLINK_ID\":[%d,%d],", s.mavlink_system_id, s.mavlink_component_id);
+    CPP_AT_PRINTF("\"PROTOCOL_OUT\":[\"%s\",\"%s\"],",
+                  SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kConsole]],
+                  SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kCommsUART]]);
+    CPP_AT_PRINTF("\"REMOTE_ID\":[%d,%u,\"0x%02X\"],", s.remote_id_rx_enabled, s.remote_id_transports,
+                  esp32_ll.remote_id_status);
+    CPP_AT_PRINTF("\"REMOTE_ID_TX\":[%d,%u,\"%s\",", s.remote_id_tx_enabled, s.remote_id_tx_transports,
+                  JSONEscapeStr(s.remote_id_tx_uas_id, esc, sizeof(esc)));
+    CPP_AT_PRINTF("%d,%d,\"%s\",\"0x%04X\"],", s.remote_id_tx_uas_id_type, s.remote_id_tx_ua_type,
+                  JSONEscapeStr(s.remote_id_tx_operator_id, esc, sizeof(esc)), esp32_ll.remote_id_status);
+    CPP_AT_PRINTF("\"RX_ENABLE\":[%d,%d],", adsbee.Receiver1090IsEnabled(), s.subg_rx_enabled);
+    CPP_AT_PRINTF("\"RX_POSITION\":[\"%s\",\"%s\",%.6f,%.6f,%d,%d,%.1f,%d,\"%06X\"],",
+                  SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
+                  adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", adsbee.rx_position.latitude_deg,
+                  adsbee.rx_position.longitude_deg, (int)adsbee.rx_position.gnss_altitude_ft,
+                  (int)adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg,
+                  (int)adsbee.rx_position.speed_kts, (unsigned)adsbee.rx_position.icao_address);
+    CPP_AT_PRINTF("\"SUBG_ENABLE\":[\"%s\"],",
+                  SettingsManager::EnableStateToATValueStr(adsbee.subg_radio_ll.IsEnabledState()));
+    int tl_offset_mv = adsbee.GetTLOffsetMilliVolts();
+    CPP_AT_PRINTF("\"TL_OFFSET\":[%d,\"%d dBm\"],", tl_offset_mv, adsbee.AD8313MilliVoltsTodBm(tl_offset_mv));
+    CPP_AT_PRINTF("\"WATCHDOG\":[%lu],", (unsigned long)adsbee.GetWatchdogTimeoutSec());
+    CPP_AT_PRINTF("\"WIFI_AP\":[%d,\"%s\",", cns.wifi_ap_enabled, JSONEscapeStr(cns.wifi_ap_ssid, esc, sizeof(esc)));
+    CPP_AT_PRINTF("\"%s\",%d],", JSONEscapeStr(cns.wifi_ap_password, esc, sizeof(esc)), cns.wifi_ap_channel);
+    CPP_AT_PRINTF("\"WIFI_STA\":[%d,\"%s\"]", cns.wifi_sta_enabled, JSONEscapeStr(cns.wifi_sta_ssid, esc, sizeof(esc)));
+    CPP_AT_PRINTF("}\r\n");
 }
 
 CPP_AT_CALLBACK(CommsManager::ATSettingsCallback) {
@@ -1107,6 +1464,9 @@ CPP_AT_CALLBACK(CommsManager::ATSettingsCallback) {
                 if (args[0].compare("DUMP") == 0) {
                     // Print settings in AT format.
                     settings_manager.PrintAT();
+                } else if (args[0].compare("JSON") == 0) {
+                    // Print settings as a single-line JSON object (used by the web GUI).
+                    PrintSettingsJSON();
                 } else {
                     CPP_AT_ERROR("Invalid argument %s.", args[0].data());
                 }
@@ -1414,6 +1774,21 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "sending any data out to the internet (disables telemetry/reporting to all feed servers), or 1 "
                     "to allow feeds marked active.\r\n\tAT+FEED_ENABLE?\r\n\tQuery whether outbound feeds are enabled.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFeedEnableCallback, comms_manager)},
+    {.command = "GNSS",
+     .min_args = 0,
+     .max_args = 3,
+     .help_string = "AT+GNSS=enable: <0|1>[, type: <NONE|GENERIC|UBX_MIA>[,notify: <0|1>]]\r\n\tEnable or disable GNSS power, optionally "
+                    "select the GNSS type, and enable unsolicited AT notifications for when the GNSS fix becomes valid or invalid. Notify defaults to off. "
+                    "Type is optional, when not present the last configured type is reused, default is NONE; GNSS cannot be enabled while the saved type is NONE."
+                    "\r\n\tAT+GNSS?\r\n\tQuery the GNSS system state, type, and notification setting",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSCallback, comms_manager)},
+    {.command = "GNSS_FIX",
+     .min_args = 0,
+     .max_args = 0,
+     .help_string = "AT+GNSS_FIX?\r\n\tReturn fix validity, latitude and longitude in degrees, altitude in feet, "
+                    "heading in degrees true, groundspeed in knots, active satellites, UTC time, and PPS count "
+                    "since the last GNSS enable or disable operation.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSFixCallback, comms_manager)},
     {.command = "HOSTNAME",
      .min_args = 0,
      .max_args = 1,
@@ -1421,6 +1796,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "interfaces.\r\n\tAT+HOSTNAME?\r\n\tQuery the "
                     "hostname used for all network interfaces.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATHostnameCallback, comms_manager)},
+    {.command = "LED_BLINK",
+     .min_args = 2,
+     .max_args = 4,
+     .help_string = "AT+LED_BLINK=<duration_ms>,<led>[,<led>...]\r\n\tForce one or more LEDs (1090, SUBG, NETWORK, or "
+                    "ALL) solid ON for duration_ms (1-60000) then off.\r\n\tBypasses AT+LED_ENABLE; intended for test "
+                    "fixtures. Returns immediately.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLEDBlinkCallback, comms_manager)},
     {.command = "LED_ENABLE",
      .min_args = 0,
      .max_args = 1,
@@ -1431,7 +1813,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 1,
      .help_string =
-         "AT+LOG_LEVEL=<log_level [SILENT ERRORS WARNINGS LOGS]>\r\n\tSet how much stuff gets printed to the "
+         "AT+LOG_LEVEL=<log_level [SILENT ERRORS WARNINGS INFO]>\r\n\tSet how much stuff gets printed to the "
          "console.\r\n\t",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLogLevelCallback, comms_manager)},
     {.command = "MAVLINK_ID",
@@ -1460,6 +1842,22 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 0,
      .help_string = "REBOOT\r\n\tReboots the RP2040.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRebootCallback, comms_manager)},
+    {.command = "REMOTE_ID",
+     .min_args = 0,
+     .max_args = 2,
+     .help_string =
+         "[EXPERIMENTAL] Remote ID is not yet a stable part of the system; its settings and behavior may change in "
+         "future firmware.\r\n\t"
+         "AT+REMOTE_ID=<enabled>[,<transport_mask>]\r\n\tEnable/disable Broadcast Remote ID (drone) reception on the "
+         "ESP32.\r\n\ttransport_mask bits: 1=BT4 legacy, 2=BT5 Long Range, 4=WiFi beacon (default 7).\r\n\tOn "
+         "non-PSRAM builds Remote ID only runs when WiFi AP/STA are disabled and Ethernet is up.\r\n\t"
+         "AT+REMOTE_ID?\r\n\tQuery Remote ID settings and the ESP32's live status bitfield.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRemoteIDCallback, comms_manager)},
+    {.command = "REMOTE_ID_TX",
+     .min_args = 0,
+     .max_args = 6,
+     .help_callback = ATRemoteIDTxHelpCallback,
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRemoteIDTxCallback, comms_manager)},
     {.command = "RX_ENABLE",
      .min_args = 0,
      .max_args = 3,
@@ -1477,7 +1875,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 3,
      .help_string = "Load, save, or reset nonvolatile settings.\r\n\tAT+SETTINGS=<op [LOAD SAVE RESET]>\r\n\t"
                     "Display nonvolatile settings.\r\n\tAT+SETTINGS?\r\n\t+SETTINGS=...\r\n\tDump settings in AT "
-                    "command format.\r\n\tAT+SETTINGS?DUMP\r\n\t+SETTINGS=...",
+                    "command format.\r\n\tAT+SETTINGS?DUMP\r\n\t+SETTINGS=...\r\n\tDump settings as a "
+                    "single-line JSON object keyed by AT command.\r\n\tAT+SETTINGS?JSON\r\n\tSETTINGS={...}",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATSettingsCallback, comms_manager)},
     {.command = "SUBG_ENABLE",
      .min_args = 0,

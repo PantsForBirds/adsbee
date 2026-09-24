@@ -225,6 +225,10 @@ bool CommsManager::WiFiInit() {
 
     if (wifi_ap_enabled) {
         CONSOLE_INFO("CommsManager::WiFiInit", "WiFi AP started. SSID:%s password:%s", wifi_ap_ssid, wifi_ap_password);
+        // Lazily create the AP broadcast queue now that the AP is actually enabled (see the CommsManager constructor).
+        if (wifi_ap_message_queue_ == nullptr) {
+            wifi_ap_message_queue_ = xQueueCreate(kWiFiMessageQueueLen, sizeof(NetworkMessage));
+        }
         xTaskCreate(wifi_access_point_task, "wifi_ap_task", 2 * 4096, &wifi_ap_task_handle, kWiFiAPTaskPriority, NULL);
     }
     if (wifi_sta_enabled) {
@@ -320,7 +324,8 @@ bool CommsManager::IPWANSendRawPacketCompositeArray(uint8_t* raw_packets_buf) {
 }
 
 bool CommsManager::WiFiAccessPointSendMessageToAllStations(NetworkMessage& message) {
-    if (!wifi_ap_enabled) {
+    if (!wifi_ap_enabled || wifi_ap_message_queue_ == nullptr) {
+        // The queue is created lazily in WiFiInit() only when the AP is enabled; on an Ethernet-only unit it is null.
         CONSOLE_WARNING("CommsManager::WiFiAccessPointSendMessageToAllStations",
                         "Can't push to WiFi AP message queue if AP is not running.");
         return false;  // Task not started yet, pushing to queue could create an overflow.

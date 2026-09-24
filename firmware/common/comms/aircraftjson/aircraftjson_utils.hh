@@ -385,3 +385,111 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
     if (n >= max) return -1;  // Buffer overrun.
     return n;
 }
+
+/**
+ * Serializes a RemoteIDAircraft (Broadcast Remote ID drone) to a single-line readsb-compatible JSON object. The
+ * standard readsb keys (hex/lat/lon/alt_geom/gs/track) are populated from the Aircraft base class so drones render on a
+ * generic map, and Remote-ID-specific fields are added under "rid_*" keys for a richer UI. The hex id is the MAC-derived
+ * address with a '~' prefix (non-ICAO).
+ * @param[out] buf Character array of at least kAircraftJSONMessageStrMaxLen bytes.
+ * @param[in] aircraft RemoteIDAircraft to serialize.
+ * @retval Number of characters written (excluding the NUL terminator), or negative on error.
+ */
+inline int16_t WriteAircraftJSONRemoteIDAircraftStr(char buf[], const RemoteIDAircraft& aircraft) {
+    int16_t n = 0;
+    const int16_t max = kAircraftJSONMessageStrMaxLen;
+
+    // hex: MAC-derived 24-bit address, '~' prefix marks it as non-ICAO / self-assigned.
+    n += snprintf(buf + n, max - n,
+#if defined(ON_PICO) || defined(ON_HOST)
+                  "{\"hex\":\"~%06x\"",
+#else
+                  "{\"hex\":\"~%06lx\"",
+#endif
+                  aircraft.address & 0x00FFFFFF);
+    n = n < max ? n : max;
+
+    n += snprintf(buf + n, max - n, ",\"type\":\"remote_id\"");
+    n = n < max ? n : max;
+
+    // Use the UAS serial / registration as the "flight" label so it shows in generic aircraft lists.
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagBasicIDValid) && aircraft.uas_id[0] != '\0') {
+        n += snprintf(buf + n, max - n, ",\"flight\":\"%s\"", aircraft.uas_id);
+        n = n < max ? n : max;
+    }
+
+    // category: readsb "B7" = "Unmanned Aerial Vehicle".
+    n += snprintf(buf + n, max - n, ",\"category\":\"B7\"");
+    n = n < max ? n : max;
+
+    // lat / lon
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagPositionValid)) {
+        n += snprintf(buf + n, max - n, ",\"lat\":%.5f,\"lon\":%.5f", aircraft.latitude_deg, aircraft.longitude_deg);
+        n = n < max ? n : max;
+    }
+
+    // alt_geom (geometric / WGS84 altitude)
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagGNSSAltitudeValid)) {
+        n += snprintf(buf + n, max - n,
+#if defined(ON_PICO) || defined(ON_HOST)
+                      ",\"alt_geom\":%d",
+#else
+                      ",\"alt_geom\":%ld",
+#endif
+                      aircraft.gnss_altitude_ft);
+        n = n < max ? n : max;
+    }
+
+    // gs (ground speed, kts)
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagHorizontalSpeedValid)) {
+        n += snprintf(buf + n, max - n,
+#if defined(ON_PICO) || defined(ON_HOST)
+                      ",\"gs\":%d",
+#else
+                      ",\"gs\":%ld",
+#endif
+                      aircraft.speed_kts);
+        n = n < max ? n : max;
+    }
+
+    // track
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagDirectionValid)) {
+        n += snprintf(buf + n, max - n, ",\"track\":%.1f", aircraft.direction_deg);
+        n = n < max ? n : max;
+    }
+
+    // RSSI (Remote ID advertisements always carry a signal strength).
+    n += snprintf(buf + n, max - n, ",\"rssi\":%d", aircraft.last_message_signal_strength_dbm);
+    n = n < max ? n : max;
+
+    // Remote-ID-specific fields for a richer UI.
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagBasicIDValid)) {
+        n += snprintf(buf + n, max - n, ",\"rid_uas_id\":\"%s\",\"rid_id_type\":%u,\"rid_ua_type\":%u", aircraft.uas_id,
+                      aircraft.uas_id_type, aircraft.ua_type);
+        n = n < max ? n : max;
+    }
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagOperatorIDValid)) {
+        n += snprintf(buf + n, max - n, ",\"rid_operator_id\":\"%s\"", aircraft.operator_id);
+        n = n < max ? n : max;
+    }
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagOperatorPositionValid)) {
+        n += snprintf(buf + n, max - n, ",\"rid_operator_lat\":%.5f,\"rid_operator_lon\":%.5f",
+                      aircraft.operator_latitude_deg, aircraft.operator_longitude_deg);
+        n = n < max ? n : max;
+    }
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagHeightValid)) {
+        n += snprintf(buf + n, max - n,
+#if defined(ON_PICO) || defined(ON_HOST)
+                      ",\"rid_height\":%d",
+#else
+                      ",\"rid_height\":%ld",
+#endif
+                      aircraft.height_above_takeoff_ft);
+        n = n < max ? n : max;
+    }
+
+    n += snprintf(buf + n, max - n, "}\n");
+
+    if (n >= max) return -1;  // Buffer overrun.
+    return n;
+}

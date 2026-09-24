@@ -65,7 +65,6 @@ class DecodedModeSPacket {
    public:
     static const uint16_t kMaxPacketLenWords32 = RawModeSPacket::kMaxPacketLenWords32;
     static const uint16_t kDFNumBits = 5;  // [1-5] Downlink Format bitlength.
-    static const uint16_t kDebugStrLen = 200;
 
     // Bits 1-5: Downlink Format (DF)
     enum DownlinkFormat {
@@ -128,7 +127,7 @@ class DecodedModeSPacket {
     /**
      * Default constructor.
      */
-    DecodedModeSPacket() : raw("") { debug_string[0] = '\0'; };
+    DecodedModeSPacket() : raw("") {};
 
     DownlinkFormat GetDownlinkFormatEnum();
 
@@ -152,8 +151,6 @@ class DecodedModeSPacket {
      */
     uint32_t CalculateCRC24(uint16_t packet_len_bits = RawModeSPacket::kExtendedSquitterPacketLenBits) const;
 
-    char debug_string[kDebugStrLen] = "";
-
     bool is_valid = false;
     bool is_address_parity = false;
     RawModeSPacket raw;
@@ -162,6 +159,10 @@ class DecodedModeSPacket {
     uint16_t downlink_format = static_cast<uint16_t>(kDownlinkFormatInvalid);
 
     uint32_t parity_interrogator_id = 0;
+    // Calculated CRC XORed with the received parity field. Zero for a valid packet; for address-parity downlink
+    // formats this is the ICAO address (or interrogator ID); for other formats it is the CRC syndrome used for
+    // single bit error correction.
+    uint32_t crc_syndrome = 0;
 
    private:
     void ConstructModeSPacket();

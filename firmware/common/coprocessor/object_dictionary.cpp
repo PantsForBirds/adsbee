@@ -6,6 +6,8 @@
 #include "cpu_utils.hh"
 #include "device_info.hh"
 #include "esp_system.h"
+#include "pico.hh"               // pico_ll.ForceBlinkNetworkLED() for kAddrLEDBlink.
+#include "remote_id_manager.hh"  // remote_id_manager.GetOutQueue() for the ESP32 -> RP2040 Remote ID pull.
 #include "task_utils.hh"
 #ifdef CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 #include "esp_core_dump.h"
@@ -13,6 +15,7 @@
 #endif
 #elif defined(ON_TI)
 #include "cpu_utils.hh"
+#include "pico.hh"  // pico_ll.BlinkSubGLED() for kAddrLEDBlink.
 #endif
 
 #include "comms.hh"
@@ -21,7 +24,7 @@ const uint8_t ObjectDictionary::kFirmwareVersionMajor = 0;
 const uint8_t ObjectDictionary::kFirmwareVersionMinor = 9;
 const uint8_t ObjectDictionary::kFirmwareVersionPatch = 2;
 // NOTE: Indicate a final release with RC = 0.
-const uint8_t ObjectDictionary::kFirmwareVersionReleaseCandidate = 0;
+const uint8_t ObjectDictionary::kFirmwareVersionReleaseCandidate = 2;
 
 const uint32_t ObjectDictionary::kFirmwareVersion = (kFirmwareVersionMajor << 24) | (kFirmwareVersionMinor << 16) |
                                                     (kFirmwareVersionPatch << 8) | kFirmwareVersionReleaseCandidate;
@@ -33,18 +36,40 @@ extern CPUMonitor cpu_monitor;
 #endif
 
 #ifdef ON_COPRO_SLAVE
+/**
+ * Returns true if a write or read of buf_len bytes at offset fits inside an object of object_len bytes, otherwise logs
+ * an error naming the object and returns false. Guards every memcpy into or out of a fixed size object so that a peer
+ * running a different struct layout (or a corrupted transaction) can't overrun the object.
+ */
+static bool CheckObjectBounds(const char* tag, const char* object_name, uint16_t offset, uint16_t buf_len,
+                              size_t object_len) {
+    if ((size_t)offset + buf_len > object_len) {
+        CONSOLE_ERROR(tag, "%d Bytes at offset %d exceeds the %d Byte %s object.", buf_len, offset, (int)object_len,
+                      object_name);
+        return false;
+    }
+    return true;
+}
+
 bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, uint16_t offset) {
     switch (addr) {
         case kAddrScratch:
             // Warning: printing here will cause a timeout and tests will fail.
             // CONSOLE_INFO("ObjectDictionary::SetBytes", "Setting %d settings Bytes at offset %d.", buf_len,
             // offset);
+            if (!CheckObjectBounds("ObjectDictionary::SetBytes", "scratch", offset, buf_len, sizeof(scratch_))) {
+                return false;
+            }
             memcpy((uint8_t*)&scratch_ + offset, buf, buf_len);
             break;
         case kAddrSettingsData:
             // Warning: printing here will cause a timeout and tests will fail.
             // CONSOLE_INFO("ObjectDictionary::SetBytes", "Setting %d settings Bytes at offset %d.", buf_len,
             // offset);
+            if (!CheckObjectBounds("ObjectDictionary::SetBytes", "settings", offset, buf_len,
+                                   sizeof(SettingsManager::Settings))) {
+                return false;
+            }
             memcpy((uint8_t*)&(settings_manager.settings) + offset, buf, buf_len);
             if (offset + buf_len == sizeof(SettingsManager::Settings)) {
                 settings_manager.Apply();
@@ -52,7 +77,14 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
             }
             break;
         case kAddrRollQueue: {
-            // Ignore offset since we only allow full writes for this command.
+            // Only full writes are allowed for this command: a roll request is a single small struct, so a partial or
+            // offset write can only come from a malformed transaction and must not execute a roll.
+            if (buf_len != sizeof(RollQueueRequest) || offset != 0) {
+                CONSOLE_ERROR("ObjectDictionary::SetBytes",
+                              "Buffer length %d and offset %d for writing RollQueueRequest must be exactly %d and 0.",
+                              buf_len, offset, (int)sizeof(RollQueueRequest));
+                return false;
+            }
             RollQueueRequest roll_request;
             memcpy(&roll_request, buf, sizeof(RollQueueRequest));
             switch (roll_request.queue_id) {
@@ -125,8 +157,17 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
         }
 #endif
         case kAddrAircraftDictionaryMetrics: {
+            // Only whole-struct writes are meaningful here. A length mismatch means the RP2040 and ESP32 were built
+            // with different AircraftDictionary::Metrics layouts; reject it loudly instead of overrunning the stack.
+            if (offset != 0 || buf_len != sizeof(AircraftDictionary::Metrics)) {
+                CONSOLE_ERROR("ObjectDictionary::SetBytes",
+                              "AircraftDictionary::Metrics write of %d Bytes at offset %d does not match the %d Byte "
+                              "struct; RP2040 and ESP32 firmware are out of sync.",
+                              buf_len, offset, (int)sizeof(AircraftDictionary::Metrics));
+                return false;
+            }
             AircraftDictionary::Metrics rp2040_metrics;
-            memcpy(&rp2040_metrics, buf + offset, buf_len);
+            memcpy(&rp2040_metrics, buf, sizeof(AircraftDictionary::Metrics));
             xQueueSend(adsbee_server.rp2040_aircraft_dictionary_metrics_queue, &rp2040_metrics, 0);
             break;
         }
@@ -152,7 +193,31 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
             memcpy(&composite_device_status, buf, sizeof(CompositeDeviceStatus));
             break;
         }
+        case kAddrLEDBlink: {
+            if (buf_len != sizeof(uint32_t) || offset != 0) {
+                CONSOLE_ERROR("ObjectDictionary::SetBytes",
+                              "Buffer length %d and offset %d for writing LED blink duration must be exactly %d and 0.",
+                              buf_len, offset, sizeof(uint32_t));
+                return false;
+            }
+            uint32_t duration_ms;
+            memcpy(&duration_ms, buf, sizeof(duration_ms));
+            pico_ll.ForceBlinkNetworkLED(duration_ms);
+            break;
+        }
 #elif defined(ON_TI)
+        case kAddrLEDBlink: {
+            if (buf_len != sizeof(uint32_t) || offset != 0) {
+                CONSOLE_ERROR("ObjectDictionary::SetBytes",
+                              "Buffer length %d and offset %d for writing LED blink duration must be exactly %d and 0.",
+                              buf_len, offset, sizeof(uint32_t));
+                return false;
+            }
+            uint32_t duration_ms;
+            memcpy(&duration_ms, buf, sizeof(duration_ms));
+            pico_ll.ForceBlinkSubGLED(duration_ms);
+            break;
+        }
 #endif
         default:
             CONSOLE_ERROR("SPICoprocessor::SetBytes", "No behavior implemented for writing to address 0x%x.", addr);
@@ -164,29 +229,45 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
 bool ObjectDictionary::GetBytes(Address addr, uint8_t* buf, uint16_t buf_len, uint16_t offset) {
     switch (addr) {
         case kAddrFirmwareVersion:
+            if (!CheckObjectBounds("ObjectDictionary::GetBytes", "firmware version", offset, buf_len,
+                                   sizeof(kFirmwareVersion))) {
+                return false;
+            }
             memcpy(buf, (uint8_t*)(&kFirmwareVersion) + offset, buf_len);
             break;
         case kAddrScratch:
             // Warning: printing here will cause a timeout and tests will fail.
             // CONSOLE_INFO("ObjectDictionary::GetBytes", "Getting %d scratch Bytes at offset %d.", buf_len,
             // offset);
+            if (!CheckObjectBounds("ObjectDictionary::GetBytes", "scratch", offset, buf_len, sizeof(scratch_))) {
+                return false;
+            }
             memcpy(buf, (uint8_t*)(&scratch_) + offset, buf_len);
             break;
         case kAddrSettingsData:
             // Warning: printing here will cause a timeout and tests will fail.
             // CONSOLE_INFO("ObjectDictionary::GetBytes", "Getting %d settings Bytes at offset %d.",
             // buf_len, offset);
+            if (!CheckObjectBounds("ObjectDictionary::GetBytes", "settings", offset, buf_len,
+                                   sizeof(SettingsManager::Settings))) {
+                return false;
+            }
             memcpy(buf, (uint8_t*)&(settings_manager.settings) + offset, buf_len);
             break;
         case kAddrDeviceStatus: {
+            if (!CheckObjectBounds("ObjectDictionary::GetBytes", "device status", offset, buf_len,
+                                   sizeof(device_status))) {
+                return false;
+            }
             UpdateDeviceStatus();
             memcpy(buf, (uint8_t*)&device_status + offset, buf_len);
             break;
         }
         case kAddrLogMessages: {
-            // RP2040 reading log messages from the ESP32.
-            // Pack as many pending log messages as will fit in the buffer.
-            PackLogMessages(buf, buf_len, log_message_queue, kLogMessageQueueDepth);
+            // RP2040 reading log messages from the ESP32. Offset-aware FIFO read (see PackLogMessages and the
+            // kAddrConsole handler): a log burst whose packed size exceeds one SPI transaction is read in chunks with an
+            // increasing byte offset, so we forward `offset` to serve the correct window of the packed stream.
+            PackLogMessages(buf, buf_len, log_message_queue, kLogMessageQueueDepth, offset);
             break;
         }
         case kAddrSCCommandRequests: {
@@ -212,13 +293,23 @@ bool ObjectDictionary::GetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
         }
 #ifdef ON_ESP32
         case kAddrESP32DeviceInfo: {
+            // NOTE: offset is a byte offset, so it must be applied to a byte pointer (not to the struct pointer, which
+            // would step by whole structs and read off the end of the stack).
+            if (!CheckObjectBounds("ObjectDictionary::GetBytes", "ESP32 device info", offset, buf_len,
+                                   sizeof(ESP32DeviceInfo))) {
+                return false;
+            }
             ESP32DeviceInfo esp32_device_info = GetESP32DeviceInfo();
-            memcpy(buf, &esp32_device_info + offset, buf_len);
+            memcpy(buf, (uint8_t*)&esp32_device_info + offset, buf_len);
             break;
         }
         case kAddrESP32NetworkInfo: {
+            if (!CheckObjectBounds("ObjectDictionary::GetBytes", "ESP32 network info", offset, buf_len,
+                                   sizeof(ESP32NetworkInfo))) {
+                return false;
+            }
             ESP32NetworkInfo network_info = comms_manager.GetNetworkInfo();
-            memcpy(buf, &network_info + offset, buf_len);
+            memcpy(buf, (uint8_t*)&network_info + offset, buf_len);
             break;
         }
         case kAddrESP32RebootInfo: {
@@ -342,30 +433,64 @@ bool ObjectDictionary::GetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
             break;
         }
         case kAddrConsole: {
+            // Offset-aware FIFO read. SPICoprocessor::Read splits reads larger than one SPI transaction into multiple
+            // PartialReads with an increasing byte offset (e.g. a 4000-Byte console read becomes chunk 1 [offset 0] +
+            // chunk 2 [offset ~2045] when kSPITransactionMaxLenBytes is 2048). This handler MUST honor `offset` and peek
+            // the queue starting at `offset`, otherwise a multi-chunk read re-serves the head of the queue and corrupts
+            // the tail of the reassembled buffer (this silently broke network-console OTA when the transaction size was
+            // reduced 4096->2048). The queue is only rolled after the full Read completes, and concurrent producers only
+            // append at the tail, so head-relative indices [offset, offset + buf_len) are stable across chunks.
             if (xSemaphoreTake(object_dictionary.network_console_rx_queue_mutex,
                                pdMS_TO_TICKS(kNetworkConsoleMutexTimeoutMs)) != pdTRUE) {
                 CONSOLE_ERROR("ObjectDictionary::GetBytes",
                               "Timed out waiting for network console RX queue mutex; skipping console read.");
                 return false;
             }
-            if (network_console_rx_queue.Length() < buf_len) {
-                CONSOLE_ERROR("ObjectDictionary::GetBytes",
-                              "Buffer length %d of network console message to read is larger than RX queue length %d.",
-                              buf_len, network_console_rx_queue.Length());
+            if (network_console_rx_queue.Length() < offset + buf_len) {
+                CONSOLE_ERROR(
+                    "ObjectDictionary::GetBytes",
+                    "Network console read of %d Bytes at offset %d exceeds RX queue length %d.", buf_len, offset,
+                    network_console_rx_queue.Length());
                 xSemaphoreGive(object_dictionary.network_console_rx_queue_mutex);
                 return false;
             }
             for (uint16_t i = 0; i < buf_len; i++) {
                 char ch;
-                if (!network_console_rx_queue.Peek(ch, i)) {
+                if (!network_console_rx_queue.Peek(ch, offset + i)) {
                     CONSOLE_ERROR("ObjectDictionary::GetBytes",
-                                  "Failed to peek character %d from network console RX queue.", i);
+                                  "Failed to peek character %d from network console RX queue.", offset + i);
                     xSemaphoreGive(object_dictionary.network_console_rx_queue_mutex);
                     return false;
                 }
                 buf[i] = static_cast<uint8_t>(ch);
             }
             xSemaphoreGive(object_dictionary.network_console_rx_queue_mutex);
+            break;
+        }
+        case kAddrCompositeArrayRawPackets: {
+            // ESP32 -> RP2040 direction: pack the Remote ID packets the ESP32 has received over BLE/WiFi so the RP2040
+            // can ingest them into its own AircraftDictionary (which drives serial reporting). Mode S and UAT flow the
+            // other direction (RP2040 -> ESP32), so only the Remote ID queue is packed here.
+            if (offset != 0) {
+                CONSOLE_ERROR("ObjectDictionary::GetBytes",
+                              "Offset %d for reading CompositeArrayRawPackets not supported, must be 0.", offset);
+                return false;
+            }
+            if (buf_len < sizeof(CompositeArray::RawPackets::Header)) {
+                CONSOLE_ERROR("ObjectDictionary::GetBytes",
+                              "Buffer length %d for reading CompositeArrayRawPackets must be at least %d.", buf_len,
+                              sizeof(CompositeArray::RawPackets::Header));
+                return false;
+            }
+
+            CompositeArray::RawPackets raw_packets = CompositeArray::PackRawPacketsBuffer(
+                buf, buf_len, nullptr, nullptr, nullptr, remote_id_manager.GetOutQueue());
+            if (raw_packets.IsValid() == false) {
+                CONSOLE_ERROR("ObjectDictionary::GetBytes",
+                              "Failed to pack CompositeArray::RawPackets into buffer for reading.");
+                return false;
+            }
+
             break;
         }
 #elif defined(ON_TI)
@@ -466,6 +591,11 @@ void ObjectDictionary::UpdateDeviceStatus() {
         static_cast<uint32_t>(num_log_messages * LogMessage::kHeaderSize);
     device_status.num_queued_sc_command_requests = sc_command_request_queue.Length();
     device_status.num_queued_network_console_rx_chars = num_network_console_rx_chars;
+    // Length of Remote ID packets queued for the RP2040 to pull (header-only == nothing pending). The RP2040 polls this
+    // in ESP32::Update() and issues a kAddrCompositeArrayRawPackets read when it exceeds the header size. Mirrors the
+    // CC1312's pending_raw_packets_len_bytes pull mechanism (see the ON_TI branch below).
+    device_status.pending_raw_packets_len_bytes = CompositeArray::CalculateRawPacketsBufferLength(
+        nullptr, nullptr, nullptr, remote_id_manager.GetOutQueue());
 #elif defined(ON_TI)
     device_status = {
         .timestamp_ms = get_time_since_boot_ms(),
@@ -496,22 +626,49 @@ void ObjectDictionary::UpdateDeviceStatus() {
 
 uint16_t ObjectDictionary::PackLogMessages(uint8_t* buf, uint16_t buf_len,
                                            PFBQueue<ObjectDictionary::LogMessage>& log_message_queue,
-                                           uint16_t num_messages) {
-    uint16_t bytes_written = 0;
+                                           uint16_t num_messages, uint16_t offset) {
+    // Offset-aware FIFO pack: fill buf with the byte window [offset, offset + buf_len) of the concatenated packed
+    // log-message stream, where each message packs to (kHeaderSize + num_chars + 1) Bytes. This is required so that
+    // SPICoprocessor::Read's multi-transaction (chunked) reads reassemble correctly: when the packed stream exceeds one
+    // SPI transaction it is read in chunks with increasing byte offset, and a chunk boundary can fall in the middle of a
+    // message. We copy the intersection of each message's stream range with the requested window. With offset == 0 and a
+    // buf_len large enough to hold whole messages (the common single-transaction case) this is byte-identical to a
+    // simple head-packed stream. See the matching offset-aware kAddrConsole handler; any FIFO-backed object read this
+    // way MUST honor offset or reject non-zero offset, or a future transaction-size change silently corrupts it.
+    const uint32_t window_start = offset;
+    const uint32_t window_end = static_cast<uint32_t>(offset) + buf_len;
+    uint32_t stream_pos = 0;     // Byte position of the current message within the full packed stream.
+    uint16_t bytes_written = 0;  // Furthest byte written into buf, relative to window_start.
     for (uint16_t i = 0; i < num_messages; i++) {
         LogMessage log_message;
         if (!log_message_queue.Peek(log_message, i)) {
             break;  // No more messages to pack.
         }
-        uint16_t buf_bytes_remaining = buf_len - bytes_written;
-        uint16_t log_message_packed_size =
-            LogMessage::kHeaderSize + log_message.num_chars + 1;  // +1 for null terminator
-        if (buf_bytes_remaining < log_message_packed_size) {
-            break;  // Not enough space to write the next log message.
+        const uint16_t packed_size = LogMessage::kHeaderSize + log_message.num_chars + 1;  // +1 for null terminator.
+        const uint32_t msg_start = stream_pos;
+        const uint32_t msg_end = stream_pos + packed_size;
+        // Intersect this message's stream range [msg_start, msg_end) with the requested window.
+        const uint32_t copy_start = msg_start > window_start ? msg_start : window_start;
+        const uint32_t copy_end = msg_end < window_end ? msg_end : window_end;
+        if (copy_start < copy_end) {
+            if (msg_start >= window_start && msg_end <= window_end) {
+                // Whole message fits in the window: copy directly (common case, offset 0).
+                uint8_t* dst = buf + (msg_start - window_start);
+                memcpy(dst, &log_message, packed_size - 1);
+                dst[packed_size - 1] = '\0';  // Null terminate the message.
+            } else {
+                // Message straddles a chunk boundary: materialize its packed bytes and copy the overlapping slice.
+                uint8_t packed[LogMessage::kHeaderSize + kLogMessageMaxNumChars + 1];
+                memcpy(packed, &log_message, packed_size - 1);
+                packed[packed_size - 1] = '\0';  // Null terminate the message.
+                memcpy(buf + (copy_start - window_start), packed + (copy_start - msg_start), copy_end - copy_start);
+            }
+            bytes_written = static_cast<uint16_t>(copy_end - window_start);
         }
-        memcpy(buf + bytes_written, &log_message, log_message_packed_size - 1);
-        buf[bytes_written + log_message_packed_size - 1] = '\0';  // Null terminate the message.
-        bytes_written += log_message_packed_size;
+        stream_pos = msg_end;
+        if (stream_pos >= window_end) {
+            break;  // Filled the requested window.
+        }
         // Don't pop log messages here, wait for the roll request to do that.
     }
     return bytes_written;

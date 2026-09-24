@@ -234,6 +234,41 @@ uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t 
     return WriteGDL90Message(to_buf, to_buf_num_bytes, message_buf, kMessageBufLenBytes);
 }
 
+bool GDL90Reporter::IsValidOwnshipSource(SettingsManager::RxPosition::PositionSource source) {
+    return source == SettingsManager::RxPosition::kPositionSourceGNSS ||
+           source == SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;
+}
+
+bool GDL90Reporter::BuildOwnshipReportData(GDL90TargetReportData& data,
+                                           const SettingsManager::RxPosition& rx_position,
+                                           bool rx_position_available) {
+    data = {};
+    memcpy(data.callsign, "ADSBEE  ", sizeof(data.callsign) - 1);
+    data.address_type = GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress;
+
+    bool have_position = rx_position_available && IsValidOwnshipSource(rx_position.source);
+    if (!have_position) {
+        return false;
+    }
+
+    bool from_tracked_aircraft = rx_position.source == SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;
+    data.latitude_deg = rx_position.latitude_deg;
+    data.longitude_deg = rx_position.longitude_deg;
+    // The ownship report altitude is pressure altitude. A GNSS fix carries no baro data, so report it invalid
+    // (INT32_MIN encodes as 0xFFF) rather than substituting geometric altitude or a stale value.
+    data.altitude_ft = from_tracked_aircraft ? rx_position.baro_altitude_ft : INT32_MIN;
+    data.speed_kts = rx_position.speed_kts;
+    data.direction_deg = rx_position.heading_deg;
+    // Only carry a real ICAO address when bootstrapping off a tracked aircraft; a GNSS ownship is self-assigned.
+    data.participant_address = from_tracked_aircraft ? rx_position.icao_address : 0x0;
+    // Non-zero NIC so EFBs treat the position as valid. Conservative fixed accuracy category (<92.6 m).
+    data.navigation_integrity_category = 8;
+    data.navigation_accuracy_category_position = 8;
+    data.SetMiscIndicator(GDL90TargetReportData::kMiscIndicatorTTIsTrueTrackAngle, false,
+                          rx_position.speed_kts > kOwnshipAirborneSpeedKts);
+    return true;
+}
+
 uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes,
                                                       const ModeSAircraft& aircraft, bool ownship) {
     GDL90TargetReportData data;
@@ -367,6 +402,55 @@ uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t 
     // GDL90 does not provide space for an EOS character, since it only provides 8 Bytes for the callsign.
     memcpy(data.callsign, aircraft.callsign, UATAircraft::kCallSignMaxNumChars);
     // NOTE: Emergency Priority code currently not used.
+
+    return WriteGDL90TargetReportMessage(to_buf, to_buf_num_bytes, data, ownship);
+}
+
+uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes,
+                                                      const RemoteIDAircraft& aircraft, bool ownship) {
+    GDL90TargetReportData data;
+
+    data.participant_address = aircraft.address;
+    // Remote ID uses self-assigned (non-ICAO) identifiers.
+    data.address_type = GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress;
+    data.latitude_deg = aircraft.latitude_deg;
+    data.longitude_deg = aircraft.longitude_deg;
+    // Drones report geometric (WGS84) altitude; GDL90 altitude is nominally pressure altitude, but geometric is the best
+    // value we have for a drone.
+    data.altitude_ft =
+        aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagGNSSAltitudeValid) ? aircraft.gnss_altitude_ft : INT32_MIN;
+    data.direction_deg = aircraft.direction_deg;
+
+    // Only claim the track/heading field holds a true track angle when a direction was actually received: Remote ID
+    // reports direction independently of position, so a drone with a valid position but no direction would otherwise be
+    // reported as tracking 0 degrees (or a stale value) rather than "unknown".
+    GDL90TargetReportData::MiscIndicatorTrackOrHeadingValue track_heading_value =
+        (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagPositionValid) &&
+         aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagDirectionValid))
+            ? GDL90TargetReportData::kMiscIndicatorTTIsTrueTrackAngle
+            : GDL90TargetReportData::kMiscIndicatorTTNotValid;
+    data.SetMiscIndicator(track_heading_value, /*report_is_extrapolated=*/false,
+                          aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagIsAirborne));
+
+    // NIC/NAC unknown for Remote ID.
+    data.navigation_integrity_category = 0;
+    data.navigation_accuracy_category_position = 0;
+    data.speed_kts =
+        aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagHorizontalSpeedValid) ? (float)aircraft.speed_kts : -1.0f;
+    // A Remote ID Location message may omit vertical speed; report it as unavailable (0x800) rather than a real 0 fpm.
+    data.vertical_rate_fpm = aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagVerticalRateValid)
+                                 ? aircraft.gnss_vertical_rate_fpm
+                                 : GDL90TargetReportData::kVerticalRateUnavailableFpm;
+    data.emitter_category = ADSBTypes::kEmitterCategoryUnmannedAerialVehicle;  // 14 = UAV.
+
+    // GDL90 callsign is 8 chars; use the tail of the UAS serial (the distinctive part), padded with spaces.
+    memset(data.callsign, ' ', 8);
+    data.callsign[8] = '\0';
+    if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagBasicIDValid)) {
+        size_t id_len = strnlen(aircraft.uas_id, RemoteIDAircraft::kIDLenChars);
+        size_t copy_len = id_len < 8 ? id_len : 8;
+        memcpy(data.callsign, aircraft.uas_id + (id_len - copy_len), copy_len);
+    }
 
     return WriteGDL90TargetReportMessage(to_buf, to_buf_num_bytes, data, ownship);
 }

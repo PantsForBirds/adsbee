@@ -1,8 +1,9 @@
-# Debug partition table — same as partitions_singleapp_large but with a coredump partition at the end of flash.
+# Debug partition table — a 3 MB app (matching partitions_remote_id.csv, so the Bluetooth-enabled Remote ID build fits)
+# plus a coredump partition at the end of flash.
 # Coredump is placed at the very end of 8MB flash (0x800000 - 256K = 0x7C0000) so it can't be overwritten
 # by the application even if it grows large.
 # Name,   Type, SubType,  Offset,    Size,   Flags
 nvs,      data, nvs,      ,          0x6000,
 phy_init, data, phy,      ,          0x1000,
-factory,  app,  factory,  ,          1500K,
+factory,  app,  factory,  ,          3M,
 coredump, data, coredump, 0x7C0000,  256K,

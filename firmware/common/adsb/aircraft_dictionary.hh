@@ -13,6 +13,7 @@
 #include "json_utils.hh"
 #include "macros.hh"
 #include "mode_s_packet.hh"
+#include "remote_id_packet.hh"
 #include "uat_packet.hh"
 
 // #define ADSB_VERBOSE_PACKET_WARNINGS  // Uncomment to print warnings about unexpected packet formats / content.
@@ -41,7 +42,8 @@ class Aircraft {
         kAircraftTypeInvalid = 0xF,
         kAircraftTypeModeS = 0,
         kAircraftTypeUAT = 1,
-        // TODO: Add FLARM, ADS-L, Remote ID, etc.
+        kAircraftTypeRemoteID = 2,  // Broadcast Remote ID (ASTM F3411) drone, received over BLE / WiFi on the ESP32.
+        // TODO: Add FLARM, ADS-L, etc.
     };
 
     virtual ~Aircraft() = default;
@@ -57,6 +59,8 @@ class Aircraft {
                 return (icao_address & ~kAircraftTypeMask) | (kAircraftTypeModeS << kAircraftTypeShiftBits);
             case kAircraftTypeUAT:
                 return (icao_address & ~kAircraftTypeMask) | (kAircraftTypeUAT << kAircraftTypeShiftBits);
+            case kAircraftTypeRemoteID:
+                return (icao_address & ~kAircraftTypeMask) | (kAircraftTypeRemoteID << kAircraftTypeShiftBits);
             default:
                 // We can't print here or else we cause a circular dependency with comms.hh.
                 // CONSOLE_ERROR("Aircraft::ICAOToUID", "Invalid aircraft type %d for ICAO address 0x%lx.", type,
@@ -648,10 +652,103 @@ class UATAircraft : public Aircraft {
 #endif
 };
 
+/**
+ * Broadcast Remote ID (ASTM F3411 / ASD-STAN prEN 4709-002) drone.
+ *
+ * Populated on the ESP32 (and mirrored on the RP2040) from Open Drone ID messages received over Bluetooth LE and WiFi.
+ * The protocol-agnostic position/altitude/speed/track live in the Aircraft base class (converted to the ADSBee-standard
+ * feet / knots / degrees); the fields here hold the Remote-ID-specific identity and operator information.
+ *
+ * UID / dictionary key: unlike Mode S and UAT (which key on a real ICAO-style address contained in every message), a
+ * Remote ID transmitter has no address in most message types (a Location message on its own carries no serial number).
+ * We therefore key on a 24-bit CRC of the transmitter's MAC / BLE address (see MACToAddress). This is stable across all
+ * message types from one transmitter, so Location messages that arrive before the Basic ID still land on the right
+ * entry with no provisional-UID migration dance. The trade-off is that a drone which rotates its (randomized) BLE MAC
+ * mid-flight starts a new track; tracks expire on the normal prune interval, so this is acceptable. The human-readable
+ * UAS serial / registration is stored in uas_id once a Basic ID message arrives.
+ * TODO: optionally coalesce tracks that share a uas_id across MAC rotations.
+ */
+class RemoteIDAircraft : public Aircraft {
+   public:
+    static constexpr uint16_t kIDLenChars = 20;          // ODID_ID_SIZE. UAS ID / Operator ID length (no null).
+    static constexpr uint16_t kDescriptionLenChars = 23;  // ODID_STR_SIZE. Self-ID free-text description length.
+
+    enum BitFlag : uint32_t {
+        kBitFlagIsAirborne = 0,          // Operational status indicates the UA is airborne.
+        kBitFlagPositionValid = 1,       // A valid UA Location has been received.
+        kBitFlagDirectionValid = 2,      // A valid track direction has been received.
+        kBitFlagHorizontalSpeedValid = 3,
+        kBitFlagGNSSAltitudeValid = 4,   // Geometric (WGS84) UA altitude is valid.
+        kBitFlagHeightValid = 5,         // Height above takeoff / ground is valid.
+        kBitFlagOperatorPositionValid = 6,  // A valid operator (System message) location has been received.
+        kBitFlagBasicIDValid = 7,        // A Basic ID message has populated uas_id / uas_id_type / ua_type.
+        kBitFlagOperatorIDValid = 8,     // An Operator ID message has populated operator_id.
+        kBitFlagSelfIDValid = 9,         // A Self ID message has populated self_id_description.
+        kBitFlagVerticalRateValid = 10,  // A valid vertical speed has been received (Location may omit it).
+        kBitFlagNumFlagBits
+    };
+
+    /**
+     * Computes the 24-bit dictionary address (low 24 bits of the UID) from a 6-byte transmitter MAC / BLE address.
+     * Implemented in aircraft_dictionary.cpp (uses the shared crc24 utility).
+     */
+    static uint32_t MACToAddress(const uint8_t mac[6]);
+
+    RemoteIDAircraft(uint32_t address_in) : address(address_in) {}
+    RemoteIDAircraft() {}
+
+    /**
+     * Override Functions
+     */
+    inline uint32_t GetUID() const { return ICAOToUID(address, kAircraftTypeRemoteID); }
+
+    inline void UpdateMetrics() {
+        metrics = metrics_counter_;
+        metrics_counter_ = Metrics();
+    }
+
+    /**
+     * Standard Functions
+     */
+    inline bool HasBitFlag(BitFlag bit) const { return flags & (0b1 << bit) ? true : false; }
+    inline void WriteBitFlag(BitFlag bit, bool value) { value ? flags |= (0b1 << bit) : flags &= ~(0b1 << bit); }
+    inline void IncrementNumFramesReceived() { metrics_counter_.valid_frames++; }
+
+    struct Metrics {
+        uint16_t valid_frames = 0;  // Number of valid Remote ID messages received this reporting interval.
+    };
+
+    uint32_t flags = 0b0;
+    uint32_t address = 0;  // 24-bit MAC-derived dictionary address (see MACToAddress). Top nibble stays 0.
+
+    char uas_id[kIDLenChars + 1] = "";           // UAS ID: serial number (ANSI/CTA-2063-A), CAA registration, etc.
+    char operator_id[kIDLenChars + 1] = "";      // Operator ID (e.g. FAA / CAA operator registration).
+
+    uint8_t uas_id_type = 0;  // ODID_idtype_t: 1=serial, 2=CAA registration, 3=UTM (UUID), 4=specific session ID.
+    uint8_t ua_type = 0;      // ODID_uatype_t: aircraft category (aeroplane, multirotor, helicopter, ...).
+    uint8_t operational_status = 0;  // ODID_status_t: 0=undeclared, 1=ground, 2=airborne, 3=emergency, 4=remote-id-fail.
+    uint8_t height_type = 0;         // ODID_Height_reference_t: 0=above takeoff, 1=above ground.
+
+    int8_t last_message_signal_strength_dbm = 0;  // RSSI of the most recent advertisement, in dBm.
+    RawRemoteIDPacket::Transport transport = RawRemoteIDPacket::kTransportInvalid;  // Last transport the UA was heard on.
+    uint8_t source_mac[6] = {0};  // Transmitter MAC / BLE address the UID was derived from.
+
+    int32_t height_above_takeoff_ft = 0;  // UA height above takeoff or ground per height_type. Valid iff flag set.
+
+    float operator_latitude_deg = 0.0f;
+    float operator_longitude_deg = 0.0f;
+    int32_t operator_altitude_geo_ft = 0;  // Operator (System message) geometric altitude, WGS84.
+
+    Metrics metrics;
+
+   private:
+    Metrics metrics_counter_;
+};
+
 class AircraftDictionary {
    public:
     static constexpr uint16_t kMaxNumAircraft = kAircraftDictionaryMaxNumAircraft;
-    static constexpr uint16_t kMaxNumSources = 3;
+    static constexpr uint16_t kMaxNumSources = 4;  // One per 1090 demodulator state machine.
 
 #ifdef FILTER_CPR_POSITIONS
     // Table-based inverse haversine isn't super accurate at small distances, and aircraft velocity may be super
@@ -659,7 +756,7 @@ class AircraftDictionary {
     static constexpr uint32_t kPositionFilterDeadbandMeters = 20e3;
 #endif
 
-    typedef std::variant<ModeSAircraft, UATAircraft> AircraftEntry;
+    typedef std::variant<ModeSAircraft, UATAircraft, RemoteIDAircraft> AircraftEntry;
 
     // Ensure that valid variant indices matche the AircraftType enum value so that we can use them interchangeably.
     static_assert(
@@ -667,6 +764,13 @@ class AircraftDictionary {
         "ModeSAircraft variant index must match Aircraft::kAircraftTypeModeS");
     static_assert(std::is_same_v<std::variant_alternative_t<Aircraft::kAircraftTypeUAT, AircraftEntry>, UATAircraft>,
                   "UATAircraft variant index must match Aircraft::kAircraftTypeUAT");
+    static_assert(
+        std::is_same_v<std::variant_alternative_t<Aircraft::kAircraftTypeRemoteID, AircraftEntry>, RemoteIDAircraft>,
+        "RemoteIDAircraft variant index must match Aircraft::kAircraftTypeRemoteID");
+    // Keep RemoteIDAircraft from growing the variant (and therefore the fixed node pool on both the RP2040 and ESP32,
+    // which costs kMaxNumAircraft * delta bytes on each). If this fails, trim RemoteIDAircraft's fields.
+    static_assert(sizeof(RemoteIDAircraft) <= sizeof(ModeSAircraft),
+                  "RemoteIDAircraft must not exceed ModeSAircraft or it grows the AircraftEntry pool on both MCUs.");
 
     struct AircraftDictionaryConfig {
         uint32_t aircraft_prune_interval_ms = 60e3;
@@ -701,6 +805,10 @@ class AircraftDictionary {
 
         uint16_t num_mode_s_aircraft = 0;
         uint16_t num_uat_aircraft = 0;
+        uint16_t num_remote_id_aircraft = 0;
+
+        uint16_t raw_remote_id_frames = 0;    // Remote ID advertisements received (pre-decode).
+        uint16_t valid_remote_id_frames = 0;  // Remote ID advertisements that decoded successfully.
 
         /**
          * Formats the metrics dictionary into a JSON packet with the following structure.
@@ -749,10 +857,16 @@ class AircraftDictionary {
                          ", \"raw_uat_uplink_frames\": %u, \"valid_uat_uplink_frames\": %u",
                          raw_uat_adsb_frames, valid_uat_adsb_frames, raw_uat_uplink_frames, valid_uat_uplink_frames);
 
-            // Add dictionary stats.
+            // Add Remote ID stats.
             chars_written += snprintf(buf + chars_written, buf_len - chars_written,
-                                      ", \"num_mode_s_aircraft\": %u, \"num_uat_aircraft\": %u", num_mode_s_aircraft,
-                                      num_uat_aircraft);
+                                      ", \"raw_remote_id_frames\": %u, \"valid_remote_id_frames\": %u",
+                                      raw_remote_id_frames, valid_remote_id_frames);
+
+            // Add dictionary stats.
+            chars_written +=
+                snprintf(buf + chars_written, buf_len - chars_written,
+                         ", \"num_mode_s_aircraft\": %u, \"num_uat_aircraft\": %u, \"num_remote_id_aircraft\": %u",
+                         num_mode_s_aircraft, num_uat_aircraft, num_remote_id_aircraft);
             chars_written += snprintf(buf + chars_written, buf_len - chars_written, "}");
             return chars_written;
         }
@@ -803,7 +917,7 @@ class AircraftDictionary {
      */
     inline void Record1090RawSquitterFrame(int16_t source = -1) {
         metrics_counter_.raw_squitter_frames++;
-        if (source > 0) {
+        if (source >= 0 && source < kMaxNumSources) {
             metrics_counter_.raw_squitter_frames_by_source[source]++;
         }
     }
@@ -815,7 +929,7 @@ class AircraftDictionary {
      */
     inline void Record1090RawExtendedSquitterFrame(int16_t source = -1) {
         metrics_counter_.raw_extended_squitter_frames++;
-        if (source > 0) {
+        if (source >= 0 && source < kMaxNumSources) {
             metrics_counter_.raw_extended_squitter_frames_by_source[source]++;
         }
     }
@@ -889,6 +1003,19 @@ class AircraftDictionary {
      */
 
     bool IngestDecodedUATADSBPacket(const DecodedUATADSBPacket& packet);
+
+    /**
+     * Remote ID (Broadcast Drone ID) Decoding
+     */
+
+    /**
+     * Ingests a raw Broadcast Remote ID packet (an Open Drone ID message or message pack, as received over BLE/WiFi on
+     * the ESP32). Decodes the payload with the vendored opendroneid-core-c library and inserts/updates the corresponding
+     * RemoteIDAircraft, keyed on a CRC of the source MAC. Records raw/valid frame metrics.
+     * @param[in] packet Raw Remote ID packet to ingest (payload + transport metadata).
+     * @retval True if the packet decoded and updated an aircraft, false otherwise.
+     */
+    bool IngestRawRemoteIDPacket(const RawRemoteIDPacket& packet);
 
     /**
      * Returns the number of aircraft currently in the dictionary.

@@ -380,8 +380,109 @@ TEST(GDL90Utils, WriteGDL90MessageBufferOverrunProtection) {
     }
 }
 
-TEST(GDL90Utils, OwnshipReport) {
-    // TODO: Add tests here!
+// Decodes a 24-bit signed binary fraction (resolution 180/2^23 deg) from three big-endian message bytes.
+static float DecodeLatLon24(const uint8_t* bytes) {
+    int32_t raw = (bytes[0] << 16) | (bytes[1] << 8) | bytes[2];
+    if (raw & 0x800000) raw -= 0x1000000;  // Sign extend.
+    return raw * (180.0f / 8388608.0f);
+}
+
+TEST(GDL90Utils, OwnshipReportFromGNSS) {
+    SettingsManager::RxPosition rx_position;
+    rx_position.source = SettingsManager::RxPosition::kPositionSourceGNSS;
+    rx_position.latitude_deg = 37.5f;
+    rx_position.longitude_deg = -122.0f;
+    rx_position.gnss_altitude_ft = 1500;
+    rx_position.baro_altitude_ft = 1234;  // Stale: must NOT leak into a GNSS ownship report.
+    rx_position.heading_deg = 90.0f;
+    rx_position.speed_kts = 45;
+    rx_position.icao_address = 0xABCDEF;  // Irrelevant for GNSS: ownship must be self-assigned.
+
+    GDL90Reporter::GDL90TargetReportData data;
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipReportData(data, rx_position, /*rx_position_available=*/true));
+    EXPECT_EQ(data.address_type, GDL90Reporter::GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress);
+    EXPECT_EQ(data.participant_address, 0u);
+    EXPECT_FLOAT_EQ(data.latitude_deg, 37.5f);
+    EXPECT_FLOAT_EQ(data.longitude_deg, -122.0f);
+    EXPECT_EQ(data.altitude_ft, INT32_MIN);  // Pressure altitude unknown from GNSS: invalid, never GNSS altitude.
+    EXPECT_FLOAT_EQ(data.speed_kts, 45.0f);
+    EXPECT_FLOAT_EQ(data.direction_deg, 90.0f);
+    EXPECT_EQ(data.navigation_integrity_category, 8);
+    EXPECT_EQ(data.navigation_accuracy_category_position, 8);
+    EXPECT_EQ(data.misc_indicators, 0b1001);  // Airborne (45 kt > 30 kt), true track angle.
+    EXPECT_STREQ(data.callsign, "ADSBEE  ");
+
+    // Encode it and check the wire format. None of the payload bytes below need escaping.
+    uint8_t buf[GDL90Reporter::kGDL90MessageMaxLenBytes];
+    uint16_t len = gdl90.WriteGDL90TargetReportMessage(buf, sizeof(buf), data, /*ownship=*/true);
+    ASSERT_EQ(len, 32);  // 1 flag + 28 payload + 2 CRC + 1 flag.
+    EXPECT_EQ(buf[0], 0x7E);
+    EXPECT_EQ(buf[1], GDL90Reporter::kGDL90MessageIDOwnshipReport);
+    EXPECT_EQ(buf[2], 0x01);  // No traffic alert, self-assigned address type.
+    EXPECT_EQ(buf[3], 0x00);  // Participant address 0x000000.
+    EXPECT_EQ(buf[4], 0x00);
+    EXPECT_EQ(buf[5], 0x00);
+    EXPECT_NEAR(DecodeLatLon24(buf + 6), 37.5f, 1e-4f);
+    EXPECT_NEAR(DecodeLatLon24(buf + 9), -122.0f, 1e-4f);
+    EXPECT_EQ(buf[12], 0xFF);  // Altitude 0xFFF = invalid.
+    EXPECT_EQ(buf[13], 0xF9);  // Altitude LS nibble + misc indicators 0b1001.
+    EXPECT_EQ(buf[14], 0x88);  // NIC 8, NACp 8.
+    EXPECT_EQ(buf[15], 0x02);  // Horizontal velocity 45 kt = 0x02D.
+    EXPECT_EQ(buf[16] & 0xF0, 0xD0);
+    EXPECT_EQ(buf[18], 64);  // 90 deg * 256/360.
+    EXPECT_EQ(memcmp(buf + 20, "ADSBEE  ", 8), 0);
+    EXPECT_EQ(buf[31], 0x7E);
+}
+
+TEST(GDL90Utils, OwnshipReportFromTrackedAircraft) {
+    SettingsManager::RxPosition rx_position;
+    rx_position.source = SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;
+    rx_position.latitude_deg = 40.0f;
+    rx_position.longitude_deg = -75.0f;
+    rx_position.gnss_altitude_ft = 3100;
+    rx_position.baro_altitude_ft = 3000;
+    rx_position.heading_deg = 180.0f;
+    rx_position.speed_kts = 5;
+    rx_position.icao_address = 0xABCDEF;
+
+    GDL90Reporter::GDL90TargetReportData data;
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipReportData(data, rx_position, /*rx_position_available=*/true));
+    EXPECT_EQ(data.participant_address, 0xABCDEFu);  // Bootstrapping off a real aircraft: carry its ICAO.
+    EXPECT_EQ(data.altitude_ft, 3000);              // Aircraft supplies a pressure altitude.
+    EXPECT_EQ(data.misc_indicators, 0b0001);        // On the ground (5 kt), true track angle.
+}
+
+TEST(GDL90Utils, OwnshipReportWithoutPosition) {
+    SettingsManager::RxPosition rx_position;
+    rx_position.latitude_deg = 37.5f;
+    rx_position.longitude_deg = -122.0f;
+    rx_position.speed_kts = 100;
+    rx_position.icao_address = 0xABCDEF;
+
+    // A GNSS source with no fresh fix must not send its last coordinates.
+    rx_position.source = SettingsManager::RxPosition::kPositionSourceGNSS;
+    GDL90Reporter::GDL90TargetReportData data;
+    data.latitude_deg = 1.0f;  // Prove the builder resets stale contents.
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipReportData(data, rx_position, /*rx_position_available=*/false));
+    EXPECT_FLOAT_EQ(data.latitude_deg, 0.0f);
+    EXPECT_FLOAT_EQ(data.longitude_deg, 0.0f);
+    EXPECT_EQ(data.navigation_integrity_category, 0);  // GDL90 "no position" convention: lat, lon, NIC all zero.
+    EXPECT_EQ(data.participant_address, 0u);
+    EXPECT_EQ(data.address_type, GDL90Reporter::GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress);
+    EXPECT_STREQ(data.callsign, "ADSBEE  ");
+
+    // Receiver locations that are not this device's own movement are never ownship, even when available.
+    for (auto source : {SettingsManager::RxPosition::kPositionSourceNone, SettingsManager::RxPosition::kPositionSourceFixed,
+                        SettingsManager::RxPosition::kPositionSourceLowestAircraft}) {
+        rx_position.source = source;
+        EXPECT_FALSE(GDL90Reporter::IsValidOwnshipSource(source));
+        EXPECT_FALSE(GDL90Reporter::BuildOwnshipReportData(data, rx_position, /*rx_position_available=*/true))
+            << "source " << static_cast<int>(source);
+        EXPECT_FLOAT_EQ(data.latitude_deg, 0.0f);
+        EXPECT_EQ(data.navigation_integrity_category, 0);
+    }
+    EXPECT_TRUE(GDL90Reporter::IsValidOwnshipSource(SettingsManager::RxPosition::kPositionSourceGNSS));
+    EXPECT_TRUE(GDL90Reporter::IsValidOwnshipSource(SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO));
 }
 
 TEST(GDL90Utils, TrafficReport) {
@@ -403,4 +504,75 @@ TEST(GDL90Utils, ModeSEmitterCategoryUsesDecodedEnum) {
     // aircraft, so it maps directly to buf[19].
     EXPECT_EQ(buf[19], static_cast<uint8_t>(ADSBTypes::kEmitterCategoryHeavy));
     EXPECT_NE(buf[19], ac.emitter_category_raw);
+}
+
+// Decodes a GDL90 frame (flag bytes + byte stuffing) back into the raw message buffer so tests can assert on field
+// offsets without depending on which bytes happened to need escaping. Returns the number of message bytes recovered
+// (excluding the trailing 2-byte CRC), or 0 if the frame is malformed.
+static uint16_t DecodeGDL90Frame(const uint8_t* frame, uint16_t frame_len, uint8_t* out, uint16_t out_len) {
+    if (frame_len < 4 || frame[0] != 0x7E) return 0;
+    uint16_t out_i = 0;
+    for (uint16_t i = 1; i < frame_len; i++) {
+        if (frame[i] == 0x7E) {                   // Closing flag.
+            return (out_i >= 2) ? out_i - 2 : 0;  // Strip the trailing CRC16.
+        }
+        if (out_i >= out_len) return 0;
+        if (frame[i] == 0x7D) {  // Escape: next byte is XORed with 0x20.
+            if (++i >= frame_len) return 0;
+            out[out_i++] = frame[i] ^ 0x20;
+        } else {
+            out[out_i++] = frame[i];
+        }
+    }
+    return 0;  // No closing flag.
+}
+
+// Encodes a RemoteIDAircraft as a GDL90 traffic report and returns the de-escaped message buffer.
+static uint16_t EncodeRemoteIDTrafficReport(const RemoteIDAircraft& aircraft, uint8_t* msg, uint16_t msg_len) {
+    uint8_t frame[GDL90Reporter::kGDL90MessageMaxLenBytes];
+    uint16_t frame_len = gdl90.WriteGDL90TargetReportMessage(frame, sizeof(frame), aircraft, /*ownship=*/false);
+    return DecodeGDL90Frame(frame, frame_len, msg, msg_len);
+}
+
+TEST(GDL90Utils, RemoteIDTrackValidOnlyWhenDirectionValid) {
+    // Remote ID reports direction independently of position, so a drone with a valid position but no direction must
+    // NOT be reported as having a true track angle — otherwise a stale/default heading reads as a real track.
+    RemoteIDAircraft ac(0x123456);
+    ac.latitude_deg = 37.5f;
+    ac.longitude_deg = -122.3f;
+    ac.direction_deg = 90.0f;  // Stale value that must not be presented as a valid track.
+    ac.WriteBitFlag(RemoteIDAircraft::kBitFlagPositionValid, true);
+
+    uint8_t msg[32];
+    ASSERT_GE(EncodeRemoteIDTrafficReport(ac, msg, sizeof(msg)), 18u);
+    // message_buf[12] low nibble = misc indicators; bits [1:0] are the track/heading type.
+    EXPECT_EQ(msg[12] & 0b11, GDL90Reporter::GDL90TargetReportData::kMiscIndicatorTTNotValid);
+
+    // Once a direction is actually received, the track angle is advertised as valid.
+    ac.WriteBitFlag(RemoteIDAircraft::kBitFlagDirectionValid, true);
+    ASSERT_GE(EncodeRemoteIDTrafficReport(ac, msg, sizeof(msg)), 18u);
+    EXPECT_EQ(msg[12] & 0b11, GDL90Reporter::GDL90TargetReportData::kMiscIndicatorTTIsTrueTrackAngle);
+}
+
+TEST(GDL90Utils, RemoteIDVerticalRateUnavailableWhenNotReceived) {
+    // A Remote ID Location message may omit vertical speed. That must encode as the GDL90 "not available" sentinel
+    // (0x800), not as a real 0 fpm.
+    RemoteIDAircraft ac(0x123456);
+    ac.latitude_deg = 37.5f;
+    ac.longitude_deg = -122.3f;
+    ac.WriteBitFlag(RemoteIDAircraft::kBitFlagPositionValid, true);
+    ac.gnss_vertical_rate_fpm = 0;  // Default/stale: no vertical rate was ever received.
+
+    uint8_t msg[32];
+    ASSERT_GE(EncodeRemoteIDTrafficReport(ac, msg, sizeof(msg)), 18u);
+    // Vertical velocity is 12 bits: low nibble of message_buf[15] (MSBs) followed by message_buf[16].
+    uint16_t vertical_rate_encoded = ((msg[15] & 0x0F) << 8) | msg[16];
+    EXPECT_EQ(vertical_rate_encoded, 0x800);
+
+    // With a received vertical rate, the real value is encoded in units of 64 fpm.
+    ac.gnss_vertical_rate_fpm = 640;
+    ac.WriteBitFlag(RemoteIDAircraft::kBitFlagVerticalRateValid, true);
+    ASSERT_GE(EncodeRemoteIDTrafficReport(ac, msg, sizeof(msg)), 18u);
+    vertical_rate_encoded = ((msg[15] & 0x0F) << 8) | msg[16];
+    EXPECT_EQ(vertical_rate_encoded, 640 / 64);
 }

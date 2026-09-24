@@ -1,0 +1,425 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<!DOCTYPE configuration SYSTEM "C:/Program Files (x86)/Texas Instruments/SmartRF Tools/SmartRF Studio 7/config/xml/configdata.dtd"[]>
+<dcpanelconfiguration>
+    <Devicename>CC1312R_PG21</Devicename>
+    <Description>Saved configuration data</Description>
+    <Patch>
+        <Define>RF_MODE_AUTO</Define>
+        <Cpe>rf_patch_cpe_prop</Cpe>
+        <Mce></Mce>
+        <Rfe></Rfe>
+    </Patch>
+    <commandsettings>
+        <Command name="CMD_TX_TEST">
+            <Field name="commandNo">0x00000808</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="config">0x0000000a</Field>
+            <Field name="txWord">0x0000aaaa</Field>
+            <Field name="endTrigger">0x00000001</Field>
+            <Field name="syncWord">0xacdda4e2</Field>
+            <Field name="endTime">0x00000000</Field>
+        </Command>
+        <Command name="CMD_SYNC_STOP_RAT">
+            <Field name="commandNo">0x00000809</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+            <Field name="rat0">0x00000000</Field>
+        </Command>
+        <Command name="CMD_SYNC_START_RAT">
+            <Field name="commandNo">0x0000080a</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+            <Field name="rat0">0x00000000</Field>
+        </Command>
+        <Command name="CMD_STOP">
+            <Field name="commandNo">0x00000402</Field>
+        </Command>
+        <Command name="CMD_SCH_IMM">
+            <Field name="commandNo">0x00000810</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+            <Field name="cmdrVal">0x00000000</Field>
+            <Field name="cmdstaVal">0x00000000</Field>
+        </Command>
+        <Command name="CMD_RX_TEST">
+            <Field name="commandNo">0x00000807</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="config">0x00000004</Field>
+            <Field name="endTrigger">0x00000001</Field>
+            <Field name="syncWord">0xacdda4e2</Field>
+            <Field name="endTime">0x00000000</Field>
+        </Command>
+        <Command name="CMD_RESYNC_RAT">
+            <Field name="commandNo">0x00000816</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+            <Field name="rat0">0x00000000</Field>
+        </Command>
+        <Command name="CMD_RADIO_SETUP">
+            <Field name="commandNo">0x00000802</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="mode">0x00000001</Field>
+            <Field name="loDivider">0x00000000</Field>
+            <Field name="config">0x00000000</Field>
+            <Field name="txPower">0x00000000</Field>
+            <Field name="pRegOverride">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PROP_TX_ADV">
+            <Field name="commandNo">0x00003803</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="pktConf">0x00000000</Field>
+            <Field name="numHdrBits">0x00000010</Field>
+            <Field name="pktLen">0x00000000</Field>
+            <Field name="startConf">0x00000000</Field>
+            <Field name="preTrigger">0x00000000</Field>
+            <Field name="preTime">0x00000000</Field>
+            <Field name="syncWord">0xacdda4e2</Field>
+            <Field name="pPkt">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PROP_TX">
+            <Field name="commandNo">0x00003801</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="pktConf">0x00000018</Field>
+            <Field name="pktLen">0x00000014</Field>
+            <Field name="syncWord">0xacdda4e2</Field>
+            <Field name="pPkt">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PROP_RX_SNIFF">
+            <Field name="commandNo">0x00003808</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="pktConf">0x00000000</Field>
+            <Field name="rxConf">0x00000000</Field>
+            <Field name="syncWord">0x00000000</Field>
+            <Field name="maxPktLen">0x00000000</Field>
+            <Field name="address0">0x00000000</Field>
+            <Field name="address1">0x00000000</Field>
+            <Field name="endTrigger">0x00000000</Field>
+            <Field name="endTime">0x00000000</Field>
+            <Field name="pQueue">0x00000000</Field>
+            <Field name="pOutput">0x00000000</Field>
+            <Field name="csConf">0x00000000</Field>
+            <Field name="rssiThr">0x00000000</Field>
+            <Field name="numRssiIdle">0x00000000</Field>
+            <Field name="numRssiBusy">0x00000000</Field>
+            <Field name="corrPeriod">0x00000000</Field>
+            <Field name="corrConfig">0x00000000</Field>
+            <Field name="csEndTrigger">0x00000000</Field>
+            <Field name="csEndTime">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PROP_RX_ADV_SNIFF">
+            <Field name="commandNo">0x00003809</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="pktConf">0x00000000</Field>
+            <Field name="rxConf">0x00000000</Field>
+            <Field name="syncWord0">0x00000000</Field>
+            <Field name="syncWord1">0x00000000</Field>
+            <Field name="maxPktLen">0x00000000</Field>
+            <Field name="hdrConf">0x00000000</Field>
+            <Field name="addrConf">0x00000000</Field>
+            <Field name="lenOffset">0x00000000</Field>
+            <Field name="endTrigger">0x00000000</Field>
+            <Field name="endTime">0x00000000</Field>
+            <Field name="pAddr">0x00000000</Field>
+            <Field name="pQueue">0x00000000</Field>
+            <Field name="pOutput">0x00000000</Field>
+            <Field name="csConf">0x00000000</Field>
+            <Field name="rssiThr">0x00000000</Field>
+            <Field name="numRssiIdle">0x00000000</Field>
+            <Field name="numRssiBusy">0x00000000</Field>
+            <Field name="corrPeriod">0x00000000</Field>
+            <Field name="corrConfig">0x00000000</Field>
+            <Field name="csEndTrigger">0x00000000</Field>
+            <Field name="csEndTime">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PROP_RX_ADV">
+            <Field name="commandNo">0x00003804</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="pktConf">0x00000000</Field>
+            <Field name="rxConf">0x000000f8</Field>
+            <Field name="syncWord0">0xacdda4e2</Field>
+            <Field name="syncWord1">0x53225b1d</Field>
+            <Field name="maxPktLen">0x000000ff</Field>
+            <Field name="hdrConf">0x00000000</Field>
+            <Field name="addrConf">0x00000000</Field>
+            <Field name="lenOffset">0x00000000</Field>
+            <Field name="endTrigger">0x00000000</Field>
+            <Field name="endTime">0x00000000</Field>
+            <Field name="pAddr">0x00000000</Field>
+            <Field name="pQueue">0x00000000</Field>
+            <Field name="pOutput">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PROP_RX">
+            <Field name="commandNo">0x00003802</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="pktConf">0x00000000</Field>
+            <Field name="rxConf">0x00000088</Field>
+            <Field name="syncWord">0xacdda4e2</Field>
+            <Field name="maxPktLen">0x0000005c</Field>
+            <Field name="address0">0x000000aa</Field>
+            <Field name="address1">0x000000bb</Field>
+            <Field name="endTrigger">0x00000001</Field>
+            <Field name="endTime">0x00000000</Field>
+            <Field name="pQueue">0x00000000</Field>
+            <Field name="pOutput">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PROP_RADIO_SETUP">
+            <Field name="commandNo">0x00003806</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="modulation">0x00000000</Field>
+            <Field name="symbolRate">0x00000000</Field>
+            <Field name="rxBw">0x00000000</Field>
+            <Field name="preamConf">0x00000000</Field>
+            <Field name="formatConf">0x00000000</Field>
+            <Field name="config">0x00000000</Field>
+            <Field name="txPower">0x00000000</Field>
+            <Field name="pRegOverride">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PROP_RADIO_DIV_SETUP">
+            <Field name="commandNo">0x00003807</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="modulation">0x00002711</Field>
+            <Field name="symbolRate">0x0a6bfb0f</Field>
+            <Field name="rxBw">0x00000064</Field>
+            <Field name="preamConf">0x00000000</Field>
+            <Field name="formatConf">0x000000a0</Field>
+            <Field name="config">0x00000008</Field>
+            <Field name="txPower">0x0000003f</Field>
+            <Field name="pRegOverride">0x00000000</Field>
+            <Field name="centerFreq">0x000003d2</Field>
+            <Field name="intFreq">0x00000d99</Field>
+            <Field name="loDivider">0x00000005</Field>
+            <OverrideField name="pRegOverride">
+                <OverrideBuffer name="override_prop_common.xml">
+                    <Element32b>0x00F788D3</Element32b>
+                </OverrideBuffer>
+                <OverrideBuffer name="override_prop_common_sub1g.xml">
+                    <Element32b>0x4001405D</Element32b>
+                    <Element32b>0x08141131</Element32b>
+                </OverrideBuffer>
+                <OverrideBuffer name="override_tc782_tc783.xml">
+                    <Element32b>ADI_2HALFREG_OVERRIDE(0,16,0x8,0x8,17,0x1,0x1)</Element32b>
+                    <Element32b>HW_REG_OVERRIDE(0x609C,0x002E)</Element32b>
+                    <Element32b>0x000488A3</Element32b>
+                    <Element32b>ADI_HALFREG_OVERRIDE(0,5,0xF,0x2)</Element32b>
+                    <Element32b>ADI_HALFREG_OVERRIDE(0,61,0xF,0x0)</Element32b>
+                    <Element32b>HW_REG_OVERRIDE(0x6028,0x001A)</Element32b>
+                    <Element32b>0x00000343</Element32b>
+                </OverrideBuffer>
+            </OverrideField>
+        </Command>
+        <Command name="CMD_PROP_CS">
+            <Field name="commandNo">0x00003805</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="csFsConf">0x00000000</Field>
+            <Field name="csConf">0x00000000</Field>
+            <Field name="rssiThr">0x00000000</Field>
+            <Field name="numRssiIdle">0x00000000</Field>
+            <Field name="numRssiBusy">0x00000000</Field>
+            <Field name="corrPeriod">0x00000000</Field>
+            <Field name="corrConfig">0x00000000</Field>
+            <Field name="csEndTrigger">0x00000000</Field>
+            <Field name="csEndTime">0x00000000</Field>
+        </Command>
+        <Command name="CMD_PATTERN_CHECK">
+            <Field name="commandNo">0x00000813</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+            <Field name="patternOpt">0x00000000</Field>
+            <Field name="pNextOpIfOk">0x00000000</Field>
+            <Field name="pValue">0x00000000</Field>
+            <Field name="mask">0x00000000</Field>
+            <Field name="compareVal">0x00000000</Field>
+        </Command>
+        <Command name="CMD_NOP">
+            <Field name="commandNo">0x00000801</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+        </Command>
+        <Command name="CMD_FS_POWERUP">
+            <Field name="commandNo">0x0000080c</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+            <Field name="pRegOverride">0x00000000</Field>
+        </Command>
+        <Command name="CMD_FS_POWERDOWN">
+            <Field name="commandNo">0x0000080d</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+        </Command>
+        <Command name="CMD_FS_OFF">
+            <Field name="commandNo">0x00000804</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+        </Command>
+        <Command name="CMD_FS">
+            <Field name="commandNo">0x00000803</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000001</Field>
+            <Field name="frequency">0x000003d2</Field>
+            <Field name="fractFreq">0x00000000</Field>
+            <Field name="synthConf">0x00000000</Field>
+        </Command>
+        <Command name="CMD_COUNT_BRANCH">
+            <Field name="commandNo">0x00000812</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+            <Field name="counter">0x00000000</Field>
+            <Field name="pNextOpIfOk">0x00000000</Field>
+        </Command>
+        <Command name="CMD_COUNT">
+            <Field name="commandNo">0x0000080b</Field>
+            <Field name="status">0x00000000</Field>
+            <Field name="pNextOp">0x00000000</Field>
+            <Field name="startTime">0x00000000</Field>
+            <Field name="startTrigger">0x00000000</Field>
+            <Field name="condition">0x00000000</Field>
+            <Field name="counter">0x00000000</Field>
+        </Command>
+        <Command name="CMD_ABORT">
+            <Field name="commandNo">0x00000401</Field>
+        </Command>
+    </commandsettings>
+    <dcpanel>
+        <Property role="44" name="m_chkCmdView">2</Property>
+        <Property role="44" name="m_chkRfParameters">2</Property>
+        <Property role="33" name="m_typicalSettings">Settings for 779 - 930 MHz band;1 Mbps, 350 kHz Deviation, 2-GFSK, 2.2 MHz RX Bandwidth</Property>
+        <Property role="37" name="m_testFuncPanel">3</Property>
+    </dcpanel>
+    <targetconfig>
+        <Property role="46" name="m_cmbBoardSelection">0</Property>
+        <Property role="44" name="m_chkDcDc">2</Property>
+    </targetconfig>
+    <rfparameters>
+        <Property role="65535" name="txPower">13</Property>
+    </rfparameters>
+    <conttx>
+        <Property role="45" name="m_rbtModulated">1</Property>
+        <Property role="45" name="m_rbtUnmodulated">0</Property>
+        <Property role="46" name="m_cmbDataFormat">-1</Property>
+        <Property role="44" name="m_chkFreqSweep">0</Property>
+        <Property role="44" name="m_chkChanSweep">0</Property>
+    </conttx>
+    <contrx>
+        <Property role="46" name="m_cmbDataFormat">0</Property>
+        <Property role="44" name="m_chkAutoScroll">2</Property>
+    </contrx>
+    <packettx>
+        <Property role="42" name="m_edtPacketCount">100</Property>
+        <Property role="42" name="m_edtFixedPktLength">20</Property>
+        <Property role="42" name="m_edtPacketData">59 97 ba 69 06 65 18 41 ee 9d db eb 50 95 dc 72 5c ca </Property>
+        <Property role="42" name="m_edtAccessAddress"></Property>
+        <Property role="44" name="m_chkAddSeqNbr">2</Property>
+        <Property role="44" name="m_chkInfinite">0</Property>
+        <Property role="45" name="m_rbtRandom">1</Property>
+        <Property role="45" name="m_rbtText">0</Property>
+        <Property role="45" name="m_rbtHex">0</Property>
+        <Property role="44" name="m_chkAdvanced">0</Property>
+        <Property role="46" name="m_cmbLengthConfig">0</Property>
+        <Property role="42" name="m_edtFixedPktLength">20</Property>
+        <Property role="20" name="m_grp802154g">0</Property>
+        <Property role="42" name="m_edt802154gPktLength">0</Property>
+        <Property role="45" name="m_rbt802154g2BCrc">1</Property>
+        <Property role="45" name="m_rbt802154g4BCrc">0</Property>
+        <Property role="44" name="m_chk802154gWhitening">2</Property>
+        <Property role="44" name="m_chkFEC">0</Property>
+        <Property role="46" name="m_cmbPreambleCount">0</Property>
+        <Property role="44" name="m_chkAddress">0</Property>
+        <Property role="46" name="m_cmbSyncMode">8</Property>
+    </packettx>
+    <packetview>
+        <Property role="42" name="m_edtPktLength">20</Property>
+        <Property role="42" name="m_edtAddress"></Property>
+        <Property role="41" name="m_lblFrmPayload">59 97 ba 69 06 65 18 41 ee 9d db eb 50 95 dc 72 5c ca </Property>
+    </packetview>
+    <packetrx>
+        <Property role="42" name="m_edtPacketCount">100</Property>
+        <Property role="42" name="m_edtAccessAddress">0xacdda4e2</Property>
+        <Property role="44" name="m_chkInfinite">2</Property>
+        <Property role="46" name="m_cmbViewFormat">0</Property>
+        <Property role="44" name="m_chkSeqNbrIncluded">0</Property>
+        <Property role="42" name="m_edtDumpFile"></Property>
+        <Property role="44" name="m_chkAdvanced">0</Property>
+        <Property role="44" name="m_chk802154gMode">0</Property>
+    </packetrx>
+</dcpanelconfiguration>

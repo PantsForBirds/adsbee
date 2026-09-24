@@ -151,13 +151,12 @@ TEST(BeastUtils, BuildFeedStartFrame) {
 }
 
 struct UATADSBPacketBeastTest {
-    DecodedUATADSBPacket packet;
+    RawUATADSBPacket packet;
     char beast_frame_buf[2 * BeastReporter::kUATADSBBeastFrameMaxLenBytes];
 };
 
 UATADSBPacketBeastTest uat_adsb_tests[] = {
-    {.packet =
-         DecodedUATADSBPacket("00a66ef135445d525a0c05191190212048006cb82bc4d53a5b2bb0a8ec6e", -60, 0, 0x123456 << 2),
+    {.packet = RawUATADSBPacket("00a66ef135445d525a0c05191190212048006cb82bc4d53a5b2bb0a8ec6e", -60, 0, 0x123456 << 2),
      .beast_frame_buf =
          "1aec730000001234562d"  // Prefix: escape | frame type | uat message type | mlat timestamp | rssi
          "00a66ef135445d525a0c05191190212048006cb82bc4d53a5b2bb0a8ec6e"}};
@@ -175,12 +174,12 @@ TEST(BeastUtils, BuildUATADSBFrame) {
 }
 
 struct UATUplinkPacketBeastTest {
-    DecodedUATUplinkPacket packet;
+    RawUATUplinkPacket packet;
     char beast_frame_buf[2 * BeastReporter::kUATUplinkBeastFrameMaxLenBytes];
 };
 
 UATUplinkPacketBeastTest uat_uplink_tests[] = {
-    {.packet = DecodedUATUplinkPacket(
+    {.packet = RawUATUplinkPacket(
          "352d30000000147058000000c9c70d000000523c3c000000d61f170000005cc7f1000000b60cd7000000b01f0c0000002ec7720000000"
          "08cd3000000001f1e0000003505330000000ef6c10000001d5ffc000000687c7500000022f5c300000010d91c0000000020b400000000"
          "51cb00000000600c000000ff4cf000000000f57f00000051541c00000091227000000054037f0000007c4f1e0000004d053000000050f"

@@ -162,6 +162,9 @@ class SPICoprocessorSlaveInterface : public SPICoprocessorInterface {
     uint16_t num_queued_log_messages = 0;                // Number of log messages queued to be read from the slave.
     uint16_t queued_log_messages_packed_size_bytes = 0;  // Size of the pending log messages in bytes.
     uint16_t num_queued_sc_command_requests = 0;         // Number of SCCommand requests queued on the slave.
+    // Cached ESP32 Remote ID receiver status bitfield (see RemoteIDManager::Status). Only meaningful for the ESP32
+    // coprocessor; left 0 for others. Surfaced to the user via AT+REMOTE_ID?.
+    uint16_t remote_id_status = 0;
 
    protected:
     // Use this flag to indicate whether we are expecting the handshake line to go high. If it is high during a

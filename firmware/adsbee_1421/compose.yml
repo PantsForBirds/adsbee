@@ -1,0 +1,25 @@
+services:
+  # CC1314R10 (Cortex-M33) toolchain for the adsbee_1421 application. The TI SimpleLink SDK and
+  # arm-none-eabi-gcc live in the image; TI_LPF2_SDK_PATH is set in the container environment.
+  ti-lpf2:
+    image: coolnamesalltaken/ti-lpf2:latest
+    platform: "linux/amd64"
+    network_mode: host
+    volumes:
+      # Mount the whole product directory so the ADSBEE_*_DIR CMake defaults
+      # (${CMAKE_SOURCE_DIR}/../../common and ../../modules) resolve identically
+      # inside the container and on the host.
+      - .:/firmware/adsbee_1421
+      - ../common:/firmware/common
+      - ../modules:/firmware/modules
+    command: tail -f /dev/null
+
+  # RP2040 toolchain for the adsbee_1421_programmer flashing jig.
+  pico-docker:
+    image: coolnamesalltaken/pico-docker:latest
+    network_mode: host
+    volumes:
+      # The programmer bakes in ../ti/build/Release/adsbee_1421.hex, so it needs the
+      # whole product directory, not just programmer/.
+      - .:/firmware/adsbee_1421
+    command: tail -f /dev/null

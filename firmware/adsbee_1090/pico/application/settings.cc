@@ -7,6 +7,7 @@
 #include "firmware_update.hh"
 #include "flash_utils.hh"
 #include "hardware/flash.h"
+#include "settings_migration.hh"
 #include "spi_coprocessor.hh"
 
 /* Original flash length: 16384k Bytes.
@@ -62,30 +63,47 @@ bool SettingsManager::Load() {
         memcpy(&settings, (const void*)kFlashSettingsStartAddr, sizeof(Settings));
     }
 
-    // Reset to defaults if loading from a blank EEPROM.
+    // Handle a stored settings version that doesn't match the current firmware.
     if (settings.settings_version != kSettingsVersion) {
-        CONSOLE_ERROR("settingsManager::Settings::Load",
-                      "Settings version mismatch. Expected %d, got %d. Resetting to defaults.", kSettingsVersion,
-                      settings.settings_version);
-        // Attempt to load the core network settings anyways.
-        bool found_valid_cns = false;
-        Settings::CoreNetworkSettings cns_backup;
-        if (settings.core_network_settings.IsValid()) {
-            found_valid_cns = true;
-            cns_backup = settings.core_network_settings;
+        // Snapshot the raw stored bytes before we overwrite `settings` (the blob we just read IS the old struct; its
+        // first field, settings_version, is at offset 0 in every version).
+        uint8_t raw[sizeof(Settings)];
+        memcpy(raw, &settings, sizeof(settings));
+        uint32_t old_version = settings.settings_version;
+
+        // First, try to migrate the old settings forward, preserving all user values.
+        if (SettingsMigrator::Migrate(raw, sizeof(raw), old_version, settings)) {
+            CONSOLE_INFO("SettingsManager::Settings::Load",
+                         "Migrated settings from version %lu to %lu, preserving user settings.", old_version,
+                         (uint32_t)kSettingsVersion);
+        } else {
+            // Unmigratable (older than the oldest supported version, unknown, or a corrupt/short read). Fall back to
+            // factory defaults, preserving CoreNetworkSettings if its CRC still validates.
+            CONSOLE_ERROR("settingsManager::Settings::Load",
+                          "Settings version mismatch (expected %d, got %lu) and no migration path. Resetting to "
+                          "defaults.",
+                          kSettingsVersion, old_version);
+            bool found_valid_cns = false;
+            Settings::CoreNetworkSettings cns_backup;
+            if (settings.core_network_settings.IsValid()) {
+                found_valid_cns = true;
+                cns_backup = settings.core_network_settings;
+            }
+
+            ResetToDefaults();  // Reset to defaults with part number specific overrides.
+            // Restore the core network settings if they were valid.
+            if (found_valid_cns) {
+                CONSOLE_INFO("SettingsManager::Settings::Load",
+                             "Restoring core network settings from backup with checksum 0x%x.", cns_backup.crc32);
+                settings.core_network_settings = cns_backup;
+            }
         }
 
-        ResetToDefaults();  // Reset to defaults with part number specific overrides.
-        // Restore the core network settings if they were valid.
-        if (found_valid_cns) {
-            CONSOLE_INFO("SettingsManager::Settings::Load",
-                         "Restoring core network settings from backup with checksum 0x%x.", cns_backup.crc32);
-            settings.core_network_settings = cns_backup;
-        }
+        // Persist the migrated (or reset) settings so subsequent boots match the current version.
         if (bsp.has_eeprom && !eeprom.Save(settings)) {
-            CONSOLE_ERROR("settings.cc::Load", "Failed to save default settings.");
+            CONSOLE_ERROR("settings.cc::Load", "Failed to save settings after version change.");
             return false;
-        } else {
+        } else if (!bsp.has_eeprom) {
             FlashUtils::FlashSafe();
             flash_range_erase(FirmwareUpdateManager::FlashAddrToOffset(kFlashSettingsStartAddr),
                               FlashUtils::kFlashSectorSizeBytes);

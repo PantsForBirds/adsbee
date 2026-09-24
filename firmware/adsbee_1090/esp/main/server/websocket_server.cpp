@@ -1,5 +1,7 @@
 #include "websocket_server.hh"
 
+#include "esp_heap_caps.h"
+
 #include "comms.hh"
 #include "hal.hh"
 
@@ -68,7 +70,15 @@ esp_err_t WebSocketServer::Handler(httpd_req_t* req) {
 
     if (req->method == HTTP_GET) {
         CONSOLE_INFO("WebSocketServer::Handler", " [%s] Handshake done, new connection was opened.", config_.label);
-        if (!AddClient(client_fd)) {
+        uint32_t free_heap_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        bool heap_ok = free_heap_bytes >= kMinFreeHeapBytesToAcceptClient;
+        if (!heap_ok) {
+            CONSOLE_WARNING("WebSocketServer::Handler",
+                            "[%s] Rejecting websocket connection: %lu Bytes of heap free, need at least %lu.",
+                            config_.label, (unsigned long)free_heap_bytes,
+                            (unsigned long)kMinFreeHeapBytesToAcceptClient);
+        }
+        if (!heap_ok || !AddClient(client_fd)) {
             CONSOLE_ERROR("WebSocketServer::Handler", "[%s] Rejecting websocket connection.", config_.label);
             // Send a close frame
             httpd_ws_frame_t ws_pkt = {
@@ -161,6 +171,21 @@ bool WebSocketServer::RemoveClient(int client_fd) {
 }
 
 void WebSocketServer::BroadcastMessage(const char* message, int16_t len_bytes) {
+    if (GetNumClients() == 0) {
+        return;
+    }
+    uint32_t free_heap_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    if (free_heap_bytes < kMinFreeHeapBytesToBroadcast) {
+        // Sending queues TCP segments on the heap; when it's this low, dropping the message is the safe choice.
+        uint32_t timestamp_ms = get_time_since_boot_ms();
+        if (timestamp_ms - last_low_heap_warning_timestamp_ms_ > kLowHeapWarningIntervalMs) {
+            last_low_heap_warning_timestamp_ms_ = timestamp_ms;
+            CONSOLE_WARNING("WebSocketServer::BroadcastMessage",
+                            "[%s] Dropping messages while heap is low (%lu Bytes free, need %lu).", config_.label,
+                            (unsigned long)free_heap_bytes, (unsigned long)kMinFreeHeapBytesToBroadcast);
+        }
+        return;
+    }
     for (int i = 0; i < config_.num_clients_allowed; i++) {
         if (clients_[i].in_use) {
             esp_err_t ret = SendMessage(clients_[i].client_fd, message, len_bytes);

@@ -401,6 +401,113 @@ static inline void message_demodulator_program_init(
     //    pio_encode_out(pio_null, 29) | pio_encode_delay(2);
     //}
 
-    pio_sm_init(pio, sm, offset, &c);
+    // Park at initial_entry so the SM waits for the demod pin instead of free-running from the top of the program.
+    pio_sm_init(pio, sm, offset + message_demodulator_offset_initial_entry, &c);
+}
+%}
+; SELF-PARKING MESSAGE DEMODULATOR (opt-in via DEMODULATOR_SELF_PARKING in adsbee.cc).
+; Identical bit timing and sampling phase to message_demodulator (48 cycles per bit, same sample window), but checks the
+; demod pin after every bit. When the preamble detector drops the demod pin at the end of a message, the SM pads the
+; partial ISR word with zeros until it autopushes (left aligned, exactly one push), clears the ISR shift counter, and parks
+; at initial_entry waiting for the next demod interval. This removes the CPU-side bit-at-a-time padding and the full
+; state machine restart from the OnDemodComplete ISR, and makes the received word count deterministic (2 or 4 words).
+; 31 instructions.
+.program message_demodulator_self_parking
+; Demod pin for knowing when a valid message demod interval has begun. Must be the IN pin base.
+.define demod_in_pin_index 0
+; Each delay count is 4 cycles
+.define initial_entry_delay 8
+
+; Allow side-setting the out_pin for debugging. 1x output pin can be optionally side-set.
+.side_set 1 opt
+
+; SAMPLE SUBROUTINE (unchanged from message_demodulator, 33 cycles)
+; Samples 3x and uses a biased majority vote to determine whether it's HI or LO.
+; @retval x x=1 if the sampling period was LO, x=0 if it was HI.
+sample:
+    set x 2 [7]         ; 5:13 | (x+1) = number of samples to take
+    mov osr !null [7]   ; 14:22 | OSR = all ones
+public sample_set_vote_threshold:
+    out null 29 [2]     ; 23:25 | OSR = 0b111 (3/3 bits required to classify sampling period as HI)
+sample_wrap_target:
+    jmp pin sample_hi side 1 ; 8+3n
+sample_lo:
+    jmp sample_wrap side 0 ; 9+3n
+sample_hi:
+    out null 1 side 0 ; 9+3n
+sample_wrap:
+    jmp x-- sample_wrap_target ; 10+3n
+    jmp !osre sample_net_lo [1] ; 17:19 | if OSR not empty -> net LO
+sample_net_hi:
+    set x 0 [1]                 ; 20-21
+    jmp sample_return           ; 22
+sample_net_lo:
+    set x 1 [2]                 ; 20-22
+sample_return:                  ; 4 cycles (message_demodulator uses 3 here, compensated by the shorter nop below)
+    mov osr, ::pins             ; 23 | Bit-reversed IN pins: OSR bit 31 = demod pin (IN pin 0).
+    out y, 1                    ; 24 | y = demod pin (OSR shifts left, so out yields bit 31).
+    jmp !y message_done         ; 25 | Demod interval ended: flush the partial word and park.
+    jmp !x start_of_1           ; 26 | HI sample -> next bit is a 1, otherwise fall through to a 0.
+
+start_of_0:                     ; We are ~0.25 bits into a 0 - signal is LO
+    nop [6]                     ; 7 cycles (message_demodulator: 8) | DUMB WAIT
+rising_edge_0:
+    in null, 1 [1] side 0       ; 1:2 | Emit a 0.
+    jmp sample [1]              ; 3:4
+
+start_of_1:
+    nop [6]                     ; 7 cycles (message_demodulator: 8) | DUMB WAIT
+falling_edge_1:
+    mov x !null side 0          ; 1
+    in x, 1                     ; 2 | Emit a 1.
+initial_entry_cut_in:
+    jmp sample [1]              ; 3:4
+
+message_done:
+    set x, 31
+pad_loop:
+    in null, 1                  ; 32 single-bit shifts: exactly one autopush of the left-aligned partial word.
+    jmp x-- pad_loop
+    mov isr, null               ; Clear the ISR shift counter so the next message autopushes at 32 bits.
+; Fall through and park.
+public initial_entry:
+    wait 1 pin demod_in_pin_index [3]  ; Wait to enter DEMOD interval.
+    pull noblock [0]        ; Pull from TX FIFO to OSR in order to signal DMA to capture timestamp.
+    set x initial_entry_delay side 0
+initial_entry_delay_wrap:
+    jmp x-- initial_entry_delay_wrap [2]
+    ; Preamble ends LO, so imitate the end of a 1 with its HI->LO transition.
+    jmp initial_entry_cut_in [6]
+
+% c-sdk {
+static inline void message_demodulator_self_parking_program_init(
+    PIO pio,
+    uint sm,
+    uint offset,
+    uint pulses_pin,
+    uint demod_pin,
+    uint recovered_clk_pin,
+    float div
+) {
+    pio_sm_set_consecutive_pindirs(pio, sm, demod_pin, 1, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, pulses_pin, 1, false);
+
+    pio_sm_config c = message_demodulator_self_parking_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, demod_pin); // WAIT / mov pins: demod_pin is IN pin 0.
+    sm_config_set_jmp_pin(&c, pulses_pin); // JMP based on the comparator output
+    sm_config_set_out_shift(&c, false, false, 32); // OSR shifts left, autopull turned off, autopull threshold 32 bits
+    sm_config_set_in_shift(&c, false, true, 32); // ISR shifts left, autopush turned on, autopush threshold 32 bits
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_NONE); // We expect max 112 bits, so 4 word RX FIFO is fine. We use the TX FIFO for DMA signaling.
+    sm_config_set_clkdiv(&c, div);
+
+    if (recovered_clk_pin != UINT16_MAX) {
+        // Allow PIO to control recovered_clk_pin (as output for debugging).
+        pio_gpio_init(pio, recovered_clk_pin);
+        pio_sm_set_consecutive_pindirs(pio, sm, recovered_clk_pin, 1, true);
+        sm_config_set_sideset_pins(&c, recovered_clk_pin);
+    }
+
+    // Park at initial_entry waiting for the demod pin.
+    pio_sm_init(pio, sm, offset + message_demodulator_self_parking_offset_initial_entry, &c);
 }
 %}

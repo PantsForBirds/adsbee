@@ -73,6 +73,11 @@ public:
 
     bool rx_enabled = true;
 
+    // Failed CMD_PROP_SET_LEN immediate commands (RF_runImmediateCmd status != success), counted from
+    // the RF callback (ISR context, no logging there). A nonzero value means packet-length shortening
+    // raced the RX command ending -- packets may be truncated or over-read.
+    volatile uint32_t set_len_error_count = 0;
+
 private:
     SubGHzRadioConfig config_;
 

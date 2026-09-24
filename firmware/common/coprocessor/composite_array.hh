@@ -2,6 +2,7 @@
 
 #include "data_structures.hh"
 #include "mode_s_packet.hh"
+#include "remote_id_packet.hh"
 #include "stdint.h"
 #include "stdio.h"
 #include "uat_packet.hh"
@@ -28,7 +29,10 @@ class CompositeArray {
             uint16_t num_mode_s_packets = 0;
             uint16_t num_uat_adsb_packets = 0;
             uint16_t num_uat_uplink_packets = 0;
-            uint16_t padding = 0;  // Padding to make struct word-aligned (8 bytes total)
+            // Formerly a padding word (kept the Header at 8 bytes / word-aligned). Now repurposed to count Remote ID
+            // packets, which the ESP32 forwards up to the RP2040. Firmwares are rebuilt in lockstep, and any firmware
+            // that predates Remote ID simply wrote 0 here, so reusing the field is backwards compatible on the wire.
+            uint16_t num_remote_id_packets = 0;
         };
 
         /**
@@ -54,14 +58,16 @@ class CompositeArray {
             }
             uint16_t expected_len_bytes = sizeof(Header) + header->num_mode_s_packets * sizeof(RawModeSPacket) +
                                           header->num_uat_adsb_packets * sizeof(RawUATADSBPacket) +
-                                          header->num_uat_uplink_packets * sizeof(RawUATUplinkPacket);
+                                          header->num_uat_uplink_packets * sizeof(RawUATUplinkPacket) +
+                                          header->num_remote_id_packets * sizeof(RawRemoteIDPacket);
             if (len_bytes < expected_len_bytes) {
                 if (error_msg) {
                     snprintf(error_msg, kErrorMessageMaxLen,
                              "Invalid CompositeArray::RawPackets: insufficient length for %u Mode S packet(s), %u UAT "
-                             "ADSB packet(s), %u UAT Uplink packet(s) (expected %u bytes, got %u bytes).",
+                             "ADSB packet(s), %u UAT Uplink packet(s), %u Remote ID packet(s) (expected %u bytes, got "
+                             "%u bytes).",
                              header->num_mode_s_packets, header->num_uat_adsb_packets, header->num_uat_uplink_packets,
-                             expected_len_bytes, len_bytes);
+                             header->num_remote_id_packets, expected_len_bytes, len_bytes);
                 }
                 return false;
             }
@@ -74,6 +80,7 @@ class CompositeArray {
         RawModeSPacket* mode_s_packets = nullptr;          // Array of RawModeSPacket structs.
         RawUATADSBPacket* uat_adsb_packets = nullptr;      // Array of RawUATADSBPacket structs.
         RawUATUplinkPacket* uat_uplink_packets = nullptr;  // Array of RawUATUplinkPacket structs.
+        RawRemoteIDPacket* remote_id_packets = nullptr;    // Array of RawRemoteIDPacket structs.
     };
 
     // Ensure that things are nicely word-aliged so that we can do direct array access without memcpy.
@@ -81,6 +88,7 @@ class CompositeArray {
     static_assert(sizeof(RawModeSPacket) % 4 == 0);
     static_assert(sizeof(RawUATADSBPacket) % 4 == 0);
     static_assert(sizeof(RawUATUplinkPacket) % 4 == 0);
+    static_assert(sizeof(RawRemoteIDPacket) % 4 == 0);
 
     /**
      * Fills a buffer as a CompositeArray (RawPackets::Header) followed by arrays of raw packets of each kind. Takes
@@ -91,11 +99,13 @@ class CompositeArray {
      * @param[in] uat_adsb_queue Pointer to a PFBQueue of RawUATADSBPacket to dequeue packets from, or nullptr to skip.
      * @param[in] uat_uplink_queue Pointer to a PFBQueue of RawUATUplinkPacket to dequeue packets from, or nullptr to
      * skip.
+     * @param[in] remote_id_queue Pointer to a PFBQueue of RawRemoteIDPacket to dequeue packets from, or nullptr to skip.
      * @retval CompositeArray::RawPackets struct that describes the contents of the buffer.
      */
     static RawPackets PackRawPacketsBuffer(uint8_t* buf, uint16_t buf_len_bytes, PFBQueue<RawModeSPacket>* mode_s_queue,
                                            PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
-                                           PFBQueue<RawUATUplinkPacket>* uat_uplink_queue);
+                                           PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
+                                           PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr);
 
     /**
      * Unpacks a buffer containing a CompositeArray (RawPackets::Header) followed by arrays of raw packets of each kind,
@@ -117,12 +127,15 @@ class CompositeArray {
      * @param[out] uat_adsb_queue Pointer to a PFBQueue of RawUATADSBPacket to enqueue packets into, or nullptr to skip.
      * @param[out] uat_uplink_queue Pointer to a PFBQueue of RawUATUplinkPacket to enqueue packets into, or nullptr to
      * skip.
+     * @param[out] remote_id_queue Pointer to a PFBQueue of RawRemoteIDPacket to enqueue packets into, or nullptr to
+     * skip.
      * @retval True if all packets were successfully enqueued, false otherwise.
      */
     static bool UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_len_bytes,
                                                PFBQueue<RawModeSPacket>* mode_s_queue,
                                                PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
-                                               PFBQueue<RawUATUplinkPacket>* uat_uplink_queue);
+                                               PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
+                                               PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr);
 
     /**
      * Calculates the length in bytes of a raw packet buffer that would be formed by emptying the contents of the
@@ -131,11 +144,13 @@ class CompositeArray {
      * @param[in] uat_adsb_queue Pointer to a PFBQueue of RawUATADSBPacket to count packets from, or nullptr to skip.
      * @param[in] uat_uplink_queue Pointer to a PFBQueue of RawUATUplinkPacket to count packets from, or nullptr to
      * skip.
+     * @param[in] remote_id_queue Pointer to a PFBQueue of RawRemoteIDPacket to count packets from, or nullptr to skip.
      * @retval The total length in bytes, including the header and all packets from the queues.
      */
     static uint16_t CalculateRawPacketsBufferLength(PFBQueue<RawModeSPacket>* mode_s_queue,
                                                     PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
-                                                    PFBQueue<RawUATUplinkPacket>* uat_uplink_queue);
+                                                    PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
+                                                    PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr);
 
     /**
      * Merges packets from src_buf into dst_buf in-place. Packets of each type from src are appended after the

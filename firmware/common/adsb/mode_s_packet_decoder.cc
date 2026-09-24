@@ -1,5 +1,7 @@
 #include "mode_s_packet_decoder.hh"
 
+#include <cstring>  // For memcmp, memcpy.
+
 #include "comms.hh"
 #include "crc.hh"
 
@@ -38,6 +40,10 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
         return true;  // Nothing to do.
     }
 
+    // Per-packet debug messages are only ever printed at log level kInfo. Skip formatting them entirely otherwise: this
+    // loop runs for every demodulation attempt (most of which are noise), so the formatting cost is significant.
+    debug_enabled_ = settings_manager.settings.log_level >= SettingsManager::LogLevel::kInfo;
+
     for (uint16_t i = 0; i < num_packets_to_process; i++) {
         RawModeSPacket raw_packet;
         if (!raw_mode_s_packet_in_queue.Dequeue(raw_packet)) {
@@ -49,80 +55,95 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
         }
 
         DecodedModeSPacket decoded_packet = DecodedModeSPacket(raw_packet);
-        DebugMessage decode_debug_message = DebugMessage{
-            .message = "",
-            .log_level = SettingsManager::LogLevel::kInfo,
-        };
+        const char* status_str = nullptr;
         if (decoded_packet.is_valid) {
             PushPacketIfNotDuplicate(decoded_packet);
-
-            snprintf(decode_debug_message.message, DebugMessage::kMessageMaxLen, "src=%d [VALID     ] ",
-                     decoded_packet.raw.source);
+            status_str = "VALID     ";
         } else if (decoded_packet.is_address_parity) {
-            PushPacketIfNotDuplicate(DecodedModeSPacket(decoded_packet.raw));
-            snprintf(decode_debug_message.message, DebugMessage::kMessageMaxLen, "src=%d [APFWD     ] ",
-                     decoded_packet.raw.source);
+            // Forward for validation against ICAO addresses in the aircraft dictionary.
+            PushPacketIfNotDuplicate(decoded_packet);
+            status_str = "APFWD     ";
         } else if (config_.enable_1090_error_correction &&
                    decoded_packet.raw.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes) {
-            // Checksum correction is enabled, and we have a packet worth correcting.
-            uint8_t raw_buffer[decoded_packet.raw.buffer_len_bytes];
-            WordBufferToByteBuffer(decoded_packet.raw.buffer, raw_buffer, decoded_packet.raw.buffer_len_bytes);
-            int16_t bit_flip_index =
-                crc24_find_single_bit_error(crc24_syndrome(raw_buffer, decoded_packet.raw.buffer_len_bytes),
-                                            decoded_packet.raw.buffer_len_bytes * kBitsPerByte);
-            if (bit_flip_index > 0) {
+            // Checksum correction is enabled, and we have a packet worth correcting. The syndrome was already calculated
+            // while constructing the packet.
+            int16_t bit_flip_index = crc24_find_single_bit_error(
+                decoded_packet.crc_syndrome, decoded_packet.raw.buffer_len_bytes * kBitsPerByte);
+            if (bit_flip_index >= 0) {
                 // Found a single bit error: flip it and push the corrected packet to the output queue.
                 flip_bit(decoded_packet.raw.buffer, bit_flip_index);
                 decoded_mode_s_packet_bit_flip_locations_out_queue.Enqueue(bit_flip_index);
-                PushPacketIfNotDuplicate(DecodedModeSPacket(decoded_packet.raw));
-
-                snprintf(decode_debug_message.message, DebugMessage::kMessageMaxLen, "src=%d [1FIXD     ] ",
-                         decoded_packet.raw.source);
+                decoded_packet = DecodedModeSPacket(decoded_packet.raw);
+                PushPacketIfNotDuplicate(decoded_packet);
+                status_str = "1FIXD     ";
             } else {
                 // Checksum correction failed.
-                snprintf(decode_debug_message.message, DebugMessage::kMessageMaxLen, "src=%d [     NOFIX] ",
-                         decoded_packet.raw.source);
+                status_str = "     NOFIX";
             }
         } else {
             // Invalid and not worth correcting.
-            snprintf(decode_debug_message.message, DebugMessage::kMessageMaxLen, "src=%d [     INVLD] ",
-                     decoded_packet.raw.source);
+            status_str = "     INVLD";
         }
 
-        // Append packet contents to debug message.
-        uint16_t message_len = strnlen(decode_debug_message.message, DebugMessage::kMessageMaxLen);
-        message_len +=
-            snprintf(decode_debug_message.message + message_len, DebugMessage::kMessageMaxLen - message_len,
-                     "df=%02d icao=0x%06x ts=%llu ", decoded_packet.downlink_format, decoded_packet.icao_address,
-                     decoded_packet.raw.GetTimestampMs());  // Append a print of the packet contents.
-        raw_packet.PrintBuffer(decode_debug_message.message + message_len, DebugMessage::kMessageMaxLen - message_len);
-        debug_message_out_queue.Enqueue(decode_debug_message);
+        if (debug_enabled_) {
+            DebugMessage debug_message = DebugMessage{
+                .log_level = SettingsManager::LogLevel::kInfo,
+            };
+            int message_len = snprintf(debug_message.message, DebugMessage::kMessageMaxLen,
+                                       "src=%d [%s] df=%02d icao=0x%06x ts=%llu ", decoded_packet.raw.source, status_str,
+                                       decoded_packet.downlink_format, (unsigned)decoded_packet.icao_address,
+                                       (unsigned long long)decoded_packet.raw.GetTimestampMs());
+            // snprintf returns the length the full string would have had, so clamp on truncation. message[] is
+            // kMessageMaxLen + 1 long, so message + kMessageMaxLen always points at the terminating null.
+            if (message_len < 0) {
+                message_len = 0;
+            } else if (message_len >= DebugMessage::kMessageMaxLen) {
+                message_len = DebugMessage::kMessageMaxLen;
+            }
+            // Append a print of the packet contents as received (before any bit flip correction).
+            raw_packet.PrintBuffer(debug_message.message + message_len, DebugMessage::kMessageMaxLen - message_len);
+            debug_message_out_queue.Enqueue(debug_message);
+        }
     }
 
     return true;
 }
 
 bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& decoded_packet) {
-    uint32_t timestamp_ms = decoded_packet.raw.GetTimestampMs();
-    uint16_t packet_source = decoded_packet.raw.source;
+    const RawModeSPacket& raw = decoded_packet.raw;
+    int16_t packet_source = raw.source;
 
 #ifndef DISABLE_DUPLICATE_FILTER
-    // Check if we have already seen this packet from another source (got caught by multiple state machines
-    // simultaneously).
+    // Check if we have already seen this exact packet from another source (got caught by multiple state machines
+    // simultaneously). Only the words that hold packet bits are compared; the last word is masked by the receiver so
+    // the comparison is exact.
+    uint16_t num_words = (raw.buffer_len_bytes + kBytesPerWord - 1) / kBytesPerWord;
     for (uint16_t i = 0; i < kMaxNumSources; i++) {
-        if (last_demod_icao_[i] == decoded_packet.icao_address &&
-            (timestamp_ms - last_demod_timestamp_ms_[i]) < kMinSameAircraftMessageIntervalMs) {
-            // Already seen this packet from the same aircraft within the minimum interval.
+        const LastPacket& last = last_packet_[i];
+        if (last.buffer_len_bytes != raw.buffer_len_bytes) {
+            continue;
+        }
+        uint64_t delta_counts = raw.mlat_48mhz_64bit_counts >= last.mlat_48mhz_64bit_counts
+                                    ? raw.mlat_48mhz_64bit_counts - last.mlat_48mhz_64bit_counts
+                                    : last.mlat_48mhz_64bit_counts - raw.mlat_48mhz_64bit_counts;
+        if (delta_counts >= kDuplicatePacketWindow48MHzCounts) {
+            continue;
+        }
+        if (memcmp(last.buffer, raw.buffer, num_words * kBytesPerWord) != 0) {
+            continue;
+        }
+        // Already seen this exact packet within the duplicate window.
+        if (debug_enabled_) {
             DebugMessage debug_message = DebugMessage{
                 .log_level = SettingsManager::LogLevel::kInfo,
             };
             snprintf(debug_message.message, DebugMessage::kMessageMaxLen,
                      "ModeSPacketDecoder::PushPacketIfNotDuplicate: Skipped duplicate packet with icao=0x%x src=%d "
-                     "timestamp_ms=%d.",
-                     decoded_packet.icao_address, packet_source, timestamp_ms);
+                     "(first seen from src=%d).",
+                     (unsigned)decoded_packet.icao_address, packet_source, i);
             debug_message_out_queue.Enqueue(debug_message);
-            return false;
         }
+        return false;
     }
 #endif  // DISABLE_DUPLICATE_FILTER
 
@@ -131,9 +152,11 @@ bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& deco
     }
 
     if (packet_source >= 0 && packet_source < kMaxNumSources) {
-        // Only update packet cache if the source is valid.
-        last_demod_icao_[packet_source] = decoded_packet.icao_address;
-        last_demod_timestamp_ms_[packet_source] = timestamp_ms;
+        // Only update the packet cache if the source is valid.
+        LastPacket& last = last_packet_[packet_source];
+        memcpy(last.buffer, raw.buffer, sizeof(last.buffer));
+        last.buffer_len_bytes = raw.buffer_len_bytes;
+        last.mlat_48mhz_64bit_counts = raw.mlat_48mhz_64bit_counts;
     }
 
     return true;

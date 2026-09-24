@@ -1,7 +1,9 @@
 #include "esp32.hh"
 
 #include "adsbee.hh"  // Get access to the Sub-GHz radio for its status.
+#include "composite_array.hh"  // For pulling Remote ID packets forwarded up from the ESP32.
 #include "cpu_utils.hh"
+#include "gnss_interface.hh"
 #include "hal.hh"
 
 extern CPUMonitor core_0_monitor;
@@ -55,6 +57,7 @@ bool ESP32::Update() {
         num_queued_log_messages = device_status.num_queued_log_messages;
         queued_log_messages_packed_size_bytes = device_status.queued_log_messages_packed_size_bytes;
         num_queued_sc_command_requests = device_status.num_queued_sc_command_requests;
+        remote_id_status = device_status.remote_id_status;
     } else {
         CONSOLE_ERROR("ESP32::Update", "Unable to read ESP32 status.");
         return false;
@@ -108,7 +111,24 @@ bool ESP32::Update() {
         // Successfully read console message from ESP32.
     }
 
+    // Pull any Broadcast Remote ID packets the ESP32 received over BLE/WiFi and enqueue them for the main loop to decode
+    // into the aircraft dictionary (which drives serial reporting). Mirrors the CC1312 UAT pull in CC1312::Update().
+    if (device_status.pending_raw_packets_len_bytes > sizeof(CompositeArray::RawPackets::Header)) {
+        uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+        if (!esp32.Read(ObjectDictionary::Address::kAddrCompositeArrayRawPackets, read_buf,
+                        device_status.pending_raw_packets_len_bytes)) {
+            CONSOLE_ERROR("ESP32::Update", "Unable to read Remote ID raw packet array from ESP32.");
+            return false;
+        }
+        if (!CompositeArray::UnpackRawPacketsBufferToQueues(read_buf, sizeof(read_buf), nullptr, nullptr, nullptr,
+                                                            &adsbee.raw_remote_id_packet_queue)) {
+            CONSOLE_ERROR("ESP32::Update", "Failed to unpack Remote ID packets from ESP32.");
+            return false;
+        }
+    }
+
     // Send the RP2040's status to the ESP32.
+    const NMEAParser::GNSSFix& gnss_fix = gnss->fix();
     ObjectDictionary::CompositeDeviceStatus composite_status = {
         .rp2040 =
             {
@@ -118,6 +138,17 @@ bool ESP32::Update() {
                 .core_1_usage_percent = core_1_monitor.GetUsagePercent(),
                 .rx_position = adsbee.rx_position,
                 .rx_position_available = adsbee.rx_position_available,
+                .gnss_enabled = gnss->IsActive(),
+                .gnss_fix_valid = gnss->HasValidFix(),
+                .gnss_latitude_deg = gnss_fix.latitude_deg,
+                .gnss_longitude_deg = gnss_fix.longitude_deg,
+                .gnss_utc_time_valid = gnss_fix.utc_time_valid,
+                .gnss_utc_hour = gnss_fix.utc_hour,
+                .gnss_utc_minute = gnss_fix.utc_minute,
+                .gnss_utc_second = gnss_fix.utc_second,
+                .gnss_utc_millisecond = gnss_fix.utc_millisecond,
+                .noise_floor_mv = static_cast<uint16_t>(adsbee.GetNoiseFloorMilliVolts()),
+                .noise_floor_dbm = static_cast<int16_t>(adsbee.GetNoiseFloordBm()),
             },
         .subg = adsbee.subg_radio_ll.device_status,
     };

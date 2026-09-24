@@ -378,25 +378,21 @@ DecodedUATUplinkPacket::DecodedUATUplinkPacket(const RawUATUplinkPacket& packet)
 
 void DecodedUATUplinkPacket::ConstructUATUplinkPacket(bool run_fec) {
     if (run_fec) {
-        // Check if the packet is valid by validating the Reed-Solomon code.
-        // We don't actually know the number of bits with high certainty. First interpret as a long ADS-B message,
-        // and if that doesn't work, try it as a short ADS-B message. Decoding only available on CC1312 and in
-        // non-embedded unit tests.
+        // Check if the packet is valid by validating the Reed-Solomon code. Decoding only available on the TI RF MCUs
+        // (CC1312 coprocessor / CC1314 m1421) and in non-embedded unit tests; everyone else receives pre-corrected raw
+        // packets.
 #if defined(ON_TI) || defined(ON_HOST)
+        // DecodeUplinkMessage fills decoded_payload AND corrects raw.encoded_message in place, so the raw packet we pass
+        // around downstream (SPI to the RP2040, RAW/BEAST/GDL90 reporting) is already a corrected, interleaved codeword.
+        // No re-encode pass is needed.
         raw.sigq_bits = uat_rs.DecodeUplinkMessage(decoded_payload, raw.encoded_message);
-        if (raw.sigq_bits >= 0) {
-            CONSOLE_INFO("DecodedUATADSBPacket", "Decoded UAT uplink message with %d bytes corrected.", raw.sigq_bits);
-
-            // Now, encode the decoded payload back into the encoded message buf, so we are passing around a corrected
-            // message with parity and interleaving.
-            uat_rs.EncodeUplinkMessage(raw.encoded_message, decoded_payload);
-        } else {
+        if (raw.sigq_bits < 0) {
             is_valid = false;
             return;
         }
 #else
         // No FEC correction required, just de-interleave the payload and use it as is (it's already corrected).
-        uat_rs.DeInterleaveUplinkMessage(decoded_payload, raw.encoded_message);
+        UATReedSolomon::DeInterleaveUplinkMessage(decoded_payload, raw.encoded_message);
 #endif
     }
 

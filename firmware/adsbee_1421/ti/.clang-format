@@ -1,0 +1,9 @@
+{
+    BasedOnStyle: Google,
+    IndentWidth: 4,
+    TabWidth: 4,
+    UseTab: Never,
+    AlignConsecutiveMacros: AcrossEmptyLinesAndComments,
+    AlignConsecutiveBitFields: AcrossEmptyLinesAndComments,
+    ColumnLimit: 120
+}

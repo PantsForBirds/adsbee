@@ -15,6 +15,13 @@ void SettingsManager::Print() {
                               settings.r1090_rx_enabled ? "ENABLED" : "DISABLED");
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
                               "\tSub-GHz Receiver: %s\r\n", settings.subg_rx_enabled ? "ENABLED" : "DISABLED");
+    print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
+                              "\tRemote ID Receiver: %s (transports 0x%02X) [EXPERIMENTAL]\r\n",
+                              settings.remote_id_rx_enabled ? "ENABLED" : "DISABLED", settings.remote_id_transports);
+    print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
+                              "\tRemote ID Transmitter: %s (transports 0x%02X) [EXPERIMENTAL]\r\n",
+                              settings.remote_id_tx_enabled ? "ENABLED" : "DISABLED",
+                              settings.remote_id_tx_transports);
 
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
                               "\tTrigger Offset Level: %d milliVolts\r\n", settings.tl_offset_mv);
@@ -28,6 +35,11 @@ void SettingsManager::Print() {
                               settings.led_enabled ? "ENABLED" : "DISABLED");
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len, "\tNetwork Feeds: %s\r\n",
                               settings.feeds_enabled ? "ENABLED" : "DISABLED");
+    print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
+                              "\tGNSS: %s (%s), fix notifications: %s\r\n",
+                              settings.gnss_enabled ? "ENABLED" : "DISABLED",
+                              GNSSReceiverTypeToStr(settings.gnss_receiver_type),
+                              settings.gnss_notify ? "ENABLED" : "DISABLED");
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len, "\tLog Level: %s\r\n",
                               kConsoleLogLevelStrs[settings.log_level]);
     CONSOLE_PRINTF("%s", print_buf);
@@ -152,6 +164,10 @@ void SettingsManager::PrintAT() {
 
     // AT+FEED_ENABLE
     CONSOLE_PRINTF("AT+FEED_ENABLE=%d\r\n", settings.feeds_enabled);
+
+    // AT+GNSS
+    CONSOLE_PRINTF("AT+GNSS=%d,%s,%d\r\n", settings.gnss_enabled,
+                   GNSSReceiverTypeToStr(settings.gnss_receiver_type), settings.gnss_notify);
 
     // AT+LOG_LEVEL
     CONSOLE_PRINTF("AT+LOG_LEVEL=%s\r\n", kConsoleLogLevelStrs[settings.log_level]);

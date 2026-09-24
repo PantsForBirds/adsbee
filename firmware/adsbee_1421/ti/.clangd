@@ -1,0 +1,13 @@
+CompileFlags:
+  Add:
+    - -DDeviceFamily_CC13X4
+    - -DON_TI
+    - -DON_EMBEDDED_DEVICE
+    - -I/usr/local/ti-lpf2-sdk/source
+    - -I/usr/local/ti-lpf2-sdk/kernel/nortos
+    - -I/usr/local/ti-lpf2-sdk/kernel/nortos/posix
+    - --target=arm-none-eabi
+    - -mcpu=cortex-m33
+    - -mthumb
+    - -mfloat-abi=hard
+    - -mfpu=fpv5-sp-d16

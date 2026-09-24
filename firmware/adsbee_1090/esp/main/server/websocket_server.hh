@@ -10,11 +10,21 @@ class WebSocketServer {
     static const uint16_t kWebSocketLabelMaxLen =
         100;  // Number of chars available for label used in WebSocketManager error messages.
     static const uint16_t kMaxNumClients =
-        20;  // For sizing arrays etc. See config_.num_clients_allowed for settable limit.
+        8;  // Sizes the per-server client arrays. The three live endpoints each set num_clients_allowed=4, so 8 leaves
+            // headroom while saving internal SRAM vs the old 20. See config_.num_clients_allowed for the runtime limit.
     static const uint16_t kURIMaxLen = 200;
     static const uint32_t kInactivityTimeoutMsDefault =
         60 * 60e3;  // 1 hour default inactivity timeout for network console clients.
     static const uint16_t kWebSocketMessageMaxLen = 4000;  // Maximum size of a single websocket message.
+
+    // Heap guards. A browser page opens three websockets (console, metrics, aircraft) and each pins several kB of
+    // httpd/lwIP buffers; the aircraft stream additionally sends one frame per aircraft per second per client. On the
+    // PSRAM-less ESP32-S3 the heap is tight enough that one extra page can exhaust it, which starves WiFi/lwIP
+    // allocations and takes the ESP32 down. Refuse new clients and skip broadcasts while free heap is low so the web UI
+    // degrades (stale map, rejected tab) instead of crashing the device.
+    static constexpr uint32_t kMinFreeHeapBytesToAcceptClient = 36 * 1024;
+    static constexpr uint32_t kMinFreeHeapBytesToBroadcast = 14 * 1024;
+    static constexpr uint32_t kLowHeapWarningIntervalMs = 5000;
 
     struct WebSocketServerConfig {
         char label[kWebSocketLabelMaxLen] = "Untitled";
@@ -108,6 +118,7 @@ class WebSocketServer {
     bool UpdateActivityTimer(int client_fd);
 
     WebSocketServerConfig config_;
+    uint32_t last_low_heap_warning_timestamp_ms_ = 0;
 
     WSClientInfo clients_[kMaxNumClients] = {0};
 };

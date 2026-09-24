@@ -4,12 +4,14 @@
 
 #include "awb_utils.h"
 #include "comms.hh"  // For debug logging.
+#include "crc.hh"
 #include "decode_utils.hh"
 #include "fixedmath/fixed_math.hpp"
 #include "geo_utils.hh"
 #include "hal.hh"
 #include "macros.hh"
 #include "nasa_cpr.hh"
+#include "opendroneid.h"  // Vendored Open Drone ID codec (decode path only).
 #include "unit_conversions.hh"
 
 const float kDegreesPerRadian = 360.0f / (2.0f * M_PI);
@@ -1359,6 +1361,8 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
                 metrics_counter_.num_mode_s_aircraft++;
             } else if (std::holds_alternative<UATAircraft>(it->second)) {
                 metrics_counter_.num_uat_aircraft++;
+            } else if (std::holds_alternative<RemoteIDAircraft>(it->second)) {
+                metrics_counter_.num_remote_id_aircraft++;
             } else {
                 // This should never happen.
                 CONSOLE_ERROR("AircraftDictionary::Update", "Encountered aircraft entry with unknown type.");
@@ -1387,6 +1391,9 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
                     has_valid_gnss_altitude = true;
                     current_gnss_altitude_ft = aircraft->gnss_altitude_ft;
                 }
+            } else if (std::holds_alternative<RemoteIDAircraft>(it->second)) {
+                // Remote ID drones fly low and close to the receiver, so they must not be used as the lowest-aircraft
+                // position reference (which assumes an aircraft roughly overhead). Leave has_valid_gnss_altitude false.
             } else {
                 CONSOLE_ERROR("AircraftDictionary::Update", "Encountered aircraft entry with unknown variant type.");
             }
@@ -1449,6 +1456,10 @@ bool AircraftDictionary::GetLowestAircraftPosition(float& latitude_deg, float& l
         speed_kts =
             aircraft->HasBitFlag(UATAircraft::BitFlag::kBitFlagHorizontalSpeedValid) ? aircraft->speed_kts : NAN;
         return true;
+    } else if (std::holds_alternative<RemoteIDAircraft>(*lowest_aircraft_entry)) {
+        // Remote ID drones are never used as a position reference (see AircraftDictionary::Update), so this should not
+        // normally be reached; guard defensively.
+        return false;
     } else {
         CONSOLE_ERROR("AircraftDictionary::GetLowestAircraftPosition",
                       "Encountered lowest_aircraft_entry with unknown variant type.");
@@ -1494,14 +1505,14 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
 
             // Record a valid squitter packet.
             metrics_counter_.valid_squitter_frames++;
-            if (source > 0) {
+            if (source >= 0 && source < kMaxNumSources) {
                 metrics_counter_.valid_squitter_frames_by_source[source]++;
             }
             break;
         case RawModeSPacket::kExtendedSquitterPacketLenBytes:
             if (packet.is_valid) {
                 metrics_counter_.valid_extended_squitter_frames++;
-                if (source > 0) {
+                if (source >= 0 && source < kMaxNumSources) {
                     metrics_counter_.valid_extended_squitter_frames_by_source[source]++;
                 }
             } else {
@@ -1586,9 +1597,11 @@ bool AircraftDictionary::IngestModeSIdentityReplyPacket(const ModeSIdentityReply
     uint32_t uid = Aircraft::ICAOToUID(icao_address, Aircraft::kAircraftTypeModeS);
     ModeSAircraft* aircraft_ptr = GetAircraftPtr<ModeSAircraft>(uid);
     if (aircraft_ptr == nullptr) {
+#ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestModeSIdentityReplyPacket",
                         "Unable to find or create new aircraft with ICAO address 0x%lx in dictionary.\r\n",
                         icao_address);
+#endif  // ADSB_VERBOSE_PACKET_WARNINGS
         return false;  // unable to find or create new aircraft in dictionary
     }
     if (packet.airborne_state_known) {
@@ -1622,9 +1635,11 @@ bool AircraftDictionary::IngestModeSAltitudeReplyPacket(const ModeSAltitudeReply
     uint32_t uid = Aircraft::ICAOToUID(icao_address, Aircraft::kAircraftTypeModeS);
     ModeSAircraft* aircraft_ptr = GetAircraftPtr<ModeSAircraft>(uid);
     if (aircraft_ptr == nullptr) {
+#ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestModeSAltitudeReplyPacket",
                         "Unable to find or create new aircraft with ICAO address 0x%lx in dictionary.\r\n",
                         icao_address);
+#endif  // ADSB_VERBOSE_PACKET_WARNINGS
         return false;  // unable to find or create new aircraft in dictionary
     }
     if (packet.airborne_state_known) {
@@ -1661,9 +1676,11 @@ bool AircraftDictionary::IngestModeSAllCallReplyPacket(const ModeSAllCallReplyPa
     uint32_t uid = Aircraft::ICAOToUID(icao_address, Aircraft::kAircraftTypeModeS);
     ModeSAircraft* aircraft_ptr = GetAircraftPtr<ModeSAircraft>(uid);
     if (aircraft_ptr == nullptr) {
+#ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestModeSAllCallReplyPacket",
                         "Unable to find or create new aircraft with ICAO address 0x%lx in dictionary.\r\n",
                         icao_address);
+#endif  // ADSB_VERBOSE_PACKET_WARNINGS
         return false;  // unable to find or create new aircraft in dictionary
     }
     aircraft_ptr->last_message_timestamp_ms = get_time_since_boot_ms();
@@ -1805,9 +1822,11 @@ bool AircraftDictionary::IngestModeSADSBPacket(const ModeSADSBPacket& packet) {
     if (ret) {
         aircraft_ptr->IncrementNumFramesReceived(true);  // Count the received Mode S frame.
     } else {
+#ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestModeSADSBPacket",
                         "Failed to apply ADSB message with type code %d to ICAO 0x%lx.", type_code,
                         packet.icao_address);
+#endif  // ADSB_VERBOSE_PACKET_WARNINGS
     }
     return ret;
 }
@@ -1824,9 +1843,11 @@ bool AircraftDictionary::IngestDecodedUATADSBPacket(const DecodedUATADSBPacket& 
     UATAircraft* aircraft_ptr =
         GetAircraftPtr<UATAircraft>(Aircraft::ICAOToUID(packet.GetICAOAddress(), Aircraft::kAircraftTypeUAT));
     if (aircraft_ptr == nullptr) {
+#ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestDecodedUATADSBPacket",
                         "Unable to find or create new UAT aircraft with ICAO address 0x%lx in dictionary.\r\n",
                         packet.GetICAOAddress());
+#endif  // ADSB_VERBOSE_PACKET_WARNINGS
         return false;  // unable to find or create new aircraft in dictionary
     }
     aircraft_ptr->last_message_timestamp_ms = get_time_since_boot_ms();
@@ -1873,6 +1894,120 @@ bool AircraftDictionary::IngestDecodedUATADSBPacket(const DecodedUATADSBPacket& 
         aircraft_ptr->IncrementNumFramesReceived();
     }
     return ingest_ret;
+}
+
+uint32_t RemoteIDAircraft::MACToAddress(const uint8_t mac[6]) {
+    // Derive a stable 24-bit dictionary address from the transmitter MAC. The top nibble (address qualifier) is left 0.
+    return crc24(mac, 6) & 0x00FFFFFFu;
+}
+
+bool AircraftDictionary::IngestRawRemoteIDPacket(const RawRemoteIDPacket& packet) {
+    metrics_counter_.raw_remote_id_frames++;
+
+    if (packet.payload_len_bytes == 0 || packet.payload_len_bytes > RawRemoteIDPacket::kMaxPayloadLenBytes) {
+        return false;
+    }
+
+    // Decode the Open Drone ID payload. ODID_UAS_Data is large (~900B) but transient; it lives on the stack only for the
+    // duration of this call. Both the ESP32 (16 KB main task) and RP2040 main loop have ample stack for it.
+    ODID_UAS_Data uas_data;
+    odid_initUasData(&uas_data);
+    if (packet.GetIsMessagePack()) {
+        if (decodeMessagePack(&uas_data, reinterpret_cast<const ODID_MessagePack_encoded*>(packet.payload)) !=
+            ODID_SUCCESS) {
+            return false;
+        }
+    } else {
+        // A single 25-byte Open Drone ID message. decodeOpenDroneID populates the matching field + valid flag.
+        if (decodeOpenDroneID(&uas_data, packet.payload) == ODID_MESSAGETYPE_INVALID) {
+            return false;
+        }
+    }
+
+    uint32_t address = RemoteIDAircraft::MACToAddress(packet.source_mac);
+    RemoteIDAircraft* aircraft =
+        GetAircraftPtr<RemoteIDAircraft>(Aircraft::ICAOToUID(address, Aircraft::kAircraftTypeRemoteID));
+    if (aircraft == nullptr) {
+        CONSOLE_WARNING("AircraftDictionary::IngestRawRemoteIDPacket",
+                        "Unable to find or create Remote ID aircraft for address 0x%06lx.", address);
+        return false;
+    }
+
+    aircraft->last_message_timestamp_ms = get_time_since_boot_ms();
+    aircraft->last_message_signal_strength_dbm = packet.rssi_dbm;
+    aircraft->transport = packet.transport;
+    memcpy(aircraft->source_mac, packet.source_mac, sizeof(aircraft->source_mac));
+
+    // Basic ID: UAS serial / registration + aircraft category.
+    if (uas_data.BasicIDValid[0]) {
+        memcpy(aircraft->uas_id, uas_data.BasicID[0].UASID, RemoteIDAircraft::kIDLenChars);
+        aircraft->uas_id[RemoteIDAircraft::kIDLenChars] = '\0';
+        aircraft->uas_id_type = static_cast<uint8_t>(uas_data.BasicID[0].IDType);
+        aircraft->ua_type = static_cast<uint8_t>(uas_data.BasicID[0].UAType);
+        aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagBasicIDValid, true);
+    }
+
+    // Location / Vector: UA position, altitude, track, speed.
+    if (uas_data.LocationValid) {
+        const ODID_Location_data& loc = uas_data.Location;
+        aircraft->operational_status = static_cast<uint8_t>(loc.Status);
+        aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagIsAirborne, loc.Status == ODID_STATUS_AIRBORNE);
+
+        // Position: ODID uses 0 deg for "invalid / no value". A real UA at exactly (0, 0) is not a realistic case.
+        if (loc.Latitude != 0.0 || loc.Longitude != 0.0) {
+            aircraft->latitude_deg = static_cast<float>(loc.Latitude);
+            aircraft->longitude_deg = static_cast<float>(loc.Longitude);
+            aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagPositionValid, true);
+        }
+        if (loc.Direction != INV_DIR && loc.Direction >= 0.0f && loc.Direction < 360.0f) {
+            aircraft->direction_deg = loc.Direction;
+            aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagDirectionValid, true);
+        }
+        if (loc.SpeedHorizontal != INV_SPEED_H) {
+            aircraft->speed_kts = MpsToKts(static_cast<int>(loc.SpeedHorizontal));
+            aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagHorizontalSpeedValid, true);
+        }
+        if (loc.SpeedVertical != INV_SPEED_V) {
+            aircraft->gnss_vertical_rate_fpm = MetersToFeet(static_cast<int>(loc.SpeedVertical)) * 60;
+            aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagVerticalRateValid, true);
+        }
+        if (loc.AltitudeGeo != INV_ALT) {
+            aircraft->gnss_altitude_ft = MetersToFeet(static_cast<int>(loc.AltitudeGeo));
+            aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagGNSSAltitudeValid, true);
+        }
+        if (loc.AltitudeBaro != INV_ALT) {
+            aircraft->baro_altitude_ft = MetersToFeet(static_cast<int>(loc.AltitudeBaro));
+        }
+        if (loc.Height != INV_ALT) {
+            aircraft->height_above_takeoff_ft = MetersToFeet(static_cast<int>(loc.Height));
+            aircraft->height_type = static_cast<uint8_t>(loc.HeightType);
+            aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagHeightValid, true);
+        }
+    }
+
+    // System: operator (pilot) location + operator geometric altitude.
+    if (uas_data.SystemValid) {
+        const ODID_System_data& sys = uas_data.System;
+        if (sys.OperatorLatitude != 0.0 || sys.OperatorLongitude != 0.0) {
+            aircraft->operator_latitude_deg = static_cast<float>(sys.OperatorLatitude);
+            aircraft->operator_longitude_deg = static_cast<float>(sys.OperatorLongitude);
+            aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagOperatorPositionValid, true);
+        }
+        if (sys.OperatorAltitudeGeo != INV_ALT) {
+            aircraft->operator_altitude_geo_ft = MetersToFeet(static_cast<int>(sys.OperatorAltitudeGeo));
+        }
+    }
+
+    // Operator ID: operator registration string.
+    if (uas_data.OperatorIDValid) {
+        memcpy(aircraft->operator_id, uas_data.OperatorID.OperatorId, RemoteIDAircraft::kIDLenChars);
+        aircraft->operator_id[RemoteIDAircraft::kIDLenChars] = '\0';
+        aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagOperatorIDValid, true);
+    }
+
+    metrics_counter_.valid_remote_id_frames++;
+    aircraft->IncrementNumFramesReceived();
+    return true;
 }
 
 bool AircraftDictionary::RemoveAircraft(uint32_t uid) {

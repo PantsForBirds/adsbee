@@ -72,59 +72,57 @@ int UATReedSolomon::DecodeUplinkMessage(uint8_t decoded_payload_buf[RawUATUplink
     }
     int total_bytes_corrected = 0;
 
-    // PrintByteBuffer("DecodeUplinkMessage: Encoded message before decode:", encoded_message_buf,
-    //                 RawUATUplinkPacket::kUplinkMessageNumBytes);
-    // We need a buffer that's bigger than the payload size to de-interleave and decode with, since each block has its
-    // parity bytes overlapped with the next block, so the last block hangs over the payload length a bit.
-    uint8_t assembly_buf[RawUATUplinkPacket::kUplinkMessagePayloadNumBytes +
-                         RawUATUplinkPacket::kUplinkMessageBlockFECParityNumBytes] = {0};
+    // Each of the 6 blocks is de-interleaved into its own 92-byte scratch buffer, RS-corrected there, and the corrected
+    // codeword is scattered back into encoded_message_buf. The RS decoder corrects errors at any position in the block
+    // (parity symbols included) and the code is systematic, so the corrected 92-byte codeword is byte-identical to what
+    // re-encoding the corrected 72-byte payload would produce -- there is no need for a separate encode pass to leave
+    // the interleaved message in a corrected state.
+    uint8_t block_buf[RawUATUplinkPacket::kUplinkMessageBlockNumBytes];
     for (int block = 0; block < RawUATUplinkPacket::kUplinkMessageNumBlocks; block++) {
-        uint8_t* block_data_and_parity =
-            &(assembly_buf[block * RawUATUplinkPacket::kUplinkMessageBlockPayloadNumBytes]);
         for (int byte_index = 0; byte_index < RawUATUplinkPacket::kUplinkMessageBlockNumBytes; byte_index++) {
             // De-interleave per UAT tech manual Table 2-6.
-            block_data_and_parity[byte_index] =
-                encoded_message_buf[byte_index * RawUATUplinkPacket::kUplinkMessageNumBlocks + block];
+            block_buf[byte_index] = encoded_message_buf[byte_index * RawUATUplinkPacket::kUplinkMessageNumBlocks + block];
         }
 
-        // Decode with 0 erasures (erasures list is nullptr).
-        // PrintByteBuffer("\tBlock data before decode:", block_data_and_parity,
-        //                 RawUATUplinkPacket::kUplinkMessageBlockNumBytes);
-        int num_bytes_corrected = decode_rs_char(rs_uplink, block_data_and_parity, nullptr, 0);
-        // PrintByteBuffer("\tBlock data after decode:", block_data_and_parity,
-        //                 RawUATUplinkPacket::kUplinkMessageBlockNumBytes);
-        // CONSOLE_INFO("UATReedSolomon", "\tDecoded UAT uplink message block %d with %d bytes corrected.", block,
-        //  num_bytes_corrected);
+        // Decode with 0 erasures (erasures list is nullptr). Corrects block_buf in place.
+        int num_bytes_corrected = decode_rs_char(rs_uplink, block_buf, nullptr, 0);
         if (num_bytes_corrected < 0 || num_bytes_corrected > kUplinkMessageMaxNumByteCorrectionsPerBlock) {
-            return -1;  // Invalid message.
+            return -1;  // Invalid message. Blocks decoded so far may already have been corrected in place.
         }
+
+        if (num_bytes_corrected > 0) {
+            // Write the corrected codeword (payload + parity) back into the interleaved message so that callers hold a
+            // corrected encoded message without an encode pass.
+            for (int byte_index = 0; byte_index < RawUATUplinkPacket::kUplinkMessageBlockNumBytes; byte_index++) {
+                encoded_message_buf[byte_index * RawUATUplinkPacket::kUplinkMessageNumBlocks + block] =
+                    block_buf[byte_index];
+            }
+        }
+        memcpy(&(decoded_payload_buf[block * RawUATUplinkPacket::kUplinkMessageBlockPayloadNumBytes]), block_buf,
+               RawUATUplinkPacket::kUplinkMessageBlockPayloadNumBytes);
 
         total_bytes_corrected += num_bytes_corrected;
     }
 
-    memcpy(decoded_payload_buf, assembly_buf, RawUATUplinkPacket::kUplinkMessagePayloadNumBytes);
     return total_bytes_corrected;
 }
 
 void UATReedSolomon::DeInterleaveUplinkMessage(
     uint8_t deinterleaved_buf[RawUATUplinkPacket::kUplinkMessagePayloadNumBytes],
-    uint8_t encoded_message_buf[RawUATUplinkPacket::kUplinkMessageNumBytes]) {
+    const uint8_t encoded_message_buf[RawUATUplinkPacket::kUplinkMessageNumBytes]) {
     if (encoded_message_buf == nullptr || deinterleaved_buf == nullptr) {
         return;  // Invalid input.
     }
 
-    uint8_t assembly_buf[RawUATUplinkPacket::kUplinkMessagePayloadNumBytes] = {0};
+    // De-interleave straight into the output. Requires the buffers not to overlap (documented in fec.hh); with that
+    // guarantee no intermediate assembly buffer is needed.
     for (int block = 0; block < RawUATUplinkPacket::kUplinkMessageNumBlocks; block++) {
-        uint8_t* block_data_and_parity =
-            &(assembly_buf[block * RawUATUplinkPacket::kUplinkMessageBlockPayloadNumBytes]);
+        uint8_t* block_data = &(deinterleaved_buf[block * RawUATUplinkPacket::kUplinkMessageBlockPayloadNumBytes]);
         for (int byte_index = 0; byte_index < RawUATUplinkPacket::kUplinkMessageBlockPayloadNumBytes; byte_index++) {
             // De-interleave per UAT tech manual Table 2-6.
-            block_data_and_parity[byte_index] =
-                encoded_message_buf[byte_index * RawUATUplinkPacket::kUplinkMessageNumBlocks + block];
+            block_data[byte_index] = encoded_message_buf[byte_index * RawUATUplinkPacket::kUplinkMessageNumBlocks + block];
         }
     }
-
-    memcpy(deinterleaved_buf, assembly_buf, RawUATUplinkPacket::kUplinkMessagePayloadNumBytes);
 }
 
 bool UATReedSolomon::EncodeShortADSBMessage(uint8_t message_buf[]) {

@@ -134,3 +134,64 @@ TEST(SPICoprocessor, SCResponsePacketScrambleBuf) {
     packet.PopulateCRC();
     EXPECT_TRUE(packet.IsValid());
 }
+
+TEST(SPICoprocessor, LogMessagesOffsetChunkedReassembly) {
+    // Regression for the FIFO chunked-read offset bug that broke OTA when kSPITransactionMaxLenBytes was reduced
+    // 4096->2048. A log burst whose packed size exceeds one SPI transaction is read by the master in multiple chunks
+    // with an increasing byte offset; PackLogMessages must serve each offset window so the master's reassembly
+    // (memcpy of each chunk at its offset) reconstructs the full packed stream and UnpackLogMessages recovers every
+    // message. Before the fix, PackLogMessages ignored offset and re-served the head of the queue, so the tail of a
+    // multi-chunk read was a duplicate of the head.
+    ObjectDictionary od;
+
+    PFBQueue<ObjectDictionary::LogMessage> in_queue =
+        PFBQueue<ObjectDictionary::LogMessage>({.buf_len_num_elements = 16, .buffer = nullptr});
+    const uint16_t kNumMessages = 8;
+    for (uint16_t m = 0; m < kNumMessages; m++) {
+        ObjectDictionary::LogMessage msg;
+        msg.log_level = static_cast<SettingsManager::LogLevel>(m % 3);
+        msg.num_chars = 400 + m;  // ~400+ chars each: total packed clearly exceeds one 2048-Byte transaction.
+        for (uint16_t i = 0; i < msg.num_chars; i++) {
+            msg.message[i] = static_cast<char>('A' + ((m + i) % 26));
+        }
+        msg.message[msg.num_chars] = '\0';
+        ASSERT_TRUE(in_queue.Enqueue(msg));
+    }
+
+    // Ground-truth single-shot pack (offset 0, buffer large enough for everything).
+    uint8_t full_buf[ObjectDictionary::kLogMessageMaxNumChars * 16] = {0};
+    uint16_t total_packed = od.PackLogMessages(full_buf, sizeof(full_buf), in_queue, kNumMessages, 0);
+    // Sanity: the burst must span more than one transaction so the multi-chunk path is actually exercised.
+    ASSERT_GT(total_packed, SPICoprocessorPacket::SCResponsePacket::kDataMaxLenBytes);
+
+    // Simulate the master's chunked read + reassembly (mirrors SPICoprocessor::Read + PartialRead's memcpy at offset).
+    uint8_t reassembled[sizeof(full_buf)] = {0};
+    for (uint16_t offset = 0; offset < total_packed;
+         offset += SPICoprocessorPacket::SCResponsePacket::kDataMaxLenBytes) {
+        uint16_t this_len = SPICoprocessorPacket::SCResponsePacket::kDataMaxLenBytes;
+        if (total_packed - offset < this_len) {
+            this_len = total_packed - offset;
+        }
+        uint8_t chunk[SPICoprocessorPacket::SCResponsePacket::kDataMaxLenBytes] = {0};
+        od.PackLogMessages(chunk, this_len, in_queue, kNumMessages, offset);
+        memcpy(reassembled + offset, chunk, this_len);
+    }
+
+    // Chunked reassembly must be byte-identical to the single-shot pack.
+    EXPECT_EQ(0, memcmp(full_buf, reassembled, total_packed));
+
+    // And UnpackLogMessages must recover every message identically.
+    PFBQueue<ObjectDictionary::LogMessage> out_queue =
+        PFBQueue<ObjectDictionary::LogMessage>({.buf_len_num_elements = 16, .buffer = nullptr});
+    uint16_t num_unpacked = od.UnpackLogMessages(reassembled, total_packed, out_queue, kNumMessages);
+    EXPECT_EQ(num_unpacked, kNumMessages);
+    for (uint16_t m = 0; m < kNumMessages; m++) {
+        ObjectDictionary::LogMessage msg;
+        ASSERT_TRUE(out_queue.Dequeue(msg));
+        EXPECT_EQ(msg.num_chars, static_cast<uint16_t>(400 + m));
+        EXPECT_EQ(msg.log_level, static_cast<SettingsManager::LogLevel>(m % 3));
+        for (uint16_t i = 0; i < msg.num_chars; i++) {
+            EXPECT_EQ(msg.message[i], static_cast<char>('A' + ((m + i) % 26)));
+        }
+    }
+}

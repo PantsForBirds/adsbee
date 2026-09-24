@@ -62,14 +62,17 @@ class CommsManager {
 
     CommsManager(CommsManagerConfig config_in) : config_(config_in) {
         wifi_clients_list_mutex_ = xSemaphoreCreateMutex();
-        wifi_ap_message_queue_ = xQueueCreate(kWiFiMessageQueueLen, sizeof(NetworkMessage));
+        // wifi_ap_message_queue_ (kWiFiMessageQueueLen * ~604 B ≈ 4.8 KB internal SRAM) is only used by the WiFi-AP
+        // UDP-broadcast path, so it is created lazily in WiFiInit() when the AP is actually enabled — an Ethernet-only
+        // (no-AP) unit never pays for it. See WiFiInit() / WiFiAccessPointSendMessageToAllStations().
+        wifi_ap_message_queue_ = nullptr;
         ip_wan_reporting_composite_array_queue_ =
             xQueueCreate(kReportingCompositeArrayQueueNumElements, CompositeArray::RawPackets::kMaxLenBytes);
     }
 
     ~CommsManager() {
         vSemaphoreDelete(wifi_clients_list_mutex_);
-        vQueueDelete(wifi_ap_message_queue_);
+        if (wifi_ap_message_queue_ != nullptr) vQueueDelete(wifi_ap_message_queue_);
         vQueueDelete(ip_wan_reporting_composite_array_queue_);
     }
 

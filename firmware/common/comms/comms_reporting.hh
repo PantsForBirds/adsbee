@@ -24,6 +24,38 @@ static constexpr uint16_t kMaxReportUIDs = kAircraftDictionaryMaxNumAircraft;
  */
 typedef uint16_t ReportSink;
 
+// Minimum gap between failure summaries on the raw packet path, which runs at up to 20Hz and has no
+// round boundary to flush on.
+static constexpr uint32_t kSendFailureLogIntervalMs = 1000;
+
+/**
+ * Per-function failure tally covering one reporting round (or one rate limit window on the raw path).
+ * A CONSOLE_* call can trigger a synchronous SPI transaction to the coprocessor, which is far too
+ * expensive to do once per aircraft per sink inside a chunk budget. The report loops count failures
+ * here instead, and emit a single summary line when the round ends.
+ */
+struct ReportFailureTally {
+    uint16_t num_send_failures = 0;
+    uint16_t num_build_failures = 0;  // Frames dropped before send (builder returned 0 or overran).
+    uint16_t first_failed_sink = 0;
+    uint32_t first_failed_uid = 0;  // 0 when the failure isn't tied to a specific aircraft.
+    uint32_t last_logged_timestamp_ms = 0;
+};
+
+/**
+ * Sends a buffer to every sink, recording the first failure in tally instead of logging it inline.
+ * @param[in] sinks Array of ReportSinks to send the buffer on.
+ * @param[in] num_sinks Number of ReportSinks in the sinks array.
+ * @param[in] buf Buffer to send.
+ * @param[in] buf_len Number of bytes in buf.
+ * @param[in,out] tally Tally to record failures into.
+ * @param[in] num_msgs Number of report frames batched into buf, used for feed statistics.
+ * @param[in] uid Aircraft UID associated with this send, or 0 if it isn't aircraft specific.
+ * @retval True if every send succeeded.
+ */
+bool SendBufToSinks(const ReportSink* sinks, uint16_t num_sinks, const char* buf, uint16_t buf_len,
+                    ReportFailureTally& tally, uint16_t num_msgs = 1, uint32_t uid = 0);
+
 // Reporting Functions
 bool UpdateReporting(const ReportSink* sinks, const SettingsManager::ReportingProtocol* sink_protocols,
                      uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report = nullptr);

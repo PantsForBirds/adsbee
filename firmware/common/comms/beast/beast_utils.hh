@@ -99,17 +99,21 @@ uint16_t BuildModeSIngestBeastFrame(uint8_t *beast_frame_buf, const DecodedModeS
 /**
  * Write a UAT ADSB frame.
  * @param[out] beast_frame_buf Pointer to byte buffer to fill with payload.
- * @param[in] packet Reference to DecodedUATADSBPacket to write to the buffer.
+ * @param[in] packet Reference to RawUATADSBPacket to write to the buffer. Takes the raw packet (not the decoded one) so
+ * that callers holding raw packets don't trigger an implicit DecodedUATADSBPacket construction (a full RS decode on
+ * FEC-capable platforms) just to build a frame.
  * @retval Number of bytes written to beast_frame_buf.
  */
-uint16_t BuildUATADSBBeastFrame(uint8_t *beast_frame_buf, const DecodedUATADSBPacket &packet);
+uint16_t BuildUATADSBBeastFrame(uint8_t *beast_frame_buf, const RawUATADSBPacket &packet);
 
 /**
  * Write a UAT uplink frame.
  * @param[out] beast_frame_buf Pointer to byte buffer to fill with payload.
- * @param[in] packet Reference to DecodedUATUplinkPacket to write to the buffer.
+ * @param[in] packet Reference to RawUATUplinkPacket to write to the buffer. Takes the raw packet (not the decoded one)
+ * so that callers holding raw packets don't trigger an implicit DecodedUATUplinkPacket construction (6 RS block
+ * decodes on FEC-capable platforms) just to build a frame.
  * @retval Number of bytes written to beast_frame_buf.
  */
-uint16_t BuildUATUplinkBeastFrame(uint8_t *beast_frame_buf, const DecodedUATUplinkPacket &packet);
+uint16_t BuildUATUplinkBeastFrame(uint8_t *beast_frame_buf, const RawUATUplinkPacket &packet);
 
 }  // namespace BeastReporter

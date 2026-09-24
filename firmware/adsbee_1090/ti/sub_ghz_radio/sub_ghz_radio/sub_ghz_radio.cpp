@@ -15,15 +15,26 @@ static const uint32_t kRxRestartTimeoutMs = 5000;
 static const uint16_t kNumPartialDataEntries = SubGHzRadio::kRxPacketQueueLen;
 static const uint16_t kPartialDataEntryHeaderSizeBytes = 12;
 static const uint16_t kPartialDataEntryNumAppendedBytes = 6;  // Appended Bytes determined by the settings below.
-static const uint16_t kPartialDataEntryPayloadSizeBytes = SubGHzRadio::kRxPacketMaxLenBytes;
+// Headroom beyond the largest packet (a 552-byte UAT uplink). Without it the entry is an EXACT fit:
+// the stored bytes (len word + header + payload + appended) equal the entry's usable capacity, so
+// "packet ended" and "element reached the end of the entry" (TRM 26.3.2.7.4) land on the same byte,
+// and the radio CPU resolves that collision by ending CMD_PROP_RX_ADV with PROP_ERROR_PAR (0x3800,
+// "observed illegal parameter") on every uplink. The packet still delivers (RX_OK fires first), but
+// each uplink silently ended the RX command with an error and forced a restart.
+static const uint16_t kPartialDataEntryPayloadHeadroomBytes = 16;
+static const uint16_t kPartialDataEntryPayloadSizeBytes =
+    SubGHzRadio::kRxPacketMaxLenBytes + kPartialDataEntryPayloadHeadroomBytes;
 static const uint16_t kPartialDataEntryPayloadLenSzBytes = 2;  // Length field size in bytes.
 
 static const uint16_t kPacketHeaderSizeBytes = 1;  // Equivalent to CeilBitsToBytes(RF_cmdPropRxAdv.hdrConf.numHdrBits);
 
-static const uint16_t kPartialDataEntrySizeBytes = sizeof(rfc_dataEntryPartial_t) + kPartialDataEntryPayloadLenSzBytes +
-                                                   kPacketHeaderSizeBytes + kPartialDataEntryPayloadSizeBytes +
-                                                   kPartialDataEntryNumAppendedBytes;
-static_assert(kPartialDataEntryHeaderSizeBytes % 4 == 0, "Partial Data Entry Header Size must be word aligned.");
+// Entry stride, rounded up to word alignment: TI's queue layout requires every data entry to start
+// word aligned (RFQueue.h pads each entry the same way); rfc_dataEntryPartial_t is aligned(4).
+static const uint16_t kPartialDataEntryUnpaddedSizeBytes =
+    sizeof(rfc_dataEntryPartial_t) + kPartialDataEntryPayloadLenSzBytes + kPacketHeaderSizeBytes +
+    kPartialDataEntryPayloadSizeBytes + kPartialDataEntryNumAppendedBytes;
+static const uint16_t kPartialDataEntrySizeBytes = (kPartialDataEntryUnpaddedSizeBytes + 3) & ~uint16_t{3};
+static_assert(kPartialDataEntrySizeBytes % 4 == 0, "Partial data entry stride must be word aligned.");
 
 static const RF_EventMask kRxEventMask =
     RF_EventMdmSoft | RF_EventNDataWritten | (RF_EventRxEntryDone | RF_EventRxOk | RF_EventRxNOk) |
@@ -74,7 +85,11 @@ void rf_cmd_callback(RF_Handle h, RF_CmdHandle ch, RF_EventMask e) {
 
             rfc_CMD_PROP_SET_LEN_t RF_cmdPropSetLen = {.commandNo = CMD_PROP_SET_LEN,
                                                        .rxLen = (uint16_t)(current_packet_len_bytes)};
-            RF_runImmediateCmd(h, (uint32_t*)&RF_cmdPropSetLen);
+            // A failed SET_LEN (e.g. CMDSTA ContextError from arriving after the RX command ended)
+            // would otherwise be invisible; count it (no console in ISR context).
+            if (RF_runImmediateCmd(h, (uint32_t*)&RF_cmdPropSetLen) != RF_StatCmdDoneSuccess) {
+                subg_radio.set_len_error_count = subg_radio.set_len_error_count + 1;
+            }
         }
     }
 
@@ -251,9 +266,12 @@ bool SubGHzRadio::Update() {
     }
 
     volatile uint16_t rx_status = ((volatile RF_Op*)&RF_cmdPropRxAdv)->status;
-    if ((rx_status & 0xFF00) & PROP_DONE_OK) {
+    // Compare the status class (high byte) exactly: PROP_DONE_* = 0x34xx, PROP_ERROR_* = 0x38xx. Masking with '&'
+    // instead of '==' made every error status match the PROP_DONE_OK branch (0x3800 & 0x3400 != 0), silently
+    // restarting RX without logging the error.
+    if ((rx_status & 0xFF00) == (PROP_DONE_OK & 0xFF00)) {
         StartPacketRx();
-    } else if ((rx_status & 0xFF00) & PROP_ERROR_PAR) {
+    } else if ((rx_status & 0xFF00) == (PROP_ERROR_PAR & 0xFF00)) {
         char* error_str;
         switch (rx_status) {
             case PROP_ERROR_PAR:

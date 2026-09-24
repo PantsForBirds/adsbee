@@ -1,0 +1,91 @@
+{
+    "folders": [
+        {
+            "path": "."
+        },
+        {
+            "path": "../common"
+        },
+        {
+            "path": "../modules"
+        },
+        {
+            "path": "../../usr/local/ti-lpf2-sdk"
+        },
+        {
+            "path": "../../usr/local/gcc-arm-none-eabi-13.3.1"
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "rfqueue.h": "c",
+            "devicefamily.h": "c",
+            "clockp.h": "c",
+            "functional": "cpp",
+            "cmath": "cpp",
+            "compare": "cpp",
+            "cstdint": "cpp",
+            "format": "cpp",
+            "hwip.h": "c",
+            "swip.h": "c",
+            "freertos.h": "c",
+            "stdint.h": "c",
+            "smartrf_settings.h": "c",
+            "init_rs.h": "c",
+            "rs-common.h": "c",
+            "semaphore.h": "c",
+            "temperature.h": "c",
+            "cstring": "cpp"
+        },
+        "C_Cpp.default.defines": [
+            "ON_TI",
+            // "DeviceFamily_CC13X4"
+        ],
+        "cortex-debug.variableUseNaturalFormat": false,
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "CC1314R10 Debug",
+                "type": "cortex-debug",
+                "cwd": "/firmware/adsbee_1421",
+                "executable": "/firmware/adsbee_1421/ti/build/Debug/adsbee_1421.elf",
+                "request": "attach",
+                "servertype": "external",
+                "gdbPath": "arm-none-eabi-gdb",
+                "gdbTarget": "host.docker.internal:2337",
+                "showDevDebugOutput": "raw",
+                "svdFile": "ti/cc13x4_cc26x4.svd",
+                "preRestartCommands": [
+                    "file /firmware/adsbee_1421/ti/build/Debug/adsbee_1421.elf",
+                    "load",
+                    "monitor reset"
+                ],
+                // "runToEntryPoint": "main",
+                "armToolchainPath": "/usr/bin",
+                "device": "CC1314R10",
+            },
+            {
+                "name": "CC1314R10 Release",
+                "type": "cortex-debug",
+                "cwd": "/firmware/adsbee_1421",
+                "executable": "/firmware/adsbee_1421/ti/build/Release/adsbee_1421.elf",
+                "request": "attach",
+                "servertype": "external",
+                "gdbPath": "arm-none-eabi-gdb",
+                "gdbTarget": "host.docker.internal:2337",
+                "showDevDebugOutput": "raw",
+                "svdFile": "ti/cc13x4_cc26x4.svd",
+                "preRestartCommands": [
+                    "file /firmware/adsbee_1421/ti/build/Release/adsbee_1421.elf",
+                    "load",
+                    "monitor reset"
+                ],
+                // "runToEntryPoint": "main",
+                "armToolchainPath": "/usr/bin",
+                "device": "CC1314R10",
+            },
+        ],
+    }
+}

@@ -9,8 +9,10 @@ class ModeSPacketDecoder {
    public:
     static constexpr uint16_t kPacketQueueLen = 100;
     static constexpr uint16_t kDebugMessageQueueLen = 20;
-    static constexpr uint16_t kMinSameAircraftMessageIntervalMs =
-        10;  // Minimum time between messages from the same aircraft.
+    // Two demodulator state machines can occasionally catch the same transmission. Packets with identical contents
+    // whose timestamps fall within this window are treated as duplicates. Distinct transmissions with identical
+    // contents (e.g. bursts of interrogation replies) are spaced further apart than this.
+    static constexpr uint64_t kDuplicatePacketWindow48MHzCounts = 48000;  // 1ms.
     static constexpr uint16_t kMaxNumSources = 4;
 
     struct PacketDecoderConfig {
@@ -75,10 +77,16 @@ class ModeSPacketDecoder {
     uint16_t decoded_mode_s_packet_bit_flip_locations_out_queue_buffer_[kPacketQueueLen];
     DebugMessage debug_message_out_queue_buffer_[kDebugMessageQueueLen];
 
-    // Arrays used for keeping track of last decoded message so that we don't re-process the same message if it's caught
-    // by multiple state machines.
-    uint32_t last_demod_icao_[kMaxNumSources] = {0, 0, 0, 0};
-    uint32_t last_demod_timestamp_ms_[kMaxNumSources] = {0, 0, 0, 0};
+    // Last packet pushed from each source, used to drop the same message if it's caught by multiple state machines.
+    struct LastPacket {
+        uint32_t buffer[RawModeSPacket::kMaxPacketLenWords32] = {0};
+        uint16_t buffer_len_bytes = 0;  // 0 = no packet recorded yet (never matches a real packet).
+        uint64_t mlat_48mhz_64bit_counts = 0;
+    };
+    LastPacket last_packet_[kMaxNumSources];
+
+    // Snapshot of whether debug messages would be printed, taken once per UpdateDecoderLoop() call.
+    bool debug_enabled_ = false;
 
    public:
     bool decoded_mode_s_packet_out_queue_overflowed_ = false;

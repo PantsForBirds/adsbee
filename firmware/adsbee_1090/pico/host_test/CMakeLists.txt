@@ -44,6 +44,8 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_geo_utils.cc
         test_nasa_cpr.cc
         test_mode_s_packet_decoder.cc
+        test_nmea_parser.cc
+        ${CMAKE_SOURCE_DIR}/application/peripherals/gnss/nmea_parser.cc
         test_platform.cc
         test_reporting_aircraftjson.cc
         test_reporting_beast.cc
@@ -63,6 +65,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         ${ADSBEE_MODULES_DIR}/googletest
         ${ADSBEE_MODULES_DIR}/cppAT/settings # use default settings for testing
         ${ADSBEE_MODULES_DIR}/cppAT/src
+        ${CMAKE_SOURCE_DIR}/application/peripherals/gnss
         .
         mocks
     )

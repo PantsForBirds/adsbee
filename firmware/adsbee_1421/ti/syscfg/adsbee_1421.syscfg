@@ -1,0 +1,135 @@
+/**
+ * These arguments were used when this file was generated. They will be automatically applied on subsequent loads
+ * via the GUI or CLI. Run CLI with '--help' for additional information on how to override these arguments.
+ * @cliArgs --device "CC1314R10RSK" --part "Default" --package "RSK" --rtos "nortos" --product "simplelink_cc13xx_cc26xx_sdk@8.30.01.01"
+ * @v2CliArgs --device "CC1314R10" --package "VQFN (RSK)" --rtos "nortos" --product "simplelink_cc13xx_cc26xx_sdk@8.30.01.01"
+ * @versions {"tool":"1.23.1+4034"}
+ */
+
+/**
+ * Import the modules used in this configuration.
+ */
+const custom   = scripting.addModule("/ti/devices/radioconfig/custom");
+const rfdesign = scripting.addModule("/ti/devices/radioconfig/rfdesign");
+const GPIO     = scripting.addModule("/ti/drivers/GPIO", {}, false);
+const GPIO1    = GPIO.addInstance();
+const GPIO2    = GPIO.addInstance();
+const GPIO3    = GPIO.addInstance();
+const GPIO4    = GPIO.addInstance();
+const GPIO5    = GPIO.addInstance();
+const GPIO6    = GPIO.addInstance();
+const GPIO7    = GPIO.addInstance();
+const GPIO8    = GPIO.addInstance();
+const RF       = scripting.addModule("/ti/drivers/RF");
+const SPI      = scripting.addModule("/ti/drivers/SPI", {}, false);
+const SPI1     = SPI.addInstance();
+const UART2    = scripting.addModule("/ti/drivers/UART2", {}, false);
+const UART21   = UART2.addInstance();
+
+/**
+ * Write custom configuration values to the imported modules.
+ */
+custom.prop8                                       = ["custom868"];
+custom.radioConfigcustom868.$name                  = "ti_devices_radioconfig_settings_prop0";
+custom.radioConfigcustom868.codeExportConfig.$name = "ti_devices_radioconfig_code_export_param0";
+
+rfdesign.rfDesign = "LP_EM_CC1314R10";
+
+/* The RF driver's SWI must preempt the SPI (LR2021) and UART SWIs: the RX callback has ~15 us after
+ * sync (irqIntv fires 16 bytes into an 18-byte short UAT ADS-B frame) to issue CMD_PROP_SET_LEN
+ * before the RF core overruns the data entry with PROP_ERROR_RXFULL and the packet is lost. See the
+ * maxPktLen comment in sub_ghz_radio.cpp. Values mirror ADSBee 1090's adsbee_uat.syscfg: RF SWI one
+ * point above the default 0 used by SPI/UART; higher values cause instability. */
+RF.softwareInterruptPriority = "1";
+RF.interruptPriority         = "5";
+
+GPIO1.mode            = "Output";
+GPIO1.$name           = "SUBG_DIO26";
+GPIO1.gpioPin.$assign = "DIO_26";
+
+GPIO2.$name              = "LR_CS";
+GPIO2.mode               = "Output";
+GPIO2.initialOutputState = "High";
+GPIO2.gpioPin.$assign    = "DIO_11";
+
+/* LR2021 BUSY. Polled by the LR2021 driver, plus a falling-edge ("chip ready") interrupt used by the
+ * IRQ-paced RX FIFO drain chain to post the next SPI frame without busy-waiting. The interrupt stays
+ * disabled except while a chain frame is pending (armed/disarmed at runtime with GPIO_enableInt). */
+GPIO3.$name            = "LR_BUSY";
+GPIO3.interruptTrigger = "Falling Edge";
+GPIO3.gpioPin.$assign  = "DIO_14";
+
+GPIO4.$name              = "LR_RESET";
+GPIO4.mode               = "Output";
+GPIO4.initialOutputState = "High";
+GPIO4.gpioPin.$assign    = "DIO_15";
+
+GPIO5.$name           = "RSUBG_LED";
+GPIO5.gpioPin.$assign = "DIO_1";
+
+GPIO6.$name           = "SUBG_DIO27";
+GPIO6.mode            = "Output";
+GPIO6.gpioPin.$assign = "DIO_27";
+
+GPIO7.$name            = "SYNC";
+GPIO7.interruptTrigger = "Rising Edge";
+GPIO7.pull             = "Pull Down";
+GPIO7.gpioPin.$assign  = "DIO_5";
+
+/* LR2021 IRQ line: LR2021 DIO6 -> CC1314 DIO_12, configured chip-side as an IRQ output for
+ * kIrqRxFifo (RX FIFO high threshold). Rising edge kicks the ISR-paced FIFO drain chain. Pull-down so
+ * the line reads low (inactive) while the LR2021 side is unconfigured or the bus is handed off.
+ * NOTE: LR2021 DIO5 -> CC1314 DIO_13 is wired on the board but deliberately left unclaimed here
+ * (spare; candidate future TX/preamble-detect IRQ or debug output). */
+GPIO8.$name            = "LR_IRQ";
+GPIO8.interruptTrigger = "Rising Edge";
+GPIO8.pull             = "Pull Down";
+GPIO8.gpioPin.$assign  = "DIO_12";
+
+const CCFG              = scripting.addModule("/ti/devices/CCFG", {}, false);
+CCFG.ccfgTemplate.$name = "ti_devices_CCFG_CCFGCC26XXTemplate0";
+
+/* The m1421 has no 32.768 kHz crystal on X32K_Q1/X32K_Q2, but SysConfig's CCFG default for this
+ * device is "LF XOSC". That default is not merely unused -- Power_init() takes
+ * PowerCC26XX_DISALLOW_STANDBY pending the SCLK_LF switch and releases it only once the LF clock
+ * actually reaches RCOSC_LF or XOSC_LF (disableLFClockQualifiers() in PowerCC26X2.c). With no
+ * crystal the switch never completes, so the constraint is pinned from boot and the MCU can never
+ * enter STANDBY -- which is what broke SYNC sleep. Selecting RCOSC_LF lets the switch complete
+ * immediately, and additionally makes the (already-enabled) calibrateRCOSC_LF setting take effect,
+ * since Power_init() only arms LF calibration when the CCFG source is RCOSC_LF. */
+CCFG.srcClkLF                 = "LF RCOSC";
+
+/* Bootloader backdoor: holding SYNC (DIO_5) high during reset forces entry into the ROM serial
+ * bootloader on DIO_2 (RX) / DIO_3 (TX). Previously a hand edit in ti_devices_config.c that silent
+ * regenerations kept reverting; encoded here so regeneration is safe. */
+CCFG.enableBootloader         = true;
+CCFG.enableBootloaderBackdoor = true;
+CCFG.dioBootloaderBackdoor    = 5;
+CCFG.levelBootloaderBackdoor  = "Active high";
+
+SPI1.$name                    = "COPRO_SPI";
+SPI1.defaultTxBufferValue     = "0x00";
+SPI1.dmaInterruptPriority     = "5";
+SPI1.spi.$assign              = "SPI0";
+SPI1.spi.sclkPin.$assign      = "DIO_10";
+SPI1.spi.pociPin.$assign      = "DIO_8";
+SPI1.spi.picoPin.$assign      = "DIO_9";
+SPI1.spi.dmaRxChannel.$assign = "DMA_CH3";
+SPI1.spi.dmaTxChannel.$assign = "DMA_CH4";
+SPI1.sclkPinInstance.$name    = "COPRO_SPI_SCLK";
+SPI1.sclkPinInstance.mode     = "Input";
+SPI1.sclkPinInstance.pull     = "Pull Down";
+SPI1.pociPinInstance.$name    = "COPRO_SPI_POCI";
+SPI1.picoPinInstance.$name    = "COPRO_SPI_PICO";
+SPI1.picoPinInstance.mode     = "Input";
+SPI1.picoPinInstance.pull     = "Pull Down";
+
+UART21.$name                    = "SUBG_UART";
+UART21.uart.$assign             = "UART0";
+UART21.uart.txPin.$assign       = "DIO_3";
+UART21.uart.rxPin.$assign       = "DIO_2";
+UART21.txPinInstance.$name      = "SUBG_UART_TX";
+UART21.rxPinInstance.$name      = "SUBG_UART_RX";
+UART21.rxPinInstance.pull       = "Pull Up";
+UART21.rxPinInstance.hysteresis = true;
+UART21.rxRingBufferSize         = 512;

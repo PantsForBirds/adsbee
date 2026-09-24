@@ -1,0 +1,6 @@
+{
+    // "cmake.sourceDirectory": "/firmware/adsbee_1421/programmer",
+    // "cmake.buildDirectory": "/firmware/adsbee_1421/programmer/build/${buildType}",
+    "cmake.sourceDirectory": "/firmware/adsbee_1421/ti",
+    "cmake.buildDirectory": "/firmware/adsbee_1421/ti/build/${buildType}",
+}

@@ -87,7 +87,12 @@ class CommsManager {
     CPP_AT_CALLBACK(ATEthernetCallback);
     CPP_AT_CALLBACK(ATFeedCallback);
     CPP_AT_CALLBACK(ATFeedEnableCallback);
+    CPP_AT_CALLBACK(ATRemoteIDCallback);
+    CPP_AT_CALLBACK(ATRemoteIDTxCallback);
+    CPP_AT_CALLBACK(ATGNSSCallback);
+    CPP_AT_CALLBACK(ATGNSSFixCallback);
     CPP_AT_CALLBACK(ATHostnameCallback);
+    CPP_AT_CALLBACK(ATLEDBlinkCallback);
     CPP_AT_CALLBACK(ATLEDEnableCallback);
     CPP_AT_CALLBACK(ATOTACallback);
     CPP_AT_HELP_CALLBACK(ATOTAHelpCallback);
@@ -156,15 +161,19 @@ class CommsManager {
     inline bool SetBaudRate(SettingsManager::SerialInterface iface, uint32_t baudrate) {
         switch (iface) {
             case SettingsManager::kCommsUART:
-                // Save the actual set valuecomms_uart_baud_rate as comms_uart_baudrate_.
-                settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kCommsUART] =
-                    uart_set_baudrate(config_.comms_uart_handle, baudrate);
+                // Program the hardware, but persist the requested baudrate (not the
+                // hardware-rounded value uart_set_baudrate() returns) so settings round-trip
+                // exactly.
+                uart_set_baudrate(config_.comms_uart_handle, baudrate);
+                settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kCommsUART] = baudrate;
                 return true;
                 break;
             case SettingsManager::kGNSSUART:
-                // Save the actual set value as gnss_uart_baudrate_.
-                settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART] =
-                    uart_set_baudrate(config_.gnss_uart_handle, baudrate);
+                // Program the hardware, but persist the requested baudrate (not the
+                // hardware-rounded value uart_set_baudrate() returns) so settings round-trip
+                // exactly.
+                uart_set_baudrate(config_.gnss_uart_handle, baudrate);
+                settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART] = baudrate;
                 return true;
                 break;
             default:

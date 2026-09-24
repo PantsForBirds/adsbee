@@ -9,6 +9,7 @@
 #include "eeprom.hh"
 #include "esp32.hh"
 #include "esp32_flasher.hh"
+#include "gnss_interface.hh"   // For the GNSS receiver selected by part number (MakeGNSSReceiver, gnss).
 #include "firmware_update.hh"  // For figuring out which flash partition we're in.
 #include "hal.hh"
 #include "hardware_unit_tests.hh"  // For testing only!
@@ -46,6 +47,9 @@ CPUMonitor core_1_monitor = CPUMonitor({.idle_ticks_per_update_interval = kRP204
 ADSBee adsbee = ADSBee({});
 CommsManager comms_manager = CommsManager({});
 ESP32SerialFlasher esp32_flasher = ESP32SerialFlasher({});
+// Select the GNSS receiver from the board's part number (resolved by bsp, above). Constructs the chosen
+// concrete receiver into gnss_interface's static storage; consumers use this base reference.
+GNSSReceiver* gnss = MakeGNSSReceiver(bsp.gnss_module_type);
 
 SettingsManager settings_manager;
 ObjectDictionary object_dictionary;
@@ -172,6 +176,16 @@ int main() {
 #endif
     }
 
+    // Configure the GNSS module AFTER the ESP32 flash routine. The ESP32 serial flasher shares the
+    // uart0 peripheral (on GPIO 16/17) and calls uart_deinit(uart0) when it finishes; running
+    // gnss->Init() last lets GNSSReceiver::Init() re-claim GPIO 0/1 and re-initialize uart0 to a
+    // known state. Init() does not hard-fail if the module is absent/unresponsive (a quick liveness
+    // probe gates configuration); in that case GNSS position is simply unavailable and the receiver
+    // falls back to its non-GNSS position source. On boards with no GNSS module the receiver is a
+    // NoneGNSSReceiver, so Init()/Update() are safe no-ops and need no gating here.
+    ConfigureGNSSReceiver(settings_manager.settings.gnss_enabled,
+                          SettingsToGNSSModuleType(settings_manager.settings.gnss_receiver_type));
+
 #ifndef ISRS_ON_CORE1
     multicore_reset_core1();
     multicore_launch_core1(main_core1);
@@ -192,6 +206,7 @@ int main() {
         decoder.UpdateLogLoop();
         comms_manager.Update();
         adsbee.Update();
+        gnss->Update();
 
         esp32.Update();
 
@@ -215,6 +230,10 @@ int main() {
             sleep_ms(200);
             esp32.SetEnable(true);
             esp32_last_successful_comms_ms = get_time_since_boot_ms();
+            // Give the ESP32 a full watchdog period to boot and resume heartbeats. Without this the watchdog fires a
+            // few seconds into the ESP32's boot, so an ESP32 crash also rebooted the RP2040 (dropping the USB console
+            // and the 1090 receiver along with it).
+            adsbee.PokeWatchdog();
         }
 #endif
     }

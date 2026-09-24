@@ -119,9 +119,17 @@ body {
     cursor: text;
 }
 
-#terminal-content {
+/* Console output is one <div> per line so old lines can be dropped in O(1);
+   the wrapping rules live on the lines rather than the container. */
+#terminal-content .terminal-line {
     white-space: pre-wrap;
     word-wrap: break-word;
+}
+
+/* A blank line has no children and would collapse to zero height; a zero-width
+   space gives it exactly one line-height without altering spacing elsewhere. */
+#terminal-content .terminal-line:empty::after {
+    content: '\200b';
 }
 
 #cursor {
@@ -693,17 +701,17 @@ body {
     display: block;
 }
 
-/* ─── Radar tab ───────────────────────────────────────── */
-#tab-radar {
+/* ─── Map tab ───────────────────────────────────────── */
+#tab-map {
     overflow: hidden;
 }
 
-#tab-radar.active {
+#tab-map.active {
     display: flex;
     flex-direction: row;
 }
 
-#radar-left {
+#map-left {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -729,6 +737,40 @@ body {
 
 body.dark-mode #map .leaflet-tile-pane {
     filter: brightness(0.55) saturate(0.5);
+}
+
+/* Map display options. Sits top-right so it stays clear of Leaflet's top-left
+   zoom control; z-index matches Leaflet's own control layer. */
+.map-options {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-family: Arial, sans-serif;
+    font-size: 0.75rem;
+    box-shadow: var(--shadow);
+    user-select: none;
+    transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+.map-options label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+}
+
+.map-options input {
+    margin: 0;
+    cursor: pointer;
 }
 
 .map-offline-banner {
@@ -895,3 +937,168 @@ body.dark-mode #map .leaflet-tile-pane {
 }
 
 #resize-handle:hover { background: #ffcb00; }
+
+/* ─── Settings tab ────────────────────────────────────── */
+/* These rules are duplicated in software/adsbee_1421_console/adsbee_1421_console.html's
+   inline stylesheet — keep the two in sync. */
+.settings-save-bar {
+    font-family: Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-page);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings-save-bar .tools-button {
+    width: auto;
+    margin: 0;
+    padding: 8px 20px;
+}
+
+.settings-status {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+#settings-form {
+    font-family: Arial, sans-serif;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    padding: 16px;
+    align-items: start;
+}
+
+.settings-group {
+    background: var(--bg-card);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 12px 16px 16px;
+}
+
+.settings-group-title {
+    font-weight: bold;
+    font-size: 1.05em;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+}
+
+.settings-entry {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings-entry:last-child { border-bottom: none; }
+
+.settings-entry-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.settings-entry-label { font-weight: 600; }
+
+.settings-danger {
+    font-size: 0.75em;
+    color: #b45309;
+    border: 1px solid #b45309;
+    border-radius: 4px;
+    padding: 0 5px;
+}
+
+/* Maturity notice, not a hazard: same shape as .settings-danger but a cooler, calmer hue so it
+   reads as "this feature is still moving" rather than "this action may break something". */
+.settings-experimental {
+    font-size: 0.75em;
+    color: #7c3aed;
+    border: 1px solid #7c3aed;
+    border-radius: 4px;
+    padding: 0 5px;
+}
+
+.settings-entry-status {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    margin-left: auto;
+}
+
+.settings-entry-status.error { color: #dc2626; }
+
+.settings-help {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin: 2px 0 4px;
+}
+
+.settings-field {
+    display: flex;
+    flex-direction: column;
+    margin: 8px 0 0;
+    padding-left: 6px;
+    border-left: 3px solid transparent;
+}
+
+.settings-field label {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    margin-bottom: 3px;
+}
+
+.settings-field input[type="text"],
+.settings-field input[type="number"],
+.settings-field input[type="password"],
+.settings-field select {
+    font-family: inherit;
+    background: var(--bg-page);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 0.95em;
+    max-width: 280px;
+}
+
+.settings-field-inline {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-field-inline label { margin: 0; }
+
+.settings-field.dirty { border-left-color: #ffcb00; }
+
+.settings-field.dirty input,
+.settings-field.dirty select { border-color: #ffcb00; }
+
+.settings-bitmask {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.9em;
+}
+
+.settings-display {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+.settings-note {
+    font-size: 0.75em;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.settings-error {
+    font-size: 0.8em;
+    color: #dc2626;
+}
+
+.settings-error:empty { display: none; }

@@ -137,3 +137,40 @@ TEST(PFBQueue, Discard) {
     // Discarding 0 elements from an empty queue should return true.
     EXPECT_TRUE(queue.Discard(0));
 }
+#include <functional>
+#include <memory>
+
+// PFBQueue must work with non-trivially-copyable element types (e.g. ObjectDictionary::SCCommandRequestWithCallback
+// holds a std::function). Elements must be copied with real copy semantics, and a dequeued slot must release what it
+// owned.
+TEST(PFBQueue, NonTriviallyCopyableElements) {
+    struct Request {
+        int id = 0;
+        std::function<int()> callback = nullptr;
+    };
+    PFBQueue<Request> queue = PFBQueue<Request>({.buf_len_num_elements = 4});
+    auto tracker = std::make_shared<int>(41);  // Heap object captured by the callbacks to observe ownership.
+    ASSERT_EQ(tracker.use_count(), 1);
+    {
+        Request request = {.id = 7, .callback = [tracker]() { return *tracker + 1; }};
+        ASSERT_TRUE(queue.Enqueue(request));
+        // Source goes out of scope here; the queue must hold its own copy of the callback.
+    }
+    EXPECT_EQ(tracker.use_count(), 2);  // Only the queued copy remains.
+
+    Request peeked;
+    ASSERT_TRUE(queue.Peek(peeked));
+    EXPECT_EQ(peeked.id, 7);
+    EXPECT_EQ(peeked.callback(), 42);
+    peeked = Request();
+    EXPECT_EQ(tracker.use_count(), 2);
+
+    Request popped;
+    ASSERT_TRUE(queue.Dequeue(popped));
+    EXPECT_EQ(popped.id, 7);
+    EXPECT_EQ(popped.callback(), 42);
+    EXPECT_EQ(tracker.use_count(), 2);  // Dequeued copy plus the local tracker; the queue slot released its copy.
+    popped = Request();
+    EXPECT_EQ(tracker.use_count(), 1);
+    EXPECT_TRUE(queue.IsEmpty());
+}
