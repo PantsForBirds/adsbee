@@ -213,8 +213,8 @@ class SettingsManager {
         bool r1090_bias_tee_enabled = false;
         uint32_t watchdog_timeout_sec = kDefaultWatchdogTimeoutSec;
         bool led_enabled = true;  // Set to false to disable all hardware status/activity LEDs.
-        bool feeds_enabled = true;  // Master switch: set to false to disable all outbound network feeds (no data
-                                    // leaves the device to the internet). Overrides per-feed feed_is_active[].
+        bool feeds_enabled = true;  // Master switch: set to false to disable all outbound network feeds. Overrides
+                                    // per-feed feed_is_active[].
         bool gnss_enabled = false;
         GNSSReceiverType gnss_receiver_type = kGNSSReceiverNone;
         bool gnss_notify = false;

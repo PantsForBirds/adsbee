@@ -269,8 +269,8 @@ void CommsManager::IPWANTask(void* pvParameters) {
         // Maintain socket connections and build list of acive report sinks.
         for (uint16_t i = 0; i < SettingsManager::Settings::kMaxNumFeeds; i++) {
             // Iterate through feeds, open/close and send message as required. The feeds_enabled master switch gates
-            // all outbound connections: when it's off no data leaves the device to the internet, regardless of the
-            // per-feed feed_is_active[] flags.
+            // all outbound feed connections: when it's off no feed sockets are opened, regardless of the per-feed
+            // feed_is_active[] flags.
             if (!settings_manager.settings.feeds_enabled || !settings_manager.settings.feed_is_active[i]) {
                 // Feed is not active, ensure socket is closed.
                 if (feed_sock_is_connected_[i]) {

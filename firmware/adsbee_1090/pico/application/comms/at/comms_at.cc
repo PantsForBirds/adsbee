@@ -237,7 +237,7 @@ CPP_AT_CALLBACK(CommsManager::ATFeedEnableCallback) {
                 CPP_AT_TRY_ARG2NUM(0, enabled);
                 settings_manager.settings.feeds_enabled = enabled;
                 // Sync to the ESP32 so it stops (or resumes) opening outbound feed sockets. When disabled, the
-                // ESP32 IP WAN task closes all feed sockets so no aircraft data leaves the device.
+                // ESP32 IP WAN task closes all feed sockets so no data is sent to any feed.
                 settings_manager.SyncToCoprocessors();
                 CPP_AT_SUCCESS();
             }
@@ -1770,9 +1770,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "FEED_ENABLE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+FEED_ENABLE=<enabled>\r\n\tMaster switch for all outbound network feeds. Set to 0 to stop "
-                    "sending any data out to the internet (disables telemetry/reporting to all feed servers), or 1 "
-                    "to allow feeds marked active.\r\n\tAT+FEED_ENABLE?\r\n\tQuery whether outbound feeds are enabled.",
+     .help_string = "AT+FEED_ENABLE=<enabled>\r\n\tMaster switch for all outbound network feeds. Set to 0 to disable "
+                    "all feeds, or 1 to allow feeds marked active. Does not change per-feed active flags set with "
+                    "AT+FEED.\r\n\tAT+FEED_ENABLE?\r\n\tQuery whether outbound feeds are enabled.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFeedEnableCallback, comms_manager)},
     {.command = "GNSS",
      .min_args = 0,
