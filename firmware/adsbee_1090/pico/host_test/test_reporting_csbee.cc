@@ -91,9 +91,9 @@ TEST(CSBeeUtils, ModeSAircraftToCSBeeString) {
 
     // Check CRC
     std::string_view crc_str = GetNextToken();
-    char calculated_crc_string[kCRCMaxNumChars + 1];
-    sprintf(calculated_crc_string, "%X\r\n",
-            CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
+    char calculated_crc_string[kCRCMaxNumChars + kEOLNumChars + 1];  // CRC hex digits + "\r\n" + null terminator.
+    snprintf(calculated_crc_string, sizeof(calculated_crc_string), "%X\r\n",
+             CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
     printf("Reported CRC=%s Calculated CRC=%s\r\n", std::string(crc_str).c_str(), calculated_crc_string);
     EXPECT_EQ(crc_str.compare(calculated_crc_string), 0);
 }
@@ -175,9 +175,9 @@ TEST(CSBeeUtils, UATAircraftToCSBeeString) {
 
     // Check CRC
     std::string_view crc_str = GetNextToken();
-    char calculated_crc_string[kCRCMaxNumChars + 1];
-    sprintf(calculated_crc_string, "%X\r\n",
-            CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
+    char calculated_crc_string[kCRCMaxNumChars + kEOLNumChars + 1];  // CRC hex digits + "\r\n" + null terminator.
+    snprintf(calculated_crc_string, sizeof(calculated_crc_string), "%X\r\n",
+             CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
     printf("Reported CRC=%s Calculated CRC=%s\r\n", std::string(crc_str).c_str(), calculated_crc_string);
     EXPECT_EQ(crc_str.compare(calculated_crc_string), 0);
 }
@@ -214,9 +214,9 @@ TEST(CSBeeUtils, UATAircraftWithAddressQualifierToCSBeeString) {
 
     // Check CRC
     std::string_view crc_str = GetNextToken();
-    char calculated_crc_string[kCRCMaxNumChars + 1];
-    sprintf(calculated_crc_string, "%X\r\n",
-            CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
+    char calculated_crc_string[kCRCMaxNumChars + kEOLNumChars + 1];  // CRC hex digits + "\r\n" + null terminator.
+    snprintf(calculated_crc_string, sizeof(calculated_crc_string), "%X\r\n",
+             CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
     printf("Reported CRC=%s Calculated CRC=%s\r\n", std::string(crc_str).c_str(), calculated_crc_string);
     EXPECT_EQ(crc_str.compare(calculated_crc_string), 0);
 }
@@ -257,9 +257,9 @@ TEST(CSBeeUtils, CSBeeStatisticsMessage) {
 
     // Check CRC
     std::string_view crc_str = GetNextToken();
-    char calculated_crc_string[kCRCMaxNumChars + 1];
-    sprintf(calculated_crc_string, "%X\r\n",
-            CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
+    char calculated_crc_string[kCRCMaxNumChars + kEOLNumChars + 1];  // CRC hex digits + "\r\n" + null terminator.
+    snprintf(calculated_crc_string, sizeof(calculated_crc_string), "%X\r\n",
+             CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
     printf("Reported CRC=%s Calculated CRC=%s\r\n", std::string(crc_str).c_str(), calculated_crc_string);
     EXPECT_EQ(crc_str.compare(calculated_crc_string), 0);
 }
