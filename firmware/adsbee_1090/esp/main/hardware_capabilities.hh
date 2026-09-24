@@ -42,17 +42,17 @@ class HardwareCapabilities {
     /**
      * Total PSRAM heap size in bytes (0 if no PSRAM).
      */
-    static uint32_t GetPSRAMTotalBytes() { return psram_total_bytes_; }
+    static size_t GetPSRAMTotalBytes() { return psram_total_bytes_; }
 
     /**
      * Free PSRAM heap in bytes (0 if no PSRAM).
      */
-    static uint32_t GetPSRAMFreeBytes() { return has_psram_ ? heap_caps_get_free_size(MALLOC_CAP_SPIRAM) : 0; }
+    static size_t GetPSRAMFreeBytes() { return has_psram_ ? heap_caps_get_free_size(MALLOC_CAP_SPIRAM) : 0; }
 
     /**
      * Free internal-SRAM heap in bytes. Use this for heap guards (see kInternalHeapCaps).
      */
-    static uint32_t GetInternalFreeBytes() { return heap_caps_get_free_size(kInternalHeapCaps); }
+    static size_t GetInternalFreeBytes() { return heap_caps_get_free_size(kInternalHeapCaps); }
 
     /**
      * Bitfield for ObjectDictionary::ESP32DeviceStatus::hardware_capabilities.
@@ -61,5 +61,5 @@ class HardwareCapabilities {
 
    private:
     static bool has_psram_;
-    static uint32_t psram_total_bytes_;
+    static size_t psram_total_bytes_;
 };

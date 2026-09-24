@@ -9,7 +9,7 @@
 #endif
 
 bool HardwareCapabilities::has_psram_ = false;
-uint32_t HardwareCapabilities::psram_total_bytes_ = 0;
+size_t HardwareCapabilities::psram_total_bytes_ = 0;
 
 void HardwareCapabilities::Detect() {
 #ifdef CONFIG_SPIRAM
