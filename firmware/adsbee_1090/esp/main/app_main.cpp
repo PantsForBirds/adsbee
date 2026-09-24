@@ -22,6 +22,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hardware_capabilities.hh"
 #include "hardware_unit_tests.hh"
 #include "pico.hh"
 #include "settings.hh"
@@ -49,11 +50,12 @@ void heap_caps_alloc_failed_hook(size_t requested_size, uint32_t caps, const cha
                   "\tfree heap: %d bytes\r\n"
                   "\tlargest free block: %d bytes\r\n"
                   "\tDRAM: %d bytes\r\n"
-                  "\tIRAM: %d bytes\r\n",
+                  "\tIRAM: %d bytes\r\n"
+                  "\tPSRAM: %d bytes\r\n",
                   function_name, requested_size, caps, heap_caps_get_free_size(MALLOC_CAP_8BIT),
                   heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
                   heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
-                  heap_caps_get_free_size(MALLOC_CAP_IRAM_8BIT));
+                  heap_caps_get_free_size(MALLOC_CAP_IRAM_8BIT), heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     printf("Stack trace at allocation failure:\n");
     esp_backtrace_print(20);  // Print up to 20 stack frames
 }
@@ -63,9 +65,12 @@ void device_status_update_task(void* pvParameters) {
         cpu_monitor.ReadCPUUsage(object_dictionary.device_status.core_0_usage_percent,
                                  object_dictionary.device_status.core_1_usage_percent);
         object_dictionary.device_status.temperature_deg_c = CPUMonitor::ReadTemperatureDegC();
-        object_dictionary.device_status.heap_free_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        // Report internal SRAM only: with PSRAM, MALLOC_CAP_8BIT would also count ~2 MB of PSRAM and hide the internal
+        // RAM pressure this telemetry exists to show. Identical to MALLOC_CAP_8BIT on a module without PSRAM.
+        object_dictionary.device_status.heap_free_bytes = HardwareCapabilities::GetInternalFreeBytes();
         object_dictionary.device_status.heap_largest_free_block_bytes =
-            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+            heap_caps_get_largest_free_block(HardwareCapabilities::kInternalHeapCaps);
+        object_dictionary.device_status.psram_free_kb = HardwareCapabilities::GetPSRAMFreeBytes() / 1024;
 
         vTaskDelay(pdMS_TO_TICKS(kDeviceStatusUpdateIntervalMs));  // Delay 1 second.
     }
@@ -77,6 +82,13 @@ extern "C" void app_main(void) {
 
     ESP_LOGI("app_main", "Beginning ADSBee Server Application.");
     ESP_LOGI("app_main", "Default task priority: %d", uxTaskPriorityGet(NULL));
+
+    // Detect PSRAM before anything (settings apply, Remote ID) consults it. The same image runs on modules with and
+    // without PSRAM; see hardware_capabilities.hh.
+    HardwareCapabilities::Detect();
+    object_dictionary.device_status.hardware_capabilities = HardwareCapabilities::GetCapabilitiesBitfield();
+    object_dictionary.device_status.psram_total_kb = HardwareCapabilities::GetPSRAMTotalBytes() / 1024;
+    object_dictionary.device_status.psram_free_kb = HardwareCapabilities::GetPSRAMFreeBytes() / 1024;
 
     CPUMonitor::Init();
     xTaskCreate(device_status_update_task, "DeviceStatusUpdate", kDeviceStatusUpdateTaskStackSizeBytes, NULL,

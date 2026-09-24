@@ -1,12 +1,13 @@
 // WiFi promiscuous sniffer for Broadcast Remote ID (ASTM F3411) over WiFi beacon frames.
 //
-// Used only on the internal-RAM (non-PSRAM) build when WiFi AP/STA are disabled: the WiFi radio is repurposed as a
-// channel-hopping (1/6/11) sniffer while Ethernet carries IP. The driver is brought up in NULL mode with trimmed RX
-// buffers and promiscuous mode enabled; beacon frames are scanned for the Open Drone ID vendor-specific IE
-// (OUI FA:0B:BC, type 0x0D) and the enclosed message pack is handed to RemoteIDManager::OnRawRemoteIDPacket().
+// When WiFi AP/STA are disabled the WiFi radio is repurposed as a channel-hopping (1/6/11) sniffer while Ethernet
+// carries IP. The driver is brought up in NULL mode with trimmed RX buffers and promiscuous mode enabled; beacon frames
+// are scanned for the Open Drone ID vendor-specific IE (OUI FA:0B:BC, type 0x0D) and the enclosed message pack is
+// handed to RemoteIDManager::OnRawRemoteIDPacket().
 //
-// On the PSRAM coexist build the radio is locked to the AP/STA channel; channel-locked best-effort sniffing there is
-// left as future work (RemoteIDManager does not start the sniffer while WiFi AP/STA are up).
+// On hardware with PSRAM the sniffer may also run while WiFi AP/STA are up ("attached" mode): promiscuous RX is enabled
+// on the running AP/STA driver and the radio stays locked to the AP/STA channel, so reception is best-effort (only
+// transmitters on that channel are heard). RemoteIDManager only picks attached mode when PSRAM was detected.
 
 #include "remote_id_manager.hh"
 
@@ -198,10 +199,11 @@ uint16_t BuildODIDBeaconFrame(uint8_t* buf, uint16_t buf_len_bytes, const uint8_
 
 }  // namespace
 
-bool RemoteIDManager::WiFiSnifferStart() {
+bool RemoteIDManager::WiFiSnifferStart(bool attach_to_network_wifi) {
     if (wifi_sniffer_running_) return true;
 
-    if (!WiFiRadioAcquire()) return false;
+    // Attached mode rides on the driver CommsManager::WiFiInit() already started for AP/STA; don't init it again.
+    if (!attach_to_network_wifi && !WiFiRadioAcquire()) return false;
 
     wifi_promiscuous_filter_t filter = {.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT};
     esp_wifi_set_promiscuous_filter(&filter);
@@ -209,10 +211,20 @@ bool RemoteIDManager::WiFiSnifferStart() {
     esp_err_t err = esp_wifi_set_promiscuous(true);
     if (err != ESP_OK) {
         CONSOLE_ERROR("remote_id_wifi", "esp_wifi_set_promiscuous failed: %d.", err);
-        WiFiRadioRelease();
+        if (!attach_to_network_wifi) WiFiRadioRelease();
         return false;
     }
 
+    if (attach_to_network_wifi) {
+        // The AP/STA owns the channel; listen wherever it is (WiFiSnifferServiceHopper won't hop).
+        wifi_sniffer_attached_ = true;
+        wifi_sniffer_running_ = true;
+        s_sniffer_running = true;
+        CONSOLE_INFO("remote_id_wifi", "Remote ID WiFi sniffer started on the WiFi AP/STA channel (no hopping).");
+        return true;
+    }
+
+    wifi_sniffer_attached_ = false;
     sniffer_channel_index_ = 0;
     // If the transmitter already owns the channel, leave it there (see WiFiSnifferServiceHopper).
     if (!s_wifi_tx_running) {
@@ -230,13 +242,16 @@ void RemoteIDManager::WiFiSnifferStop() {
     esp_wifi_set_promiscuous(false);
     wifi_sniffer_running_ = false;
     s_sniffer_running = false;
-    WiFiRadioRelease();
+    if (!wifi_sniffer_attached_) WiFiRadioRelease();
+    wifi_sniffer_attached_ = false;
 }
 
 void RemoteIDManager::WiFiSnifferServiceHopper() {
     // While the beacon transmitter is running it owns the channel (a hop would move the transmission off channel and
     // break receivers listening there), so the sniffer stays parked on the transmit channel and listens there.
     if (s_wifi_tx_running) return;
+    // Attached to WiFi AP/STA: the network link owns the channel.
+    if (wifi_sniffer_attached_) return;
     uint32_t now_ms = get_time_since_boot_ms();
     if (now_ms - last_channel_hop_ms_ < kSnifferChannelDwellMs) return;
     sniffer_channel_index_ = (sniffer_channel_index_ + 1) % (sizeof(kSnifferChannels) / sizeof(kSnifferChannels[0]));

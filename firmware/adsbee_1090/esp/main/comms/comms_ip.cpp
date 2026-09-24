@@ -2,6 +2,7 @@
 #include "comms.hh"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
+#include "hardware_capabilities.hh"  // Internal-RAM heap guards (PSRAM must not mask an internal shortage).
 #include "esp_mac.h"
 #include "hal.hh"
 #include "lwip/dns.h"
@@ -93,11 +94,11 @@ esp_err_t safe_send(int sock, const void* data, size_t total_len) {
         (comms_manager.wifi_ap_enabled || comms_manager.wifi_sta_enabled) ? kDMABackPressureThresholdBytes
                                                                           : kDMABackPressureThresholdEthernetOnlyBytes;
     uint32_t backpressure_start_ms = get_time_since_boot_ms();
-    while (heap_caps_get_free_size(MALLOC_CAP_8BIT) < kHeapBackPressureThresholdBytes ||
+    while (HardwareCapabilities::GetInternalFreeBytes() < kHeapBackPressureThresholdBytes ||
            heap_caps_get_free_size(MALLOC_CAP_DMA) < dma_backpressure_threshold_bytes) {
         if (get_time_since_boot_ms() - backpressure_start_ms > kHeapBackPressureTimeoutMs) {
             CONSOLE_WARNING("safe_send", "Heap back-pressure timeout after %lu ms (heap=%u, dma=%u)",
-                            kHeapBackPressureTimeoutMs, heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                            kHeapBackPressureTimeoutMs, HardwareCapabilities::GetInternalFreeBytes(),
                             heap_caps_get_free_size(MALLOC_CAP_DMA));
             return ESP_ERR_TIMEOUT;
         }

@@ -4,10 +4,9 @@
 #include <new>  // std::nothrow
 
 #include "comms.hh"                 // comms_manager (WiFi/Ethernet state) + logging.
-#include "esp_heap_caps.h"          // heap_caps_get_free_size.
+#include "hardware_capabilities.hh" // HasPSRAM() + internal-RAM heap guards.
 #include "hal.hh"                   // get_time_since_boot_ms.
 #include "object_dictionary.hh"     // object_dictionary.device_status.remote_id_status.
-#include "sdkconfig.h"              // CONFIG_SPIRAM / CONFIG_BT_* feature flags.
 #include "server/adsbee_server.hh"  // adsbee_server: local aircraft dictionary.
 
 RemoteIDManager remote_id_manager;
@@ -34,11 +33,10 @@ bool RemoteIDManager::EnsureBuffers() {
 }
 
 bool RemoteIDManager::CanCoexistWithWiFi() {
-#ifdef CONFIG_SPIRAM
-    return true;  // PSRAM build: NimBLE host heap + LWIP/WiFi buffers live in PSRAM, so BLE can coexist with WiFi AP/STA.
-#else
-    return false;  // Internal-RAM-only build: not enough SRAM to run WiFi AP/STA and the BLE stack simultaneously.
-#endif
+    // Decided at runtime: the same image runs on the ESP32-S3-MINI-1U-N8 (no PSRAM) and the -N4R2 (2 MB PSRAM).
+    // With PSRAM the NimBLE host heap and the WiFi/LWIP buffers are allocated from PSRAM, so BLE can coexist with WiFi
+    // AP/STA. Without it there is not enough internal SRAM to run WiFi AP/STA and the BLE stack simultaneously.
+    return HardwareCapabilities::HasPSRAM();
 }
 
 void RemoteIDManager::OnRawRemoteIDPacket(const RawRemoteIDPacket& packet) {
@@ -132,7 +130,7 @@ void RemoteIDManager::Reconcile() {
     const bool wifi_ap_sta_up =
         comms_manager.wifi_ap_enabled || comms_manager.wifi_sta_enabled;
 
-    // On non-PSRAM builds, Remote ID may only run when WiFi AP/STA are off (and Ethernet is carrying IP).
+    // Without PSRAM, Remote ID may only run when WiFi AP/STA are off (and Ethernet is carrying IP).
     if (wifi_ap_sta_up && !CanCoexistWithWiFi()) {
         status_ |= kStatusBlockedByWiFi;
         // Still surface whether Bluetooth is even compiled in, so this early-return doesn't mask kStatusNotInBuild: a
@@ -158,7 +156,7 @@ void RemoteIDManager::Reconcile() {
         if (!BluetoothIsSupported()) {
             // Bluetooth isn't compiled into this firmware at all: the user needs a different image.
             status_ |= kStatusNotInBuild;
-        } else if (ble_running_ || heap_caps_get_free_size(MALLOC_CAP_8BIT) >= kMinHeapFreeBytesForBLE) {
+        } else if (ble_running_ || HardwareCapabilities::GetInternalFreeBytes() >= kMinHeapFreeBytesForBLE) {
             if (BLEStart(want_coded)) {
                 status_ |= kStatusBLEActive;
                 if (ble_coded_running_) status_ |= kStatusBLECodedPHYActive;
@@ -176,17 +174,21 @@ void RemoteIDManager::Reconcile() {
     }
 
     // --- WiFi beacon sniffer (best-effort) ---
-    // Only meaningful when WiFi AP/STA is not otherwise in use (channel-hopping sniffer). On a non-PSRAM board the
-    // internal SRAM cannot hold BOTH the BLE controller/host and the WiFi driver alongside the network stack (ethernet +
-    // httpd + feeds) — running both drops free heap/DMA low enough to starve safe_send and drop packets — so the sniffer
-    // is mutually exclusive with BLE there: it runs only when BLE is not active (BLE is the priority transport). A PSRAM
-    // board (CanCoexistWithWiFi) has the headroom to run both. When allowed, it still passes a heap guard as a backstop.
+    // Two modes:
+    //   - WiFi AP/STA down: the sniffer owns the radio (NULL mode) and hops channels 1/6/11.
+    //   - WiFi AP/STA up (only reachable with PSRAM; the no-PSRAM case returned above): the sniffer attaches promiscuous
+    //     RX to the running AP/STA driver and listens on the AP/STA channel only, since hopping would break the link.
+    // On a board without PSRAM the internal SRAM cannot hold BOTH the BLE controller/host and the WiFi driver alongside
+    // the network stack (ethernet + httpd + feeds) — running both drops free heap/DMA low enough to starve safe_send and
+    // drop packets — so the sniffer is mutually exclusive with BLE there: it runs only when BLE is not active (BLE is the
+    // priority transport). A PSRAM board (CanCoexistWithWiFi) has the headroom to run both. When allowed, it still
+    // passes a heap guard as a backstop.
     const bool ble_is_active = (status_ & kStatusBLEActive) != 0;
-    const bool wifi_sniffer_allowed = want_wifi && !wifi_ap_sta_up && (CanCoexistWithWiFi() || !ble_is_active);
+    const bool wifi_sniffer_allowed = want_wifi && (CanCoexistWithWiFi() || !ble_is_active);
     if (wifi_sniffer_allowed) {
         if (wifi_sniffer_running_ ||
-            heap_caps_get_free_size(MALLOC_CAP_8BIT) >= kMinHeapFreeBytesForWiFiSniffer) {
-            if (WiFiSnifferStart()) {
+            HardwareCapabilities::GetInternalFreeBytes() >= kMinHeapFreeBytesForWiFiSniffer) {
+            if (WiFiSnifferStart(/*attach_to_network_wifi=*/wifi_ap_sta_up)) {
                 status_ |= kStatusWiFiSnifferActive;
             }
         } else {
@@ -224,7 +226,7 @@ void RemoteIDManager::ReconcileTx() {
         if (!BluetoothIsSupported()) {
             status_ |= kStatusNotInBuild | kStatusTxBlocked;
         } else if (ble_tx_legacy_running_ || ble_tx_coded_running_ ||
-                   heap_caps_get_free_size(MALLOC_CAP_8BIT) >= kMinHeapFreeBytesForTx) {
+                   HardwareCapabilities::GetInternalFreeBytes() >= kMinHeapFreeBytesForTx) {
             if (BLETxStart(want_ble_legacy, want_ble_coded)) {
                 if (ble_tx_legacy_running_) status_ |= kStatusTxBLELegacyActive;
                 if (ble_tx_coded_running_) status_ |= kStatusTxBLECodedActive;
@@ -242,7 +244,7 @@ void RemoteIDManager::ReconcileTx() {
     // Only when WiFi AP/STA isn't using the radio. The transmitter parks the radio on its beacon channel; the RX
     // sniffer (if also running) stops hopping and listens there (see WiFiSnifferServiceHopper).
     if (want_wifi && !wifi_ap_sta_up) {
-        if (wifi_tx_running_ || heap_caps_get_free_size(MALLOC_CAP_8BIT) >= kMinHeapFreeBytesForTx) {
+        if (wifi_tx_running_ || HardwareCapabilities::GetInternalFreeBytes() >= kMinHeapFreeBytesForTx) {
             if (WiFiTxStart()) {
                 status_ |= kStatusTxWiFiBeaconActive;
             } else {
