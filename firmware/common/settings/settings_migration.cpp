@@ -85,6 +85,7 @@ void SettingsMigrator::MigrateV13ToV14(const settings_v13::Settings& in, Setting
     out.remote_id_transports = in.remote_id_transports;
 
     // Remote ID transmit settings are new in v14; left at their defaults (disabled, all transports, empty identity).
+    // The feeds_enabled master switch is also new in v14; left at its default (enabled) so active feeds keep running.
 
     memcpy(out.feed_uris, in.feed_uris, sizeof(in.feed_uris));
     memcpy(out.feed_ports, in.feed_ports, sizeof(in.feed_ports));

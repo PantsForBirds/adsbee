@@ -163,8 +163,10 @@ static void ExpectV13FieldsPreserved(const SettingsManager::Settings& out) {
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
 }
 
-// The Remote ID transmit settings are new in v14, so any migration must leave them at their defaults.
+// The Remote ID transmit settings and the feeds_enabled master switch are new in v14, so any migration must leave them
+// at their defaults.
 static void ExpectV14TxDefaults(const SettingsManager::Settings& out) {
+    EXPECT_TRUE(out.feeds_enabled);
     EXPECT_FALSE(out.remote_id_tx_enabled);
     EXPECT_EQ(out.remote_id_tx_transports, (uint8_t)(SettingsManager::kRemoteIDTransportBLE4 |
                                                      SettingsManager::kRemoteIDTransportBLE5Long |

@@ -936,6 +936,11 @@ const SETTINGS_SCHEMA_1090 = [
         fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
     },
     {
+        cmd: 'FEED_ENABLE', label: 'Network Feeds', group: 'System',
+        help: 'Master switch for all outbound network feeds. Disabling stops every feed without changing which feeds are marked active.',
+        fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
+    },
+    {
         cmd: 'WATCHDOG', label: 'Watchdog', group: 'System',
         help: 'Reboot automatically if the firmware locks up. 0 disables the watchdog.',
         fields: [{ id: 'timeout', label: 'Timeout (seconds)', type: 'int', min: 0, max: 65535 }],

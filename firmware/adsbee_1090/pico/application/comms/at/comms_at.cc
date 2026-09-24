@@ -225,6 +225,27 @@ CPP_AT_CALLBACK(CommsManager::ATLEDEnableCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+CPP_AT_CALLBACK(CommsManager::ATFeedEnableCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d", settings_manager.settings.feeds_enabled);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (CPP_AT_HAS_ARG(0)) {
+                bool enabled;
+                CPP_AT_TRY_ARG2NUM(0, enabled);
+                settings_manager.settings.feeds_enabled = enabled;
+                // Sync to the ESP32 so it stops (or resumes) opening outbound feed sockets. When disabled, the
+                // ESP32 IP WAN task closes all feed sockets so no data is sent to any feed.
+                settings_manager.SyncToCoprocessors();
+                CPP_AT_SUCCESS();
+            }
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 CPP_AT_CALLBACK(CommsManager::ATGNSSCallback) {
     switch (op) {
         case '?':
@@ -1382,6 +1403,7 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"BIAS_TEE_ENABLE\":[%d,%d],", adsbee.BiasTeeIsEnabled(), s.subg_bias_tee_enabled);
     CPP_AT_PRINTF("\"ETHERNET\":[%d],", cns.ethernet_enabled);
     CPP_AT_PRINTF("\"ESP32_ENABLE\":[%d],", esp32.IsEnabled());
+    CPP_AT_PRINTF("\"FEED_ENABLE\":[%d],", s.feeds_enabled);
     CPP_AT_PRINTF("\"GNSS\":[%d,\"%s\",%d],", s.gnss_enabled,
                   GNSSModuleTypeToStr(SettingsToGNSSModuleType(s.gnss_receiver_type)), s.gnss_notify);
     CPP_AT_PRINTF("\"HOSTNAME\":[\"%s\"],", JSONEscapeStr(cns.hostname, esc, sizeof(esc)));
@@ -1746,6 +1768,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 5,
      .help_callback = ATFeedHelpCallback,
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFeedCallback, comms_manager)},
+    {.command = "FEED_ENABLE",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+FEED_ENABLE=<enabled>\r\n\tMaster switch for all outbound network feeds. Set to 0 to disable "
+                    "all feeds, or 1 to allow feeds marked active. Does not change per-feed active flags set with "
+                    "AT+FEED.\r\n\tAT+FEED_ENABLE?\r\n\tQuery whether outbound feeds are enabled.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFeedEnableCallback, comms_manager)},
     {.command = "GNSS",
      .min_args = 0,
      .max_args = 3,
