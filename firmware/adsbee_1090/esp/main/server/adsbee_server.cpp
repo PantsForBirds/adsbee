@@ -706,9 +706,13 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              ", \"gnss\": { \"enabled\": %s, \"fix_valid\": %s, \"latitude_deg\": %.6f, "
-             "\"longitude_deg\": %.6f, \"utc_time\": \"%s\" }",
+             "\"longitude_deg\": %.6f, \"altitude_ft\": %ld, \"heading_deg\": %.1f, \"speed_kts\": %ld, "
+             "\"num_satellites\": %u, \"utc_time\": \"%s\" }",
              rp2040_status.gnss_enabled ? "true" : "false", rp2040_status.gnss_fix_valid ? "true" : "false",
-             rp2040_status.gnss_latitude_deg, rp2040_status.gnss_longitude_deg, gnss_utc_time);
+             rp2040_status.gnss_latitude_deg, rp2040_status.gnss_longitude_deg,
+             static_cast<long>(rp2040_status.gnss_altitude_ft), rp2040_status.gnss_heading_deg,
+             static_cast<long>(rp2040_status.gnss_speed_kts), static_cast<unsigned int>(rp2040_status.gnss_num_satellites),
+             gnss_utc_time);
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              ", \"subg\": { \"uptime_ms\": %lu, \"user_core_usage_percent\": %u, "
