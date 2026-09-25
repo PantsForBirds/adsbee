@@ -5,8 +5,94 @@
 #endif
 #include "comms.hh"
 
+// A bool loaded from a raw settings blob can hold any byte value, and reading one that isn't 0 or 1 is undefined
+// behavior. Inspect the storage byte instead of the bool, and rewrite any nonzero value as true.
+static bool SanitizeBool(bool& value, const char* name, int index = -1) {
+    uint8_t raw;
+    memcpy(&raw, &value, sizeof(raw));
+    if (raw <= 1) {
+        return false;
+    }
+    if (index >= 0) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "%s[%d] has non-boolean value %u, resetting to true.", name, index,
+                      raw);
+    } else {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "%s has non-boolean value %u, resetting to true.", name, raw);
+    }
+    const uint8_t one = 1;
+    memcpy(&value, &one, sizeof(one));
+    return true;
+}
+
+// Forces NUL termination of a fixed-size char array, so %s formatting and strlen() stay inside the field.
+static bool SanitizeString(char* str, size_t size, const char* name, int index = -1) {
+    if (memchr(str, '\0', size) != nullptr) {
+        return false;
+    }
+    if (index >= 0) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "%s[%d] is not NUL-terminated, truncating.", name, index);
+    } else {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "%s is not NUL-terminated, truncating.", name);
+    }
+    str[size - 1] = '\0';
+    return true;
+}
+
 bool SettingsManager::Sanitize() {
     bool changed = false;
+
+    // CoreNetworkSettings is CRC-protected. If the CRC was valid before sanitizing, keep it valid after any fix-up so
+    // the block can still be restored after a failed migration.
+    Settings::CoreNetworkSettings& cns = settings.core_network_settings;
+    bool cns_was_valid = cns.IsValid();
+    bool cns_changed = false;
+    cns_changed |= SanitizeBool(cns.esp32_enabled, "esp32_enabled");
+    cns_changed |= SanitizeBool(cns.wifi_ap_enabled, "wifi_ap_enabled");
+    cns_changed |= SanitizeBool(cns.wifi_sta_enabled, "wifi_sta_enabled");
+    cns_changed |= SanitizeBool(cns.ethernet_enabled, "ethernet_enabled");
+    cns_changed |= SanitizeString(cns.hostname, sizeof(cns.hostname), "hostname");
+    cns_changed |= SanitizeString(cns.wifi_ap_ssid, sizeof(cns.wifi_ap_ssid), "wifi_ap_ssid");
+    cns_changed |= SanitizeString(cns.wifi_ap_password, sizeof(cns.wifi_ap_password), "wifi_ap_password");
+    cns_changed |= SanitizeString(cns.wifi_sta_ssid, sizeof(cns.wifi_sta_ssid), "wifi_sta_ssid");
+    cns_changed |= SanitizeString(cns.wifi_sta_password, sizeof(cns.wifi_sta_password), "wifi_sta_password");
+    if (cns_changed) {
+        if (cns_was_valid) {
+            cns.UpdateCRC32();
+        }
+        changed = true;
+    }
+
+    changed |= SanitizeBool(settings.r1090_rx_enabled, "r1090_rx_enabled");
+    changed |= SanitizeBool(settings.r1090_bias_tee_enabled, "r1090_bias_tee_enabled");
+    changed |= SanitizeBool(settings.led_enabled, "led_enabled");
+    changed |= SanitizeBool(settings.feeds_enabled, "feeds_enabled");
+    changed |= SanitizeBool(settings.gnss_enabled, "gnss_enabled");
+    changed |= SanitizeBool(settings.gnss_notify, "gnss_notify");
+    changed |= SanitizeBool(settings.subg_rx_enabled, "subg_rx_enabled");
+    changed |= SanitizeBool(settings.subg_bias_tee_enabled, "subg_bias_tee_enabled");
+    changed |= SanitizeBool(settings.remote_id_rx_enabled, "remote_id_rx_enabled");
+    changed |= SanitizeBool(settings.remote_id_tx_enabled, "remote_id_tx_enabled");
+    changed |= SanitizeString(settings.remote_id_tx_uas_id, sizeof(settings.remote_id_tx_uas_id), "remote_id_tx_uas_id");
+    changed |= SanitizeString(settings.remote_id_tx_operator_id, sizeof(settings.remote_id_tx_operator_id),
+                              "remote_id_tx_operator_id");
+    for (uint16_t i = 0; i < Settings::kMaxNumFeeds; i++) {
+        changed |= SanitizeBool(settings.feed_is_active[i], "feed_is_active", i);
+        changed |= SanitizeString(settings.feed_uris[i], sizeof(settings.feed_uris[i]), "feed_uris", i);
+    }
+
+    // A baud rate of 0 is invalid for the hardware UARTs (the console is a USB CDC port, where 0 is the normal value).
+    if (settings.baud_rates[SerialInterface::kCommsUART] == 0) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "Comms UART baud rate is 0, resetting to %lu.",
+                      (unsigned long)Settings::kDefaultCommsUARTBaudrate);
+        settings.baud_rates[SerialInterface::kCommsUART] = Settings::kDefaultCommsUARTBaudrate;
+        changed = true;
+    }
+    if (settings.baud_rates[SerialInterface::kGNSSUART] == 0) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "GNSS UART baud rate is 0, resetting to %lu.",
+                      (unsigned long)Settings::kDefaultGNSSUARTBaudrate);
+        settings.baud_rates[SerialInterface::kGNSSUART] = Settings::kDefaultGNSSUARTBaudrate;
+        changed = true;
+    }
 
     if (settings.log_level >= LogLevel::kNumLogLevels) {
         CONSOLE_ERROR("SettingsManager::Sanitize", "log_level %u out of range, resetting to kWarnings.",
@@ -52,6 +138,12 @@ bool SettingsManager::Sanitize() {
         CONSOLE_ERROR("SettingsManager::Sanitize", "gnss_receiver_type %u out of range, resetting to kGNSSReceiverNone.",
                       settings.gnss_receiver_type);
         settings.gnss_receiver_type = kGNSSReceiverNone;
+        changed = true;
+    }
+    // GNSS can't run without a receiver type; AT+GNSS refuses to enable it that way, so treat the combination as disabled.
+    if (settings.gnss_enabled && settings.gnss_receiver_type == kGNSSReceiverNone) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "gnss_enabled is set with receiver type NONE, disabling GNSS.");
+        settings.gnss_enabled = false;
         changed = true;
     }
 
