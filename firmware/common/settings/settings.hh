@@ -1,6 +1,7 @@
 #ifndef SETTINGS_HH_
 #define SETTINGS_HH_
 
+#include <cstddef>  // for offsetof
 #include <cstdint>
 #include <functional>  // for strtoull
 
@@ -650,5 +651,39 @@ class SettingsManager {
 };
 
 extern SettingsManager settings_manager;
+
+// Layout lock for the live Settings struct. Settings are stored as raw bytes (flash/EEPROM) and sent as raw bytes to the
+// ESP32 and CC1312, so ANY change to the struct's layout -- adding, removing, reordering or resizing a field, or changing
+// an enum's underlying type -- changes what older firmware and stored blobs mean. v15 exists because fields were
+// inserted twice without a version bump, and devices misread their settings after an update.
+//
+// If one of these fails because you changed Settings:
+//   1. Bump kSettingsVersion (and the firmware version, see scripts/check_version_sync.sh).
+//   2. Freeze the PREVIOUS layout as a settings_vN snapshot in settings_versions.hh and add a MigrateVNToVN+1 step in
+//      settings_migration.cpp (see the recipe at the top of settings_versions.hh).
+//   3. Update the version and the numbers below to the new layout.
+// Do not just edit the numbers. These hold on every target that stores or transfers Settings (host tests, RP2040,
+// ESP32-S3, CC1312), since all of them build this header with the same ABI rules.
+static_assert(kSettingsVersion == 15,
+              "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
+static_assert(sizeof(SettingsManager::Settings) == 1144,
+              "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");
+static_assert(alignof(SettingsManager::Settings) == 4, "Settings alignment changed. See the comment above.");
+static_assert(sizeof(SettingsManager::Settings::CoreNetworkSettings) == 240,
+              "CoreNetworkSettings layout changed. It must stay fixed so network settings survive any migration.");
+static_assert(sizeof(SettingsManager::RxPosition) == 29, "RxPosition layout changed. See the comment above.");
+static_assert(offsetof(SettingsManager::Settings, core_network_settings) == 4, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, led_enabled) == 260, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, feeds_enabled) == 261, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, gnss_notify) == 264, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, log_level) == 266, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, baud_rates) == 276, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, subg_mode) == 291, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, remote_id_tx_enabled) == 294, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, feed_uris) == 340, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, feed_protocols) == 1010, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, feed_receiver_ids) == 1030, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, mavlink_system_id) == 1110, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, rx_position) == 1112, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */
