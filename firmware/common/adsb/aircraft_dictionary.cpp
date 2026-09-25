@@ -658,6 +658,9 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
     ModeSADSBPacket::AirborneVelocitiesSubtype subtype =
         static_cast<ModeSADSBPacket::AirborneVelocitiesSubtype>(packet.GetNBitWordFromMessage(3, 5));
     bool is_supersonic = false;
+    // Speed and direction subfields can each be flagged as not available by the transmitter.
+    bool horizontal_speed_available = false;
+    bool direction_available = false;
     switch (subtype) {
         case ModeSADSBPacket::AirborneVelocitiesSubtype::kAirborneVelocitiesGroundSpeedSupersonic:
             is_supersonic = true;
@@ -683,6 +686,8 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
                     v_y_kts *= 4;
                 }
                 CalculateTrackAndSpeedFromNEVelocities(v_y_kts, v_x_kts, direction_deg, speed_kts);
+                horizontal_speed_available = true;
+                direction_available = true;
             }
             break;
         }
@@ -702,8 +707,13 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
                 bool is_true_airspeed = static_cast<bool>(packet.GetNBitWordFromMessage(1, 24));
                 speed_source =
                     is_true_airspeed ? ADSBTypes::kSpeedSourceAirspeedTrue : ADSBTypes::kSpeedSourceAirspeedIndicated;
+                horizontal_speed_available = true;
+            }
+            // ME[14] - Heading Status: the heading subfield is only valid if this bit is set. DO-260B 2.2.3.2.6.3.6.
+            if (packet.GetNBitWordFromMessage(1, 13)) {
                 direction_deg = static_cast<float>(fixedmath::fixed_t(packet.GetNBitWordFromMessage(10, 14) * 360) /
                                                    fixedmath::fixed_t(1024));
+                direction_available = true;
             }
 
             break;
@@ -716,9 +726,9 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
 #endif                     // ADSB_VERBOSE_PACKET_WARNINGS
             return false;  // Don't attempt vertical rate decode if message type is invalid.
     }
-    // Latching bit flags.
-    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid, true);
-    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid, true);
+    // Latching bit flags. Don't report stale or placeholder values when the subfields are flagged as not available.
+    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid, direction_available);
+    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid, horizontal_speed_available);
     // Non-latching bit flags.
     WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedDirection, true);
     WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedHorizontalSpeed, true);

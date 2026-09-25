@@ -525,6 +525,47 @@ TEST(AircraftDictionary, IngestAirborneVelocityMessage) {
     EXPECT_NEAR(aircraft.speed_kts, 375.0f, 0.01);
 }
 
+TEST(AircraftDictionary, IngestAirborneVelocityMessageNotAvailable) {
+    AircraftDictionary dictionary = AircraftDictionary();
+    uint32_t uid = Aircraft::ICAOToUID(0xABCDEF, Aircraft::kAircraftTypeModeS);
+
+    // Subtype 1 (ground speed), 100kts east and 100kts north: speed and direction available.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB00000514EEC");
+    ASSERT_TRUE(tpacket.is_valid);
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ModeSAircraft* aircraft = dictionary.GetAircraftPtr<ModeSAircraft>(uid);
+    ASSERT_NE(aircraft, nullptr);
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid));
+    EXPECT_EQ(aircraft->speed_kts, 141);
+    EXPECT_NEAR(aircraft->direction_deg, 45.0f, 0.01f);
+
+    // Subtype 1 with the east-west velocity subfield set to 0 (not available): neither speed nor track is known.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900000CB00000FD855A");
+    ASSERT_TRUE(tpacket.is_valid);
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid));
+    EXPECT_EQ(aircraft->speed_source, ADSBTypes::kSpeedSourceNotAvailable);
+
+    // Subtype 3 (airspeed), heading status bit = 0, IAS 250kts: speed is available but heading is not.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9B00001F70000019B69C");
+    ASSERT_TRUE(tpacket.is_valid);
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid));
+    EXPECT_EQ(aircraft->speed_kts, 250);
+    EXPECT_EQ(aircraft->speed_source, ADSBTypes::kSpeedSourceAirspeedIndicated);
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid));
+
+    // Subtype 3, heading status bit = 1 with heading 90 degrees, airspeed subfield 0 (not available).
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9B050000100000C441AC");
+    ASSERT_TRUE(tpacket.is_valid);
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid));
+    EXPECT_NEAR(aircraft->direction_deg, 90.0f, 0.01f);
+}
+
 TEST(AircraftDictionary, IngestAltitudeReply) {
     ModeSAircraft* aircraft_ptr;
     // Try ingesting a altitude reply packet that's marked as valid so that it doesn't require a cross-check with the
