@@ -179,14 +179,12 @@ static_assert(offsetof(Settings, rx_position) == 1058, "v13 rx_position offset d
 }  // namespace settings_v13
 
 /**
- * v14 layout: v13 plus the Remote ID *transmit* settings (remote_id_tx_*) appended after the receive settings, plus
- * `led_enabled` inserted earlier (between watchdog_timeout_sec and log_level). This is the layout that shipped with
- * kSettingsVersion == 14 from commit 82f9813e ("Add Remote ID reception #202") until commit e1f28fe7 ("John/jacob
- * gnss #205") inserted `gnss_enabled`/`gnss_receiver_type`/`gnss_notify` into the live struct WITHOUT bumping
- * kSettingsVersion or adding a migration step -- meaning on-flash v14 blobs from before e1f28fe7 were read straight
- * into the new, larger, shifted struct with no migration, corrupting every field from `gnss_enabled` onward
- * (including subg_rx_enabled, subg_enabled, remote_id_*, feed_*, mavlink_*, and rx_position). This snapshot exists so
- * that migration can be added retroactively at v15.
+ * v14 layout: v13 plus `led_enabled`, the GNSS settings (`gnss_enabled`, `gnss_receiver_type`, `gnss_notify`) and the
+ * Remote ID *transmit* settings (remote_id_tx_*). This is the layout every release tagged with kSettingsVersion == 14
+ * shipped (adsbee_1090 0.9.1-rc1/rc2, adsbee_1421 0.3.7 through 0.3.11-rc1). The GNSS fields were added (e1f28fe7) a
+ * few commits after v14 was introduced (82f9813e) without a version bump, but no release carried the pre-GNSS layout,
+ * so this is the only v14 layout real devices hold. The three GNSS bytes landed in what had been padding, so everything
+ * from baud_rates onward sits at the same offsets either way.
  */
 namespace settings_v14 {
 
@@ -226,8 +224,8 @@ struct __attribute__((packed)) RxPosition {
     uint32_t icao_address;
 };
 
-// Byte-identical copy of the v14 Settings layout (kSettingsVersion == 14, pre-GNSS). Enum members are stored as their
-// v14 underlying integer types: LogLevel/ReportingProtocol : uint16_t, EnableState : int8_t, SubGHzRadioMode : uint8_t.
+// Byte-identical copy of the shipped v14 Settings layout. Enum members are stored as their v14 underlying integer types:
+// LogLevel/ReportingProtocol : uint16_t, EnableState : int8_t, SubGHzRadioMode/GNSSReceiverType : uint8_t.
 struct alignas(4) Settings {
     uint32_t settings_version;
     CoreNetworkSettings core_network_settings;
@@ -235,8 +233,10 @@ struct alignas(4) Settings {
     int32_t tl_offset_mv;
     bool r1090_bias_tee_enabled;
     uint32_t watchdog_timeout_sec;
-    bool led_enabled;  // Added prior to v14 (commit d9bd04cd).
-    // (post-v14 inserts gnss_enabled, gnss_receiver_type, gnss_notify here -- the bug this snapshot exists to fix.)
+    bool led_enabled;
+    bool gnss_enabled;
+    uint8_t gnss_receiver_type;
+    bool gnss_notify;
     uint16_t log_level;
     uint16_t reporting_protocols[kNumSerialInterfaces];
     uint32_t baud_rates[kNumSerialInterfaces];
@@ -262,7 +262,7 @@ struct alignas(4) Settings {
     RxPosition rx_position;
 };
 
-// Lock the v14 byte layout (measured from the real pre-GNSS v14 struct at commit 82f9813e). Same rules as v12/v13:
+// Lock the v14 byte layout (measured from the live struct at tag adsbee_1090-0.9.1-rc2). Same rules as v12/v13:
 // never "fix" these by editing the numbers -- a failure means the snapshot no longer matches the true historical
 // layout.
 static_assert(sizeof(CoreNetworkSettings) == 240, "v14 CoreNetworkSettings must be 240 bytes.");
@@ -271,7 +271,10 @@ static_assert(sizeof(Settings) == 1140, "v14 Settings must be 1140 bytes.");
 static_assert(offsetof(Settings, core_network_settings) == 4, "v14 CoreNetworkSettings offset drift.");
 static_assert(offsetof(Settings, r1090_rx_enabled) == 244, "v14 r1090_rx_enabled offset drift.");
 static_assert(offsetof(Settings, led_enabled) == 260, "v14 led_enabled offset drift.");
-static_assert(offsetof(Settings, log_level) == 262, "v14 log_level offset drift.");
+static_assert(offsetof(Settings, gnss_enabled) == 261, "v14 gnss_enabled offset drift.");
+static_assert(offsetof(Settings, gnss_receiver_type) == 262, "v14 gnss_receiver_type offset drift.");
+static_assert(offsetof(Settings, gnss_notify) == 263, "v14 gnss_notify offset drift.");
+static_assert(offsetof(Settings, log_level) == 264, "v14 log_level offset drift.");
 static_assert(offsetof(Settings, subg_mode) == 287, "v14 subg_mode offset drift.");
 static_assert(offsetof(Settings, remote_id_rx_enabled) == 288, "v14 remote_id_rx_enabled offset drift.");
 static_assert(offsetof(Settings, remote_id_tx_enabled) == 290, "v14 remote_id_tx_enabled offset drift.");

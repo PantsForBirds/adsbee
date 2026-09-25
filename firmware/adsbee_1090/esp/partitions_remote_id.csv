@@ -1,8 +1,17 @@
-# Default partition table for the 8 MB ESP32-S3 build. Remote ID (Bluetooth/NimBLE) is enabled in the base sdkconfig, and
-# the NimBLE stack adds ~400-450 KB of code that does not fit the 1.5 MB app of the stock partitions_singleapp_large, so
-# the factory app is grown to 3 MB (ample headroom in 8 MB flash; there is no OTA scheme to preserve). Referenced by the
-# base sdkconfig via CONFIG_PARTITION_TABLE_CUSTOM_FILENAME.
+# Partition table for the unified ESP32-S3 image, which runs on BOTH supported modules:
+#   - ESP32-S3-MINI-1U-N8   (8 MB flash, no PSRAM)  -- original ADSBee 1090U
+#   - ESP32-S3-MINI-1U-N4R2 (4 MB flash, 2 MB PSRAM) -- later hardware revisions
+# The image is built for 4 MB flash (CONFIG_ESPTOOLPY_FLASHSIZE_4MB), so everything must fit below 0x400000; on an 8 MB
+# module the upper 4 MB is simply unused.
+#
+# DO NOT MOVE nvs / phy_init / factory: these offsets (nvs @ 0x9000, phy_init @ 0xF000, factory @ 0x10000) are the
+# layout every shipped ADSBee has, so NVS contents survive a firmware update, and the RP2040's ESP32 flasher writes the
+# app to the fixed APPLICATION_ADDRESS 0x10000 (pico/application/peripherals/esp32/esp32_flasher.cc).
+#
+# The factory app is 3 MB (0x10000-0x30FFFF): NimBLE (Remote ID) adds ~400-450 KB of code, which does not fit the 1.5 MB
+# app of the stock partitions_singleapp_large. 0x310000-0x3FFFFF is left free (partitions_debug.csv puts the coredump
+# partition there). No OTA scheme to preserve. Referenced by the sdkconfig via CONFIG_PARTITION_TABLE_CUSTOM_FILENAME.
 # Name,   Type, SubType,  Offset,    Size,   Flags
-nvs,      data, nvs,      ,          0x6000,
-phy_init, data, phy,      ,          0x1000,
-factory,  app,  factory,  ,          3M,
+nvs,      data, nvs,      0x9000,    0x6000,
+phy_init, data, phy,      0xF000,    0x1000,
+factory,  app,  factory,  0x10000,   3M,

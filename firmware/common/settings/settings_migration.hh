@@ -21,18 +21,10 @@ class SettingsMigrator {
     // The oldest stored version this utility can migrate from.
     static constexpr uint32_t kOldestMigratableVersion = 12;
 
-    // NOTE on v14 -> v15: firmware between commits e1f28fe7 and this fix silently inserted gnss_enabled/
-    // gnss_receiver_type/gnss_notify into the live struct WITHOUT bumping kSettingsVersion (see settings_v14::Settings
-    // in settings_versions.hh for the full story). Devices that ran that firmware and saved settings now have an
-    // on-flash blob tagged version 14 whose true byte layout no longer matches settings_v14 -- it already matches the
-    // *current* (v15) layout, just with garbage/misaligned values in gnss_enabled and every field after it (subg_mode
-    // onward), because they were read through the wrong-sized struct at least once. Since the version tag can't
-    // distinguish a genuine pre-drift v14 blob from an already-drift-corrupted one, MigrateV14ToV15 makes the
-    // textbook assumption that a "v14" blob is byte-true settings_v14 -- this is correct for any device untouched by
-    // the drifted firmware, and is what makes all *future* upgrades safe now that kSettingsVersion actually changes.
-    // It cannot losslessly recover a blob that was already corrupted by the drifted firmware: those devices will
-    // need someone to re-check the 1090/Sub-GHz/GNSS enable flags once after applying this fix, but will not corrupt
-    // further.
+    // NOTE on v14 -> v15: both e1f28fe7 (GNSS fields) and #224 (feeds_enabled) inserted fields into the live struct
+    // without bumping kSettingsVersion. settings_v14 is the layout every v14 release shipped (with GNSS, without
+    // feeds_enabled). Unreleased dev builds from between #224 and v15 stored a feeds_enabled layout under the v14 tag;
+    // those blobs migrate with log_level onward misread, and SettingsManager::Sanitize() keeps the result safe.
 
     /**
      * Migrates a stored settings blob at `from_version` forward to the current kSettingsVersion layout.

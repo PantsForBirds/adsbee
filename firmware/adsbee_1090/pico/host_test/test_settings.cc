@@ -168,8 +168,13 @@ static void ExpectV13FieldsPreserved(const SettingsManager::Settings& out) {
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
 }
 
-// The Remote ID transmit settings are new in v14, so any migration must leave them at their defaults.
+// Fields new in v14 (Remote ID transmit, GNSS) and v15 (feeds_enabled) must land on their defaults when migrating from
+// a version that doesn't have them.
 static void ExpectV14TxDefaults(const SettingsManager::Settings& out) {
+    EXPECT_TRUE(out.feeds_enabled);
+    EXPECT_FALSE(out.gnss_enabled);
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverNone);
+    EXPECT_FALSE(out.gnss_notify);
     EXPECT_FALSE(out.remote_id_tx_enabled);
     EXPECT_EQ(out.remote_id_tx_transports, (uint8_t)(SettingsManager::kRemoteIDTransportBLE4 |
                                                      SettingsManager::kRemoteIDTransportBLE5Long |
@@ -218,6 +223,9 @@ static void PopulateV14(settings_v14::Settings& v14) {
     v14.r1090_bias_tee_enabled = true;
     v14.watchdog_timeout_sec = 42;
     v14.led_enabled = false;
+    v14.gnss_enabled = true;
+    v14.gnss_receiver_type = SettingsManager::kGNSSReceiverUBXMIA;
+    v14.gnss_notify = true;
     v14.log_level = SettingsManager::LogLevel::kInfo;
     v14.reporting_protocols[0] = SettingsManager::ReportingProtocol::kCSBee;
     v14.reporting_protocols[1] = SettingsManager::ReportingProtocol::kGDL90;
@@ -262,7 +270,7 @@ static void PopulateV14(settings_v14::Settings& v14) {
     v14.rx_position.icao_address = 0xABCDEF;
 }
 
-TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsGNSS) {
+TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
     settings_v14::Settings v14;
     PopulateV14(v14);
 
@@ -284,11 +292,10 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsGNSS) {
     EXPECT_EQ(out.watchdog_timeout_sec, 42u);
     EXPECT_FALSE(out.led_enabled);
 
-    // gnss_enabled/gnss_receiver_type/gnss_notify are new since v14 (the fields that were silently inserted without
-    // a version bump); a v14->v15 migration must land them on their live defaults, not garbage/uninitialized bytes.
-    EXPECT_FALSE(out.gnss_enabled);
-    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverNone);
-    EXPECT_FALSE(out.gnss_notify);
+    EXPECT_TRUE(out.feeds_enabled);  // New in v15.
+    EXPECT_TRUE(out.gnss_enabled);
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
+    EXPECT_TRUE(out.gnss_notify);
 
     EXPECT_EQ(out.log_level, SettingsManager::LogLevel::kInfo);
     EXPECT_EQ(out.reporting_protocols[0], SettingsManager::ReportingProtocol::kCSBee);
@@ -319,6 +326,50 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsGNSS) {
     EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
     EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+}
+
+// Builds a v14 blob by raw byte offset, independent of settings_v14::Settings, using the layout measured from the
+// struct shipped in adsbee_1090-0.9.1-rc2. Guards against the frozen snapshot drifting from what devices actually hold.
+TEST(SettingsMigration, V14ShippedRc2BlobMigrates) {
+    uint8_t blob[1140];
+    memset(blob, 0, sizeof(blob));
+    auto put16 = [&](size_t off, uint16_t v) { memcpy(&blob[off], &v, sizeof(v)); };
+    auto put32 = [&](size_t off, uint32_t v) { memcpy(&blob[off], &v, sizeof(v)); };
+
+    put32(0, 14);
+    blob[244] = 1;           // r1090_rx_enabled
+    blob[260] = 1;           // led_enabled
+    blob[261] = 1;           // gnss_enabled
+    blob[262] = 2;           // gnss_receiver_type = kGNSSReceiverUBXMIA
+    blob[263] = 0;           // gnss_notify
+    put16(264, 1);           // log_level = kErrors
+    put16(266, 0);           // reporting_protocols[0] = kNoReports
+    put16(268, 9);           // reporting_protocols[1] = kAircraftJSON
+    put16(270, 0);           // reporting_protocols[2]
+    put32(272, 0);           // baud_rates[0]
+    put32(276, 115200);      // baud_rates[1]
+    put32(280, 115200);      // baud_rates[2]
+    blob[284] = 1;           // subg_enabled = kEnableStateEnabled
+    blob[285] = 1;           // subg_rx_enabled
+    blob[1106] = 9;          // mavlink_system_id
+
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 14, out));
+
+    EXPECT_TRUE(out.r1090_rx_enabled);
+    EXPECT_TRUE(out.led_enabled);
+    EXPECT_TRUE(out.gnss_enabled);
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
+    EXPECT_FALSE(out.gnss_notify);
+    EXPECT_EQ(out.log_level, SettingsManager::LogLevel::kErrors);
+    EXPECT_EQ(out.reporting_protocols[0], SettingsManager::ReportingProtocol::kNoReports);
+    EXPECT_EQ(out.reporting_protocols[1], SettingsManager::ReportingProtocol::kAircraftJSON);
+    EXPECT_EQ(out.baud_rates[1], 115200u);
+    EXPECT_EQ(out.baud_rates[2], 115200u);
+    EXPECT_EQ(out.subg_enabled, SettingsManager::EnableState::kEnableStateEnabled);
+    EXPECT_TRUE(out.subg_rx_enabled);
+    EXPECT_EQ(out.mavlink_system_id, 9);
+    EXPECT_TRUE(out.feeds_enabled);
 }
 
 TEST(SettingsMigration, UnmigratableVersionReturnsFalse) {

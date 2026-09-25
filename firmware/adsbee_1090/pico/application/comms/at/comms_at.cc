@@ -225,6 +225,27 @@ CPP_AT_CALLBACK(CommsManager::ATLEDEnableCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+CPP_AT_CALLBACK(CommsManager::ATFeedEnableCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d", settings_manager.settings.feeds_enabled);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (CPP_AT_HAS_ARG(0)) {
+                bool enabled;
+                CPP_AT_TRY_ARG2NUM(0, enabled);
+                settings_manager.settings.feeds_enabled = enabled;
+                // Sync to the ESP32 so it stops (or resumes) opening outbound feed sockets. When disabled, the
+                // ESP32 IP WAN task closes all feed sockets so no data is sent to any feed.
+                settings_manager.SyncToCoprocessors();
+                CPP_AT_SUCCESS();
+            }
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 CPP_AT_CALLBACK(CommsManager::ATGNSSCallback) {
     switch (op) {
         case '?':
@@ -404,6 +425,14 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
                               esp32_device_info.ethernet_mac[0], esp32_device_info.ethernet_mac[1],
                               esp32_device_info.ethernet_mac[2], esp32_device_info.ethernet_mac[3],
                               esp32_device_info.ethernet_mac[4], esp32_device_info.ethernet_mac[5]);
+                if (!(esp32_ll.hardware_capabilities & ObjectDictionary::kESP32HWCapReported)) {
+                    CPP_AT_PRINTF("ESP32 PSRAM: UNKNOWN\r\n");
+                } else if (esp32_ll.hardware_capabilities & ObjectDictionary::kESP32HWCapPSRAM) {
+                    CPP_AT_PRINTF("ESP32 PSRAM: %u KB (%u KB free)\r\n", esp32_ll.psram_total_kb,
+                                  esp32_ll.psram_free_kb);
+                } else {
+                    CPP_AT_PRINTF("ESP32 PSRAM: NONE\r\n");
+                }
             } else {
                 CPP_AT_PRINTF("ESP32 Disabled\r\n");
             }
@@ -571,6 +600,36 @@ CPP_AT_CALLBACK(CommsManager::ATEthernetCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+// The ESP32 image runs on modules with and without PSRAM (ESP32-S3-MINI-1U-N4R2 vs -N8) and reports which one it is in
+// ESP32DeviceStatus::hardware_capabilities. Returns true only once the ESP32 has positively reported "no PSRAM"; while
+// the capability is unknown (ESP32 disabled, not read yet, or older ESP32 firmware) settings are accepted and the ESP32's
+// own runtime gating (RemoteIDManager) remains the backstop.
+static bool ESP32KnownToLackPSRAM() {
+    return (esp32_ll.hardware_capabilities & ObjectDictionary::kESP32HWCapReported) &&
+           !(esp32_ll.hardware_capabilities & ObjectDictionary::kESP32HWCapPSRAM);
+}
+
+static bool WiFiAPOrSTAEnabled() {
+    const SettingsManager::Settings::CoreNetworkSettings& cns = settings_manager.settings.core_network_settings;
+    return cns.wifi_ap_enabled || cns.wifi_sta_enabled;
+}
+
+static const char kRemoteIDNeedsPSRAMError[] =
+    "Remote ID can't run while WiFi AP or WiFi Station is enabled on this hardware: its ESP32 has no PSRAM, so there "
+    "isn't enough RAM for WiFi networking and Remote ID at the same time. Disable both (AT+WIFI_AP=0 and "
+    "AT+WIFI_STA=0) and use Ethernet, or use hardware with PSRAM.";
+
+// Warns when WiFi AP/STA is being enabled while Remote ID is on, on hardware without PSRAM. WiFi networking wins (it is
+// how most users reach the device), so the setting is accepted and Remote ID pauses; this makes that visible.
+static void WarnIfWiFiPausesRemoteID() {
+    const SettingsManager::Settings& s = settings_manager.settings;
+    if (!ESP32KnownToLackPSRAM() || !WiFiAPOrSTAEnabled()) return;
+    if (!s.remote_id_rx_enabled && !s.remote_id_tx_enabled) return;
+    CPP_AT_PRINTF(
+        "WARNING: Remote ID is enabled but will be paused while WiFi AP or WiFi Station is enabled: this hardware's "
+        "ESP32 has no PSRAM, so it can't run WiFi networking and Remote ID at the same time.\r\n");
+}
+
 CPP_AT_CALLBACK(CommsManager::ATRemoteIDCallback) {
     switch (op) {
         case '?':
@@ -586,7 +645,12 @@ CPP_AT_CALLBACK(CommsManager::ATRemoteIDCallback) {
             if (!CPP_AT_HAS_ARG(0)) {
                 CPP_AT_ERROR("Requires at least one argument. AT+REMOTE_ID=<enabled>[,<transport_mask>]");
             }
-            CPP_AT_TRY_ARG2NUM(0, settings_manager.settings.remote_id_rx_enabled);
+            bool rx_enabled;
+            CPP_AT_TRY_ARG2NUM(0, rx_enabled);
+            if (rx_enabled && ESP32KnownToLackPSRAM() && WiFiAPOrSTAEnabled()) {
+                CPP_AT_ERROR("%s", kRemoteIDNeedsPSRAMError);
+            }
+            settings_manager.settings.remote_id_rx_enabled = rx_enabled;
             if (CPP_AT_HAS_ARG(1)) {
                 CPP_AT_TRY_ARG2NUM(1, settings_manager.settings.remote_id_transports);
             }
@@ -658,7 +722,12 @@ CPP_AT_CALLBACK(CommsManager::ATRemoteIDTxCallback) {
             if (!CPP_AT_HAS_ARG(0)) {
                 CPP_AT_ERROR("Requires at least one argument. AT+REMOTE_ID_TX=<enabled>[,<transport_mask>]");
             }
-            CPP_AT_TRY_ARG2NUM(0, settings_manager.settings.remote_id_tx_enabled);
+            bool tx_enabled;
+            CPP_AT_TRY_ARG2NUM(0, tx_enabled);
+            if (tx_enabled && ESP32KnownToLackPSRAM() && WiFiAPOrSTAEnabled()) {
+                CPP_AT_ERROR("%s", kRemoteIDNeedsPSRAMError);
+            }
+            settings_manager.settings.remote_id_tx_enabled = tx_enabled;
             if (CPP_AT_HAS_ARG(1)) {
                 CPP_AT_TRY_ARG2NUM(1, settings_manager.settings.remote_id_tx_transports);
             }
@@ -1382,6 +1451,7 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"BIAS_TEE_ENABLE\":[%d,%d],", adsbee.BiasTeeIsEnabled(), s.subg_bias_tee_enabled);
     CPP_AT_PRINTF("\"ETHERNET\":[%d],", cns.ethernet_enabled);
     CPP_AT_PRINTF("\"ESP32_ENABLE\":[%d],", esp32.IsEnabled());
+    CPP_AT_PRINTF("\"FEED_ENABLE\":[%d],", s.feeds_enabled);
     CPP_AT_PRINTF("\"GNSS\":[%d,\"%s\",%d],", s.gnss_enabled,
                   GNSSModuleTypeToStr(SettingsToGNSSModuleType(s.gnss_receiver_type)), s.gnss_notify);
     CPP_AT_PRINTF("\"HOSTNAME\":[\"%s\"],", JSONEscapeStr(cns.hostname, esc, sizeof(esc)));
@@ -1614,6 +1684,7 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiAPCallback) {
             if (CPP_AT_HAS_ARG(0)) {
                 CPP_AT_TRY_ARG2NUM(0, cns.wifi_ap_enabled);
                 CPP_AT_CMD_PRINTF(": wifi_ap_enabled=%d\r\n", cns.wifi_ap_enabled);
+                if (cns.wifi_ap_enabled) WarnIfWiFiPausesRemoteID();
             }
             if (CPP_AT_HAS_ARG(1)) {
                 strncpy(cns.wifi_ap_ssid, args[1].data(), SettingsManager::Settings::kWiFiSSIDMaxLen);
@@ -1659,6 +1730,7 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiSTACallback) {
             if (CPP_AT_HAS_ARG(0)) {
                 CPP_AT_TRY_ARG2NUM(0, cns.wifi_sta_enabled);
                 CPP_AT_CMD_PRINTF(": wifi_sta_enabled=%d\r\n", cns.wifi_sta_enabled);
+                if (cns.wifi_sta_enabled) WarnIfWiFiPausesRemoteID();
             }
             if (CPP_AT_HAS_ARG(1)) {
                 strncpy(cns.wifi_sta_ssid, args[1].data(), SettingsManager::Settings::kWiFiSSIDMaxLen);
@@ -1746,6 +1818,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 5,
      .help_callback = ATFeedHelpCallback,
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFeedCallback, comms_manager)},
+    {.command = "FEED_ENABLE",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+FEED_ENABLE=<enabled>\r\n\tMaster switch for all outbound network feeds. Set to 0 to disable "
+                    "all feeds, or 1 to allow feeds marked active. Does not change per-feed active flags set with "
+                    "AT+FEED.\r\n\tAT+FEED_ENABLE?\r\n\tQuery whether outbound feeds are enabled.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFeedEnableCallback, comms_manager)},
     {.command = "GNSS",
      .min_args = 0,
      .max_args = 3,
@@ -1822,7 +1901,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
          "future firmware.\r\n\t"
          "AT+REMOTE_ID=<enabled>[,<transport_mask>]\r\n\tEnable/disable Broadcast Remote ID (drone) reception on the "
          "ESP32.\r\n\ttransport_mask bits: 1=BT4 legacy, 2=BT5 Long Range, 4=WiFi beacon (default 7).\r\n\tOn "
-         "non-PSRAM builds Remote ID only runs when WiFi AP/STA are disabled and Ethernet is up.\r\n\t"
+         "hardware whose ESP32 has no PSRAM (see AT+DEVICE_INFO?), Remote ID only runs when WiFi AP/STA are disabled "
+         "and Ethernet is up; with PSRAM it runs alongside WiFi (the WiFi beacon receiver then listens on the WiFi "
+         "channel only).\r\n\t"
          "AT+REMOTE_ID?\r\n\tQuery Remote ID settings and the ESP32's live status bitfield.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRemoteIDCallback, comms_manager)},
     {.command = "REMOTE_ID_TX",

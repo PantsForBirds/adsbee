@@ -69,7 +69,8 @@ void SettingsMigrator::MigrateV13ToV14(const settings_v13::Settings& in, setting
     out.tl_offset_mv = in.tl_offset_mv;
     out.r1090_bias_tee_enabled = in.r1090_bias_tee_enabled;
     out.watchdog_timeout_sec = in.watchdog_timeout_sec;
-    out.led_enabled = true;  // Added prior to v14; match the live default since v13 doesn't have it.
+    out.led_enabled = true;  // New in v14; match the live default.
+    // gnss_enabled/gnss_receiver_type/gnss_notify are new in v14; zero-init above matches their defaults (off, none).
 
     out.log_level = in.log_level;
     for (uint16_t i = 0; i < settings_v14::kNumSerialInterfaces; i++) {
@@ -108,9 +109,8 @@ void SettingsMigrator::MigrateV13ToV14(const settings_v13::Settings& in, setting
 }
 
 void SettingsMigrator::MigrateV14ToV15(const settings_v14::Settings& in, SettingsManager::Settings& out) {
-    // Start from a fresh, fully-defaulted current struct so gnss_enabled/gnss_receiver_type/gnss_notify (the fields
-    // that were silently inserted without a version bump -- see the NOTE in settings_migration.hh) take their proper
-    // current defaults instead of stale/misaligned bytes, and any RP2040 DeviceInfo-seeded defaults are applied.
+    // Start from a fresh, fully-defaulted current struct so feeds_enabled (new in v15) takes its default (enabled, so
+    // active feeds keep running) and any RP2040 DeviceInfo-seeded defaults are applied.
     out = SettingsManager::Settings();
 
     out.settings_version = kSettingsVersion;
@@ -122,8 +122,9 @@ void SettingsMigrator::MigrateV14ToV15(const settings_v14::Settings& in, Setting
     out.r1090_bias_tee_enabled = in.r1090_bias_tee_enabled;
     out.watchdog_timeout_sec = in.watchdog_timeout_sec;
     out.led_enabled = in.led_enabled;
-
-    // gnss_enabled, gnss_receiver_type, gnss_notify are new (post-v14 drift); left at their live defaults set above.
+    out.gnss_enabled = in.gnss_enabled;
+    out.gnss_receiver_type = static_cast<SettingsManager::GNSSReceiverType>(in.gnss_receiver_type);
+    out.gnss_notify = in.gnss_notify;
 
     out.log_level = static_cast<SettingsManager::LogLevel>(in.log_level);
     for (uint16_t i = 0; i < SettingsManager::SerialInterface::kNumSerialInterfaces; i++) {

@@ -93,6 +93,8 @@ void SettingsManager::Print() {
                               "\tWatchdog Timeout: %lu seconds\r\n", settings.watchdog_timeout_sec);
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len, "\tHardware LEDs: %s\r\n",
                               settings.led_enabled ? "ENABLED" : "DISABLED");
+    print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len, "\tNetwork Feeds: %s\r\n",
+                              settings.feeds_enabled ? "ENABLED" : "DISABLED");
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
                               "\tGNSS: %s (%s), fix notifications: %s\r\n",
                               settings.gnss_enabled ? "ENABLED" : "DISABLED",
@@ -219,6 +221,9 @@ void SettingsManager::PrintAT() {
 
     // AT+LED_ENABLE
     CONSOLE_PRINTF("AT+LED_ENABLE=%d\r\n", settings.led_enabled);
+
+    // AT+FEED_ENABLE
+    CONSOLE_PRINTF("AT+FEED_ENABLE=%d\r\n", settings.feeds_enabled);
 
     // AT+GNSS
     CONSOLE_PRINTF("AT+GNSS=%d,%s,%d\r\n", settings.gnss_enabled,
