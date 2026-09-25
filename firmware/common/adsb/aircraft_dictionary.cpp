@@ -516,15 +516,29 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
                 break;
             default:
                 // Check for TypeCodes that can determine a NIC without needing to consult NIC supplement bits.
+                // Version 3 redefined TC=20-22: TC=21 is NIC 7, and TC=20 / TC=22 are refined by NIC supplement D
+                // from the Airborne Velocity message (DO-260C Table 2-11, Table 2-28). Without NIC supplement D, use
+                // the lowest NIC of the TYPE code. Earlier versions: DO-260C Table N-24.
+                uint8_t nic_d = NICBitIsValid(ADSBTypes::kNICBitD0) ? (nic_bits >> ADSBTypes::kNICBitD0) & 0b11 : 0;
                 switch (type_code) {
                     case 20:
-                        navigation_integrity_category = ADSBTypes::kROCLessThan7p5Meters;
+                        // NIC 11 in versions 0-2. Version 3: NIC 8-11.
+                        navigation_integrity_category =
+                            adsb_version < 3 ? ADSBTypes::kROCLessThan7p5Meters
+                                             : static_cast<ADSBTypes::NICRadiusOfContainment>(
+                                                   ADSBTypes::kROCLessThan0p1NauticalMiles + nic_d);
                         break;
                     case 21:
-                        navigation_integrity_category = ADSBTypes::kROCLessThan25Meters;
+                        // NIC 10 in versions 0-2. Version 3: NIC 7.
+                        navigation_integrity_category = adsb_version < 3 ? ADSBTypes::kROCLessThan25Meters
+                                                                         : ADSBTypes::kROCLessThan0p2NauticalMiles;
                         break;
                     case 22:
-                        navigation_integrity_category = ADSBTypes::kROCUnknown;
+                        // NIC 0 in versions 0-2. Version 3: NIC 0 or 4-6.
+                        navigation_integrity_category =
+                            (adsb_version < 3 || nic_d == 0) ? ADSBTypes::kROCUnknown
+                                                             : static_cast<ADSBTypes::NICRadiusOfContainment>(
+                                                                   ADSBTypes::kROCLessThan4NauticalMiles + nic_d);
                         break;
                     default:
 #ifdef ADSB_VERBOSE_PACKET_WARNINGS
@@ -794,6 +808,13 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
                         "Difference between GNSS and baro altitude not available for aircraft 0x%lx.", icao_address);
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
         // Don't set decode_successful to false so that we ignore missing GNSS/Baro altitude info.
+        // ME[47-48] - NIC supplement D (version 3), sent when the difference bits are all zeros. TIS-B velocity
+        // messages use these bits for NIC supplement A and NACv. DO-260C 2.2.3.2.6.1.16, 2.2.17.3.4.
+        if (!is_tisb) {
+            uint8_t nic_d = packet.GetNBitWordFromMessage(2, 46);
+            WriteNICBit(ADSBTypes::kNICBitD0, nic_d & 0b01);
+            WriteNICBit(ADSBTypes::kNICBitD1, nic_d & 0b10);
+        }
     } else if (encoded_gnss_alt_baro_alt_difference_ft == 0b1111111) {
         // All ones: the difference is at least 3137.5ft, so the geometric altitude can't be derived from it.
         // DO-260C N.4.2.4.a.

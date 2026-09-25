@@ -961,6 +961,52 @@ TEST(AircraftDictionary, NICAssignment) {
     }
 }
 
+TEST(AircraftDictionary, GNSSPositionNICVersion3) {
+    // Version 3 redefined the NIC of TYPE codes 20-22: TC=21 is NIC 7 (RC < 0.2NM), and TC=20 / TC=22 are refined by
+    // NIC supplement D in Airborne Velocity ME[47-48]. DO-260C Table 2-11, Table 2-28. Versions 0-2: TC=20 NIC 11,
+    // TC=21 NIC 10, TC=22 NIC 0 (DO-260C Table N-24).
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft);
+    DecodedModeSPacket tc20((char*)"8DABCDEFA0B5002468567885D284");
+    DecodedModeSPacket tc21((char*)"8DABCDEFA8B50024685678662111");
+    DecodedModeSPacket tc22((char*)"8DABCDEFB0B50024685678BDC1A7");
+    DecodedModeSPacket velocity_nic_d_2((char*)"8DABCDEF9900650CB006007563EC");
+    ASSERT_TRUE(tc20.is_valid && tc21.is_valid && tc22.is_valid && velocity_nic_d_2.is_valid);
+
+    // Version 2 Operational Status (NIC_A=1).
+    DecodedModeSPacket status((char*)"8DABCDEFF8302036C0576A000000");
+    status.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(status));
+    ASSERT_EQ(aircraft->adsb_version, 2);
+    dictionary.IngestDecodedModeSPacket(tc21);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan25Meters);
+    dictionary.IngestDecodedModeSPacket(tc20);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan7p5Meters);
+
+    // Version 3 Operational Status.
+    status = DecodedModeSPacket((char*)"8DABCDEFF8302036C0776A000000");
+    status.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(status));
+    ASSERT_EQ(aircraft->adsb_version, 3);
+    dictionary.IngestDecodedModeSPacket(tc21);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan0p2NauticalMiles);
+    // No NIC supplement D received yet: lowest NIC for the TYPE code.
+    dictionary.IngestDecodedModeSPacket(tc20);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan0p1NauticalMiles);
+    dictionary.IngestDecodedModeSPacket(tc22);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCUnknown);
+
+    // Velocity with NIC supplement D = 2 (difference from baro altitude not available).
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(velocity_nic_d_2));
+    dictionary.IngestDecodedModeSPacket(tc20);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan25Meters);
+    dictionary.IngestDecodedModeSPacket(tc22);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan1NauticalMile);
+    dictionary.IngestDecodedModeSPacket(tc21);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan0p2NauticalMiles);
+}
+
 TEST(AircraftDictionary, SurfaceNICAssignment) {
     // Surface position NIC from TYPE code, NIC_A and NIC_C. DO-260C Table 2-11: TC=7 is RC < 75m with NIC_A=1,
     // NIC_C=0 and RC < 0.1NM with NIC_A=0, NIC_C=0. ME[0] = 0x38 (TC=7). Force is_valid.

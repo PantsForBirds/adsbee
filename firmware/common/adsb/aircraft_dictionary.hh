@@ -345,8 +345,8 @@ class ModeSAircraft : public Aircraft {
 
     // Aircraft Operation Status Message
     // Navigation Integrity Category (NIC)
-    uint8_t nic_bits_valid = 0b000;  // MSb to LSb: nic_c_valid nic_b_valid nic_a_valid.
-    uint8_t nic_bits = 0b000;        // MSb to LSb: nic_c nic_b nic_a.
+    uint8_t nic_bits_valid = 0b000;  // MSb to LSb: nic_d1_valid nic_d0_valid nic_c_valid nic_b_valid nic_a_valid.
+    uint8_t nic_bits = 0b000;        // MSb to LSb: nic_d1 nic_d0 nic_c nic_b nic_a.
     ADSBTypes::NICRadiusOfContainment navigation_integrity_category = ADSBTypes::kROCUnknown;  // 4 bits.
     ADSBTypes::NICBarometricAltitudeIntegrity navigation_integrity_category_baro =
         ADSBTypes::kBAIGillhamInputNotCrossChecked;  // 1 bit. Default to worst case.
