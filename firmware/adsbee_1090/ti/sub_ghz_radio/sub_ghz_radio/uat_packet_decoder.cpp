@@ -1,17 +1,27 @@
 #include "uat_packet_decoder.hh"
 
+#include <ti/drivers/dpl/HwiP.h>
+
 #include "buffer_utils.hh"
 #include "comms.hh"
 #include "object_dictionary.hh"
 #include "pico.hh"
 
+// The raw UAT queues are filled from the RF driver callback (SubGHzRadio::HandlePacketRx, SWI context) and PFBQueue
+// is not ISR-safe: with overwrite_when_full the producer moves head_ and both sides write is_full_, and the element copy
+// in Dequeue() can be torn by a concurrent Enqueue(). Mask interrupts around each consumer-side queue operation. On
+// this single-core M4F that is sufficient. Do NOT use PFBQueue's is_thread_safe flag here -- a blocking mutex would
+// deadlock in ISR context. (Same scheme as adsbee_1421/ti/sub_ghz_radio/uat_packet_decoder.cpp.)
 bool UATPacketDecoder::Update() {
     // Process incoming UAT ADS-B packets.
-    while (!raw_uat_adsb_packet_queue.IsEmpty()) {
-        // pico_ll.BlinkSubGLED();
-
+    while (true) {
         RawUATADSBPacket packet;
-        raw_uat_adsb_packet_queue.Dequeue(packet);
+        uintptr_t key = HwiP_disable();
+        bool got_packet = raw_uat_adsb_packet_queue.Dequeue(packet);
+        HwiP_restore(key);
+        if (!got_packet) {
+            break;
+        }
         uint16_t packet_len_bytes = packet.buffer_len_bytes;
         // Decode the packet and enqueue the result.
         DecodedUATADSBPacket decoded_packet = DecodedUATADSBPacket(packet);
@@ -35,9 +45,14 @@ bool UATPacketDecoder::Update() {
         }
     }
 
-    while (!raw_uat_uplink_packet_queue.IsEmpty()) {
+    while (true) {
         RawUATUplinkPacket packet;
-        raw_uat_uplink_packet_queue.Dequeue(packet);
+        uintptr_t key = HwiP_disable();
+        bool got_packet = raw_uat_uplink_packet_queue.Dequeue(packet);
+        HwiP_restore(key);
+        if (!got_packet) {
+            break;
+        }
         // Decode the packet and enqueue the result.
         DecodedUATUplinkPacket decoded_packet = DecodedUATUplinkPacket(packet);
 

@@ -221,10 +221,17 @@ bool SubGHzRadio::HandlePacketRx(rfc_dataEntryPartial_t* filled_entry) {
     int8_t status = static_cast<int8_t>(packet_data[packet_len_bytes + kPartialDataEntryNumAppendedBytes - 1]);
     static_assert(kPartialDataEntryNumAppendedBytes == 6);  // This section is hardcoded to match the appended bytes.
 
-    switch (current_packet_len_bytes) {
+    // Dispatch on the entry-derived, bounds-checked packet_len_bytes -- NOT the volatile current_packet_len_bytes
+    // written by the RF_EventNDataWritten handler. RF events coalesce, so that global can be stale here (it can already
+    // hold the NEXT packet's length, or a SET_LEN may have failed). A stale 552 would misclassify an ADS-B reception as
+    // an uplink and cost a multi-ms Reed-Solomon decode of garbage. (Same fix as adsbee_1421.)
+    if (packet_len_bytes != static_cast<uint16_t>(current_packet_len_bytes)) {
+        uat_len_mismatch_count = uat_len_mismatch_count + 1;
+    }
+    switch (packet_len_bytes) {
         case RawUATADSBPacket::kShortADSBMessageNumBytes:
         case RawUATADSBPacket::kLongADSBMessageNumBytes: {
-            RawUATADSBPacket raw_packet = RawUATADSBPacket(packet_data, current_packet_len_bytes);
+            RawUATADSBPacket raw_packet = RawUATADSBPacket(packet_data, packet_len_bytes);
             raw_packet.sigs_dbm = rssi_dbm;
             raw_packet.mlat_48mhz_64bit_counts = timestamp;
 
@@ -233,7 +240,7 @@ bool SubGHzRadio::HandlePacketRx(rfc_dataEntryPartial_t* filled_entry) {
             break;
         }
         case RawUATUplinkPacket::kUplinkMessageNumBytes: {
-            RawUATUplinkPacket raw_packet = RawUATUplinkPacket(packet_data, current_packet_len_bytes);
+            RawUATUplinkPacket raw_packet = RawUATUplinkPacket(packet_data, packet_len_bytes);
             raw_packet.sigs_dbm = rssi_dbm;
             raw_packet.mlat_48mhz_64bit_counts = timestamp;
 

@@ -54,7 +54,21 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
             return false;
         }
 
-        DecodedModeSPacket decoded_packet = DecodedModeSPacket(raw_packet);
+        // Short formats (DF 0-15) are always 56 bits. If the demodulation interval ran on after the message (e.g. a
+        // pulse right after it), the receiver hands them over as 112-bit packets. A valid 56-bit packet followed by
+        // zeros is also a valid 112-bit codeword, so decoding those as 112 bits accepts and forwards 14 byte DF=11s,
+        // and loses the rest. Trim them back to 56 bits.
+        RawModeSPacket framed_packet = raw_packet;
+        if (framed_packet.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
+            (framed_packet.buffer[0] >> (kBytesPerWord * kBitsPerByte - DecodedModeSPacket::kDFNumBits)) <
+                DecodedModeSPacket::kDownlinkFormatLongRangeAirToAirSurveillance) {
+            framed_packet.buffer_len_bytes = RawModeSPacket::kSquitterPacketLenBytes;
+            framed_packet.buffer[1] &= 0xFFFFFF00;
+            framed_packet.buffer[2] = 0;
+            framed_packet.buffer[3] = 0;
+        }
+
+        DecodedModeSPacket decoded_packet = DecodedModeSPacket(framed_packet);
         const char* status_str = nullptr;
         if (decoded_packet.is_valid) {
             PushPacketIfNotDuplicate(decoded_packet);
@@ -64,12 +78,18 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
             PushPacketIfNotDuplicate(decoded_packet);
             status_str = "APFWD     ";
         } else if (config_.enable_1090_error_correction &&
-                   decoded_packet.raw.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes) {
+                   decoded_packet.raw.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
+                   (decoded_packet.downlink_format == DecodedModeSPacket::kDownlinkFormatExtendedSquitter ||
+                    decoded_packet.downlink_format ==
+                        DecodedModeSPacket::kDownlinkFormatExtendedSquitterNonTransponder)) {
             // Checksum correction is enabled, and we have a packet worth correcting. The syndrome was already calculated
             // while constructing the packet.
+            // Only extended squitters received as DF=17/18 are corrected, and never by flipping a bit in the DF field:
+            // a DF=17/18 is only accepted if its first five bits say so (DO-260B 2.2.4.3.4.7.3.a). Correcting other
+            // formats (or the DF field) turns noise and non-ADS-B formats (e.g. DF=19, DF=24) into ADS-B packets.
             int16_t bit_flip_index = crc24_find_single_bit_error(
                 decoded_packet.crc_syndrome, decoded_packet.raw.buffer_len_bytes * kBitsPerByte);
-            if (bit_flip_index >= 0) {
+            if (bit_flip_index >= DecodedModeSPacket::kDFNumBits) {
                 // Found a single bit error: flip it and push the corrected packet to the output queue.
                 flip_bit(decoded_packet.raw.buffer, bit_flip_index);
                 decoded_mode_s_packet_bit_flip_locations_out_queue.Enqueue(bit_flip_index);
@@ -115,9 +135,12 @@ bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& deco
 
 #ifndef DISABLE_DUPLICATE_FILTER
     // Check if we have already seen this exact packet from another source (got caught by multiple state machines
-    // simultaneously). Only the words that hold packet bits are compared; the last word is masked by the receiver so
-    // the comparison is exact.
+    // simultaneously). Only the bits that belong to the packet are compared: the receiver only masks the last word it
+    // reads out of the demodulator, so a 56-bit packet that was read as 3 words has trailing bits in its second word.
+    constexpr uint16_t kBitsPerWord = kBytesPerWord * kBitsPerByte;
     uint16_t num_words = (raw.buffer_len_bytes + kBytesPerWord - 1) / kBytesPerWord;
+    uint16_t last_word_num_bits = raw.buffer_len_bytes * kBitsPerByte - (num_words - 1) * kBitsPerWord;
+    uint32_t last_word_mask = num_words > 0 ? UINT32_MAX << (kBitsPerWord - last_word_num_bits) : 0;
     for (uint16_t i = 0; i < kMaxNumSources; i++) {
         const LastPacket& last = last_packet_[i];
         if (last.buffer_len_bytes != raw.buffer_len_bytes) {
@@ -129,7 +152,8 @@ bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& deco
         if (delta_counts >= kDuplicatePacketWindow48MHzCounts) {
             continue;
         }
-        if (memcmp(last.buffer, raw.buffer, num_words * kBytesPerWord) != 0) {
+        if (num_words == 0 || memcmp(last.buffer, raw.buffer, (num_words - 1) * kBytesPerWord) != 0 ||
+            ((last.buffer[num_words - 1] ^ raw.buffer[num_words - 1]) & last_word_mask) != 0) {
             continue;
         }
         // Already seen this exact packet within the duplicate window.

@@ -285,7 +285,7 @@ bool ModeSAircraft::ApplySurfacePositionMessage(const ModeSADSBPacket& packet, u
     WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne, false);
 
     if (NICBitIsValid(ADSBTypes::kNICBitA) && NICBitIsValid(ADSBTypes::kNICBitC)) {
-        // Assign NIC based on NIC supplement bits A and C and received TypeCode.
+        // Assign NIC based on NIC supplement bits A (bit 0) and C (bit 2) and received TypeCode. DO-260C Table 2-11.
         switch ((packet.type_code << 3) | (nic_bits & 0b101)) {
             case (5 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan7p5Meters;
@@ -293,7 +293,7 @@ bool ModeSAircraft::ApplySurfacePositionMessage(const ModeSADSBPacket& packet, u
             case (6 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan25Meters;
                 break;
-            case (7 << 3) | 0b100:
+            case (7 << 3) | 0b001:  // NIC_A=1, NIC_C=0: RC < 75m
                 navigation_integrity_category = ADSBTypes::kROCLessThan75Meters;
                 break;
             case (7 << 3) | 0b000:
@@ -467,26 +467,32 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
     WriteNICBit(ADSBTypes::kNICBitB, packet.GetNBitWordFromMessage(1, 7));
 
     if (NICBitIsValid(ADSBTypes::kNICBitA) && NICBitIsValid(ADSBTypes::kNICBitB)) {
-        // Assign NIC based on NIC supplement bits A (bit 0) and B (bit 1) and received TypeCode.
-        switch ((type_code << 3) | (nic_bits & 0b011)) {
+        // Assign NIC based on NIC supplement bits A (bit 0) and B (bit 1) and received TypeCode. DO-260C Table 2-11.
+        // Version 1 has a single NIC supplement (NIC_A); ME[8] is the single antenna flag there, and NIC_A=1 selects
+        // the rows that need NIC_A=NIC_B=1 in later versions. DO-260C Table N-16.
+        uint8_t nic_ab = nic_bits & 0b011;
+        if (adsb_version == 1) {
+            nic_ab = (nic_bits & 0b001) ? 0b011 : 0b000;
+        }
+        switch ((type_code << 3) | nic_ab) {
             case (9 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan7p5Meters;
                 break;
             case (10 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan25Meters;
                 break;
-            case (11 << 3) | 0b010:  // NIC_B=1: RC < 75m
+            case (11 << 3) | 0b011:  // NIC_A=1, NIC_B=1: RC < 75m
                 navigation_integrity_category = ADSBTypes::kROCLessThan75Meters;
                 break;
-            case (11 << 3) | 0b000:  // NIC_B=0: RC < 0.1NM
+            case (11 << 3) | 0b000:  // NIC_A=0, NIC_B=0: RC < 0.1NM
                 navigation_integrity_category = ADSBTypes::kROCLessThan0p1NauticalMiles;
                 break;
             case (12 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan0p2NauticalMiles;
                 break;
-            case (13 << 3) | 0b000:  // NIC_A=0, NIC_B=0: RC < 0.3NM, but NIC value shared with <0.6NM.
-            case (13 << 3) | 0b010:  // NIC_A=0, NIC_B=1: RC < 0.5NM, but NIC value shared with <0.6NM.
-            case (13 << 3) | 0b001:  // NIC_A=1, NIC_B=0: RC < 0.6NM.
+            case (13 << 3) | 0b010:  // NIC_A=0, NIC_B=1: RC < 0.3NM, but NIC value shared with <0.6NM.
+            case (13 << 3) | 0b000:  // NIC_A=0, NIC_B=0: RC < 0.5NM, but NIC value shared with <0.6NM.
+            case (13 << 3) | 0b001:  // NIC_A=1, NIC_B=0: not defined, NIC 6 like the other TC=13 combinations.
             case (13 << 3) | 0b011:  // NIC_A=1, NIC_B=1: RC < 0.6NM.
                 navigation_integrity_category = ADSBTypes::kROCLessThan0p6NauticalMiles;
                 break;
@@ -496,10 +502,10 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
             case (15 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan2NauticalMiles;
                 break;
-            case (16 << 3) | 0b000:  // NIC_A=0: RC < 4NM
+            case (16 << 3) | 0b011:  // NIC_A=1, NIC_B=1: RC < 4NM
                 navigation_integrity_category = ADSBTypes::kROCLessThan4NauticalMiles;
                 break;
-            case (16 << 3) | 0b001:  // NIC_A=1: RC < 8NM
+            case (16 << 3) | 0b000:  // NIC_A=0, NIC_B=0: RC < 8NM
                 navigation_integrity_category = ADSBTypes::kROCLessThan8NauticalMiles;
                 break;
             case (17 << 3) | 0b000:
@@ -510,15 +516,29 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
                 break;
             default:
                 // Check for TypeCodes that can determine a NIC without needing to consult NIC supplement bits.
+                // Version 3 redefined TC=20-22: TC=21 is NIC 7, and TC=20 / TC=22 are refined by NIC supplement D
+                // from the Airborne Velocity message (DO-260C Table 2-11, Table 2-28). Without NIC supplement D, use
+                // the lowest NIC of the TYPE code. Earlier versions: DO-260C Table N-24.
+                uint8_t nic_d = NICBitIsValid(ADSBTypes::kNICBitD0) ? (nic_bits >> ADSBTypes::kNICBitD0) & 0b11 : 0;
                 switch (type_code) {
                     case 20:
-                        navigation_integrity_category = ADSBTypes::kROCLessThan7p5Meters;
+                        // NIC 11 in versions 0-2. Version 3: NIC 8-11.
+                        navigation_integrity_category =
+                            adsb_version < 3 ? ADSBTypes::kROCLessThan7p5Meters
+                                             : static_cast<ADSBTypes::NICRadiusOfContainment>(
+                                                   ADSBTypes::kROCLessThan0p1NauticalMiles + nic_d);
                         break;
                     case 21:
-                        navigation_integrity_category = ADSBTypes::kROCLessThan25Meters;
+                        // NIC 10 in versions 0-2. Version 3: NIC 7.
+                        navigation_integrity_category = adsb_version < 3 ? ADSBTypes::kROCLessThan25Meters
+                                                                         : ADSBTypes::kROCLessThan0p2NauticalMiles;
                         break;
                     case 22:
-                        navigation_integrity_category = ADSBTypes::kROCUnknown;
+                        // NIC 0 in versions 0-2. Version 3: NIC 0 or 4-6.
+                        navigation_integrity_category =
+                            (adsb_version < 3 || nic_d == 0) ? ADSBTypes::kROCUnknown
+                                                             : static_cast<ADSBTypes::NICRadiusOfContainment>(
+                                                                   ADSBTypes::kROCLessThan4NauticalMiles + nic_d);
                         break;
                     default:
 #ifdef ADSB_VERBOSE_PACKET_WARNINGS
@@ -595,10 +615,19 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
             break;
         }
         case ModeSADSBPacket::TypeCode::kTypeCodeAirbornePositionGNSSAlt: {
-            altitude_source = ADSBTypes::kAltitudeSourceGNSS;
-            uint16_t gnss_altitude_m = static_cast<uint16_t>(packet.GetNBitWordFromMessage(12, 8));
-            gnss_altitude_ft = MetersToFeet(gnss_altitude_m);
-            WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, true);
+            // GNSS height (HAE) uses the same Q bit / Gillham encoding as barometric altitude, not meters.
+            // DO-260B 2.2.3.2.3.4.2.
+            int32_t temp_gnss_altitude_ft =
+                AC12ToAltitudeFt(static_cast<uint16_t>(packet.GetNBitWordFromMessage(12, 8)));
+            if (temp_gnss_altitude_ft > kAltitudeDecodeErrorInvalid) {
+                altitude_source = ADSBTypes::kAltitudeSourceGNSS;
+                gnss_altitude_ft = temp_gnss_altitude_ft;
+                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, true);
+            } else {
+                // All zeros (not available) or an invalid Gillham code.
+                altitude_source = ADSBTypes::kAltitudeSourceNotAvailable;
+                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, false);
+            }
             WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude, true);
             break;
         }
@@ -649,6 +678,9 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
     ModeSADSBPacket::AirborneVelocitiesSubtype subtype =
         static_cast<ModeSADSBPacket::AirborneVelocitiesSubtype>(packet.GetNBitWordFromMessage(3, 5));
     bool is_supersonic = false;
+    // Speed and direction subfields can each be flagged as not available by the transmitter.
+    bool horizontal_speed_available = false;
+    bool direction_available = false;
     switch (subtype) {
         case ModeSADSBPacket::AirborneVelocitiesSubtype::kAirborneVelocitiesGroundSpeedSupersonic:
             is_supersonic = true;
@@ -674,6 +706,8 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
                     v_y_kts *= 4;
                 }
                 CalculateTrackAndSpeedFromNEVelocities(v_y_kts, v_x_kts, direction_deg, speed_kts);
+                horizontal_speed_available = true;
+                direction_available = true;
             }
             break;
         }
@@ -693,8 +727,13 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
                 bool is_true_airspeed = static_cast<bool>(packet.GetNBitWordFromMessage(1, 24));
                 speed_source =
                     is_true_airspeed ? ADSBTypes::kSpeedSourceAirspeedTrue : ADSBTypes::kSpeedSourceAirspeedIndicated;
+                horizontal_speed_available = true;
+            }
+            // ME[14] - Heading Status: the heading subfield is only valid if this bit is set. DO-260B 2.2.3.2.6.3.6.
+            if (packet.GetNBitWordFromMessage(1, 13)) {
                 direction_deg = static_cast<float>(fixedmath::fixed_t(packet.GetNBitWordFromMessage(10, 14) * 360) /
                                                    fixedmath::fixed_t(1024));
+                direction_available = true;
             }
 
             break;
@@ -707,9 +746,19 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
 #endif                     // ADSB_VERBOSE_PACKET_WARNINGS
             return false;  // Don't attempt vertical rate decode if message type is invalid.
     }
-    // Latching bit flags.
-    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid, true);
-    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid, true);
+    // ME[11-13] - NACv (NUCr in version 0, mapped one-for-one to NACv). This is where NACv lives for airborne aircraft
+    // of every ADS-B version; the airborne Operational Status message doesn't carry it. DO-260C 2.2.3.2.6.1.5, N.2.3.8,
+    // Table N-26. TIS-B velocity messages carry NACp in these bits instead (DO-260C 2.2.17.3.4.4).
+    bool is_tisb = packet.downlink_format == ModeSADSBPacket::kDownlinkFormatExtendedSquitterNonTransponder &&
+                   (packet.ca_cf.code_format == 2 || packet.ca_cf.code_format == 5);
+    if (!is_tisb) {
+        navigation_accuracy_category_velocity =
+            static_cast<ADSBTypes::NACHorizontalVelocityError>(packet.GetNBitWordFromMessage(3, 10));
+    }
+
+    // Latching bit flags. Don't report stale or placeholder values when the subfields are flagged as not available.
+    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid, direction_available);
+    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid, horizontal_speed_available);
     // Non-latching bit flags.
     WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedDirection, true);
     WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedHorizontalSpeed, true);
@@ -749,6 +798,8 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
     }
 
     // Decode altitude difference between GNSS and barometric altitude.
+    // ME[49] - Difference From Baro Altitude Sign, ME[50-56] - Difference From Baro Altitude (bits 8-2 of the v3
+    // Extended Difference From Baro Altitude, which v2 receivers decode as a 7 bit field with 25ft resolution).
     bool gnss_alt_below_baro_alt = static_cast<bool>(packet.GetNBitWordFromMessage(1, 48));
     uint16_t encoded_gnss_alt_baro_alt_difference_ft = static_cast<uint16_t>(packet.GetNBitWordFromMessage(7, 49));
     if (encoded_gnss_alt_baro_alt_difference_ft == 0) {
@@ -757,24 +808,27 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
                         "Difference between GNSS and baro altitude not available for aircraft 0x%lx.", icao_address);
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
         // Don't set decode_successful to false so that we ignore missing GNSS/Baro altitude info.
-    } else {
+        // ME[47-48] - NIC supplement D (version 3), sent when the difference bits are all zeros. TIS-B velocity
+        // messages use these bits for NIC supplement A and NACv. DO-260C 2.2.3.2.6.1.16, 2.2.17.3.4.
+        if (!is_tisb) {
+            uint8_t nic_d = packet.GetNBitWordFromMessage(2, 46);
+            WriteNICBit(ADSBTypes::kNICBitD0, nic_d & 0b01);
+            WriteNICBit(ADSBTypes::kNICBitD1, nic_d & 0b10);
+        }
+    } else if (encoded_gnss_alt_baro_alt_difference_ft == 0b1111111) {
+        // All ones: the difference is at least 3137.5ft, so the geometric altitude can't be derived from it.
+        // DO-260C N.4.2.4.a.
+    } else if (altitude_source == ADSBTypes::kAltitudeSourceBaro &&
+               HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid)) {
+        // Only derive the geometric altitude from a valid barometric altitude (DO-260C N.4.2.4.b). The barometric
+        // altitude is never derived from a GNSS height: transmitters that send GNSS height in the position message
+        // because barometric altitude is unavailable may encode this subfield as the difference from zero pressure
+        // altitude, from a stale baro altitude, or as not available (DO-260C N.4.2.4, Note).
         int gnss_alt_baro_alt_difference_ft =
             (encoded_gnss_alt_baro_alt_difference_ft - 1) * 25 * (gnss_alt_below_baro_alt ? -1 : 1);
-        switch (altitude_source) {
-            case ADSBTypes::kAltitudeSourceBaro:
-                gnss_altitude_ft = baro_altitude_ft + gnss_alt_baro_alt_difference_ft;
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, true);
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude, true);
-                break;
-            case ADSBTypes::kAltitudeSourceGNSS:
-                baro_altitude_ft = gnss_altitude_ft - gnss_alt_baro_alt_difference_ft;
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude, true);
-                break;
-            default:
-                // Don't sweat it if the aircraft doesn't have an altitude yet.
-                break;
-        }
+        gnss_altitude_ft = baro_altitude_ft + gnss_alt_baro_alt_difference_ft;
+        WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, true);
+        WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude, true);
     }
 
     return decode_successful;
@@ -800,7 +854,8 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
     // Three distinct formats exist depending on ADS-B version:
     //   v0 (DO-260): CC/OM are 4×4-bit group codes; ME[40-55] are all reserved.
     //   v1 (DO-260A): individual CC/OM flags; ME[40-55] carry NICa/NACp/BAQ/SIL/HRD.
-    //   v2 (DO-260B): same as v1 + GVA replaces BAQ, SIL supplement at ME[54], NACv in airborne OM.
+    //   v2 (DO-260B): same as v1 + GVA replaces BAQ, SIL supplement at ME[54].
+    //   v3 (DO-260C): same as v2, but NICbaro (ME[52]) is reserved.
     //
     // Version must be read first so all subsequent reads can be version-gated.
 
@@ -855,29 +910,33 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
         case ModeSADSBPacket::OperationStatusSubtype::kOperationStatusSubtypeAirborne:  // ST = 0
         {
             if (adsb_version >= 1) {
-                // ME[10] - TCAS Operational
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASOperational, packet.GetNBitWordFromMessage(1, 10));
+                // ME[10] - TCAS Operational. Version 1 defined this bit as "Not-TCAS", so it maps inversely.
+                // DO-260C Table N-20.
+                bool tcas_bit = packet.GetNBitWordFromMessage(1, 10);
+                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASOperational, adsb_version == 1 ? !tcas_bit : tcas_bit);
 
                 // ME[14] - Air Referenced Velocity (ARV) Report Capability - Ignored
                 // ME[15] - Target State (TS) Report Capability - Ignored
                 // ME[16-17] - Trajectory Change (TC) Report Capability - Ignored
-                // ME[18] - UAT In
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 18));
+                // ME[18] - UAT In (v2+, not defined in v1).
+                if (adsb_version >= 2) {
+                    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 18));
+                }
 
-                // ME[52] - NIC Baro
-                navigation_integrity_category_baro =
-                    static_cast<ADSBTypes::NICBarometricAltitudeIntegrity>(packet.GetNBitWordFromMessage(1, 52));
+                // ME[52] - NIC Baro (v1 and v2 only; reserved in v3). DO-260C Figure 2-12, 2.2.3.2.7.2.15.
+                if (adsb_version <= 2) {
+                    navigation_integrity_category_baro =
+                        static_cast<ADSBTypes::NICBarometricAltitudeIntegrity>(packet.GetNBitWordFromMessage(1, 52));
+                }
             }
 
             // ME[48-49]: GVA (Geometric Vertical Accuracy) in v2. In v1 this field is BAQ (Barometric
             // Altitude Quality) which has a different encoding — do not store as GVA for v1.
             if (adsb_version >= 2) {
                 geometric_vertical_accuracy = static_cast<ADSBTypes::GVA>(packet.GetNBitWordFromMessage(2, 48));
-
-                // ME[32-34] - NACv in airborne OM (v2 only; reserved in v1).
-                navigation_accuracy_category_velocity =
-                    static_cast<ADSBTypes::NACHorizontalVelocityError>(packet.GetNBitWordFromMessage(3, 32));
             }
+            // ME[32-39] of the airborne OM are reserved in v2 and hold the CA Coordination Capability Bits in v3; NACv
+            // for airborne aircraft comes from the Airborne Velocity message. DO-260C Table 2-55, Table N-27.
 
             break;
         }
@@ -887,13 +946,16 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
                 // ME[14] - B2 Low
                 WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIsClassB2GroundVehicle,
                              packet.GetNBitWordFromMessage(1, 14));
-                // ME[15] - UAT In
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 15));
-                // ME[16-18] - NACv
-                navigation_accuracy_category_velocity =
-                    static_cast<ADSBTypes::NACHorizontalVelocityError>(packet.GetNBitWordFromMessage(3, 16));
-                // ME[19] - NIC Supplement C
-                WriteNICBit(ADSBTypes::kNICBitC, packet.GetNBitWordFromMessage(1, 19));
+                // UAT In, NACv and NIC supplement C are not defined in the version 1 surface CC. DO-260C Table N-20.
+                if (adsb_version >= 2) {
+                    // ME[15] - UAT In
+                    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 15));
+                    // ME[16-18] - NACv
+                    navigation_accuracy_category_velocity =
+                        static_cast<ADSBTypes::NACHorizontalVelocityError>(packet.GetNBitWordFromMessage(3, 16));
+                    // ME[19] - NIC Supplement C
+                    WriteNICBit(ADSBTypes::kNICBitC, packet.GetNBitWordFromMessage(1, 19));
+                }
 
                 // ME[20-23] Aircraft/Vehicle Length and Width Code
                 switch (packet.GetNBitWordFromMessage(4, 20)) {
@@ -964,7 +1026,9 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
                 }
 
                 // ME[32-39] - GPS Antenna Offset (surface OM only; airborne uses ME[32-34] for NACv in v2).
-                switch (packet.GetNBitWordFromMessage(8, 32)) {
+                // ME[32-34] is the lateral offset (direction bit + 2 bit distance), ME[35-39] the longitudinal offset.
+                // DO-260B 2.2.3.2.7.2.4.7.
+                switch (packet.GetNBitWordFromMessage(3, 32)) {
                     case 0b000:  // No data.
                         break;
                     case 0b001:  // 2 meters left of roll axis.
@@ -1024,8 +1088,8 @@ bool UATAircraft::DecodePosition(const DecodedUATADSBPacket::UATStateVector& sta
         uint32_t max_distance_meters =
             kCPRPositionFilterVelocityMps * ms_since_last_track_update / 1000;  // mps to meters
 
-        uint32_t candidate_lat_awb32 = UATAWBToAWB32(state_vector.latitude_awb);
-        uint32_t candidate_lon_awb32 = UATAWBToAWB32(state_vector.longitude_awb);
+        uint32_t candidate_lat_awb32 = UATLatAWBToAWB32(state_vector.latitude_awb);
+        uint32_t candidate_lon_awb32 = UATLonAWBToAWB32(state_vector.longitude_awb);
         uint32_t distance_meters =
             CalculateGeoidalDistanceMetersAWB(lat_awb32_, lon_awb32_, candidate_lat_awb32, candidate_lon_awb32);
 
@@ -1082,12 +1146,6 @@ bool UATAircraft::ApplyUATADSBStateVector(const DecodedUATADSBPacket::UATStateVe
         }
     }
 
-    if (latitude_deg > 90) {
-        latitude_deg -= 180.0f;  // Convert to negative latitude if it exceeds 90 degrees.
-    }
-    if (longitude_deg > 180) {
-        longitude_deg -= 360.0f;  // Convert to negative longitude if it exceeds 180 degrees.
-    }
 
     // Parse altitue.
     if (state_vector.altitude_is_geometric_altitude) {
@@ -1130,51 +1188,44 @@ bool UATAircraft::ApplyUATADSBStateVector(const DecodedUATADSBPacket::UATStateVe
     WriteBitFlag(BitFlag::kBitFlagUpdatedHorizontalSpeed, true);
 
     // Parse direction type and use it to set flags.
-    bool received_valid_hvel_data = false;
+    bool direction_valid = false;
     switch (direction_type) {
         case ADSBTypes::kDirectionTypeTrueTrackAngle:
             WriteBitFlag(BitFlag::kBitFlagDirectionIsHeading, false);
             WriteBitFlag(BitFlag::kBitFlagHeadingUsesMagneticNorth, false);
 
-            received_valid_hvel_data = true;
+            direction_valid = true;
             break;
         case ADSBTypes::kDirectionTypeMagneticHeading:
             WriteBitFlag(BitFlag::kBitFlagDirectionIsHeading, true);
             WriteBitFlag(BitFlag::kBitFlagHeadingUsesMagneticNorth, true);
 
-            received_valid_hvel_data = true;
+            direction_valid = true;
             break;
         case ADSBTypes::kDirectionTypeTrueHeading:
             WriteBitFlag(BitFlag::kBitFlagDirectionIsHeading, true);
             WriteBitFlag(BitFlag::kBitFlagHeadingUsesMagneticNorth, false);
 
-            received_valid_hvel_data = true;
+            direction_valid = true;
             break;
         default:
             // Heading not available.
-            WriteBitFlag(BitFlag::kBitFlagDirectionValid, false);
-            WriteBitFlag(BitFlag::kBitFlagDirectionValid, false);
-
-            received_valid_hvel_data = false;
+            direction_valid = false;
     }
-    WriteBitFlag(BitFlag::kBitFlagDirectionValid, received_valid_hvel_data);
-    WriteBitFlag(BitFlag::kBitFlagHorizontalSpeedValid, received_valid_hvel_data);
+    WriteBitFlag(BitFlag::kBitFlagDirectionValid, direction_valid);
+    // Speed validity is independent of the direction: on the ground, speed and track/heading are separate subfields
+    // with their own "not available" encodings, and airborne zero velocity has a speed but no track.
+    WriteBitFlag(BitFlag::kBitFlagHorizontalSpeedValid, speed_kts != INT32_MIN);
 
     if (ag_state == ADSBTypes::kAirGroundStateOnGround) {
         // Parse AV dimensions.
         int16_t width_m_temp;
         int16_t length_m_temp;
-        switch (DecodedUATADSBPacket::DecodeAVDimensions(state_vector.aircraft_length_width_code, width_m_temp,
-                                                         length_m_temp)) {
-            case ADSBTypes::kAVDimensionsTypeAVLengthWidth:
-                width_m = width_m_temp;
-                length_m = length_m_temp;
-                break;
-            case ADSBTypes::kAVDimensionsTypeGNSSSensorOffset:
-                gnss_antenna_offset_forward_of_reference_point_m = length_m_temp;
-                gnss_antenna_offset_right_of_reference_point_m = width_m_temp;
-                break;
-        }
+        // The return value only reflects the Position Offset Applied flag; the field always carries the A/V length
+        // and width code (UAT Tech Manual Tables 2-34 to 2-36), never a GNSS antenna offset.
+        DecodedUATADSBPacket::DecodeAVDimensions(state_vector.aircraft_length_width_code, width_m_temp, length_m_temp);
+        width_m = width_m_temp;
+        length_m = length_m_temp;
     } else {
         // Parse vertical rate.
         int32_t vertical_rate_fpm_temp;
@@ -1232,15 +1283,26 @@ bool UATAircraft::ApplyUATADSBModeStatus(const DecodedUATADSBPacket::UATModeStat
     callsign_temp[7] = LookupUATCallsignChar(temp);
 
     if (mode_status.csid) {
-        // Callsign field encodes an ID (alphanumerica callsign).
-        strncpy(callsign, callsign_temp, UATAircraft::kCallSignMaxNumChars);
-        callsign[UATAircraft::kCallSignMaxNumChars] = '\0';
+        // Callsign field encodes an ID (alphanumerica callsign). A leading '\0' means the characters were "not
+        // available" (base-40 code 37, sent in all 8 positions when there is no call sign) or reserved: keep the last
+        // known callsign instead of blanking it.
+        if (callsign_temp[0] != '\0') {
+            strncpy(callsign, callsign_temp, UATAircraft::kCallSignMaxNumChars);
+            callsign[UATAircraft::kCallSignMaxNumChars] = '\0';
+        }
     } else {
-        // Callsign field encodes a squawk code.
-        squawk = 0;
+        // Callsign field encodes a squawk code. Squawk digits are 0-7, so ignore a malformed field.
+        uint16_t squawk_temp = 0;
+        bool squawk_valid = true;
         for (uint16_t i = 0; i < kSquawkNumDigits; i++) {
-            squawk *= 10;
-            squawk += (callsign_temp[i] - '0');
+            if (callsign_temp[i] < '0' || callsign_temp[i] > '7') {
+                squawk_valid = false;
+                break;
+            }
+            squawk_temp = squawk_temp * 10 + (callsign_temp[i] - '0');
+        }
+        if (squawk_valid) {
+            squawk = squawk_temp;
         }
     }
 
@@ -1487,8 +1549,8 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
         && ContainsAircraft(packet.icao_address)
 #endif
     ) {
-        // DF=0,4,5,16,20,21 (DF=11 doesn't work with this since the interrogator ID may be overlaid with the ICAO
-        // address--we expect spontaneous acquisition DF=11's to come in pre-marked as valid).
+        // DF=0,4,5,16,20,21, or a DF=11 whose parity is overlaid with a nonzero interrogator code (DF=11 replies with
+        // interrogator code 0 come in pre-marked as valid).
         // Packet is address parity that is incapable of validating itself, and its CRC was
         // validated against the ICAO addresses in the aircraft dictionary.
         // When AIRCRAFT_DICTIONARY_TRUST_FORWARDED_ADDRESS_PARITY is set, the upstream validator
@@ -1539,13 +1601,20 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
     bool ingest_ret = false;
     uint16_t downlink_format = packet.downlink_format;
     switch (downlink_format) {
-        // Altitude Reply Packet.
+        // Altitude Reply Packet. DF=20 (Comm-B altitude reply) has the same FS, DR, UM and AC fields as DF=4.
         case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatAltitudeReply:
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommBAltitudeReply:
             ingest_ret = IngestModeSAltitudeReplyPacket(ModeSAltitudeReplyPacket(packet));
             break;
-        // Identity Reply Packet.
+        // Identity Reply Packet. DF=21 (Comm-B identity reply) has the same FS, DR, UM and ID fields as DF=5.
         case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatIdentityReply:
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommBIdentityReply:
             ingest_ret = IngestModeSIdentityReplyPacket(ModeSIdentityReplyPacket(packet));
+            break;
+        // ACAS air-air surveillance replies carry vertical status and altitude.
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatShortRangeAirToAirSurveillance:  // DF = 0
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatLongRangeAirToAirSurveillance:   // DF = 16
+            ingest_ret = IngestModeSAirAirSurveillancePacket(packet);
             break;
         case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatAllCallReply:  // DF = 11
             ingest_ret = IngestModeSAllCallReplyPacket(ModeSAllCallReplyPacket(packet));
@@ -1557,11 +1626,7 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
             // Handle ADS-B Packets.
             ingest_ret = IngestModeSADSBPacket(ModeSADSBPacket(packet));
             break;
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatShortRangeAirToAirSurveillance:  // DF = 0
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatLongRangeAirToAirSurveillance:   // DF = 16
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommBAltitudeReply:              // DF = 20
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommBIdentityReply:              // DF = 21
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommDExtendedLengthMessage:      // DF = 24
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommDExtendedLengthMessage:  // DF = 24
             // Silently handle currently unsupported downlink formats.
             ingest_ret = true;
             break;
@@ -1584,7 +1649,8 @@ bool AircraftDictionary::IngestModeSIdentityReplyPacket(const ModeSIdentityReply
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
         return false;
     }
-    if (packet.downlink_format != ModeSIdentityReplyPacket::kDownlinkFormatIdentityReply) {
+    if (packet.downlink_format != ModeSIdentityReplyPacket::kDownlinkFormatIdentityReply &&
+        packet.downlink_format != ModeSIdentityReplyPacket::kDownlinkFormatCommBIdentityReply) {
 #ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestModeSIdentityReplyPacket",
                         "Received Mode S packet with invalid downlink format %d, expected %d (Identity Reply).",
@@ -1610,7 +1676,9 @@ bool AircraftDictionary::IngestModeSIdentityReplyPacket(const ModeSIdentityReply
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert, packet.has_alert);
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent, packet.has_ident);
     aircraft_ptr->squawk = packet.squawk;
-    aircraft_ptr->IncrementNumFramesReceived(false);
+    aircraft_ptr->last_message_timestamp_ms = get_time_since_boot_ms();
+    aircraft_ptr->IncrementNumFramesReceived(packet.raw.buffer_len_bytes ==
+                                             RawModeSPacket::kExtendedSquitterPacketLenBytes);
 
     return true;
 }
@@ -1622,7 +1690,8 @@ bool AircraftDictionary::IngestModeSAltitudeReplyPacket(const ModeSAltitudeReply
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
         return false;
     }
-    if (packet.downlink_format != ModeSAltitudeReplyPacket::kDownlinkFormatAltitudeReply) {
+    if (packet.downlink_format != ModeSAltitudeReplyPacket::kDownlinkFormatAltitudeReply &&
+        packet.downlink_format != ModeSAltitudeReplyPacket::kDownlinkFormatCommBAltitudeReply) {
 #ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestModeSAltitudeReplyPacket",
                         "Received Mode S packet with invalid downlink format %d, expected %d (Altitude Reply).",
@@ -1647,10 +1716,51 @@ bool AircraftDictionary::IngestModeSAltitudeReplyPacket(const ModeSAltitudeReply
     }
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert, packet.has_alert);
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent, packet.has_ident);
-    aircraft_ptr->baro_altitude_ft = packet.altitude_ft;
-    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
+    // An all zeros AC field means altitude not available, and bad Gillham codes decode to an error value. Don't report
+    // either one as a valid altitude.
+    if (packet.altitude_ft > kAltitudeDecodeErrorInvalid) {
+        aircraft_ptr->baro_altitude_ft = packet.altitude_ft;
+        aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
+    } else {
+        aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
+    }
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude, true);
-    aircraft_ptr->IncrementNumFramesReceived(false);
+    aircraft_ptr->last_message_timestamp_ms = get_time_since_boot_ms();
+    aircraft_ptr->IncrementNumFramesReceived(packet.raw.buffer_len_bytes ==
+                                             RawModeSPacket::kExtendedSquitterPacketLenBytes);
+
+    return true;
+}
+
+bool AircraftDictionary::IngestModeSAirAirSurveillancePacket(const DecodedModeSPacket& packet) {
+    if (!packet.is_valid) {
+        return false;
+    }
+    if (packet.downlink_format != DecodedModeSPacket::kDownlinkFormatShortRangeAirToAirSurveillance &&
+        packet.downlink_format != DecodedModeSPacket::kDownlinkFormatLongRangeAirToAirSurveillance) {
+        return false;
+    }
+
+    uint32_t uid = Aircraft::ICAOToUID(packet.icao_address, Aircraft::kAircraftTypeModeS);
+    ModeSAircraft* aircraft_ptr = GetAircraftPtr<ModeSAircraft>(uid);
+    if (aircraft_ptr == nullptr) {
+        return false;  // unable to find or create new aircraft in dictionary
+    }
+    // Bit 6 - Vertical Status (VS): 0 = airborne, 1 = on the ground.
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne,
+                               GetNBitsFromWordBuffer(1, 5, packet.raw.buffer) == 0);
+    // Bits 20-32 - Altitude Code (AC), same encoding as DF=4.
+    int32_t altitude_ft = AltitudeCodeToAltitudeFt(GetNBitsFromWordBuffer(13, 19, packet.raw.buffer));
+    if (altitude_ft > kAltitudeDecodeErrorInvalid) {
+        aircraft_ptr->baro_altitude_ft = altitude_ft;
+        aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
+    } else {
+        aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
+    }
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude, true);
+    aircraft_ptr->last_message_timestamp_ms = get_time_since_boot_ms();
+    aircraft_ptr->IncrementNumFramesReceived(packet.raw.buffer_len_bytes ==
+                                             RawModeSPacket::kExtendedSquitterPacketLenBytes);
 
     return true;
 }

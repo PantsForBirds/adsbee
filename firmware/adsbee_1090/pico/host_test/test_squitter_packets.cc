@@ -85,3 +85,32 @@ TEST(ModeSAllCallReplyPacket, JasonPlaynePackets) {
     packet = ModeSAllCallReplyPacket(DecodedModeSPacket((const char*)"5D7C0B6DB05075"));
     EXPECT_FALSE(packet.is_valid);
 }
+TEST(ModeSAllCallReplyPacket, RejectSyndromeAboveInterrogatorIDBits) {
+    // Valid DF=11 (5D7C0B6DB05076) with the parity field XORed with 0x010000, and with 0xAB0000. The syndrome has no
+    // bits set in its lower 16 bits, so it must not be mistaken for an interrogator ID of 0.
+    DecodedModeSPacket packet = DecodedModeSPacket((const char*)"5D7C0B6DB15076");
+    EXPECT_EQ(packet.crc_syndrome, 0x010000u);
+    EXPECT_FALSE(packet.is_valid);
+    packet = DecodedModeSPacket((const char*)"5D7C0B6D1B5076");
+    EXPECT_EQ(packet.crc_syndrome, 0xAB0000u);
+    EXPECT_FALSE(packet.is_valid);
+}
+
+TEST(ModeSAllCallReplyPacket, NonzeroInterrogatorCodeNeedsAddressConfirmation) {
+    // 5D7C0B6DB05076 with its parity overlaid with interrogator code 5 (CL=0, IC=5).
+    DecodedModeSPacket packet = DecodedModeSPacket((const char*)"5D7C0B6DB05073");
+    EXPECT_FALSE(packet.is_valid);
+    EXPECT_TRUE(packet.is_address_parity);
+    EXPECT_EQ(packet.icao_address, 0x7C0B6Du);
+    EXPECT_EQ(packet.parity_interrogator_id, 5u);
+
+    // Largest possible overlay: CL=4, IC=15.
+    packet = DecodedModeSPacket((const char*)"5D7C0B6DB05039");
+    EXPECT_FALSE(packet.is_valid);
+    EXPECT_TRUE(packet.is_address_parity);
+
+    // CL=5 is not a valid code label, so this is just a corrupted packet.
+    packet = DecodedModeSPacket((const char*)"5D7C0B6DB05026");
+    EXPECT_FALSE(packet.is_valid);
+    EXPECT_FALSE(packet.is_address_parity);
+}

@@ -499,7 +499,7 @@ class ADSBee {
     int16_t tl_learning_prev_num_valid_packets_ = 1;  // Set to 1 to avoid dividing by 0.
     uint16_t tl_learning_prev_tl_offset_mv_ = tl_offset_mv_;
 
-    uint64_t mlat_counter_wraps_ = 0;
+    volatile uint64_t mlat_counter_wraps_ = 0;  // Written by the SysTick wrap handler.
 
     // Buffer used to hold packets currently being received.
     RawModeSPacket rx_packet_[BSP::kMaxNumDemodStateMachines];

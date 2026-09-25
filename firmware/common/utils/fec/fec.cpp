@@ -45,10 +45,15 @@ int UATReedSolomon::DecodeShortADSBMessage(uint8_t message_buf[RawUATADSBPacket:
     if (message_buf == nullptr) {
         return -1;  // Invalid input.
     }
-    int num_bytes_corrected = decode_rs_char(rs_adsb_short, (unsigned char*)message_buf, nullptr, 0);
+    // Decode a copy so that a rejected frame (e.g. RS-valid but wrong payload type for this format) leaves
+    // message_buf untouched for the caller's next format attempt.
+    uint8_t scratch[RawUATADSBPacket::kShortADSBMessageNumBytes];
+    memcpy(scratch, message_buf, sizeof(scratch));
+    int num_bytes_corrected = decode_rs_char(rs_adsb_short, scratch, nullptr, 0);
     if (num_bytes_corrected >= 0 && num_bytes_corrected <= kADSBShortMessageMaxNumByteCorrections &&
-        (message_buf[0] >> 3) == 0) {
-        return num_bytes_corrected;  // Return number of bits corrected.
+        (scratch[0] >> 3) == 0) {
+        memcpy(message_buf, scratch, sizeof(scratch));
+        return num_bytes_corrected;  // Return number of bytes corrected.
     }
     return -1;
 }
@@ -57,10 +62,15 @@ int UATReedSolomon::DecodeLongADSBMessage(uint8_t message_buf[RawUATADSBPacket::
     if (message_buf == nullptr) {
         return -1;  // Invalid input.
     }
-    int num_bytes_corrected = decode_rs_char(rs_adsb_long, (unsigned char*)message_buf, nullptr, 0);
+    // Decode a copy so that a rejected frame (e.g. RS-valid but payload type 0, which is only legal in a basic
+    // message) leaves message_buf untouched for the subsequent basic-message attempt.
+    uint8_t scratch[RawUATADSBPacket::kLongADSBMessageNumBytes];
+    memcpy(scratch, message_buf, sizeof(scratch));
+    int num_bytes_corrected = decode_rs_char(rs_adsb_long, scratch, nullptr, 0);
     if (num_bytes_corrected >= 0 && num_bytes_corrected <= kLongADSBMessageMaxNumByteCorrections &&
-        (message_buf[0] >> 3) != 0) {
-        return num_bytes_corrected;  // Return number of bits corrected.
+        (scratch[0] >> 3) != 0) {
+        memcpy(message_buf, scratch, sizeof(scratch));
+        return num_bytes_corrected;  // Return number of bytes corrected.
     }
     return -1;
 }
