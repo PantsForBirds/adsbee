@@ -1,0 +1,50 @@
+# Example bench inventory for adsbee-hil. Copy to ~/.config/adsbee-hil/bench.toml (or point
+# $ADSBEE_HIL_CONFIG / --config at it) and replace the placeholders with what
+# `adsbee-hil discover` prints on your bench.
+
+[bench]
+name = "example-bench"
+# Where per-device lock files live. Must be shared by every user/runner that drives this bench.
+lock_dir = "/tmp/adsbee-hil-locks"
+# `flash` refuses while a process whose command line matches one of these regexes runs (like
+# pgrep -f), e.g. a GitHub Actions job that owns a receiver on this bench. `--force` overrides.
+busy_processes = ["bin/Runner.Worker"]
+
+# External tools that aren't part of this repository.
+[flashers.adsbee_1421]
+# CC13x4 ROM serial-bootloader flasher for the ADSBee 1421 module, run with the programmer jig's
+# console port. Placeholders: {image} {port} {baud} {verbose}. It MUST erase only the sectors the
+# image covers: a bank erase also wipes the module's settings and device-info (OTA key) sectors.
+# Can also be set with $ADSBEE_HIL_FLASHER_ADSBEE_1421 (a shell-quoted string).
+command = ["/path/to/venv/bin/python", "/path/to/cc13x4_flasher.py", "{image}",
+           "-p", "{port}", "-b", "{baud}", "--erase", "sector", "{verbose}"]
+
+[[receivers]]
+id = "1090u-a"
+model = "adsbee_1090u"
+usb_serial = "E000000000000001"   # RP2040 USB serial (app mode)
+usb_port = "1-1.3"                # optional; checked when set, used to find the BOOTSEL drive
+tags = ["ci"]
+# host = "adsbee-1090u-a.local"   # for OTA (flash some.ota)
+
+[[receivers]]
+id = "1421-a"
+model = "adsbee_1421"
+usb_serial = "E000000000000002"   # the programmer jig's USB serial
+usb_port = "1-1.4"
+
+# Transmitters. `receivers` lists which receivers each one reaches (default: all).
+# [[transmitters]]
+# id = "wiggler-a"
+# type = "bee_wiggler"
+# usb_serial = "E000000000000003"
+# receivers = ["1090u-a", "1421-a"]
+# mode_s_atten_db = 60             # default step-attenuator settings when a pattern sets none
+# subg_atten_db = 60
+#
+# [[transmitters]]
+# id = "pluto-a"
+# type = "pluto"
+# uri = "ip:192.168.2.1"
+# tx_gain_db = -60
+# receivers = ["1421-a"]
