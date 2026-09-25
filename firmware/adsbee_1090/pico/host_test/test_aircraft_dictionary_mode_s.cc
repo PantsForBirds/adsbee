@@ -499,6 +499,7 @@ TEST(AircraftDictionary, IngestAirborneVelocityMessage) {
         dictionary.GetAircraftPtr<ModeSAircraft>(Aircraft::ICAOToUID(0x485020, Aircraft::kAircraftTypeModeS));
     aircraft_ptr->baro_altitude_ft = 2000;
     aircraft_ptr->altitude_source = ADSBTypes::kAltitudeSourceBaro;
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
     // Re-ingest message A to make sure the GNSS altitude gets corrected.
     ASSERT_TRUE(dictionary.IngestModeSADSBPacket(packet));
     EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude));
@@ -566,6 +567,69 @@ TEST(AircraftDictionary, IngestAirborneVelocityMessageNotAvailable) {
     EXPECT_NEAR(aircraft->direction_deg, 90.0f, 0.01f);
 }
 
+
+TEST(AircraftDictionary, AirborneVelocityDifferenceFromBaroAltitude) {
+    // DO-260C N.4.2.4: the geometric altitude is only derived from the Difference From Baro Altitude subfield when the
+    // barometric altitude is valid and the difference isn't all ones (>= 3137.5ft).
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft);
+
+    // TC=11, baro altitude 35000ft.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEF58B50024685678F135E9");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ASSERT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    ASSERT_EQ(aircraft->baro_altitude_ft, 35000);
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+
+    // Velocity with the difference subfield all ones: geometric altitude is not derived.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB0047F947AAC");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+
+    // Velocity with GNSS 550ft above baro.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB00417964810");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+    EXPECT_EQ(aircraft->gnss_altitude_ft, 35550);
+
+    // TC=11 with an undecodable Gillham altitude: baro altitude is no longer valid, so the next difference must not be
+    // applied to the stale 35000ft.
+    aircraft->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, false);
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF5800102468567887BF8F");
+    ASSERT_TRUE(tpacket.is_valid);
+    dictionary.IngestDecodedModeSPacket(tpacket);
+    ASSERT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB00417964810");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+}
+
+TEST(AircraftDictionary, AirborneVelocityDifferenceFromBaroAltitudeWithGNSSPosition) {
+    // An aircraft reporting GNSS height in its position messages (TC=20-22) usually does so because its barometric
+    // altitude is unavailable, and the difference subfield may then be relative to zero pressure altitude (DO-260C
+    // N.4.2.4, Note). The barometric altitude must not be derived from it.
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft);
+
+    // TC=20, GNSS height 35000ft.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEFA0B5002468567885D284");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ASSERT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+    ASSERT_EQ(aircraft->gnss_altitude_ft, 35000);
+
+    // Velocity with GNSS 550ft below baro.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB00497914ED0");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft->gnss_altitude_ft, 35000);
+}
 
 TEST(AircraftDictionary, AirborneVelocityNACv) {
     // NACv for airborne aircraft is ME[11-13] of the Airborne Velocity message (all ADS-B versions; NUCr in v0 maps

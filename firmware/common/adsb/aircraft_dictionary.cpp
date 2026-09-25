@@ -778,6 +778,8 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
     }
 
     // Decode altitude difference between GNSS and barometric altitude.
+    // ME[49] - Difference From Baro Altitude Sign, ME[50-56] - Difference From Baro Altitude (bits 8-2 of the v3
+    // Extended Difference From Baro Altitude, which v2 receivers decode as a 7 bit field with 25ft resolution).
     bool gnss_alt_below_baro_alt = static_cast<bool>(packet.GetNBitWordFromMessage(1, 48));
     uint16_t encoded_gnss_alt_baro_alt_difference_ft = static_cast<uint16_t>(packet.GetNBitWordFromMessage(7, 49));
     if (encoded_gnss_alt_baro_alt_difference_ft == 0) {
@@ -786,24 +788,20 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
                         "Difference between GNSS and baro altitude not available for aircraft 0x%lx.", icao_address);
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
         // Don't set decode_successful to false so that we ignore missing GNSS/Baro altitude info.
-    } else {
+    } else if (encoded_gnss_alt_baro_alt_difference_ft == 0b1111111) {
+        // All ones: the difference is at least 3137.5ft, so the geometric altitude can't be derived from it.
+        // DO-260C N.4.2.4.a.
+    } else if (altitude_source == ADSBTypes::kAltitudeSourceBaro &&
+               HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid)) {
+        // Only derive the geometric altitude from a valid barometric altitude (DO-260C N.4.2.4.b). The barometric
+        // altitude is never derived from a GNSS height: transmitters that send GNSS height in the position message
+        // because barometric altitude is unavailable may encode this subfield as the difference from zero pressure
+        // altitude, from a stale baro altitude, or as not available (DO-260C N.4.2.4, Note).
         int gnss_alt_baro_alt_difference_ft =
             (encoded_gnss_alt_baro_alt_difference_ft - 1) * 25 * (gnss_alt_below_baro_alt ? -1 : 1);
-        switch (altitude_source) {
-            case ADSBTypes::kAltitudeSourceBaro:
-                gnss_altitude_ft = baro_altitude_ft + gnss_alt_baro_alt_difference_ft;
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, true);
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude, true);
-                break;
-            case ADSBTypes::kAltitudeSourceGNSS:
-                baro_altitude_ft = gnss_altitude_ft - gnss_alt_baro_alt_difference_ft;
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude, true);
-                break;
-            default:
-                // Don't sweat it if the aircraft doesn't have an altitude yet.
-                break;
-        }
+        gnss_altitude_ft = baro_altitude_ft + gnss_alt_baro_alt_difference_ft;
+        WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, true);
+        WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude, true);
     }
 
     return decode_successful;
