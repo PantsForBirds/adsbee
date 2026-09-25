@@ -565,3 +565,29 @@ TEST(UATFEC, RejectedADSBDecodeLeavesBufferUnmodified) {
     EXPECT_EQ(uat_rs.DecodeShortADSBMessage(short_received), -1);
     EXPECT_EQ(memcmp(short_received, short_received_copy, sizeof(short_received)), 0);
 }
+
+TEST(UATSync, MessageLengthFromSyncLS4AndPayloadType) {
+    static_assert(RawUATADSBPacket::kSyncWordLS4 == 0x2 && RawUATUplinkPacket::kSyncWordLS4 == 0xD,
+                  "ADS-B and uplink sync words are complements");
+    // Exact sync nibbles.
+    EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0x2, 0), RawUATADSBPacket::kShortADSBMessageNumBytes);
+    EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0x2, 1), RawUATADSBPacket::kLongADSBMessageNumBytes);
+    EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0x2, 31), RawUATADSBPacket::kLongADSBMessageNumBytes);
+    EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0xD, 0), RawUATUplinkPacket::kUplinkMessageNumBytes);
+    EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0xD, 17), RawUATUplinkPacket::kUplinkMessageNumBytes);
+    // Any single bit error keeps the format (previously every ADS-B nibble error became a 552-byte uplink reception).
+    for (uint8_t bit = 0; bit < 4; bit++) {
+        SCOPED_TRACE(bit);
+        EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0x2 ^ (1 << bit), 0),
+                  RawUATADSBPacket::kShortADSBMessageNumBytes);
+        EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0x2 ^ (1 << bit), 3),
+                  RawUATADSBPacket::kLongADSBMessageNumBytes);
+        EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0xD ^ (1 << bit), 0),
+                  RawUATUplinkPacket::kUplinkMessageNumBytes);
+    }
+    // Two-bit errors are equidistant; resolve to ADS-B (the common, short reception).
+    EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0x2 ^ 0x3, 1), RawUATADSBPacket::kLongADSBMessageNumBytes);
+    // Upper nibble bits are ignored.
+    EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0xF2, 0), RawUATADSBPacket::kShortADSBMessageNumBytes);
+    EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0xAD, 0), RawUATUplinkPacket::kUplinkMessageNumBytes);
+}

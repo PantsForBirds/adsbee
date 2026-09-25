@@ -30,6 +30,16 @@ RawUATADSBPacket::RawUATADSBPacket(uint8_t rx_buffer[kADSBMessageMaxSizeBytes], 
     memcpy(buffer, rx_buffer, buffer_len_bytes);
 }
 
+uint16_t UATMessageLenBytesFromSyncAndPayloadType(uint8_t sync_word_ls4, uint8_t payload_type_code) {
+    uint8_t distance_to_adsb = __builtin_popcount((sync_word_ls4 ^ RawUATADSBPacket::kSyncWordLS4) & 0xF);
+    uint8_t distance_to_uplink = __builtin_popcount((sync_word_ls4 ^ RawUATUplinkPacket::kSyncWordLS4) & 0xF);
+    if (distance_to_uplink < distance_to_adsb) {
+        return RawUATUplinkPacket::kUplinkMessageNumBytes;
+    }
+    return payload_type_code == 0 ? RawUATADSBPacket::kShortADSBMessageNumBytes
+                                  : RawUATADSBPacket::kLongADSBMessageNumBytes;
+}
+
 DecodedUATADSBPacket::DecodedUATADSBPacket(const char* rx_string, int32_t sigs_dbm, int32_t sigq_bits,
                                            uint64_t mlat_48mhz_64bit_counts)
     : raw(rx_string, sigs_dbm, sigq_bits, mlat_48mhz_64bit_counts) {

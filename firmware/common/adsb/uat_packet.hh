@@ -72,6 +72,22 @@ class RawUATADSBPacket {
     uint64_t mlat_48mhz_64bit_counts = 0;  // High resolution MLAT counter.
 };
 
+/**
+ * Picks how many bytes to receive after the 32 most significant bits of a UAT sync word, given the 4 least
+ * significant sync bits (received as the first nibble of the "header") and the payload type code (first 5 bits of the
+ * first payload byte). Used by the TI sub-GHz radio firmware (CMD_PROP_SET_LEN) while the packet is still arriving.
+ *
+ * The ADS-B and ground uplink sync words are bitwise complements, so their LS4 nibbles (0x2 and 0xD) are at Hamming
+ * distance 4. The nibble is classified to the nearest pattern, so any 1-bit error still picks the right format; a
+ * 2-bit tie goes to ADS-B, which is far more common and whose (short) mis-reception costs ~0.3 ms of receiver time
+ * instead of the ~4.2 ms of a 552-byte uplink reception. The payload type code is not FEC-protected yet at this
+ * point; a basic message (type 0) is read as 30 bytes, anything else as 48.
+ * @param[in] sync_word_ls4 4 least significant bits of the received sync word.
+ * @param[in] payload_type_code Uncorrected 5-bit payload type code.
+ * @retval Number of bytes to receive (30, 48 or 552).
+ */
+uint16_t UATMessageLenBytesFromSyncAndPayloadType(uint8_t sync_word_ls4, uint8_t payload_type_code);
+
 class DecodedUATADSBPacket {
    public:
     static constexpr uint16_t kMaxPacketSizeBytes = RawUATADSBPacket::kADSBMessageMaxSizeBytes;
