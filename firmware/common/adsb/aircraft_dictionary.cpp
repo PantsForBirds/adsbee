@@ -1088,8 +1088,8 @@ bool UATAircraft::DecodePosition(const DecodedUATADSBPacket::UATStateVector& sta
         uint32_t max_distance_meters =
             kCPRPositionFilterVelocityMps * ms_since_last_track_update / 1000;  // mps to meters
 
-        uint32_t candidate_lat_awb32 = UATAWBToAWB32(state_vector.latitude_awb);
-        uint32_t candidate_lon_awb32 = UATAWBToAWB32(state_vector.longitude_awb);
+        uint32_t candidate_lat_awb32 = UATLatAWBToAWB32(state_vector.latitude_awb);
+        uint32_t candidate_lon_awb32 = UATLonAWBToAWB32(state_vector.longitude_awb);
         uint32_t distance_meters =
             CalculateGeoidalDistanceMetersAWB(lat_awb32_, lon_awb32_, candidate_lat_awb32, candidate_lon_awb32);
 
@@ -1146,12 +1146,6 @@ bool UATAircraft::ApplyUATADSBStateVector(const DecodedUATADSBPacket::UATStateVe
         }
     }
 
-    if (latitude_deg > 90) {
-        latitude_deg -= 180.0f;  // Convert to negative latitude if it exceeds 90 degrees.
-    }
-    if (longitude_deg > 180) {
-        longitude_deg -= 360.0f;  // Convert to negative longitude if it exceeds 180 degrees.
-    }
 
     // Parse altitue.
     if (state_vector.altitude_is_geometric_altitude) {

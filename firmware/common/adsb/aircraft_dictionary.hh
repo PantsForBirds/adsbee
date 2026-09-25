@@ -563,13 +563,25 @@ class UATAircraft : public Aircraft {
     inline void WriteBitFlag(BitFlag bit, bool value) { value ? flags |= (0b1 << bit) : flags &= ~(0b1 << bit); }
 
     /**
-     * UAT state vector contains latitude and longitude as 24-bit Angular Weighted Binary (AWB). Convert to 32-bit
-     * angular weighted binary.
-     * @param[in] uat_lat_awb 24-bit UAT latitude in AWB format.
+     * UAT state vector contains longitude as 24-bit Angular Weighted Binary (AWB). Convert to 32-bit angular weighted
+     * binary.
+     * @param[in] uat_lon_awb 24-bit UAT longitude in AWB format.
+     * @retval 32-bit longitude in AWB format.
+     */
+    static inline uint32_t UATLonAWBToAWB32(uint32_t uat_lon_awb) {
+        return (uat_lon_awb << 8);  // Shift left to convert from 24-bit to 32-bit AWB.
+    }
+
+    /**
+     * UAT state vector contains latitude as 24-bit AWB with the MSB omitted (23 bits, UAT Tech Manual Table 2-12 note
+     * 1): valid latitudes are 0x000000-0x400000 (0 to 90N) and 0xC00000-0xFFFFFF (90S to 0), so the two MSBs are
+     * always equal apart from the north pole. Restore the MSB, then convert to 32-bit AWB.
+     * @param[in] uat_lat_awb 23-bit UAT latitude.
      * @retval 32-bit latitude in AWB format.
      */
-    inline uint32_t UATAWBToAWB32(uint32_t uat_awb) {
-        return (uat_awb << 8);  // Shift left to convert from 24-bit to 32-bit AWB.
+    static inline uint32_t UATLatAWBToAWB32(uint32_t uat_lat_awb) {
+        uint32_t lat_awb24 = uat_lat_awb > 0x400000 ? (uat_lat_awb | 0x800000) : uat_lat_awb;
+        return (lat_awb24 << 8);
     }
 
     /**
