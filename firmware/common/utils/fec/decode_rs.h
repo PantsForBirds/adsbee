@@ -215,7 +215,24 @@
   /* Find roots of the error+erasure locator polynomial by Chien search */
   memcpy(&reg[1],&lambda[1],NROOTS*sizeof(reg[0]));
   count = 0;		/* Number of roots of lambda(x) */
-  for (i = 1,k=IPRIM-1; i <= NN; i++,k = MODNN(k+IPRIM)) {
+  i = 1;
+  k = IPRIM-1;
+  if (PRIM == 1) {
+    /*
+     * ADSBee modification: with PRIM == 1, step i tests location k = i-1, so
+     * the first PAD steps only test pad locations, which can never hold an
+     * error (see the pad check below). Jump straight to i = PAD+1 by
+     * advancing reg[] by PAD steps. A root in the pad then simply isn't
+     * found, and deg_lambda != count rejects the word as uncorrectable.
+     */
+    for (j = deg_lambda; j > 0; j--) {
+      if (reg[j] != A0)
+        reg[j] = MODNN(reg[j] + j * PAD);
+    }
+    i = PAD + 1;
+    k = PAD;
+  }
+  for (; i <= NN; i++,k = MODNN(k+IPRIM)) {
     q = 1; /* lambda[0] is always 0 */
     for (j = deg_lambda; j > 0; j--){
       if (reg[j] != A0) {
