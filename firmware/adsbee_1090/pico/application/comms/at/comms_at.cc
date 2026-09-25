@@ -537,6 +537,7 @@ CPP_AT_CALLBACK(CommsManager::ATESP32FlashCallback) {
         CPP_AT_ERROR("CommsManager::ATESP32FlashCallback", "Error while flashing ESP32.");
     }
 
+    esp32.firmware_update_failed = false;  // The ESP32 now runs this build's firmware.
     if (!esp32.Init()) {
         CPP_AT_ERROR("CommsManager::ATESP32FlashCallback", "Error while re-initializing ESP32 after flashing.");
     }
