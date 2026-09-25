@@ -1291,8 +1291,7 @@ bool UATAircraft::ApplyUATADSBModeStatus(const DecodedUATADSBPacket::UATModeStat
             callsign[UATAircraft::kCallSignMaxNumChars] = '\0';
         }
     } else {
-        // Callsign field encodes a squawk code (flight plan ID). Only accept it if the first four characters are
-        // octal digits, otherwise it isn't a Mode 3/A code.
+        // Callsign field encodes a squawk code. Squawk digits are 0-7, so ignore a malformed field.
         uint16_t squawk_temp = 0;
         bool squawk_valid = true;
         for (uint16_t i = 0; i < kSquawkNumDigits; i++) {
