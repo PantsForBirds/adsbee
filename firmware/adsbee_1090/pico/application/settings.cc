@@ -55,7 +55,12 @@ bool SettingsManager::Load() {
     if (bsp.has_eeprom) {
         // Load settings from external EEPROM.
         if (!eeprom.Load(settings)) {
-            CONSOLE_ERROR("settings.cc::Load", "Failed load settings from EEPROM.");
+            // A failed read can leave `settings` partially overwritten. Fall back to defaults in RAM so nothing
+            // downstream (Print(), the coprocessors) sees garbage, but don't persist them: the failure may be a
+            // transient I2C error, and the stored settings may still be intact for the next boot.
+            CONSOLE_ERROR("settings.cc::Load", "Failed load settings from EEPROM. Using defaults for this boot.");
+            ResetToDefaults();
+            Sanitize();
             return false;
         };
     } else {
