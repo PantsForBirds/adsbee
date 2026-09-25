@@ -181,8 +181,8 @@ bool GNSSReceiver::Update() {
         }
     }
 
-    // TEMPORARY periodic debug print (remove once root cause found). Uses ungated CONSOLE_PRINTF so
-    // it shows regardless of the configured log level.
+    // TEMPORARY periodic debug print (remove once root cause found). Logged at INFO level, so it only shows with
+    // AT+LOG_LEVEL=INFO.
     if (now_ms - debug_last_print_timestamp_ms_ >= kDebugPrintIntervalMs) {
         debug_last_print_timestamp_ms_ = now_ms;
         const GNSSFix& f = parser_.fix();
@@ -213,22 +213,21 @@ bool GNSSReceiver::Update() {
         notify_observed_valid_ = current_fix_valid;
         notify_pending_ = !notify_has_emitted_ || current_fix_valid != notify_last_emitted_valid_;
     }
-    // Respect AT+PROTOCOL_OUT=CONSOLE,NONE the same way aircraft data reporting does: an unsolicited
-    // GNSS_FIX line on the console can otherwise corrupt an in-progress binary transfer (e.g. AT+OTA=WRITE).
-    bool console_reporting_enabled =
-        settings_manager.settings.reporting_protocols[SettingsManager::SerialInterface::kConsole] !=
-        SettingsManager::ReportingProtocol::kNoReports;
-    if (settings_manager.settings.gnss_notify && console_reporting_enabled && notify_pending_ &&
+    // Fix-validity transitions are logged at INFO level, so they only reach the console when AT+LOG_LEVEL=INFO (the
+    // default is WARNINGS). They used to be unsolicited, ungated CONSOLE_PRINTF lines, which interleaved with binary
+    // console transfers such as AT+OTA=WRITE (the OTA tools drop the log level to ERRORS first) and could not be
+    // silenced. Programmatic consumers should poll AT+GNSS_FIX? or read the "gnss" block of the ESP32 metrics JSON.
+    if (settings_manager.settings.gnss_notify && notify_pending_ &&
         (!notify_has_emitted_ || now_ms - notify_last_timestamp_ms_ >= kFixNotifyMinIntervalMs)) {
         const GNSSFix& f = parser_.fix();
         char utc_time[9] = "--:--:--";
         if (f.utc_time_valid) {
             snprintf(utc_time, sizeof(utc_time), "%02u:%02u:%02u", f.utc_hour, f.utc_minute, f.utc_second);
         }
-        CONSOLE_PRINTF("GNSS_FIX=%d,%.6f,%.6f,%ld,%.1f,%ld,%u,%s,%lu\r\n", current_fix_valid,
-                       f.latitude_deg, f.longitude_deg, static_cast<long>(f.altitude_ft), f.heading_deg,
-                       static_cast<long>(f.speed_kts), static_cast<unsigned int>(f.num_satellites), utc_time,
-                       static_cast<unsigned long>(pps_count()));
+        CONSOLE_INFO("GNSSReceiver::Update", "GNSS_FIX=%d,%.6f,%.6f,%ld,%.1f,%ld,%u,%s,%lu", current_fix_valid,
+                     f.latitude_deg, f.longitude_deg, static_cast<long>(f.altitude_ft), f.heading_deg,
+                     static_cast<long>(f.speed_kts), static_cast<unsigned int>(f.num_satellites), utc_time,
+                     static_cast<unsigned long>(pps_count()));
         notify_last_emitted_valid_ = current_fix_valid;
         notify_has_emitted_ = true;
         notify_pending_ = false;
