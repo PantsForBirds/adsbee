@@ -547,3 +547,111 @@ TEST(SettingsManager, SanitizeClampsOutOfRangeEnumFields) {
     settings_manager.settings = clean;
     EXPECT_FALSE(settings_manager.Sanitize());
 }
+
+// Writes a raw byte into a bool's storage, the way a corrupt settings blob would (assigning an int to a bool can't).
+static void PokeBoolByte(bool& b, uint8_t raw) { memcpy(&b, &raw, sizeof(raw)); }
+static uint8_t PeekBoolByte(const bool& b) {
+    uint8_t raw;
+    memcpy(&raw, &b, sizeof(raw));
+    return raw;
+}
+
+TEST(SettingsManager, SanitizeNormalizesBools) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+    s.core_network_settings.UpdateCRC32();
+
+    PokeBoolByte(s.gnss_notify, 0x02);
+    PokeBoolByte(s.feed_is_active[3], 0x75);
+    PokeBoolByte(s.remote_id_tx_enabled, 0xFF);
+    PokeBoolByte(s.core_network_settings.wifi_sta_enabled, 0x34);
+    // Keep the CRC valid over the corrupt byte, as it would be if the corruption predates the last save.
+    s.core_network_settings.UpdateCRC32();
+
+    EXPECT_TRUE(settings_manager.Sanitize());
+
+    EXPECT_EQ(PeekBoolByte(s.gnss_notify), 1);
+    EXPECT_EQ(PeekBoolByte(s.feed_is_active[3]), 1);
+    EXPECT_EQ(PeekBoolByte(s.remote_id_tx_enabled), 1);
+    EXPECT_EQ(PeekBoolByte(s.core_network_settings.wifi_sta_enabled), 1);
+    EXPECT_EQ(PeekBoolByte(s.feed_is_active[0]), 0);  // Untouched legal values stay as they were.
+    EXPECT_TRUE(s.core_network_settings.IsValid());   // CRC recomputed after the CNS fix-up.
+}
+
+TEST(SettingsManager, SanitizeTerminatesStrings) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+    memset(s.core_network_settings.hostname, 'H', sizeof(s.core_network_settings.hostname));
+    memset(s.core_network_settings.wifi_sta_password, 'P', sizeof(s.core_network_settings.wifi_sta_password));
+    s.core_network_settings.UpdateCRC32();
+    memset(s.feed_uris[2], 'A', sizeof(s.feed_uris[2]));
+    memset(s.remote_id_tx_uas_id, 'U', sizeof(s.remote_id_tx_uas_id));
+    memset(s.remote_id_tx_operator_id, 'O', sizeof(s.remote_id_tx_operator_id));
+
+    EXPECT_TRUE(settings_manager.Sanitize());
+
+    EXPECT_EQ(strnlen(s.core_network_settings.hostname, sizeof(s.core_network_settings.hostname)),
+              sizeof(s.core_network_settings.hostname) - 1);
+    EXPECT_EQ(strnlen(s.core_network_settings.wifi_sta_password, sizeof(s.core_network_settings.wifi_sta_password)),
+              sizeof(s.core_network_settings.wifi_sta_password) - 1);
+    EXPECT_EQ(strnlen(s.feed_uris[2], sizeof(s.feed_uris[2])), sizeof(s.feed_uris[2]) - 1);
+    EXPECT_EQ(strnlen(s.remote_id_tx_uas_id, sizeof(s.remote_id_tx_uas_id)), sizeof(s.remote_id_tx_uas_id) - 1);
+    EXPECT_EQ(strnlen(s.remote_id_tx_operator_id, sizeof(s.remote_id_tx_operator_id)),
+              sizeof(s.remote_id_tx_operator_id) - 1);
+    EXPECT_STREQ(s.feed_uris[9], "feed.adsb.fi");  // Terminated strings are left alone.
+    EXPECT_TRUE(s.core_network_settings.IsValid());
+}
+
+TEST(SettingsManager, SanitizeDoesNotValidateAnInvalidCoreNetworkCRC) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+    s.core_network_settings.UpdateCRC32();
+    s.core_network_settings.crc32 ^= 0xFFFFFFFF;  // Stored CRC doesn't match.
+    memset(s.core_network_settings.hostname, 'H', sizeof(s.core_network_settings.hostname));
+
+    EXPECT_TRUE(settings_manager.Sanitize());
+    // The fix-up must not turn an untrustworthy block into one that Load() would restore.
+    EXPECT_FALSE(s.core_network_settings.IsValid());
+}
+
+TEST(SettingsManager, SanitizeResetsZeroUARTBaudRates) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+    s.baud_rates[SettingsManager::kCommsUART] = 0;
+    s.baud_rates[SettingsManager::kGNSSUART] = 0;
+
+    EXPECT_TRUE(settings_manager.Sanitize());
+
+    EXPECT_EQ(s.baud_rates[SettingsManager::kCommsUART], SettingsManager::Settings::kDefaultCommsUARTBaudrate);
+    EXPECT_EQ(s.baud_rates[SettingsManager::kGNSSUART], SettingsManager::Settings::kDefaultGNSSUARTBaudrate);
+    EXPECT_EQ(s.baud_rates[SettingsManager::kConsole], 0u);  // USB CDC console: 0 is the normal value.
+
+    // Non-default, non-zero rates are kept.
+    s.baud_rates[SettingsManager::kCommsUART] = 57600;
+    s.baud_rates[SettingsManager::kGNSSUART] = 38400;
+    EXPECT_FALSE(settings_manager.Sanitize());
+    EXPECT_EQ(s.baud_rates[SettingsManager::kCommsUART], 57600u);
+    EXPECT_EQ(s.baud_rates[SettingsManager::kGNSSUART], 38400u);
+}
+
+TEST(SettingsManager, SanitizeDisablesGNSSWithoutReceiverType) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+    s.gnss_enabled = true;
+    s.gnss_receiver_type = SettingsManager::kGNSSReceiverNone;
+    EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_FALSE(s.gnss_enabled);
+
+    // An out-of-range type is reset to NONE first, which then also disables GNSS.
+    s.gnss_enabled = true;
+    s.gnss_receiver_type = static_cast<SettingsManager::GNSSReceiverType>(77);
+    EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_EQ(s.gnss_receiver_type, SettingsManager::kGNSSReceiverNone);
+    EXPECT_FALSE(s.gnss_enabled);
+
+    // A real configuration is left alone.
+    s.gnss_enabled = true;
+    s.gnss_receiver_type = SettingsManager::kGNSSReceiverUBXMIA;
+    EXPECT_FALSE(settings_manager.Sanitize());
+    EXPECT_TRUE(s.gnss_enabled);
+}

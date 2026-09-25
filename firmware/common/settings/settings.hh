@@ -562,16 +562,22 @@ class SettingsManager {
     bool Load();
 
     /**
-     * Clamps every enum-typed field in `settings` to its legal range, defaulting out-of-range values instead of
-     * leaving them as-is. Settings migration can only be as trustworthy as the version tag on a stored blob (see the
-     * NOTE in settings_migration.hh for a case where that tag was wrong for a real device), and other corruption
-     * sources (a bit-flipped flash sector, a partially-written EEPROM page) are always possible too. An out-of-range
-     * enum value used to index a kXxxStrs[] lookup table (Print(), PrintAT(), AT command handlers) is a hard fault on
-     * the RP2040 and a crash/reboot loop on the ESP32 (which receives `settings` from the RP2040 over SPI at boot and
-     * calls Print() immediately) -- i.e. a corrupted settings blob can brick the device on every subsequent boot,
-     * surviving even a full reflash, because the settings flash/EEPROM sector isn't touched by an application update.
-     * Called unconditionally at the end of Load(), after migration or the factory-defaults fallback, so nothing
-     * downstream ever sees an out-of-range value regardless of where it came from.
+     * Repairs values in `settings` that no valid settings blob can contain, instead of leaving them as-is:
+     *   - every enum-typed field is clamped to its legal range (out-of-range values are reset to defaults);
+     *   - every bool is normalized to 0/1 (any nonzero byte becomes true);
+     *   - every fixed-size char array is forced to be NUL-terminated;
+     *   - a baud rate of 0 on the Comms or GNSS UART is reset to that UART's default;
+     *   - gnss_enabled with receiver type NONE is turned off.
+     * CoreNetworkSettings' CRC is recomputed after a fix-up only if it was valid beforehand.
+     * Settings migration can only be as trustworthy as the version tag on a stored blob (see the NOTE in
+     * settings_migration.hh for a case where that tag was wrong for a real device), and other corruption sources (a
+     * bit-flipped flash sector, a partially-written EEPROM page) are always possible too. An out-of-range enum value
+     * used to index a kXxxStrs[] lookup table (Print(), PrintAT(), AT command handlers) is a hard fault on the RP2040
+     * and a crash/reboot loop on the ESP32 (which receives `settings` from the RP2040 over SPI at boot and calls
+     * Print() immediately) -- i.e. a corrupted settings blob can brick the device on every subsequent boot, surviving
+     * even a full reflash, because the settings flash/EEPROM sector isn't touched by an application update. Called on
+     * every Load() path (after migration, the factory-defaults fallback, or a failed EEPROM read), so nothing
+     * downstream sees these values regardless of where they came from.
      * @retval True if any field was out-of-range and got reset (caller should persist the fix), false if nothing
      *         needed changing.
      */
