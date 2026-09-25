@@ -13,7 +13,7 @@
 #include "pico/rand.h"
 #endif
 
-static constexpr uint32_t kSettingsVersion = 14;  // Change this when settings format changes!
+static constexpr uint32_t kSettingsVersion = 15;  // Change this when settings format changes!
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 class SettingsManager {
@@ -560,6 +560,22 @@ class SettingsManager {
      * @retval True if succeeded, false otherwise.
      */
     bool Load();
+
+    /**
+     * Clamps every enum-typed field in `settings` to its legal range, defaulting out-of-range values instead of
+     * leaving them as-is. Settings migration can only be as trustworthy as the version tag on a stored blob (see the
+     * NOTE in settings_migration.hh for a case where that tag was wrong for a real device), and other corruption
+     * sources (a bit-flipped flash sector, a partially-written EEPROM page) are always possible too. An out-of-range
+     * enum value used to index a kXxxStrs[] lookup table (Print(), PrintAT(), AT command handlers) is a hard fault on
+     * the RP2040 and a crash/reboot loop on the ESP32 (which receives `settings` from the RP2040 over SPI at boot and
+     * calls Print() immediately) -- i.e. a corrupted settings blob can brick the device on every subsequent boot,
+     * surviving even a full reflash, because the settings flash/EEPROM sector isn't touched by an application update.
+     * Called unconditionally at the end of Load(), after migration or the factory-defaults fallback, so nothing
+     * downstream ever sees an out-of-range value regardless of where it came from.
+     * @retval True if any field was out-of-range and got reset (caller should persist the fix), false if nothing
+     *         needed changing.
+     */
+    bool Sanitize();
 
     /**
      * Print the settings in human-readable format.

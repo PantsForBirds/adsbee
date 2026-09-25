@@ -52,6 +52,11 @@ TEST(SettingsMigration, LayoutLockedSizes) {
     EXPECT_EQ(sizeof(settings_v13::CoreNetworkSettings),
               sizeof(SettingsManager::Settings::CoreNetworkSettings));
     EXPECT_EQ(sizeof(settings_v13::RxPosition), sizeof(SettingsManager::RxPosition));
+
+    EXPECT_EQ(sizeof(settings_v14::Settings), 1140u);
+    EXPECT_EQ(sizeof(settings_v14::CoreNetworkSettings),
+              sizeof(SettingsManager::Settings::CoreNetworkSettings));
+    EXPECT_EQ(sizeof(settings_v14::RxPosition), sizeof(SettingsManager::RxPosition));
 }
 
 // Fills a v13 settings struct with distinctive, non-default values across every field, and gives it a valid-CRC
@@ -163,10 +168,13 @@ static void ExpectV13FieldsPreserved(const SettingsManager::Settings& out) {
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
 }
 
-// The Remote ID transmit settings and the feeds_enabled master switch are new in v14, so any migration must leave them
-// at their defaults.
+// Fields new in v14 (Remote ID transmit, GNSS) and v15 (feeds_enabled) must land on their defaults when migrating from
+// a version that doesn't have them.
 static void ExpectV14TxDefaults(const SettingsManager::Settings& out) {
     EXPECT_TRUE(out.feeds_enabled);
+    EXPECT_FALSE(out.gnss_enabled);
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverNone);
+    EXPECT_FALSE(out.gnss_notify);
     EXPECT_FALSE(out.remote_id_tx_enabled);
     EXPECT_EQ(out.remote_id_tx_transports, (uint8_t)(SettingsManager::kRemoteIDTransportBLE4 |
                                                      SettingsManager::kRemoteIDTransportBLE5Long |
@@ -194,6 +202,176 @@ TEST(SettingsMigration, V13ToV14PreservesAllFields) {
     ExpectV14TxDefaults(out);
 }
 
+// Fills a v14 settings struct with distinctive, non-default values across every field (including the Remote ID
+// transmit settings, new in v14), and gives it a valid-CRC CoreNetworkSettings block.
+static void PopulateV14(settings_v14::Settings& v14) {
+    v14 = settings_v14::Settings{};
+    v14.settings_version = 14;
+
+    SettingsManager::Settings::CoreNetworkSettings cns;  // Zero-fills strings in its constructor.
+    cns.esp32_enabled = true;
+    strncpy(cns.wifi_ap_ssid, "MigrateNet", sizeof(cns.wifi_ap_ssid));
+    strncpy(cns.wifi_ap_password, "supersecret", sizeof(cns.wifi_ap_password));
+    cns.wifi_ap_channel = 6;
+    cns.ethernet_enabled = true;
+    cns.UpdateCRC32();
+    ASSERT_EQ(sizeof(cns), sizeof(v14.core_network_settings));
+    memcpy(&v14.core_network_settings, &cns, sizeof(cns));
+
+    v14.r1090_rx_enabled = false;
+    v14.tl_offset_mv = 123;
+    v14.r1090_bias_tee_enabled = true;
+    v14.watchdog_timeout_sec = 42;
+    v14.led_enabled = false;
+    v14.gnss_enabled = true;
+    v14.gnss_receiver_type = SettingsManager::kGNSSReceiverUBXMIA;
+    v14.gnss_notify = true;
+    v14.log_level = SettingsManager::LogLevel::kInfo;
+    v14.reporting_protocols[0] = SettingsManager::ReportingProtocol::kCSBee;
+    v14.reporting_protocols[1] = SettingsManager::ReportingProtocol::kGDL90;
+    v14.reporting_protocols[2] = SettingsManager::ReportingProtocol::kAircraftJSON;
+    v14.baud_rates[0] = 1200;
+    v14.baud_rates[1] = 57600;
+    v14.baud_rates[2] = 4800;
+    v14.subg_enabled = SettingsManager::EnableState::kEnableStateDisabled;
+    v14.subg_rx_enabled = false;
+    v14.subg_bias_tee_enabled = true;
+    v14.subg_mode = SettingsManager::SubGHzRadioMode::kSubGHzRadioModeUATRx;
+    v14.remote_id_rx_enabled = true;
+    v14.remote_id_transports = SettingsManager::kRemoteIDTransportBLE5Long;
+    v14.remote_id_tx_enabled = true;
+    v14.remote_id_tx_transports = SettingsManager::kRemoteIDTransportWiFiBeacon;
+    v14.remote_id_tx_uas_id_type = 3;
+    v14.remote_id_tx_ua_type = 15;
+    strncpy(v14.remote_id_tx_uas_id, "TXID123", sizeof(v14.remote_id_tx_uas_id));
+    strncpy(v14.remote_id_tx_operator_id, "OP456", sizeof(v14.remote_id_tx_operator_id));
+
+    strncpy(v14.feed_uris[0], "myfeed.example.com", sizeof(v14.feed_uris[0]));
+    strncpy(v14.feed_uris[9], "feed.adsb.fi", sizeof(v14.feed_uris[9]));
+    v14.feed_ports[0] = 30005;
+    v14.feed_ports[9] = 30004;
+    v14.feed_is_active[0] = true;
+    v14.feed_is_active[9] = true;
+    v14.feed_protocols[0] = SettingsManager::ReportingProtocol::kBeast;
+    v14.feed_protocols[9] = SettingsManager::ReportingProtocol::kBeast;
+    v14.feed_receiver_ids[0][0] = 0xDE;
+    v14.feed_receiver_ids[0][7] = 0xAD;
+
+    v14.mavlink_system_id = 7;
+    v14.mavlink_component_id = 42;
+
+    v14.rx_position.source = 1;  // kPositionSourceFixed
+    v14.rx_position.latitude_deg = 37.5f;
+    v14.rx_position.longitude_deg = -122.3f;
+    v14.rx_position.gnss_altitude_ft = 111;
+    v14.rx_position.baro_altitude_ft = 222;
+    v14.rx_position.heading_deg = 90.0f;
+    v14.rx_position.speed_kts = 33;
+    v14.rx_position.icao_address = 0xABCDEF;
+}
+
+TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
+    settings_v14::Settings v14;
+    PopulateV14(v14);
+
+    uint8_t blob[sizeof(settings_v14::Settings)];
+    memcpy(blob, &v14, sizeof(v14));
+
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 14, out));
+
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+
+    SettingsManager::Settings::CoreNetworkSettings cns_out = out.core_network_settings;
+    EXPECT_TRUE(cns_out.IsValid());
+    EXPECT_STREQ(out.core_network_settings.wifi_ap_ssid, "MigrateNet");
+
+    EXPECT_FALSE(out.r1090_rx_enabled);
+    EXPECT_EQ(out.tl_offset_mv, 123);
+    EXPECT_TRUE(out.r1090_bias_tee_enabled);
+    EXPECT_EQ(out.watchdog_timeout_sec, 42u);
+    EXPECT_FALSE(out.led_enabled);
+
+    EXPECT_TRUE(out.feeds_enabled);  // New in v15.
+    EXPECT_TRUE(out.gnss_enabled);
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
+    EXPECT_TRUE(out.gnss_notify);
+
+    EXPECT_EQ(out.log_level, SettingsManager::LogLevel::kInfo);
+    EXPECT_EQ(out.reporting_protocols[0], SettingsManager::ReportingProtocol::kCSBee);
+    EXPECT_EQ(out.baud_rates[0], 1200u);
+
+    EXPECT_EQ(out.subg_enabled, SettingsManager::EnableState::kEnableStateDisabled);
+    EXPECT_FALSE(out.subg_rx_enabled);
+    EXPECT_TRUE(out.subg_bias_tee_enabled);
+
+    EXPECT_TRUE(out.remote_id_rx_enabled);
+    EXPECT_EQ(out.remote_id_transports, (uint8_t)SettingsManager::kRemoteIDTransportBLE5Long);
+    EXPECT_TRUE(out.remote_id_tx_enabled);
+    EXPECT_EQ(out.remote_id_tx_transports, (uint8_t)SettingsManager::kRemoteIDTransportWiFiBeacon);
+    EXPECT_EQ(out.remote_id_tx_uas_id_type, 3);
+    EXPECT_EQ(out.remote_id_tx_ua_type, 15);
+    EXPECT_STREQ(out.remote_id_tx_uas_id, "TXID123");
+    EXPECT_STREQ(out.remote_id_tx_operator_id, "OP456");
+
+    EXPECT_STREQ(out.feed_uris[0], "myfeed.example.com");
+    EXPECT_EQ(out.feed_ports[0], 30005);
+    EXPECT_TRUE(out.feed_is_active[0]);
+    EXPECT_EQ(out.feed_protocols[0], SettingsManager::ReportingProtocol::kBeast);
+    EXPECT_EQ(out.feed_receiver_ids[0][0], 0xDE);
+
+    EXPECT_EQ(out.mavlink_system_id, 7);
+    EXPECT_EQ(out.mavlink_component_id, 42);
+
+    EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
+    EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
+    EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+}
+
+// Builds a v14 blob by raw byte offset, independent of settings_v14::Settings, using the layout measured from the
+// struct shipped in adsbee_1090-0.9.1-rc2. Guards against the frozen snapshot drifting from what devices actually hold.
+TEST(SettingsMigration, V14ShippedRc2BlobMigrates) {
+    uint8_t blob[1140];
+    memset(blob, 0, sizeof(blob));
+    auto put16 = [&](size_t off, uint16_t v) { memcpy(&blob[off], &v, sizeof(v)); };
+    auto put32 = [&](size_t off, uint32_t v) { memcpy(&blob[off], &v, sizeof(v)); };
+
+    put32(0, 14);
+    blob[244] = 1;           // r1090_rx_enabled
+    blob[260] = 1;           // led_enabled
+    blob[261] = 1;           // gnss_enabled
+    blob[262] = 2;           // gnss_receiver_type = kGNSSReceiverUBXMIA
+    blob[263] = 0;           // gnss_notify
+    put16(264, 1);           // log_level = kErrors
+    put16(266, 0);           // reporting_protocols[0] = kNoReports
+    put16(268, 9);           // reporting_protocols[1] = kAircraftJSON
+    put16(270, 0);           // reporting_protocols[2]
+    put32(272, 0);           // baud_rates[0]
+    put32(276, 115200);      // baud_rates[1]
+    put32(280, 115200);      // baud_rates[2]
+    blob[284] = 1;           // subg_enabled = kEnableStateEnabled
+    blob[285] = 1;           // subg_rx_enabled
+    blob[1106] = 9;          // mavlink_system_id
+
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 14, out));
+
+    EXPECT_TRUE(out.r1090_rx_enabled);
+    EXPECT_TRUE(out.led_enabled);
+    EXPECT_TRUE(out.gnss_enabled);
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
+    EXPECT_FALSE(out.gnss_notify);
+    EXPECT_EQ(out.log_level, SettingsManager::LogLevel::kErrors);
+    EXPECT_EQ(out.reporting_protocols[0], SettingsManager::ReportingProtocol::kNoReports);
+    EXPECT_EQ(out.reporting_protocols[1], SettingsManager::ReportingProtocol::kAircraftJSON);
+    EXPECT_EQ(out.baud_rates[1], 115200u);
+    EXPECT_EQ(out.baud_rates[2], 115200u);
+    EXPECT_EQ(out.subg_enabled, SettingsManager::EnableState::kEnableStateEnabled);
+    EXPECT_TRUE(out.subg_rx_enabled);
+    EXPECT_EQ(out.mavlink_system_id, 9);
+    EXPECT_TRUE(out.feeds_enabled);
+}
+
 TEST(SettingsMigration, UnmigratableVersionReturnsFalse) {
     uint8_t blob[sizeof(settings_v12::Settings)] = {0};
     SettingsManager::Settings out;
@@ -203,6 +381,9 @@ TEST(SettingsMigration, UnmigratableVersionReturnsFalse) {
     EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(blob), kSettingsVersion, out));
     // A v12 version tag but a too-short blob must also be rejected.
     EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v12::Settings) - 1, 12, out));
+    // Likewise for a v14 version tag with a too-short blob.
+    uint8_t v14_blob[sizeof(settings_v14::Settings)] = {0};
+    EXPECT_FALSE(SettingsMigrator::Migrate(v14_blob, sizeof(settings_v14::Settings) - 1, 14, out));
 }
 
 TEST(SettingsMigration, V12ToCurrentPreservesAllFields) {
@@ -332,4 +513,37 @@ TEST(SettingsMigration, V12ToCurrentPreservesAllFields) {
     EXPECT_FLOAT_EQ(out.rx_position.heading_deg, 90.0f);
     EXPECT_EQ(out.rx_position.speed_kts, 33);
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+}
+
+// Regression test for a real hard fault seen on hardware: a v14->v15 migration on a device whose on-flash blob had
+// already drifted out from under the (un-bumped) v14 tag produced an out-of-range reporting_protocols/log_level
+// value, which SettingsManager::Print() then used to index kReportingProtocolStrs[]/kConsoleLogLevelStrs[] --
+// faulting the RP2040 and crash-looping the ESP32 (which receives `settings` over SPI and calls Print() at boot) on
+// every subsequent boot, even after a full reflash, because Sanitize() didn't exist to catch it.
+TEST(SettingsManager, SanitizeClampsOutOfRangeEnumFields) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+
+    s.log_level = static_cast<SettingsManager::LogLevel>(9999);
+    s.reporting_protocols[0] = static_cast<SettingsManager::ReportingProtocol>(0xF1F6);
+    s.feed_protocols[3] = static_cast<SettingsManager::ReportingProtocol>(0xABCD);
+    s.subg_mode = static_cast<SettingsManager::SubGHzRadioMode>(200);
+    s.subg_enabled = static_cast<SettingsManager::EnableState>(42);
+    s.gnss_receiver_type = static_cast<SettingsManager::GNSSReceiverType>(200);
+    s.rx_position.source = static_cast<SettingsManager::RxPosition::PositionSource>(200);
+
+    EXPECT_TRUE(settings_manager.Sanitize());
+
+    EXPECT_LT(s.log_level, SettingsManager::LogLevel::kNumLogLevels);
+    EXPECT_LT(s.reporting_protocols[0], SettingsManager::ReportingProtocol::kNumProtocols);
+    EXPECT_LT(s.feed_protocols[3], SettingsManager::ReportingProtocol::kNumProtocols);
+    EXPECT_LT(s.subg_mode, SettingsManager::kNumSubGHzRadioModes);
+    EXPECT_EQ(s.subg_enabled, SettingsManager::EnableState::kEnableStateEnabled);
+    EXPECT_EQ(s.gnss_receiver_type, SettingsManager::kGNSSReceiverNone);
+    EXPECT_LT(s.rx_position.source, SettingsManager::RxPosition::kNumPositionSources);
+
+    // A second pass over already-legal values must report no change and leave them untouched.
+    SettingsManager::Settings clean = SettingsManager::Settings{};
+    settings_manager.settings = clean;
+    EXPECT_FALSE(settings_manager.Sanitize());
 }

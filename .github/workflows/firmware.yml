@@ -324,28 +324,28 @@ jobs:
         path: firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.elf
         retention-days: 1
 
-  # version_sync_check:
-  #   # Fail the PR if the Settings struct version changed without a firmware version bump.
-  #   # See firmware/scripts/check_version_sync.sh.
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #   - name: Checkout repository
-  #     uses: actions/checkout@v4
-  #     with:
-  #       # Full history so we can diff against the base branch / previous commit.
-  #       fetch-depth: 0
-  #   - name: Check Settings/firmware version sync
-  #     run: |
-  #       if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
-  #         # Pull request: compare the base branch against the PR head.
-  #         old="${{ github.event.pull_request.base.sha }}"
-  #       else
-  #         # Push: compare against the commit before the push so every commit in a
-  #         # multi-commit push is covered (not just the tip).
-  #         old="${{ github.event.before }}"
-  #         # First push to a new branch reports an all-zero "before"; fall back to the parent.
-  #         if [ -z "$old" ] || [ "$old" = "0000000000000000000000000000000000000000" ]; then
-  #           old="HEAD^"
-  #         fi
-  #       fi
-  #       firmware/scripts/check_version_sync.sh "$old" HEAD
+  version_sync_check:
+    # Fail the PR if the Settings struct version changed without a firmware version bump.
+    # See firmware/scripts/check_version_sync.sh.
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        # Full history so we can diff against the base branch / previous commit.
+        fetch-depth: 0
+    - name: Check Settings/firmware version sync
+      run: |
+        if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+          # Pull request: compare the base branch against the PR head.
+          old="${{ github.event.pull_request.base.sha }}"
+        else
+          # Push: compare against the commit before the push so every commit in a
+          # multi-commit push is covered (not just the tip).
+          old="${{ github.event.before }}"
+          # First push to a new branch reports an all-zero "before"; fall back to the parent.
+          if [ -z "$old" ] || [ "$old" = "0000000000000000000000000000000000000000" ]; then
+            old="HEAD^"
+          fi
+        fi
+        firmware/scripts/check_version_sync.sh "$old" HEAD

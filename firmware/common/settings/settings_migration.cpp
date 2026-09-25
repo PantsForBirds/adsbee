@@ -5,10 +5,14 @@
 // The frozen nested layouts must stay byte-identical to the live ones for the raw copies below to be valid. If a future
 // version changes CoreNetworkSettings or RxPosition, these fire and the migration steps must switch to field-by-field
 // copies for those members.
-static_assert(sizeof(settings_v13::CoreNetworkSettings) == sizeof(SettingsManager::Settings::CoreNetworkSettings),
-              "v13 CoreNetworkSettings layout diverged from live; migration copy is no longer valid.");
-static_assert(sizeof(settings_v13::RxPosition) == sizeof(SettingsManager::RxPosition),
-              "v13 RxPosition layout diverged from live; migration copy is no longer valid.");
+static_assert(sizeof(settings_v14::CoreNetworkSettings) == sizeof(SettingsManager::Settings::CoreNetworkSettings),
+              "v14 CoreNetworkSettings layout diverged from live; migration copy is no longer valid.");
+static_assert(sizeof(settings_v14::RxPosition) == sizeof(SettingsManager::RxPosition),
+              "v14 RxPosition layout diverged from live; migration copy is no longer valid.");
+static_assert(sizeof(settings_v13::CoreNetworkSettings) == sizeof(settings_v14::CoreNetworkSettings),
+              "v13 -> v14 CoreNetworkSettings layout changed; migration copy is no longer valid.");
+static_assert(sizeof(settings_v13::RxPosition) == sizeof(settings_v14::RxPosition),
+              "v13 -> v14 RxPosition layout changed; migration copy is no longer valid.");
 static_assert(sizeof(settings_v12::CoreNetworkSettings) == sizeof(settings_v13::CoreNetworkSettings),
               "v12 -> v13 CoreNetworkSettings layout changed; migration copy is no longer valid.");
 static_assert(sizeof(settings_v12::RxPosition) == sizeof(settings_v13::RxPosition),
@@ -55,9 +59,58 @@ void SettingsMigrator::MigrateV12ToV13(const settings_v12::Settings& in, setting
     memcpy(&out.rx_position, &in.rx_position, sizeof(in.rx_position));
 }
 
-void SettingsMigrator::MigrateV13ToV14(const settings_v13::Settings& in, SettingsManager::Settings& out) {
-    // Start from a fresh, fully-defaulted current struct so any fields added since v13 (the Remote ID transmit settings)
-    // take their current defaults and, on the RP2040, DeviceInfo-seeded defaults are applied.
+void SettingsMigrator::MigrateV13ToV14(const settings_v13::Settings& in, settings_v14::Settings& out) {
+    out = settings_v14::Settings{};
+    out.settings_version = 14;
+
+    memcpy(&out.core_network_settings, &in.core_network_settings, sizeof(in.core_network_settings));
+
+    out.r1090_rx_enabled = in.r1090_rx_enabled;
+    out.tl_offset_mv = in.tl_offset_mv;
+    out.r1090_bias_tee_enabled = in.r1090_bias_tee_enabled;
+    out.watchdog_timeout_sec = in.watchdog_timeout_sec;
+    out.led_enabled = true;  // New in v14; match the live default.
+    // gnss_enabled/gnss_receiver_type/gnss_notify are new in v14; zero-init above matches their defaults (off, none).
+
+    out.log_level = in.log_level;
+    for (uint16_t i = 0; i < settings_v14::kNumSerialInterfaces; i++) {
+        out.reporting_protocols[i] = in.reporting_protocols[i];
+        out.baud_rates[i] = in.baud_rates[i];
+    }
+
+    out.subg_enabled = in.subg_enabled;
+    out.subg_rx_enabled = in.subg_rx_enabled;
+    out.subg_bias_tee_enabled = in.subg_bias_tee_enabled;
+    out.subg_mode = in.subg_mode;
+
+    // Remote ID receive settings carry over from v13.
+    out.remote_id_rx_enabled = in.remote_id_rx_enabled;
+    out.remote_id_transports = in.remote_id_transports;
+
+    // Remote ID transmit settings are new in v14; left at their defaults (disabled, all transports, empty identity)
+    // via the `settings_v14::Settings{}` zero-init above -- match the live defaults explicitly since this frozen
+    // struct has no constructor to apply them.
+    out.remote_id_tx_transports = SettingsManager::kRemoteIDTransportBLE4 |
+                                  SettingsManager::kRemoteIDTransportBLE5Long |
+                                  SettingsManager::kRemoteIDTransportWiFiBeacon;
+    out.remote_id_tx_uas_id_type = 1;
+    out.remote_id_tx_ua_type = 2;
+
+    memcpy(out.feed_uris, in.feed_uris, sizeof(in.feed_uris));
+    memcpy(out.feed_ports, in.feed_ports, sizeof(in.feed_ports));
+    memcpy(out.feed_is_active, in.feed_is_active, sizeof(in.feed_is_active));
+    memcpy(out.feed_protocols, in.feed_protocols, sizeof(in.feed_protocols));
+    memcpy(out.feed_receiver_ids, in.feed_receiver_ids, sizeof(in.feed_receiver_ids));
+
+    out.mavlink_system_id = in.mavlink_system_id;
+    out.mavlink_component_id = in.mavlink_component_id;
+
+    memcpy(&out.rx_position, &in.rx_position, sizeof(in.rx_position));
+}
+
+void SettingsMigrator::MigrateV14ToV15(const settings_v14::Settings& in, SettingsManager::Settings& out) {
+    // Start from a fresh, fully-defaulted current struct so feeds_enabled (new in v15) takes its default (enabled, so
+    // active feeds keep running) and any RP2040 DeviceInfo-seeded defaults are applied.
     out = SettingsManager::Settings();
 
     out.settings_version = kSettingsVersion;
@@ -68,6 +121,10 @@ void SettingsMigrator::MigrateV13ToV14(const settings_v13::Settings& in, Setting
     out.tl_offset_mv = in.tl_offset_mv;
     out.r1090_bias_tee_enabled = in.r1090_bias_tee_enabled;
     out.watchdog_timeout_sec = in.watchdog_timeout_sec;
+    out.led_enabled = in.led_enabled;
+    out.gnss_enabled = in.gnss_enabled;
+    out.gnss_receiver_type = static_cast<SettingsManager::GNSSReceiverType>(in.gnss_receiver_type);
+    out.gnss_notify = in.gnss_notify;
 
     out.log_level = static_cast<SettingsManager::LogLevel>(in.log_level);
     for (uint16_t i = 0; i < SettingsManager::SerialInterface::kNumSerialInterfaces; i++) {
@@ -80,12 +137,15 @@ void SettingsMigrator::MigrateV13ToV14(const settings_v13::Settings& in, Setting
     out.subg_bias_tee_enabled = in.subg_bias_tee_enabled;
     out.subg_mode = static_cast<SettingsManager::SubGHzRadioMode>(in.subg_mode);
 
-    // Remote ID receive settings carry over from v13.
     out.remote_id_rx_enabled = in.remote_id_rx_enabled;
     out.remote_id_transports = in.remote_id_transports;
 
-    // Remote ID transmit settings are new in v14; left at their defaults (disabled, all transports, empty identity).
-    // The feeds_enabled master switch is also new in v14; left at its default (enabled) so active feeds keep running.
+    out.remote_id_tx_enabled = in.remote_id_tx_enabled;
+    out.remote_id_tx_transports = in.remote_id_tx_transports;
+    out.remote_id_tx_uas_id_type = in.remote_id_tx_uas_id_type;
+    out.remote_id_tx_ua_type = in.remote_id_tx_ua_type;
+    memcpy(out.remote_id_tx_uas_id, in.remote_id_tx_uas_id, sizeof(in.remote_id_tx_uas_id));
+    memcpy(out.remote_id_tx_operator_id, in.remote_id_tx_operator_id, sizeof(in.remote_id_tx_operator_id));
 
     memcpy(out.feed_uris, in.feed_uris, sizeof(in.feed_uris));
     memcpy(out.feed_ports, in.feed_ports, sizeof(in.feed_ports));
@@ -106,6 +166,7 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
     // Each case enters the chain at its own version and falls through the remaining one-step upgrades to reach the
     // current version, so any stored version >= kOldestMigratableVersion lands on the live layout.
     settings_v13::Settings v13;
+    settings_v14::Settings v14;
 
     switch (from_version) {
         case 12: {
@@ -116,6 +177,7 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             settings_v12::Settings v12;
             memcpy(&v12, blob, sizeof(v12));
             MigrateV12ToV13(v12, v13);
+            MigrateV13ToV14(v13, v14);
             break;
         }
         case 13: {
@@ -123,6 +185,14 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
                 return false;
             }
             memcpy(&v13, blob, sizeof(v13));
+            MigrateV13ToV14(v13, v14);
+            break;
+        }
+        case 14: {
+            if (blob_len < sizeof(settings_v14::Settings)) {
+                return false;
+            }
+            memcpy(&v14, blob, sizeof(v14));
             break;
         }
         default:
@@ -130,6 +200,6 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             return false;
     }
 
-    MigrateV13ToV14(v13, out);  // Final step: v13 is the newest frozen version, so this lands on the live struct.
+    MigrateV14ToV15(v14, out);  // Final step: v14 is the newest frozen version, so this lands on the live struct.
     return true;
 }
