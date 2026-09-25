@@ -194,3 +194,30 @@ TEST(ModeSPacketDecoder, ForwardAllCallReplyWithInterrogatorCode) {
     EXPECT_TRUE(decoded_packet.is_address_parity);
     EXPECT_EQ(decoded_packet.icao_address, 0x7C0B6Du);
 }
+
+TEST(ModeSPacketDecoder, RejectDuplicateSquittersWithTrailingBits) {
+    // A 56-bit packet read out of the demodulator as 3 words keeps the bits received after the end of the message in
+    // the low byte of its second word. They aren't part of the packet, so they mustn't defeat the duplicate filter.
+    ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
+    RawModeSPacket raw_packet((const char*)"5D7C0B6DB05076");
+    ASSERT_EQ(raw_packet.buffer_len_bytes, 7);  // 56 bits.
+    raw_packet.source = 0;
+    raw_packet.mlat_48mhz_64bit_counts = 123456;
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+
+    RawModeSPacket raw_packet_trailing_bits = raw_packet;
+    raw_packet_trailing_bits.buffer[1] |= 0xA5;  // Bits 56-63.
+    raw_packet_trailing_bits.source = 1;
+    raw_packet_trailing_bits.mlat_48mhz_64bit_counts = 123456 + kCountsPerMs / 4;
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet_trailing_bits);
+    decoder.UpdateDecoderLoop();
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+
+    // A packet that differs within its 56 bits is not a duplicate.
+    RawModeSPacket different_packet((const char*)"5D7C0B6DB05073");
+    different_packet.source = 2;
+    different_packet.mlat_48mhz_64bit_counts = 123456 + kCountsPerMs / 2;
+    decoder.raw_mode_s_packet_in_queue.Enqueue(different_packet);
+    decoder.UpdateDecoderLoop();
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 2);
+}

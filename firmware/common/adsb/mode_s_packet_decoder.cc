@@ -121,9 +121,12 @@ bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& deco
 
 #ifndef DISABLE_DUPLICATE_FILTER
     // Check if we have already seen this exact packet from another source (got caught by multiple state machines
-    // simultaneously). Only the words that hold packet bits are compared; the last word is masked by the receiver so
-    // the comparison is exact.
+    // simultaneously). Only the bits that belong to the packet are compared: the receiver only masks the last word it
+    // reads out of the demodulator, so a 56-bit packet that was read as 3 words has trailing bits in its second word.
+    constexpr uint16_t kBitsPerWord = kBytesPerWord * kBitsPerByte;
     uint16_t num_words = (raw.buffer_len_bytes + kBytesPerWord - 1) / kBytesPerWord;
+    uint16_t last_word_num_bits = raw.buffer_len_bytes * kBitsPerByte - (num_words - 1) * kBitsPerWord;
+    uint32_t last_word_mask = num_words > 0 ? UINT32_MAX << (kBitsPerWord - last_word_num_bits) : 0;
     for (uint16_t i = 0; i < kMaxNumSources; i++) {
         const LastPacket& last = last_packet_[i];
         if (last.buffer_len_bytes != raw.buffer_len_bytes) {
@@ -135,7 +138,8 @@ bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& deco
         if (delta_counts >= kDuplicatePacketWindow48MHzCounts) {
             continue;
         }
-        if (memcmp(last.buffer, raw.buffer, num_words * kBytesPerWord) != 0) {
+        if (num_words == 0 || memcmp(last.buffer, raw.buffer, (num_words - 1) * kBytesPerWord) != 0 ||
+            ((last.buffer[num_words - 1] ^ raw.buffer[num_words - 1]) & last_word_mask) != 0) {
             continue;
         }
         // Already seen this exact packet within the duplicate window.
