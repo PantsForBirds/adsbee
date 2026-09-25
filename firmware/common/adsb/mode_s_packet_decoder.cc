@@ -54,7 +54,21 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
             return false;
         }
 
-        DecodedModeSPacket decoded_packet = DecodedModeSPacket(raw_packet);
+        // Short formats (DF 0-15) are always 56 bits. If the demodulation interval ran on after the message (e.g. a
+        // pulse right after it), the receiver hands them over as 112-bit packets. A valid 56-bit packet followed by
+        // zeros is also a valid 112-bit codeword, so decoding those as 112 bits accepts and forwards 14 byte DF=11s,
+        // and loses the rest. Trim them back to 56 bits.
+        RawModeSPacket framed_packet = raw_packet;
+        if (framed_packet.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
+            (framed_packet.buffer[0] >> (kBytesPerWord * kBitsPerByte - DecodedModeSPacket::kDFNumBits)) <
+                DecodedModeSPacket::kDownlinkFormatLongRangeAirToAirSurveillance) {
+            framed_packet.buffer_len_bytes = RawModeSPacket::kSquitterPacketLenBytes;
+            framed_packet.buffer[1] &= 0xFFFFFF00;
+            framed_packet.buffer[2] = 0;
+            framed_packet.buffer[3] = 0;
+        }
+
+        DecodedModeSPacket decoded_packet = DecodedModeSPacket(framed_packet);
         const char* status_str = nullptr;
         if (decoded_packet.is_valid) {
             PushPacketIfNotDuplicate(decoded_packet);

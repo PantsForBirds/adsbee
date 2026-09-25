@@ -221,3 +221,39 @@ TEST(ModeSPacketDecoder, RejectDuplicateSquittersWithTrailingBits) {
     decoder.UpdateDecoderLoop();
     EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 2);
 }
+
+TEST(ModeSPacketDecoder, TrimShortFormatsReceivedAs112Bits) {
+    ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
+    // Valid DF=11 (5D7C0B6DB05076) followed by 56 zero bits, as handed over when the demodulation interval runs long.
+    // It is also a valid 112-bit codeword, but must come out as a 56-bit packet.
+    RawModeSPacket raw_packet((const char*)"5D7C0B6DB0507600000000000000");
+    ASSERT_EQ(raw_packet.buffer_len_bytes, 14);
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+    decoder.UpdateDecoderLoop();
+    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+    DecodedModeSPacket decoded_packet;
+    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
+    EXPECT_TRUE(decoded_packet.is_valid);
+    EXPECT_EQ(decoded_packet.raw.buffer_len_bytes, 7);
+    EXPECT_EQ(decoded_packet.icao_address, 0x7C0B6Du);
+
+    // DF=11 with interrogator code 5 and trailing garbage: only decodable once trimmed to 56 bits.
+    raw_packet = RawModeSPacket((const char*)"5D7C0B6DB05073A5000000000000");
+    raw_packet.mlat_48mhz_64bit_counts = 10 * kCountsPerMs;  // Outside the duplicate window.
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+    decoder.UpdateDecoderLoop();
+    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
+    EXPECT_TRUE(decoded_packet.is_address_parity);
+    EXPECT_EQ(decoded_packet.raw.buffer_len_bytes, 7);
+
+    // Long formats are left alone.
+    raw_packet = RawModeSPacket((const char*)"8D40621D58C382D690C8AC2863A7");
+    raw_packet.mlat_48mhz_64bit_counts = 20 * kCountsPerMs;
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+    decoder.UpdateDecoderLoop();
+    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
+    EXPECT_EQ(decoded_packet.raw.buffer_len_bytes, 14);
+    EXPECT_TRUE(decoded_packet.is_valid);
+}
