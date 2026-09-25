@@ -985,8 +985,8 @@ class AircraftDictionary {
      * Ingests an All Call Reply packet and uses it to update the relevant aircraft. Exposed for testing, but usually
      * called by IngestDecodedModeSPacket.
      *
-     * Currently, we only accept all call reply packets with an interrogator ID of 0 (replies to spontaneous acquisition
-     * squitters), since we don't have a way to know the interrogator ID of ground based surveillance stations.
+     * All call replies with an interrogator code of 0 (acquisition squitters) validate themselves. Replies to
+     * interrogators with a nonzero code are only accepted once their ICAO address is in the dictionary.
      */
     bool IngestModeSAllCallReplyPacket(const ModeSAllCallReplyPacket& packet);
 

@@ -1506,8 +1506,8 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
         && ContainsAircraft(packet.icao_address)
 #endif
     ) {
-        // DF=0,4,5,16,20,21 (DF=11 doesn't work with this since the interrogator ID may be overlaid with the ICAO
-        // address--we expect spontaneous acquisition DF=11's to come in pre-marked as valid).
+        // DF=0,4,5,16,20,21, or a DF=11 whose parity is overlaid with a nonzero interrogator code (DF=11 replies with
+        // interrogator code 0 come in pre-marked as valid).
         // Packet is address parity that is incapable of validating itself, and its CRC was
         // validated against the ICAO addresses in the aircraft dictionary.
         // When AIRCRAFT_DICTIONARY_TRUST_FORWARDED_ADDRESS_PARITY is set, the upstream validator

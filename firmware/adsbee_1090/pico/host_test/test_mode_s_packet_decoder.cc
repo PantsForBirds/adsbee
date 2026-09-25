@@ -172,3 +172,15 @@ TEST(ModeSPacketDecoder, DebugMessagesGatedOnLogLevel) {
 
     settings_manager.settings.log_level = original_log_level;
 }
+
+TEST(ModeSPacketDecoder, ForwardAllCallReplyWithInterrogatorCode) {
+    // DF=11 replies to interrogators with a nonzero II code are forwarded for ICAO confirmation, not dropped.
+    ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
+    decoder.raw_mode_s_packet_in_queue.Enqueue(RawModeSPacket((const char*)"5D7C0B6DB05073"));
+    decoder.UpdateDecoderLoop();
+    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+    DecodedModeSPacket decoded_packet;
+    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
+    EXPECT_TRUE(decoded_packet.is_address_parity);
+    EXPECT_EQ(decoded_packet.icao_address, 0x7C0B6Du);
+}

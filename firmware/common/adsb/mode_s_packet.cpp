@@ -238,17 +238,22 @@ void DecodedModeSPacket::ConstructModeSPacket() {
         }
         case kDownlinkFormatAllCallReply:  // DF = 11
         {
+            // The PI field is parity overlaid with the Code Label (CL, 3 bits) and Interrogator Code (IC, 4 bits), so
+            // the syndrome is (CL << 4) | IC. The full 24-bit syndrome must be kept: truncating it would accept
+            // corrupted packets whose syndrome only has bits set above the truncation point. DO-260B 2.2.3.2.1.7,
+            // DO-181D 2.2.14.4.30.
             icao_address = Get24BitsFromWordBuffer(8, raw.buffer);
-            // The interrogator ID is the full 24-bit syndrome. Truncating it would accept corrupted packets whose
-            // syndrome happens to only have bits set above the truncation point.
-            uint32_t interrogator_id = parity_value ^ calculated_checksum;
-            if (interrogator_id == 0) {
-                // Reply to a spontaneous acquisition squitter.
+            parity_interrogator_id = crc_syndrome;
+            if (crc_syndrome == 0) {
+                // Acquisition squitter or reply to an interrogator with II=0: the full CRC checks out.
                 is_valid = true;
-            } else {
-                // Don't know the interrogator ID, so can't tell if it's valid.
-                is_valid = false;
+            } else if (crc_syndrome <= kAllCallReplyMaxInterrogatorCode) {
+                // Reply to an interrogator with a nonzero II/SI code. Only the top 17 bits of parity are left to check
+                // the packet with, so forward it for confirmation against the ICAO addresses in the aircraft
+                // dictionary, the same way address parity packets are handled.
+                is_address_parity = true;
             }
+            // Otherwise the packet is corrupted, leave is_valid as false.
             break;
         }
 

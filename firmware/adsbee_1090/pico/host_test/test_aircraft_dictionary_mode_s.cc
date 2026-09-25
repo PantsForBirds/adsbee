@@ -783,6 +783,24 @@ TEST(AircraftDictionary, IngestAllCallReply) {
     EXPECT_EQ(aircraft.transponder_capability, 5);
 }
 
+TEST(AircraftDictionary, IngestAllCallReplyWithInterrogatorCode) {
+    AircraftDictionary dictionary = AircraftDictionary();
+    // DF=11 reply to an interrogator with II=5. Its CRC can't be checked on its own, so it must not create an aircraft.
+    DecodedModeSPacket iid_packet = DecodedModeSPacket((const char*)"5D7C0B6DB05073");
+    EXPECT_FALSE(dictionary.IngestDecodedModeSPacket(iid_packet));
+    EXPECT_FALSE(iid_packet.is_valid);
+    EXPECT_EQ(dictionary.GetNumAircraft(), 0);
+
+    // Once the aircraft is known (acquisition squitter with II=0), the same reply is accepted.
+    DecodedModeSPacket squitter = DecodedModeSPacket((const char*)"5D7C0B6DB05076");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(squitter));
+    EXPECT_EQ(dictionary.GetNumAircraft(), 1);
+    iid_packet = DecodedModeSPacket((const char*)"5D7C0B6DB05073");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(iid_packet));
+    EXPECT_TRUE(iid_packet.is_valid);
+    EXPECT_EQ(dictionary.GetNumAircraft(), 1);
+}
+
 TEST(AircraftDictionary, MetricsToJSON) {
     AircraftDictionary::Metrics metrics = {.raw_squitter_frames = 10,
                                            .valid_squitter_frames = 7,

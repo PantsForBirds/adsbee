@@ -65,6 +65,8 @@ class DecodedModeSPacket {
    public:
     static const uint16_t kMaxPacketLenWords32 = RawModeSPacket::kMaxPacketLenWords32;
     static const uint16_t kDFNumBits = 5;  // [1-5] Downlink Format bitlength.
+    // Largest interrogator code a DF=11 PI field can be overlaid with: CL=4 (SI codes 48-63), IC=15.
+    static const uint32_t kAllCallReplyMaxInterrogatorCode = (4 << 4) | 0xF;
 
     // Bits 1-5: Downlink Format (DF)
     enum DownlinkFormat {
@@ -152,6 +154,8 @@ class DecodedModeSPacket {
     uint32_t CalculateCRC24(uint16_t packet_len_bits = RawModeSPacket::kExtendedSquitterPacketLenBits) const;
 
     bool is_valid = false;
+    // True if the packet's CRC can only be checked against a known ICAO address: DF=0,4,5,16,20,21 (address parity), or
+    // a DF=11 reply to an interrogator with a nonzero II/SI code. is_valid is set once the address is confirmed.
     bool is_address_parity = false;
     RawModeSPacket raw;
 
