@@ -98,3 +98,29 @@ TEST(UATDecoderTest, UplinkFrames) {
         EXPECT_TRUE(packet.is_valid);
     }
 }
+TEST(RawUATUplinkPacket, OversizedInputIsTruncated) {
+    // 600 bytes of hex: longer than a 552-byte uplink message. Must not write past encoded_message.
+    std::string hex(600 * 2, 'A');
+    RawUATUplinkPacket packet(hex.c_str(), -42, 3, 1234);
+    EXPECT_EQ(packet.encoded_message_len_bytes, RawUATUplinkPacket::kUplinkMessageNumBytes);
+    EXPECT_EQ(packet.sigs_dbm, -42);
+    EXPECT_EQ(packet.sigq_bits, 3);
+    EXPECT_EQ(packet.mlat_48mhz_64bit_counts, 1234u);
+
+    uint8_t big_buf[600];
+    memset(big_buf, 0xAA, sizeof(big_buf));
+    RawUATUplinkPacket packet2(big_buf, sizeof(big_buf), -42, 3, 1234);
+    EXPECT_EQ(packet2.encoded_message_len_bytes, RawUATUplinkPacket::kUplinkMessageNumBytes);
+    EXPECT_EQ(packet2.sigs_dbm, -42);
+    EXPECT_EQ(packet2.mlat_48mhz_64bit_counts, 1234u);
+}
+
+TEST(RawUATADSBPacket, OversizedInputIsTruncated) {
+    uint8_t big_buf[100];
+    memset(big_buf, 0x55, sizeof(big_buf));
+    RawUATADSBPacket packet(big_buf, sizeof(big_buf), -42, 3, 1234);
+    EXPECT_EQ(packet.buffer_len_bytes, RawUATADSBPacket::kADSBMessageMaxSizeBytes);
+    EXPECT_EQ(packet.sigs_dbm, -42);
+    EXPECT_EQ(packet.sigq_bits, 3);
+    EXPECT_EQ(packet.mlat_48mhz_64bit_counts, 1234u);
+}

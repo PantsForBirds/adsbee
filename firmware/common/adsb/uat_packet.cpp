@@ -8,6 +8,7 @@
 #include "fec.hh"
 #include "fixedmath/fixed_math.hpp"
 #include "geo_utils.hh"
+#include "macros.hh"  // for MIN
 #include "utils/buffer_utils.hh"  // for CHAR_TO_HEX
 
 const fixedmath::fixed_t kDegPerTrackAngleHeadingTick =
@@ -25,8 +26,8 @@ RawUATADSBPacket::RawUATADSBPacket(const char* rx_string, int16_t sigs_dbm_in, i
 RawUATADSBPacket::RawUATADSBPacket(uint8_t rx_buffer[kADSBMessageMaxSizeBytes], uint16_t rx_buffer_len_bytes,
                                    int16_t sigs_dbm_in, int16_t sigq_bits_in, uint64_t mlat_48mhz_64bit_counts_in)
     : sigs_dbm(sigs_dbm_in), sigq_bits(sigq_bits_in), mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
-    memcpy(buffer, rx_buffer, rx_buffer_len_bytes);
-    buffer_len_bytes = rx_buffer_len_bytes;
+    buffer_len_bytes = MIN(rx_buffer_len_bytes, kADSBMessageMaxSizeBytes);
+    memcpy(buffer, rx_buffer, buffer_len_bytes);
 }
 
 DecodedUATADSBPacket::DecodedUATADSBPacket(const char* rx_string, int32_t sigs_dbm, int32_t sigq_bits,
@@ -359,9 +360,8 @@ void DecodedUATADSBPacket::DecodeTargetState(uint8_t* data, UATTargetState& targ
 RawUATUplinkPacket::RawUATUplinkPacket(const char* rx_string, int16_t sigs_dbm_in, int16_t sigq_bits_in,
                                        uint64_t mlat_48mhz_64bit_counts_in)
     : sigs_dbm(sigs_dbm_in), sigq_bits(sigq_bits_in), mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
-    uint16_t rx_num_bytes =
-        strnlen(rx_string, kUplinkMessageNumBytes * kBytesPerWord * kNibblesPerByte) / kNibblesPerByte;
-    for (uint16_t i = 0; i < rx_num_bytes && i < kUplinkMessageNumBytes * kBytesPerWord; i++) {
+    uint16_t rx_num_bytes = strnlen(rx_string, kUplinkMessageNumBytes * kNibblesPerByte) / kNibblesPerByte;
+    for (uint16_t i = 0; i < rx_num_bytes && i < kUplinkMessageNumBytes; i++) {
         uint8_t byte = (CHAR_TO_HEX(rx_string[i * kNibblesPerByte]) << kBitsPerNibble) |
                        CHAR_TO_HEX(rx_string[i * kNibblesPerByte + 1]);
         encoded_message[i] = byte;
@@ -372,8 +372,8 @@ RawUATUplinkPacket::RawUATUplinkPacket(const char* rx_string, int16_t sigs_dbm_i
 RawUATUplinkPacket::RawUATUplinkPacket(uint8_t rx_buffer[kUplinkMessageNumBytes], uint16_t rx_buffer_len_bytes,
                                        int16_t sigs_dbm_in, int16_t sigq_bits_in, uint64_t mlat_48mhz_64bit_counts_in)
     : sigs_dbm(sigs_dbm_in), sigq_bits(sigq_bits_in), mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
-    memcpy(encoded_message, rx_buffer, rx_buffer_len_bytes);
-    encoded_message_len_bytes = rx_buffer_len_bytes;
+    encoded_message_len_bytes = MIN(rx_buffer_len_bytes, kUplinkMessageNumBytes);
+    memcpy(encoded_message, rx_buffer, encoded_message_len_bytes);
 }
 
 DecodedUATUplinkPacket::DecodedUATUplinkPacket(const char* rx_string, int32_t sigs_dbm, int32_t sigq_bits,
