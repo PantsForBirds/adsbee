@@ -1666,8 +1666,14 @@ bool AircraftDictionary::IngestModeSAltitudeReplyPacket(const ModeSAltitudeReply
     }
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert, packet.has_alert);
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent, packet.has_ident);
-    aircraft_ptr->baro_altitude_ft = packet.altitude_ft;
-    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
+    // An all zeros AC field means altitude not available, and bad Gillham codes decode to an error value. Don't report
+    // either one as a valid altitude.
+    if (packet.altitude_ft > kAltitudeDecodeErrorInvalid) {
+        aircraft_ptr->baro_altitude_ft = packet.altitude_ft;
+        aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
+    } else {
+        aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
+    }
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude, true);
     aircraft_ptr->IncrementNumFramesReceived(false);
 

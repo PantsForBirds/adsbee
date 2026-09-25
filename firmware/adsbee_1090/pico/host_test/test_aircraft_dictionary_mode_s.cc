@@ -617,6 +617,24 @@ TEST(AircraftDictionary, IngestAltitudeReply) {
     EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
 }
 
+TEST(AircraftDictionary, IngestAltitudeReplyAltitudeNotAvailable) {
+    AircraftDictionary dictionary = AircraftDictionary();
+    ModeSAircraft* aircraft_ptr = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0x7C1B28u));
+    ASSERT_TRUE(aircraft_ptr);
+    // DF=4 from 0x7C1B28 with a 10000ft altitude.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"200006A2DE8B1C");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft_ptr->baro_altitude_ft, 10000);
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+
+    // Same aircraft, AC field all zeros: altitude not available. Must not be reported as a valid altitude.
+    tpacket = DecodedModeSPacket((char*)"20000000FC7D77");
+    EXPECT_EQ(tpacket.icao_address, 0x7C1B28u);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_GT(aircraft_ptr->baro_altitude_ft, kAltitudeDecodeErrorInvalid);  // Error code was not written.
+}
+
 TEST(AircraftDictionary, IngestIdentityReply) {
     // Ingest a identity reply packet with an alert and ident.
     AircraftDictionary dictionary = AircraftDictionary();
