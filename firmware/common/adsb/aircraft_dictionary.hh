@@ -982,6 +982,15 @@ class AircraftDictionary {
     bool IngestModeSAltitudeReplyPacket(const ModeSAltitudeReplyPacket& packet);
 
     /**
+     * Ingests a DF=0 or DF=16 (ACAS air-air surveillance) reply and uses its vertical status and altitude to update the
+     * relevant aircraft. Exposed for testing, but usually called by IngestDecodedModeSPacket. The packet must be valid
+     * (i.e. its address parity already confirmed against the dictionary).
+     * @param[in] packet DecodedModeSPacket with DF=0 or DF=16 to ingest.
+     * @retval True if successful, false if something broke.
+     */
+    bool IngestModeSAirAirSurveillancePacket(const DecodedModeSPacket& packet);
+
+    /**
      * Ingests an All Call Reply packet and uses it to update the relevant aircraft. Exposed for testing, but usually
      * called by IngestDecodedModeSPacket.
      *

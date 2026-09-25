@@ -635,6 +635,56 @@ TEST(AircraftDictionary, IngestAltitudeReplyAltitudeNotAvailable) {
     EXPECT_GT(aircraft_ptr->baro_altitude_ft, kAltitudeDecodeErrorInvalid);  // Error code was not written.
 }
 
+TEST(AircraftDictionary, IngestAirAirSurveillanceAndCommBReplies) {
+    AircraftDictionary dictionary = AircraftDictionary();
+
+    // Address parity packets from an aircraft that isn't in the dictionary are dropped.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"020186A2FDD380");  // DF=0, 10000ft, airborne.
+    EXPECT_FALSE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(dictionary.GetNumAircraft(), 0);
+
+    ModeSAircraft* aircraft_ptr = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0x7C1B28u));
+    ASSERT_TRUE(aircraft_ptr);
+
+    // DF=0 (short air-air surveillance), VS=1 (on ground), AC=10000ft.
+    set_time_since_boot_ms(1000);
+    tpacket = DecodedModeSPacket((char*)"060186A25226CC");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(tpacket.is_valid);
+    EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft_ptr->baro_altitude_ft, 10000);
+    EXPECT_EQ(aircraft_ptr->last_message_timestamp_ms, 1000u);
+
+    // DF=0, VS=0 (airborne).
+    tpacket = DecodedModeSPacket((char*)"020186A2FDD380");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));
+
+    // DF=16 (long air-air surveillance), VS=0, AC=10000ft.
+    aircraft_ptr->baro_altitude_ft = 0;
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
+    tpacket = DecodedModeSPacket((char*)"800186A20000000000000065791D");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft_ptr->baro_altitude_ft, 10000);
+
+    // DF=20 (Comm-B altitude reply), FS=0 (airborne), AC=10000ft.
+    aircraft_ptr->baro_altitude_ft = 0;
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
+    set_time_since_boot_ms(2000);
+    tpacket = DecodedModeSPacket((char*)"A00006A2000000000000002CBC7D");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft_ptr->baro_altitude_ft, 10000);
+    EXPECT_EQ(aircraft_ptr->last_message_timestamp_ms, 2000u);
+
+    // DF=21 (Comm-B identity reply), same ID field as the DF=5 packet 2C0006A2DEE500.
+    tpacket = DecodedModeSPacket((char*)"A80006A200000000000000EF2BA6");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft_ptr->squawk, IdentityCodeToSquawk(0x6A2));
+}
+
 TEST(AircraftDictionary, IngestIdentityReply) {
     // Ingest a identity reply packet with an alert and ident.
     AircraftDictionary dictionary = AircraftDictionary();

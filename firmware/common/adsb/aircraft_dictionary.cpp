@@ -1558,13 +1558,20 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
     bool ingest_ret = false;
     uint16_t downlink_format = packet.downlink_format;
     switch (downlink_format) {
-        // Altitude Reply Packet.
+        // Altitude Reply Packet. DF=20 (Comm-B altitude reply) has the same FS, DR, UM and AC fields as DF=4.
         case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatAltitudeReply:
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommBAltitudeReply:
             ingest_ret = IngestModeSAltitudeReplyPacket(ModeSAltitudeReplyPacket(packet));
             break;
-        // Identity Reply Packet.
+        // Identity Reply Packet. DF=21 (Comm-B identity reply) has the same FS, DR, UM and ID fields as DF=5.
         case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatIdentityReply:
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommBIdentityReply:
             ingest_ret = IngestModeSIdentityReplyPacket(ModeSIdentityReplyPacket(packet));
+            break;
+        // ACAS air-air surveillance replies carry vertical status and altitude.
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatShortRangeAirToAirSurveillance:  // DF = 0
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatLongRangeAirToAirSurveillance:   // DF = 16
+            ingest_ret = IngestModeSAirAirSurveillancePacket(packet);
             break;
         case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatAllCallReply:  // DF = 11
             ingest_ret = IngestModeSAllCallReplyPacket(ModeSAllCallReplyPacket(packet));
@@ -1576,11 +1583,7 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
             // Handle ADS-B Packets.
             ingest_ret = IngestModeSADSBPacket(ModeSADSBPacket(packet));
             break;
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatShortRangeAirToAirSurveillance:  // DF = 0
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatLongRangeAirToAirSurveillance:   // DF = 16
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommBAltitudeReply:              // DF = 20
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommBIdentityReply:              // DF = 21
-        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommDExtendedLengthMessage:      // DF = 24
+        case DecodedModeSPacket::DownlinkFormat::kDownlinkFormatCommDExtendedLengthMessage:  // DF = 24
             // Silently handle currently unsupported downlink formats.
             ingest_ret = true;
             break;
@@ -1603,7 +1606,8 @@ bool AircraftDictionary::IngestModeSIdentityReplyPacket(const ModeSIdentityReply
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
         return false;
     }
-    if (packet.downlink_format != ModeSIdentityReplyPacket::kDownlinkFormatIdentityReply) {
+    if (packet.downlink_format != ModeSIdentityReplyPacket::kDownlinkFormatIdentityReply &&
+        packet.downlink_format != ModeSIdentityReplyPacket::kDownlinkFormatCommBIdentityReply) {
 #ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestModeSIdentityReplyPacket",
                         "Received Mode S packet with invalid downlink format %d, expected %d (Identity Reply).",
@@ -1629,7 +1633,9 @@ bool AircraftDictionary::IngestModeSIdentityReplyPacket(const ModeSIdentityReply
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert, packet.has_alert);
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent, packet.has_ident);
     aircraft_ptr->squawk = packet.squawk;
-    aircraft_ptr->IncrementNumFramesReceived(false);
+    aircraft_ptr->last_message_timestamp_ms = get_time_since_boot_ms();
+    aircraft_ptr->IncrementNumFramesReceived(packet.raw.buffer_len_bytes ==
+                                             RawModeSPacket::kExtendedSquitterPacketLenBytes);
 
     return true;
 }
@@ -1641,7 +1647,8 @@ bool AircraftDictionary::IngestModeSAltitudeReplyPacket(const ModeSAltitudeReply
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
         return false;
     }
-    if (packet.downlink_format != ModeSAltitudeReplyPacket::kDownlinkFormatAltitudeReply) {
+    if (packet.downlink_format != ModeSAltitudeReplyPacket::kDownlinkFormatAltitudeReply &&
+        packet.downlink_format != ModeSAltitudeReplyPacket::kDownlinkFormatCommBAltitudeReply) {
 #ifdef ADSB_VERBOSE_PACKET_WARNINGS
         CONSOLE_WARNING("AircraftDictionary::IngestModeSAltitudeReplyPacket",
                         "Received Mode S packet with invalid downlink format %d, expected %d (Altitude Reply).",
@@ -1675,7 +1682,42 @@ bool AircraftDictionary::IngestModeSAltitudeReplyPacket(const ModeSAltitudeReply
         aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
     }
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude, true);
-    aircraft_ptr->IncrementNumFramesReceived(false);
+    aircraft_ptr->last_message_timestamp_ms = get_time_since_boot_ms();
+    aircraft_ptr->IncrementNumFramesReceived(packet.raw.buffer_len_bytes ==
+                                             RawModeSPacket::kExtendedSquitterPacketLenBytes);
+
+    return true;
+}
+
+bool AircraftDictionary::IngestModeSAirAirSurveillancePacket(const DecodedModeSPacket& packet) {
+    if (!packet.is_valid) {
+        return false;
+    }
+    if (packet.downlink_format != DecodedModeSPacket::kDownlinkFormatShortRangeAirToAirSurveillance &&
+        packet.downlink_format != DecodedModeSPacket::kDownlinkFormatLongRangeAirToAirSurveillance) {
+        return false;
+    }
+
+    uint32_t uid = Aircraft::ICAOToUID(packet.icao_address, Aircraft::kAircraftTypeModeS);
+    ModeSAircraft* aircraft_ptr = GetAircraftPtr<ModeSAircraft>(uid);
+    if (aircraft_ptr == nullptr) {
+        return false;  // unable to find or create new aircraft in dictionary
+    }
+    // Bit 6 - Vertical Status (VS): 0 = airborne, 1 = on the ground.
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne,
+                               GetNBitsFromWordBuffer(1, 5, packet.raw.buffer) == 0);
+    // Bits 20-32 - Altitude Code (AC), same encoding as DF=4.
+    int32_t altitude_ft = AltitudeCodeToAltitudeFt(GetNBitsFromWordBuffer(13, 19, packet.raw.buffer));
+    if (altitude_ft > kAltitudeDecodeErrorInvalid) {
+        aircraft_ptr->baro_altitude_ft = altitude_ft;
+        aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
+    } else {
+        aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
+    }
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude, true);
+    aircraft_ptr->last_message_timestamp_ms = get_time_since_boot_ms();
+    aircraft_ptr->IncrementNumFramesReceived(packet.raw.buffer_len_bytes ==
+                                             RawModeSPacket::kExtendedSquitterPacketLenBytes);
 
     return true;
 }
