@@ -55,7 +55,12 @@ bool SettingsManager::Load() {
     if (bsp.has_eeprom) {
         // Load settings from external EEPROM.
         if (!eeprom.Load(settings)) {
-            CONSOLE_ERROR("settings.cc::Load", "Failed load settings from EEPROM.");
+            // A failed read can leave `settings` partially overwritten. Fall back to defaults in RAM so nothing
+            // downstream (Print(), the coprocessors) sees garbage, but don't persist them: the failure may be a
+            // transient I2C error, and the stored settings may still be intact for the next boot.
+            CONSOLE_ERROR("settings.cc::Load", "Failed load settings from EEPROM. Using defaults for this boot.");
+            ResetToDefaults();
+            Sanitize();
             return false;
         };
     } else {
@@ -150,7 +155,10 @@ bool SettingsManager::Save() {
     comms_manager.GetBaudRate(SerialInterface::kGNSSUART,
                               settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART]);
 
-    settings.core_network_settings.esp32_enabled = esp32.IsEnabled();
+    // An ESP32 disabled because its firmware update failed this boot is still meant to be enabled; don't persist that.
+    if (!esp32.firmware_update_failed) {
+        settings.core_network_settings.esp32_enabled = esp32.IsEnabled();
+    }
 
     settings.subg_enabled = adsbee.subg_radio_ll.IsEnabledState();
 
@@ -244,7 +252,11 @@ bool SettingsManager::Apply() {
                               settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART]);
 
     if (settings.core_network_settings.esp32_enabled) {
-        if (!esp32.IsEnabled()) {
+        if (esp32.firmware_update_failed) {
+            CONSOLE_ERROR("SettingsManager::Apply",
+                          "Not enabling ESP32: its firmware update failed this boot. Reboot to retry, or use "
+                          "AT+ESP32_FLASH.");
+        } else if (!esp32.IsEnabled()) {
             CONSOLE_INFO("SettingsManager::Apply", "Enabling ESP32.");
             success &= esp32.Init();
         }

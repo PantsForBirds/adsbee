@@ -537,6 +537,7 @@ CPP_AT_CALLBACK(CommsManager::ATESP32FlashCallback) {
         CPP_AT_ERROR("CommsManager::ATESP32FlashCallback", "Error while flashing ESP32.");
     }
 
+    esp32.firmware_update_failed = false;  // The ESP32 now runs this build's firmware.
     if (!esp32.Init()) {
         CPP_AT_ERROR("CommsManager::ATESP32FlashCallback", "Error while re-initializing ESP32 after flashing.");
     }
@@ -1829,7 +1830,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 3,
      .help_string = "AT+GNSS=enable: <0|1>[, type: <NONE|GENERIC|UBX_MIA>[,notify: <0|1>]]\r\n\tEnable or disable GNSS power, optionally "
-                    "select the GNSS type, and enable unsolicited AT notifications for when the GNSS fix becomes valid or invalid. Notify defaults to off. "
+                    "select the GNSS type, and enable GNSS_FIX log messages for when the GNSS fix becomes valid or invalid. Notify defaults to off. "
+                    "Notifications are INFO-level log messages: they only appear on the console with AT+LOG_LEVEL=INFO. "
+                    "Poll AT+GNSS_FIX? to read the fix programmatically. "
                     "Type is optional, when not present the last configured type is reused, default is NONE; GNSS cannot be enabled while the saved type is NONE."
                     "\r\n\tAT+GNSS?\r\n\tQuery the GNSS system state, type, and notification setting",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSCallback, comms_manager)},
