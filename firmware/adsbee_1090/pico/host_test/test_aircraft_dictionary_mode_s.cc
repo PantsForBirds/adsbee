@@ -420,7 +420,31 @@ TEST(AircraftDictionary, IngestAirbornePositionGNSSAltitude) {
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
     EXPECT_EQ(aircraft.altitude_source, ADSBTypes::AltitudeSource::kAltitudeSourceGNSS);
-    EXPECT_EQ(aircraft.gnss_altitude_ft, 8431);
+    // Altitude subfield is 0xA0A: Q=0, so it's Gillham coded like a barometric altitude (DO-260B 2.2.3.2.3.4.2). It
+    // used to be decoded as 2570 meters (8431ft).
+    EXPECT_EQ(aircraft.gnss_altitude_ft, GillhamToAltitudeFt(AltitudeCodeToGillham(0b1010000001010)));
+}
+
+TEST(AircraftDictionary, IngestAirbornePositionGNSSAltitudeQBit) {
+    AircraftDictionary dictionary = AircraftDictionary();
+    // DF=17, TC=20, altitude subfield 0xB50: Q=1, N=1440 -> 25 * 1440 - 1000 = 35000ft GNSS height. Decoding the
+    // subfield as meters would give 2896m (9501ft).
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEFA0B502468AABCD71F32A");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ModeSAircraft* aircraft = dictionary.GetAircraftPtr<ModeSAircraft>(
+        Aircraft::ICAOToUID(0xABCDEF, Aircraft::kAircraftTypeModeS));
+    ASSERT_NE(aircraft, nullptr);
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+    EXPECT_EQ(aircraft->altitude_source, ADSBTypes::AltitudeSource::kAltitudeSourceGNSS);
+    EXPECT_EQ(aircraft->gnss_altitude_ft, 35000);
+
+    // Same message with an all zeros altitude subfield: GNSS height not available.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEFA00002468AABCD37D5AC");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+    EXPECT_EQ(aircraft->altitude_source, ADSBTypes::AltitudeSource::kAltitudeSourceNotAvailable);
 }
 
 TEST(AircraftDictionary, IngestAirborneVelocityMessage) {

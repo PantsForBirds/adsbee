@@ -595,10 +595,19 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
             break;
         }
         case ModeSADSBPacket::TypeCode::kTypeCodeAirbornePositionGNSSAlt: {
-            altitude_source = ADSBTypes::kAltitudeSourceGNSS;
-            uint16_t gnss_altitude_m = static_cast<uint16_t>(packet.GetNBitWordFromMessage(12, 8));
-            gnss_altitude_ft = MetersToFeet(gnss_altitude_m);
-            WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, true);
+            // GNSS height (HAE) uses the same Q bit / Gillham encoding as barometric altitude, not meters.
+            // DO-260B 2.2.3.2.3.4.2.
+            int32_t temp_gnss_altitude_ft =
+                AC12ToAltitudeFt(static_cast<uint16_t>(packet.GetNBitWordFromMessage(12, 8)));
+            if (temp_gnss_altitude_ft > kAltitudeDecodeErrorInvalid) {
+                altitude_source = ADSBTypes::kAltitudeSourceGNSS;
+                gnss_altitude_ft = temp_gnss_altitude_ft;
+                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, true);
+            } else {
+                // All zeros (not available) or an invalid Gillham code.
+                altitude_source = ADSBTypes::kAltitudeSourceNotAvailable;
+                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, false);
+            }
             WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude, true);
             break;
         }

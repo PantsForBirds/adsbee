@@ -64,6 +64,16 @@ int32_t GillhamToAltitudeFt(uint16_t gillham_value);
 uint16_t AltitudeCodeToGillham(uint16_t altitude_code);
 
 /**
+ * Converts the 12-bit altitude subfield of an ADS-B Airborne Position Message (a Mode C altitude code with the M bit
+ * removed) into an altitude in feet. Barometric altitude (TYPE 9-18) and GNSS height (TYPE 20-22) share this encoding.
+ * DO-260B 2.2.3.2.3.4.2 and 2.2.3.2.3.4.3.
+ * @param[in] ac12 Altitude subfield, in the format (MSB to LSB):
+ *                              C1 A1 C2 A2 C4 A4 B1 Q(D1) B2 D2 B4 D4
+ * @retval Altitude in feet, or a value <= kAltitudeDecodeErrorInvalid if the altitude is unavailable or invalid.
+ */
+int32_t AC12ToAltitudeFt(uint16_t ac12);
+
+/**
  * Converts a Mode C (Surveillance Altitude Reply) AC field into an altitude in ft. Uses GillhamToAltitudeFt and
  * AltitudeCodeToGillham for regular Mode C replies, but also handles cases where the altitude reply is in metric or
  * 25ft increment units.
