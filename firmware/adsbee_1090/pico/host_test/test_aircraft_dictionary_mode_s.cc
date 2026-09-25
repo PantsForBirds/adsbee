@@ -566,6 +566,40 @@ TEST(AircraftDictionary, IngestAirborneVelocityMessageNotAvailable) {
     EXPECT_NEAR(aircraft->direction_deg, 90.0f, 0.01f);
 }
 
+
+TEST(AircraftDictionary, AirborneVelocityNACv) {
+    // NACv for airborne aircraft is ME[11-13] of the Airborne Velocity message (all ADS-B versions; NUCr in v0 maps
+    // one-for-one). DO-260C 2.2.3.2.6.1.5, N.2.3.8, Table N-26.
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft);
+
+    // DF17 TC=19 subtype 1, NACv=2 (< 3 m/s).
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEF9910650CB00400C4B984");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity, ADSBTypes::kHVELessThan3MetersPerSecond);
+
+    // DF18 CF=2 (fine TIS-B): ME[10-13] are NACp in TIS-B velocity messages (DO-260C 2.2.17.3.4.4), not NACv.
+    tpacket = DecodedModeSPacket((char*)"92ABCDEF9918650CB004005FB735");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity, ADSBTypes::kHVELessThan3MetersPerSecond);
+
+    // v2 airborne Operational Status with ME[33-35] = 110 (reserved): NACv from the velocity message is kept.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEFF8302036C0576A000000");
+    tpacket.is_valid = true;
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->adsb_version, 2);
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity, ADSBTypes::kHVELessThan3MetersPerSecond);
+
+    // NACv=0 (unknown or >= 10 m/s).
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB004006978EC");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity,
+              ADSBTypes::kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond);
+}
 TEST(AircraftDictionary, IngestAltitudeReply) {
     ModeSAircraft* aircraft_ptr;
     // Try ingesting a altitude reply packet that's marked as valid so that it doesn't require a cross-check with the
@@ -1469,12 +1503,12 @@ TEST(AircraftDictionary, OperationStatusMessageVersion1) {
 }
 
 TEST(AircraftDictionary, OperationStatusMessageVersion2) {
-    // Version 2 (DO-260B): GVA at ME[48-49]; SIL supplement at ME[54]; NACv in airborne OM ME[32-34].
+    // Version 2 (DO-260B): GVA at ME[48-49]; SIL supplement at ME[54]. Airborne OM ME[32-39] are reserved.
     // Packet byte layout (ICAO=0x123456, airborne ST=0):
     //   Byte 5  = 0x30: ME[10]=1 (TCAS Op), ME[11]=1 (1090ES In)
     //   Byte 6  = 0x20: ME[18]=1 (UAT In)
     //   Byte 7  = 0x36: ME[26]=1 (TCAS RA), ME[27]=1 (IDENT), ME[29]=1 (SingleAnt), ME[30]=1 (SDA=2)
-    //   Byte 8  = 0xC0: ME[32-34]=110 (NACv=6 = kHVELessThan10MetersPerSecond)
+    //   Byte 8  = 0xC0: ME[32-34]=110 (reserved in the v2 airborne OM, must not be read as NACv)
     //   Byte 9  = 0x57: ME[40-42]=010 (v2), ME[43]=1 (NICa), ME[44-47]=0111 (NACp=7)
     //   Byte 10 = 0x6A: ME[48-49]=01 (GVA=1 = <=150m), ME[50-51]=10 (SIL=2), ME[52]=1 (NICbaro), ME[54]=1 (SILs=1)
     //   Combined SIL: (SILs<<2)|SIL = (1<<2)|2 = 6 = kPOERCLessThanOrEqualTo1em5PerSample
@@ -1495,9 +1529,9 @@ TEST(AircraftDictionary, OperationStatusMessageVersion2) {
     // SIL 3-bit composite: (SILs<<2)|SIL = (1<<2)|2 = 6.
     EXPECT_EQ(aircraft.surveillance_integrity_level,
               ADSBTypes::kPOERCLessThanOrEqualTo1em5PerSample);
-    // NACv=6 from airborne OM ME[32-34] (v2 only).
+    // NACv is not carried by the airborne OM; it comes from the Airborne Velocity message. DO-260C Table N-26/N-27.
     EXPECT_EQ(aircraft.navigation_accuracy_category_velocity,
-              ADSBTypes::kHVELessThan10MetersPerSecond);
+              ADSBTypes::kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond);
     // NIC Baro set from ME[52].
     EXPECT_EQ(aircraft.navigation_integrity_category_baro,
               ADSBTypes::kBAIGillHamInputCrossCheckedOrNonGillhamSource);

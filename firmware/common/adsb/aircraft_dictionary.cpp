@@ -726,6 +726,16 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
 #endif                     // ADSB_VERBOSE_PACKET_WARNINGS
             return false;  // Don't attempt vertical rate decode if message type is invalid.
     }
+    // ME[11-13] - NACv (NUCr in version 0, mapped one-for-one to NACv). This is where NACv lives for airborne aircraft
+    // of every ADS-B version; the airborne Operational Status message doesn't carry it. DO-260C 2.2.3.2.6.1.5, N.2.3.8,
+    // Table N-26. TIS-B velocity messages carry NACp in these bits instead (DO-260C 2.2.17.3.4.4).
+    bool is_tisb = packet.downlink_format == ModeSADSBPacket::kDownlinkFormatExtendedSquitterNonTransponder &&
+                   (packet.ca_cf.code_format == 2 || packet.ca_cf.code_format == 5);
+    if (!is_tisb) {
+        navigation_accuracy_category_velocity =
+            static_cast<ADSBTypes::NACHorizontalVelocityError>(packet.GetNBitWordFromMessage(3, 10));
+    }
+
     // Latching bit flags. Don't report stale or placeholder values when the subfields are flagged as not available.
     WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid, direction_available);
     WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid, horizontal_speed_available);
@@ -819,7 +829,7 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
     // Three distinct formats exist depending on ADS-B version:
     //   v0 (DO-260): CC/OM are 4×4-bit group codes; ME[40-55] are all reserved.
     //   v1 (DO-260A): individual CC/OM flags; ME[40-55] carry NICa/NACp/BAQ/SIL/HRD.
-    //   v2 (DO-260B): same as v1 + GVA replaces BAQ, SIL supplement at ME[54], NACv in airborne OM.
+    //   v2 (DO-260B): same as v1 + GVA replaces BAQ, SIL supplement at ME[54].
     //
     // Version must be read first so all subsequent reads can be version-gated.
 
@@ -892,11 +902,9 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
             // Altitude Quality) which has a different encoding — do not store as GVA for v1.
             if (adsb_version >= 2) {
                 geometric_vertical_accuracy = static_cast<ADSBTypes::GVA>(packet.GetNBitWordFromMessage(2, 48));
-
-                // ME[32-34] - NACv in airborne OM (v2 only; reserved in v1).
-                navigation_accuracy_category_velocity =
-                    static_cast<ADSBTypes::NACHorizontalVelocityError>(packet.GetNBitWordFromMessage(3, 32));
             }
+            // ME[32-39] of the airborne OM are reserved in v2 and hold the CA Coordination Capability Bits in v3; NACv
+            // for airborne aircraft comes from the Airborne Velocity message. DO-260C Table 2-55, Table N-27.
 
             break;
         }

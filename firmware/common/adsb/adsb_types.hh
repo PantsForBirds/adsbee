@@ -79,7 +79,7 @@ class ADSBTypes {
 
     enum NACHorizontalVelocityError : uint8_t {
         kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond = 0b000,
-        kHVELessThan10MetersPerSecond = 0b110,
+        kHVELessThan10MetersPerSecond = 0b001,
         kHVELessThan3MetersPerSecond = 0b010,
         kHVELessThan1MeterPerSecond = 0b011,
         kHVELessThan0p3MetersPerSecond = 0b100
