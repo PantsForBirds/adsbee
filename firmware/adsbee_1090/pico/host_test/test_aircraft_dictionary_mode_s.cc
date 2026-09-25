@@ -283,12 +283,18 @@ TEST(ModeSAircraft, CalculateMaxAllowedCPRInterval) {
     aircraft.speed_kts = 0;
     EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kMaxCPRIntervalMs);
 
-    // Mid-speed aircraft = calculated CPR interval between max and min allowed.
+    // DO-260C 2.2.10.3.1: X = MIN(20, 10000 / V) seconds.
+    // Aircraft at or below 500kts = 20 seconds.
+    aircraft.speed_kts = 250;
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
     aircraft.speed_kts = 400;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
+    aircraft.speed_kts = 500;
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
 
     // Very fast aircraft = same equation, no minimum interval enforced.
     aircraft.speed_kts = 1000;
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 10000u);
     EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
 }
 

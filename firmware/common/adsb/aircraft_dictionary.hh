@@ -122,8 +122,9 @@ class ModeSAircraft : public Aircraft {
     // These variables define filter bounds for time between CPR packets. If the time between packets is greater than
     // the time delta limit, the old CPR packet is discarded and the CPR packet pair is not used for position decoding.
     static constexpr uint32_t kDefaultCPRIntervalMs = 10e3;  // CPR interval when starting from scratch or stale track.
-    static constexpr uint32_t kRefCPRIntervalMs = 19e3;      // Reference interval for rejecting CPR packet pairs.
-    static constexpr uint32_t kMaxCPRIntervalMs = 30e3;  // Never accept CPR packet pairs more than 30 seconds apart.
+    // DO-260C 2.2.10.3.1: even/odd airborne position pairs are accepted within MIN(20, 10000 / ground speed kts) seconds.
+    static constexpr uint32_t kRefCPRIntervalMs = 20e3;  // Reference interval for rejecting CPR packet pairs at 500kts.
+    static constexpr uint32_t kMaxCPRIntervalMs = 20e3;  // Never accept CPR packet pairs more than 20 seconds apart.
     static constexpr uint32_t kMaxTrackUpdateIntervalMs = 20e3;  // Tracks older than this are considered stale.
 
     static constexpr uint16_t kCallSignMaxNumChars = 8;
