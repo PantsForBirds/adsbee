@@ -285,7 +285,7 @@ bool ModeSAircraft::ApplySurfacePositionMessage(const ModeSADSBPacket& packet, u
     WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne, false);
 
     if (NICBitIsValid(ADSBTypes::kNICBitA) && NICBitIsValid(ADSBTypes::kNICBitC)) {
-        // Assign NIC based on NIC supplement bits A and C and received TypeCode.
+        // Assign NIC based on NIC supplement bits A (bit 0) and C (bit 2) and received TypeCode. DO-260C Table 2-11.
         switch ((packet.type_code << 3) | (nic_bits & 0b101)) {
             case (5 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan7p5Meters;
@@ -293,7 +293,7 @@ bool ModeSAircraft::ApplySurfacePositionMessage(const ModeSADSBPacket& packet, u
             case (6 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan25Meters;
                 break;
-            case (7 << 3) | 0b100:
+            case (7 << 3) | 0b001:  // NIC_A=1, NIC_C=0: RC < 75m
                 navigation_integrity_category = ADSBTypes::kROCLessThan75Meters;
                 break;
             case (7 << 3) | 0b000:
@@ -467,26 +467,32 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
     WriteNICBit(ADSBTypes::kNICBitB, packet.GetNBitWordFromMessage(1, 7));
 
     if (NICBitIsValid(ADSBTypes::kNICBitA) && NICBitIsValid(ADSBTypes::kNICBitB)) {
-        // Assign NIC based on NIC supplement bits A (bit 0) and B (bit 1) and received TypeCode.
-        switch ((type_code << 3) | (nic_bits & 0b011)) {
+        // Assign NIC based on NIC supplement bits A (bit 0) and B (bit 1) and received TypeCode. DO-260C Table 2-11.
+        // Version 1 has a single NIC supplement (NIC_A); ME[8] is the single antenna flag there, and NIC_A=1 selects
+        // the rows that need NIC_A=NIC_B=1 in later versions. DO-260C Table N-16.
+        uint8_t nic_ab = nic_bits & 0b011;
+        if (adsb_version == 1) {
+            nic_ab = (nic_bits & 0b001) ? 0b011 : 0b000;
+        }
+        switch ((type_code << 3) | nic_ab) {
             case (9 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan7p5Meters;
                 break;
             case (10 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan25Meters;
                 break;
-            case (11 << 3) | 0b010:  // NIC_B=1: RC < 75m
+            case (11 << 3) | 0b011:  // NIC_A=1, NIC_B=1: RC < 75m
                 navigation_integrity_category = ADSBTypes::kROCLessThan75Meters;
                 break;
-            case (11 << 3) | 0b000:  // NIC_B=0: RC < 0.1NM
+            case (11 << 3) | 0b000:  // NIC_A=0, NIC_B=0: RC < 0.1NM
                 navigation_integrity_category = ADSBTypes::kROCLessThan0p1NauticalMiles;
                 break;
             case (12 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan0p2NauticalMiles;
                 break;
-            case (13 << 3) | 0b000:  // NIC_A=0, NIC_B=0: RC < 0.3NM, but NIC value shared with <0.6NM.
-            case (13 << 3) | 0b010:  // NIC_A=0, NIC_B=1: RC < 0.5NM, but NIC value shared with <0.6NM.
-            case (13 << 3) | 0b001:  // NIC_A=1, NIC_B=0: RC < 0.6NM.
+            case (13 << 3) | 0b010:  // NIC_A=0, NIC_B=1: RC < 0.3NM, but NIC value shared with <0.6NM.
+            case (13 << 3) | 0b000:  // NIC_A=0, NIC_B=0: RC < 0.5NM, but NIC value shared with <0.6NM.
+            case (13 << 3) | 0b001:  // NIC_A=1, NIC_B=0: not defined, NIC 6 like the other TC=13 combinations.
             case (13 << 3) | 0b011:  // NIC_A=1, NIC_B=1: RC < 0.6NM.
                 navigation_integrity_category = ADSBTypes::kROCLessThan0p6NauticalMiles;
                 break;
@@ -496,10 +502,10 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
             case (15 << 3) | 0b000:
                 navigation_integrity_category = ADSBTypes::kROCLessThan2NauticalMiles;
                 break;
-            case (16 << 3) | 0b000:  // NIC_A=0: RC < 4NM
+            case (16 << 3) | 0b011:  // NIC_A=1, NIC_B=1: RC < 4NM
                 navigation_integrity_category = ADSBTypes::kROCLessThan4NauticalMiles;
                 break;
-            case (16 << 3) | 0b001:  // NIC_A=1: RC < 8NM
+            case (16 << 3) | 0b000:  // NIC_A=0, NIC_B=0: RC < 8NM
                 navigation_integrity_category = ADSBTypes::kROCLessThan8NauticalMiles;
                 break;
             case (17 << 3) | 0b000:
