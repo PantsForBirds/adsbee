@@ -1537,6 +1537,29 @@ TEST(AircraftDictionary, OperationStatusMessageVersion2) {
               ADSBTypes::kBAIGillHamInputCrossCheckedOrNonGillhamSource);
 }
 
+TEST(AircraftDictionary, OperationStatusMessageVersion3) {
+    // Version 3 (DO-260C): same as v2 except that airborne ME[52] (NICbaro in v1/v2) is reserved and ME[32-38] hold the
+    // CA Coordination Capability Bits. DO-260C Figure 2-12, Table 2-55.
+    // Same packet as the v2 test with the version number set to 3 (byte 9 = 0x77).
+    AircraftDictionary dictionary;
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8D123456F8302036C0776A000000");
+    tpacket.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ASSERT_EQ(dictionary.GetNumAircraft(), 1);
+    auto& aircraft = std::get<ModeSAircraft>(dictionary.dict.begin()->second);
+
+    EXPECT_EQ(aircraft.adsb_version, 3);
+    EXPECT_TRUE(aircraft.NICBitIsValid(ADSBTypes::kNICBitA));
+    EXPECT_EQ(aircraft.navigation_accuracy_category_position, ADSBTypes::kEPULessThan0p1NauticalMiles);
+    EXPECT_EQ(aircraft.geometric_vertical_accuracy, ADSBTypes::GVALessThanOrEqualTo150Meters);
+    EXPECT_EQ(aircraft.surveillance_integrity_level, ADSBTypes::kPOERCLessThanOrEqualTo1em5PerSample);
+    // ME[52] is reserved in v3: NICbaro keeps its default.
+    EXPECT_EQ(aircraft.navigation_integrity_category_baro, ADSBTypes::kBAIGillhamInputNotCrossChecked);
+    // CCCB bits are not NACv.
+    EXPECT_EQ(aircraft.navigation_accuracy_category_velocity,
+              ADSBTypes::kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond);
+}
+
 TEST(AircraftDictionary, OperationStatusSurfaceGPSAntennaOffset) {
     // Surface Operational Status (TC=31, ST=1, v2). The GPS antenna offset is ME[33-40]: 3 lateral bits followed by 5
     // longitudinal bits. DO-260B 2.2.3.2.7.2.4.7.

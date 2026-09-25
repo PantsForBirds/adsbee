@@ -830,6 +830,7 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
     //   v0 (DO-260): CC/OM are 4×4-bit group codes; ME[40-55] are all reserved.
     //   v1 (DO-260A): individual CC/OM flags; ME[40-55] carry NICa/NACp/BAQ/SIL/HRD.
     //   v2 (DO-260B): same as v1 + GVA replaces BAQ, SIL supplement at ME[54].
+    //   v3 (DO-260C): same as v2, but NICbaro (ME[52]) is reserved.
     //
     // Version must be read first so all subsequent reads can be version-gated.
 
@@ -893,9 +894,11 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
                 // ME[18] - UAT In
                 WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 18));
 
-                // ME[52] - NIC Baro
-                navigation_integrity_category_baro =
-                    static_cast<ADSBTypes::NICBarometricAltitudeIntegrity>(packet.GetNBitWordFromMessage(1, 52));
+                // ME[52] - NIC Baro (v1 and v2 only; reserved in v3). DO-260C Figure 2-12, 2.2.3.2.7.2.15.
+                if (adsb_version <= 2) {
+                    navigation_integrity_category_baro =
+                        static_cast<ADSBTypes::NICBarometricAltitudeIntegrity>(packet.GetNBitWordFromMessage(1, 52));
+                }
             }
 
             // ME[48-49]: GVA (Geometric Vertical Accuracy) in v2. In v1 this field is BAQ (Barometric
