@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adsbee-hil"
+version = "0.1.0"
+description = "Hardware-in-the-loop bench toolkit for ADSBee receivers"
+requires-python = ">=3.9"
+dependencies = [
+    "pyserial>=3.4",
+    "tomli>=1.1; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+pluto = ["pyadi-iio", "numpy"]
+ota = ["websockets>=12.0"]
+test = ["pytest"]
+
+[project.scripts]
+adsbee-hil = "adsbee_hil.cli:main"
+
+# Out-of-tree drivers register here, e.g. in another package's pyproject.toml:
+#   [project.entry-points."adsbee_hil.receivers"]
+#   my_model = "my_package.drivers:MyReceiver"
+#   [project.entry-points."adsbee_hil.transmitters"]
+#   my_generator = "my_package.drivers:MyTransmitter"
+
+[tool.setuptools]
+packages = ["adsbee_hil"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["hil: needs real hardware and a bench file (ADSBEE_HIL_CONFIG); skipped otherwise"]
