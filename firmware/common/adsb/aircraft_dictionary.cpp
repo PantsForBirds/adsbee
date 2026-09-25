@@ -910,14 +910,18 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
         case ModeSADSBPacket::OperationStatusSubtype::kOperationStatusSubtypeAirborne:  // ST = 0
         {
             if (adsb_version >= 1) {
-                // ME[10] - TCAS Operational
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASOperational, packet.GetNBitWordFromMessage(1, 10));
+                // ME[10] - TCAS Operational. Version 1 defined this bit as "Not-TCAS", so it maps inversely.
+                // DO-260C Table N-20.
+                bool tcas_bit = packet.GetNBitWordFromMessage(1, 10);
+                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASOperational, adsb_version == 1 ? !tcas_bit : tcas_bit);
 
                 // ME[14] - Air Referenced Velocity (ARV) Report Capability - Ignored
                 // ME[15] - Target State (TS) Report Capability - Ignored
                 // ME[16-17] - Trajectory Change (TC) Report Capability - Ignored
-                // ME[18] - UAT In
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 18));
+                // ME[18] - UAT In (v2+, not defined in v1).
+                if (adsb_version >= 2) {
+                    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 18));
+                }
 
                 // ME[52] - NIC Baro (v1 and v2 only; reserved in v3). DO-260C Figure 2-12, 2.2.3.2.7.2.15.
                 if (adsb_version <= 2) {
@@ -942,13 +946,16 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
                 // ME[14] - B2 Low
                 WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIsClassB2GroundVehicle,
                              packet.GetNBitWordFromMessage(1, 14));
-                // ME[15] - UAT In
-                WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 15));
-                // ME[16-18] - NACv
-                navigation_accuracy_category_velocity =
-                    static_cast<ADSBTypes::NACHorizontalVelocityError>(packet.GetNBitWordFromMessage(3, 16));
-                // ME[19] - NIC Supplement C
-                WriteNICBit(ADSBTypes::kNICBitC, packet.GetNBitWordFromMessage(1, 19));
+                // UAT In, NACv and NIC supplement C are not defined in the version 1 surface CC. DO-260C Table N-20.
+                if (adsb_version >= 2) {
+                    // ME[15] - UAT In
+                    WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn, packet.GetNBitWordFromMessage(1, 15));
+                    // ME[16-18] - NACv
+                    navigation_accuracy_category_velocity =
+                        static_cast<ADSBTypes::NACHorizontalVelocityError>(packet.GetNBitWordFromMessage(3, 16));
+                    // ME[19] - NIC Supplement C
+                    WriteNICBit(ADSBTypes::kNICBitC, packet.GetNBitWordFromMessage(1, 19));
+                }
 
                 // ME[20-23] Aircraft/Vehicle Length and Width Code
                 switch (packet.GetNBitWordFromMessage(4, 20)) {

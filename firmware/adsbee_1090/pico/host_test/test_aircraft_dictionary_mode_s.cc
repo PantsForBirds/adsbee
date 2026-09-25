@@ -1629,8 +1629,8 @@ TEST(AircraftDictionary, OperationStatusMessageVersion0) {
 TEST(AircraftDictionary, OperationStatusMessageVersion1) {
     // Version 1 (DO-260A): individual CC/OM flags; ME[48-49] = BAQ (different encoding from GVA).
     // Packet byte layout (ICAO=0x123456, airborne ST=0):
-    //   Byte 5  = 0x30: ME[10]=1 (TCAS Op), ME[11]=1 (1090ES In)
-    //   Byte 6  = 0x20: ME[18]=1 (UAT In)
+    //   Byte 5  = 0x30: ME[10]=1 (Not-TCAS in v1: TCAS not operational), ME[11]=1 (CDTI, same as 1090ES In)
+    //   Byte 6  = 0x20: ME[18]=1 (not defined in v1, not UAT In)
     //   Byte 7  = 0x36: ME[26]=1 (TCAS RA), ME[27]=1 (IDENT), ME[29]=1 (SingleAnt), ME[30]=1 (SDA=2)
     //   Byte 8  = 0x00: OM lower (NACv not present in v1 airborne)
     //   Byte 9  = 0x37: ME[40-42]=001 (v1), ME[43]=1 (NICa), ME[44-47]=0111 (NACp=7)
@@ -1658,11 +1658,40 @@ TEST(AircraftDictionary, OperationStatusMessageVersion1) {
     // NIC Baro set from ME[52].
     EXPECT_EQ(aircraft.navigation_integrity_category_baro,
               ADSBTypes::kBAIGillHamInputCrossCheckedOrNonGillhamSource);
-    // Flags from CC/OM.
+    // Flags from CC/OM. The v1 CC bit ME[10] is "Not-TCAS" and maps inversely; v1 has no UAT In bit. DO-260C Table
+    // N-20.
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHas1090ESIn));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASRA));
+    EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASOperational));
+    EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn));
+
+    // Not-TCAS = 0: TCAS operational.
+    tpacket = DecodedModeSPacket((char*)"8D123456F810203600376A000000");
+    tpacket.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASOperational));
-    EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn));
+}
+
+TEST(AircraftDictionary, OperationStatusSurfaceVersion1) {
+    // The version 1 surface CC has no UAT In, NACv or NIC supplement C (DO-260C Table N-20).
+    // Byte 6 = 0x50: ME[16-18]=010 (NACv=2 in v2+), ME[19]=1 (NIC_C in v2+). Byte 9: version 1 (0x20) / 2 (0x40).
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0x123456u));
+    ASSERT_TRUE(aircraft);
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8D123456F9005000002000000000");
+    tpacket.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->adsb_version, 1);
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity,
+              ADSBTypes::kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond);
+    EXPECT_FALSE(aircraft->NICBitIsValid(ADSBTypes::kNICBitC));
+
+    tpacket = DecodedModeSPacket((char*)"8D123456F9005000004000000000");
+    tpacket.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->adsb_version, 2);
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity, ADSBTypes::kHVELessThan3MetersPerSecond);
+    EXPECT_TRUE(aircraft->NICBitIsValid(ADSBTypes::kNICBitC));
 }
 
 TEST(AircraftDictionary, OperationStatusMessageVersion2) {
