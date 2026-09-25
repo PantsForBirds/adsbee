@@ -58,6 +58,10 @@ ADSBTypes::DirectionType DecodedUATADSBPacket::HorizontalVelocityToDirectionDegA
             }
             CalculateTrackAndSpeedFromNEVelocities(north_velocity_kts, east_velocity_kts, direction_deg_ref,
                                                    speed_kts_ref);
+            if (north_velocity_kts == 0 && east_velocity_kts == 0) {
+                // Speed is a valid 0 kts, but the track angle of a zero velocity vector is undefined.
+                return ADSBTypes::kDirectionTypeNotAvailable;
+            }
             return ADSBTypes::kDirectionTypeTrueTrackAngle;
         } break;
         case ADSBTypes::kAirGroundStateOnGround: {

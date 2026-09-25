@@ -127,25 +127,23 @@ TEST(UATDecoderTest, DownlinkFrames) {
 
             EXPECT_EQ(aircraft.HasBitFlag(UATAircraft::kBitFlagIsAirborne), (frame->airground_state & 0b10) == 0);
 
-            if (frame->airground_state & 0b1) {
-                // Aircraft is on ground. Reporting heading and ground speed.
+            if (frame->airground_state == 2) {
+                // Aircraft is on ground: ground speed and track/heading are independent subfields.
+                EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagUpdatedHorizontalSpeed));
+                EXPECT_EQ(aircraft.HasBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid), frame->speed_valid != 0);
+                if (frame->speed_valid) {
+                    EXPECT_EQ(aircraft.speed_kts, frame->speed);
+                }
 
-                // WARNING: This test case doesn't get reached in the current data.
-                EXPECT_TRUE(false);
-
-                // Ground speed and heading format (aircraft on ground).
-                EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid));
-                EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagUpdatedHorizontalSpeed));
-
-                EXPECT_EQ(aircraft.speed_kts, frame->speed);
-
-                EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid));
                 EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagUpdatedDirection));
+                if (frame->track_type != UAT_TT_INVALID) {
+                    EXPECT_NEAR(aircraft.direction_deg, frame->track, 1.0f);  // Test data is rounded down.
+                }
 
-                EXPECT_NEAR(aircraft.direction_deg, frame->track, 0.5f);  // Test data is rounded.
-
-                // TODO: Check length/width code.
-
+                if (frame->dimensions_valid) {
+                    EXPECT_EQ(aircraft.length_m, frame->length);
+                    EXPECT_NEAR(aircraft.width_m, frame->width, 0.5);  // Half-meter widths are rounded up.
+                }
             } else if (frame->ns_vel_valid && frame->ew_vel_valid) {
                 // Airborne. Track provided in North Velocity + East Velocity format.
                 EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid));
@@ -153,11 +151,15 @@ TEST(UATDecoderTest, DownlinkFrames) {
 
                 EXPECT_EQ(aircraft.speed_kts, frame->speed);
 
-                EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid));
+                // A zero velocity vector has no track (dump978 reports track type invalid).
+                EXPECT_EQ(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid),
+                          frame->track_type != UAT_TT_INVALID);
                 EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionIsHeading));
                 EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagUpdatedDirection));
 
-                EXPECT_NEAR(aircraft.direction_deg, frame->track, 0.5f);  // Test data is rounded.
+                if (frame->track_type != UAT_TT_INVALID) {
+                    EXPECT_NEAR(aircraft.direction_deg, frame->track, 0.5f);  // Test data is rounded.
+                }
 
                 // Vertical speed
                 switch (frame->vert_rate_source) {
@@ -204,7 +206,7 @@ TEST(UATDecoderTest, DownlinkFrames) {
                     break;
                 case UAT_TT_TRUE_HEADING:
                     EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid));
-                    EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionIsHeading));
+                    EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionIsHeading));
                     EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagHeadingUsesMagneticNorth));
                     break;
                 default:

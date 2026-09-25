@@ -1188,51 +1188,44 @@ bool UATAircraft::ApplyUATADSBStateVector(const DecodedUATADSBPacket::UATStateVe
     WriteBitFlag(BitFlag::kBitFlagUpdatedHorizontalSpeed, true);
 
     // Parse direction type and use it to set flags.
-    bool received_valid_hvel_data = false;
+    bool direction_valid = false;
     switch (direction_type) {
         case ADSBTypes::kDirectionTypeTrueTrackAngle:
             WriteBitFlag(BitFlag::kBitFlagDirectionIsHeading, false);
             WriteBitFlag(BitFlag::kBitFlagHeadingUsesMagneticNorth, false);
 
-            received_valid_hvel_data = true;
+            direction_valid = true;
             break;
         case ADSBTypes::kDirectionTypeMagneticHeading:
             WriteBitFlag(BitFlag::kBitFlagDirectionIsHeading, true);
             WriteBitFlag(BitFlag::kBitFlagHeadingUsesMagneticNorth, true);
 
-            received_valid_hvel_data = true;
+            direction_valid = true;
             break;
         case ADSBTypes::kDirectionTypeTrueHeading:
             WriteBitFlag(BitFlag::kBitFlagDirectionIsHeading, true);
             WriteBitFlag(BitFlag::kBitFlagHeadingUsesMagneticNorth, false);
 
-            received_valid_hvel_data = true;
+            direction_valid = true;
             break;
         default:
             // Heading not available.
-            WriteBitFlag(BitFlag::kBitFlagDirectionValid, false);
-            WriteBitFlag(BitFlag::kBitFlagDirectionValid, false);
-
-            received_valid_hvel_data = false;
+            direction_valid = false;
     }
-    WriteBitFlag(BitFlag::kBitFlagDirectionValid, received_valid_hvel_data);
-    WriteBitFlag(BitFlag::kBitFlagHorizontalSpeedValid, received_valid_hvel_data);
+    WriteBitFlag(BitFlag::kBitFlagDirectionValid, direction_valid);
+    // Speed validity is independent of the direction: on the ground, speed and track/heading are separate subfields
+    // with their own "not available" encodings, and airborne zero velocity has a speed but no track.
+    WriteBitFlag(BitFlag::kBitFlagHorizontalSpeedValid, speed_kts != INT32_MIN);
 
     if (ag_state == ADSBTypes::kAirGroundStateOnGround) {
         // Parse AV dimensions.
         int16_t width_m_temp;
         int16_t length_m_temp;
-        switch (DecodedUATADSBPacket::DecodeAVDimensions(state_vector.aircraft_length_width_code, width_m_temp,
-                                                         length_m_temp)) {
-            case ADSBTypes::kAVDimensionsTypeAVLengthWidth:
-                width_m = width_m_temp;
-                length_m = length_m_temp;
-                break;
-            case ADSBTypes::kAVDimensionsTypeGNSSSensorOffset:
-                gnss_antenna_offset_forward_of_reference_point_m = length_m_temp;
-                gnss_antenna_offset_right_of_reference_point_m = width_m_temp;
-                break;
-        }
+        // The return value only reflects the Position Offset Applied flag; the field always carries the A/V length
+        // and width code (UAT Tech Manual Tables 2-34 to 2-36), never a GNSS antenna offset.
+        DecodedUATADSBPacket::DecodeAVDimensions(state_vector.aircraft_length_width_code, width_m_temp, length_m_temp);
+        width_m = width_m_temp;
+        length_m = length_m_temp;
     } else {
         // Parse vertical rate.
         int32_t vertical_rate_fpm_temp;

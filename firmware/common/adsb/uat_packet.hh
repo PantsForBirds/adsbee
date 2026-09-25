@@ -147,7 +147,9 @@ class DecodedUATADSBPacket {
     /**
      * Calculates the aircraft track from north/east velocity contained in the horizontal_velocity and air_ground_state
      * fields. If horizontal velocity info is not available, track is set to 0.0f, speed is set to INT32_MIN, and
-     * returned direction is set to kDirectionTypeNotAvailable.
+     * returned direction is set to kDirectionTypeNotAvailable. Speed and direction are independent: speed can be valid
+     * while the direction is not available (airborne zero velocity, or on-ground track type 0), and on the ground the
+     * direction can be valid while speed is not (speed_kts_ref = INT32_MIN).
      * @param[in] horizontal_velocity Horizontal velocity in the state vector, in kts.
      * @param[in] air_ground_state Air-ground state from the UAT state vector.
      * @param[out] direction_deg_ref Output parameter for the calculated direction in degrees.
@@ -173,13 +175,14 @@ class DecodedUATADSBPacket {
                                                                            int32_t& vertical_rate_fpm_ref);
 
     /**
-     * Decodes either the Aircraft / Vehicle length and width or GNSS sensor position offset from the Aircraft/Vehicle
-     * field that is transmitted in place of vertical rate while the aircraft is on the ground.
+     * Decodes the Aircraft / Vehicle length and width code from the A/V size field that is transmitted in place of
+     * vertical rate while the aircraft is on the ground (UAT Tech Manual Tables 2-34 to 2-36).
      * @param[in] av_dimensions_encoded Encoded Aircraft/Vehicle field.
      * @param[out] width_m_ref Reference that gets set to the decoded width.
      * @param[out] length_m_ref Reference that gets set to the decoded length.
-     * @retval AVDimensionsType that indicates whether the decoded dimensions were AV size or AV GNSS sensor offset
-     * position.
+     * @retval kAVDimensionsTypeGNSSSensorOffset if the Position Offset Applied (POA) bit is set, i.e. the reported
+     * position has been normalized from the GNSS antenna to the ADS-B reference point, kAVDimensionsTypeAVLengthWidth
+     * otherwise. The decoded width / length are the A/V dimensions in both cases.
      */
     static ADSBTypes::AVDimensionsType DecodeAVDimensions(uint32_t av_dimensions_encoded, int16_t& width_m_ref,
                                                           int16_t& length_m_ref);

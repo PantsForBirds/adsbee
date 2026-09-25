@@ -132,3 +132,113 @@ TEST(UATStateVector, PositionFilterAcceptsEquatorCrossing) {
     EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagUpdatedPosition));
     EXPECT_NEAR(aircraft.latitude_deg, -0.0005, 2 * kAWB24ResolutionDeg);
 }
+
+namespace {
+// A/G state values (Table 2-16).
+const uint8_t kAGAirborneSubsonic = 0;
+const uint8_t kAGOnGround = 2;
+
+// Ground "Track Angle/Heading" subfield (Table 2-27): 2-bit type then 9-bit angle (360/512 deg per LSB).
+uint16_t GroundTrack(uint8_t type, uint16_t angle_ticks) { return (type << 9) | (angle_ticks & 0x1FF); }
+
+// "A/V Length and Width" form of the vertical velocity field (Table 2-34): 4-bit L/W code, 1-bit POA, 6 reserved.
+uint16_t AVSize(uint8_t lw_code, bool poa) { return (lw_code << 7) | (poa << 6); }
+}  // namespace
+
+TEST(UATStateVector, OnGroundSpeedWithoutTrack) {
+    // Ground speed is independent of the Track Angle/Heading subfield: a surface target may report a speed with the
+    // track type "not available" (common for vehicles and stationary aircraft).
+    AircraftDictionary dictionary;
+    UATStateVectorFields f;
+    f.air_ground_state = kAGOnGround;
+    f.north_velocity_or_ground_speed = 11;  // 10 kts.
+    f.east_velocity_or_track = GroundTrack(0, 0);
+    UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
+    EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagIsAirborne));
+    EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid));
+    EXPECT_EQ(aircraft.speed_kts, 10);
+    EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid));
+}
+
+TEST(UATStateVector, OnGroundTrackWithoutSpeed) {
+    // "Ground speed not available" (0) with a valid true track: direction is valid, speed must not be (it would
+    // otherwise be reported as INT32_MIN knots).
+    AircraftDictionary dictionary;
+    UATStateVectorFields f;
+    f.air_ground_state = kAGOnGround;
+    f.north_velocity_or_ground_speed = 0;
+    f.east_velocity_or_track = GroundTrack(ADSBTypes::kDirectionTypeTrueTrackAngle, 128);  // 90 deg.
+    UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
+    EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid));
+    EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid));
+    EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionIsHeading));
+    EXPECT_NEAR(aircraft.direction_deg, 90.0f, 0.01f);
+}
+
+TEST(UATStateVector, OnGroundHeadingTypes) {
+    const struct {
+        uint8_t type;
+        bool is_heading;
+        bool magnetic;
+    } cases[] = {{ADSBTypes::kDirectionTypeTrueTrackAngle, false, false},
+                 {ADSBTypes::kDirectionTypeMagneticHeading, true, true},
+                 {ADSBTypes::kDirectionTypeTrueHeading, true, false}};
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.type);
+        AircraftDictionary dictionary;
+        UATStateVectorFields f;
+        f.air_ground_state = kAGOnGround;
+        f.north_velocity_or_ground_speed = 6;                    // 5 kts.
+        f.east_velocity_or_track = GroundTrack(c.type, 256 + 64);  // 225 deg.
+        UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
+        EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid));
+        EXPECT_EQ(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionIsHeading), c.is_heading);
+        EXPECT_EQ(aircraft.HasBitFlag(UATAircraft::kBitFlagHeadingUsesMagneticNorth), c.magnetic);
+        EXPECT_NEAR(aircraft.direction_deg, 225.0f, 0.01f);
+        EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid));
+        EXPECT_EQ(aircraft.speed_kts, 5);
+    }
+}
+
+TEST(UATStateVector, OnGroundDimensionsWithPositionOffsetApplied) {
+    // The POA bit (Table 2-36) only says the reported position was normalized to the ADS-B reference point. The field
+    // still carries the A/V length/width code (Table 2-35), never a GNSS antenna offset.
+    for (bool poa : {false, true}) {
+        SCOPED_TRACE(poa ? "POA=1" : "POA=0");
+        AircraftDictionary dictionary;
+        UATStateVectorFields f;
+        f.air_ground_state = kAGOnGround;
+        f.vertical_velocity_or_av_size = AVSize(5, poa);  // 25 < L <= 35 m, 33 < W <= 38 m.
+        UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
+        EXPECT_EQ(aircraft.length_m, 35);
+        EXPECT_EQ(aircraft.width_m, 38);
+        EXPECT_EQ(aircraft.gnss_antenna_offset_forward_of_reference_point_m, 0);
+        EXPECT_EQ(aircraft.gnss_antenna_offset_right_of_reference_point_m, 0);
+    }
+}
+
+TEST(UATStateVector, AirborneZeroVelocityHasNoTrack) {
+    // N/S and E/W velocity both "zero" (encoded 1): speed is 0 kts and valid, but the track angle is undefined.
+    AircraftDictionary dictionary;
+    UATStateVectorFields f;
+    f.air_ground_state = kAGAirborneSubsonic;
+    f.north_velocity_or_ground_speed = 1;
+    f.east_velocity_or_track = 1;
+    UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
+    EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid));
+    EXPECT_EQ(aircraft.speed_kts, 0);
+    EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid));
+}
+
+TEST(UATStateVector, AirborneVelocitySigns) {
+    // N/S sign 1 = south, E/W sign 1 = west (Tables 2-20, 2-25). 100 kts south + 100 kts west = track 225.
+    AircraftDictionary dictionary;
+    UATStateVectorFields f;
+    f.air_ground_state = kAGAirborneSubsonic;
+    f.north_velocity_or_ground_speed = (1 << 10) | 101;
+    f.east_velocity_or_track = (1 << 10) | 101;
+    UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
+    EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid));
+    EXPECT_NEAR(aircraft.direction_deg, 225.0f, 0.1f);
+    EXPECT_NEAR(aircraft.speed_kts, 141, 1);
+}
