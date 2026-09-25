@@ -239,7 +239,9 @@ void DecodedModeSPacket::ConstructModeSPacket() {
         case kDownlinkFormatAllCallReply:  // DF = 11
         {
             icao_address = Get24BitsFromWordBuffer(8, raw.buffer);
-            uint16_t interrogator_id = parity_value ^ calculated_checksum;
+            // The interrogator ID is the full 24-bit syndrome. Truncating it would accept corrupted packets whose
+            // syndrome happens to only have bits set above the truncation point.
+            uint32_t interrogator_id = parity_value ^ calculated_checksum;
             if (interrogator_id == 0) {
                 // Reply to a spontaneous acquisition squitter.
                 is_valid = true;

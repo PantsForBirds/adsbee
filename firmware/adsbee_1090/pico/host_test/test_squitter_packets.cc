@@ -85,3 +85,13 @@ TEST(ModeSAllCallReplyPacket, JasonPlaynePackets) {
     packet = ModeSAllCallReplyPacket(DecodedModeSPacket((const char*)"5D7C0B6DB05075"));
     EXPECT_FALSE(packet.is_valid);
 }
+TEST(ModeSAllCallReplyPacket, RejectSyndromeAboveInterrogatorIDBits) {
+    // Valid DF=11 (5D7C0B6DB05076) with the parity field XORed with 0x010000, and with 0xAB0000. The syndrome has no
+    // bits set in its lower 16 bits, so it must not be mistaken for an interrogator ID of 0.
+    DecodedModeSPacket packet = DecodedModeSPacket((const char*)"5D7C0B6DB15076");
+    EXPECT_EQ(packet.crc_syndrome, 0x010000u);
+    EXPECT_FALSE(packet.is_valid);
+    packet = DecodedModeSPacket((const char*)"5D7C0B6D1B5076");
+    EXPECT_EQ(packet.crc_syndrome, 0xAB0000u);
+    EXPECT_FALSE(packet.is_valid);
+}
