@@ -115,6 +115,14 @@ TEST(UATDecoderTest, DownlinkFrames) {
             // Check NIC
             EXPECT_EQ(aircraft.navigation_integrity_category, frame->nic);
 
+            // Byte 17 bits 5-8: UTC coupled flag (ADS-B) or TIS-B site ID (address qualifier 2 or 3).
+            if (frame->address_qualifier == UATAircraft::kTISBTargetWithICAO24BitAddress ||
+                frame->address_qualifier == UATAircraft::kTISBTargetWithTrackFileIdentifier) {
+                EXPECT_EQ(aircraft.tis_b_site_id, frame->tisb_site_id);
+            } else {
+                EXPECT_EQ(aircraft.utc_coupled, frame->utc_coupled != 0);
+            }
+
             // Check Air/Ground State and Horizontal Velocity
 
             EXPECT_EQ(aircraft.HasBitFlag(UATAircraft::kBitFlagIsAirborne), (frame->airground_state & 0b10) == 0);

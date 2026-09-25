@@ -203,7 +203,9 @@ class DecodedUATADSBPacket {
             uint16_t vertical_velocity          : 11;
             uint16_t aircraft_length_width_code : 11;
         };
-        bool utc_coupled_or_tis_b_site_id : 5;  // True if UTC is coupled, false if not.
+        // Byte 17 bits 5-8. ADS-B targets: MSB is the UTC coupled flag, other bits reserved. TIS-B targets (address
+        // qualifier 2 or 3): 4-bit TIS-B site ID. Must not be a bool: that would collapse every non-zero value to 1.
+        uint8_t utc_coupled_or_tis_b_site_id : 4;
     };
 
     struct __attribute__((packed)) UATModeStatus {
