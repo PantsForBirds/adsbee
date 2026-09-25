@@ -1283,15 +1283,27 @@ bool UATAircraft::ApplyUATADSBModeStatus(const DecodedUATADSBPacket::UATModeStat
     callsign_temp[7] = LookupUATCallsignChar(temp);
 
     if (mode_status.csid) {
-        // Callsign field encodes an ID (alphanumerica callsign).
-        strncpy(callsign, callsign_temp, UATAircraft::kCallSignMaxNumChars);
-        callsign[UATAircraft::kCallSignMaxNumChars] = '\0';
+        // Callsign field encodes an ID (alphanumerica callsign). A leading '\0' means the characters were "not
+        // available" (base-40 code 37, sent in all 8 positions when there is no call sign) or reserved: keep the last
+        // known callsign instead of blanking it.
+        if (callsign_temp[0] != '\0') {
+            strncpy(callsign, callsign_temp, UATAircraft::kCallSignMaxNumChars);
+            callsign[UATAircraft::kCallSignMaxNumChars] = '\0';
+        }
     } else {
-        // Callsign field encodes a squawk code.
-        squawk = 0;
+        // Callsign field encodes a squawk code (flight plan ID). Only accept it if the first four characters are
+        // octal digits, otherwise it isn't a Mode 3/A code.
+        uint16_t squawk_temp = 0;
+        bool squawk_valid = true;
         for (uint16_t i = 0; i < kSquawkNumDigits; i++) {
-            squawk *= 10;
-            squawk += (callsign_temp[i] - '0');
+            if (callsign_temp[i] < '0' || callsign_temp[i] > '7') {
+                squawk_valid = false;
+                break;
+            }
+            squawk_temp = squawk_temp * 10 + (callsign_temp[i] - '0');
+        }
+        if (squawk_valid) {
+            squawk = squawk_temp;
         }
     }
 

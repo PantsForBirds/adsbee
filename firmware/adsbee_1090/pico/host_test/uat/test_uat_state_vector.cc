@@ -242,3 +242,63 @@ TEST(UATStateVector, AirborneVelocitySigns) {
     EXPECT_NEAR(aircraft.direction_deg, 225.0f, 0.1f);
     EXPECT_NEAR(aircraft.speed_kts, 141, 1);
 }
+
+namespace {
+// Base-40 digit for a callsign character (Table 2-41). ' ' = 36; '\x25' (37) = "not available".
+uint16_t B40(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+    if (c == ' ') return 36;
+    return 37;
+}
+
+// Builds and FEC-encodes a long payload type 1 message (HDR | SV | MS | AUX SV) with the given 8-character callsign
+// field and CSID bit. The state vector is left "not available".
+DecodedUATADSBPacket BuildModeStatusPacket(uint32_t address, uint8_t emitter_category, const char callsign[8],
+                                           bool csid) {
+    uint8_t buf[RawUATADSBPacket::kLongADSBMessageNumBytes] = {0};
+    SetBits(buf, 0, 5, 1);  // Payload type 1.
+    SetBits(buf, 8, 24, address);
+    const uint32_t ms = 17 * 8;  // Mode Status starts at payload byte 18.
+    SetBits(buf, ms + 0, 16, emitter_category * 1600 + B40(callsign[0]) * 40 + B40(callsign[1]));
+    SetBits(buf, ms + 16, 16, B40(callsign[2]) * 1600 + B40(callsign[3]) * 40 + B40(callsign[4]));
+    SetBits(buf, ms + 32, 16, B40(callsign[5]) * 1600 + B40(callsign[6]) * 40 + B40(callsign[7]));
+    SetBits(buf, ms + 78, 1, csid);
+    uat_rs.EncodeLongADSBMessage(buf);
+    return DecodedUATADSBPacket(RawUATADSBPacket(buf, sizeof(buf)));
+}
+}  // namespace
+
+TEST(UATModeStatus, CallsignNotAvailableKeepsLastCallsign) {
+    AircraftDictionary dictionary;
+    UATAircraft aircraft = IngestAndGet(dictionary, BuildModeStatusPacket(0x123456, 1, "N12345  ", true));
+    EXPECT_STREQ(aircraft.callsign, "N12345  ");
+    EXPECT_EQ(aircraft.emitter_category, ADSBTypes::kEmitterCategoryLight);
+
+    // All eight characters = base-40 digit 37 means "call sign not available" (§3.2.1.5.4.2); that must not blank
+    // out the callsign we already know.
+    const char kNotAvailable[8] = {'\x25', '\x25', '\x25', '\x25', '\x25', '\x25', '\x25', '\x25'};
+    aircraft = IngestAndGet(dictionary, BuildModeStatusPacket(0x123456, 1, kNotAvailable, true));
+    EXPECT_STREQ(aircraft.callsign, "N12345  ");
+}
+
+TEST(UATModeStatus, SquawkFromFlightPlanID) {
+    AircraftDictionary dictionary;
+    UATAircraft aircraft = IngestAndGet(dictionary, BuildModeStatusPacket(0x654321, 0, "1200    ", false));
+    EXPECT_EQ(aircraft.squawk, 1200);
+
+    // A non-numeric flight plan ID must not be turned into a bogus squawk.
+    aircraft = IngestAndGet(dictionary, BuildModeStatusPacket(0x654321, 0, "12A4    ", false));
+    EXPECT_EQ(aircraft.squawk, 1200);
+}
+
+TEST(UATStateVector, AltitudeAboveMaxIsFiniteAndValid) {
+    // Altitude code 4095 means "> 101,337.5 ft" (Table 2-14). It used to decode to INT32_MAX and was stored as a valid
+    // altitude of 2147483647 ft.
+    AircraftDictionary dictionary;
+    UATStateVectorFields f;
+    f.altitude_encoded = 4095;
+    UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
+    EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft.baro_altitude_ft, 101350);
+}

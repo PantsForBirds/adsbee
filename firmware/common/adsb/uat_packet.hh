@@ -100,9 +100,9 @@ class DecodedUATADSBPacket {
     static inline int32_t AltitudeEncodedToAltitudeFt(uint16_t altitude_encoded) {
         if (altitude_encoded == 0) {
             return INT32_MIN;  // Invalid altitude.
-        } else if (altitude_encoded == 4095) {
-            return INT32_MAX;  // Maximum altitude (greater than 101,350 ft).
         }
+        // Code 4095 means "> 101,337.5 ft" (UAT Tech Manual Table 2-14). Report it as the bucket's nominal value,
+        // 101,350 ft (same as dump978), rather than a sentinel that would be stored and reported as a real altitude.
         return 25 * (altitude_encoded - 1) - 1000;  // Convert to feet.
     };
 

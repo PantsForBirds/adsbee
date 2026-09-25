@@ -425,7 +425,7 @@ TEST(DecodedUATADSBPacket, AltitudeEncodedToAltitudeFt) {
     ASSERT_EQ(DecodedUATADSBPacket::AltitudeEncodedToAltitudeFt(41), 0);
     ASSERT_EQ(DecodedUATADSBPacket::AltitudeEncodedToAltitudeFt(42), 25);
     ASSERT_EQ(DecodedUATADSBPacket::AltitudeEncodedToAltitudeFt(4094), 101325);
-    ASSERT_EQ(DecodedUATADSBPacket::AltitudeEncodedToAltitudeFt(4095), INT32_MAX);
+    ASSERT_EQ(DecodedUATADSBPacket::AltitudeEncodedToAltitudeFt(4095), 101350);  // "> 101,337.5 ft" bucket.
 }
 
 TEST(UATFEC, EncodeLongUATADSBPacket) {
