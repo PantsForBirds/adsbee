@@ -130,7 +130,7 @@ const struct {
     {"DO-282B Table 2-104 #28",
      "287F318C2A9FFF7F0784CA4036E252DEB0226A9F9E183CBB933FA68DBF5E1F018F635195DE87894F16BDA55E42A64137",
      DecodedUATADSBPacket::kUATADSBMessageFormatInvalid,
-     "D780CE73D59CFF7F0784CA4036E252DEB022"},  // basic/long mismatch
+     NULL},  // basic/long mismatch: first 30 bytes are a correctable basic codeword with a non-zero type
     {"DO-282B Table 2-104 #29",
      "D780CE73D4630080F87BCB4036E252DEB0226A9F9E183CBB933FA68DBF5E161C9333D935A0C83220FC2799D84A139CAB",
      DecodedUATADSBPacket::kUATADSBMessageFormatInvalid, NULL},
@@ -170,7 +170,7 @@ const struct {
     {"DO-282B Table 2-104 #39",
      "DF784C02075C59B503CFF562E1A553E2B54F40092EF8C22D0BFC643D3C5290867B135A1DB2EEC69474D7F594AC5738D8",
      DecodedUATADSBPacket::kUATADSBMessageFormatInvalid,
-     "20884C02075C59B503CF0A92E1A553E2B54F"},  // basic/long mismatch
+     NULL},  // basic/long mismatch: first 30 bytes are a correctable basic codeword with a non-zero type
     {"DO-282B Table 2-104 #40",
      "5A8355B54385ED2AD0929EB80DA044D556B452A758CA5716CD1DB40964F5BA10A26DAAD75342196DEBB63CC972994DEA",
      DecodedUATADSBPacket::kUATADSBMessageFormatLong,
@@ -329,7 +329,7 @@ const struct {
     {"DO-282B Table 2-105 #36",
      "20884C02075C59B503CF0A92E1A5EBE2B55240092EF8C22D0BFC643D3C5290867B135A1DB2EEC69474D7F594AC5738D8",
      DecodedUATADSBPacket::kUATADSBMessageFormatInvalid,
-     "20884C02075C59B503CF0A92E1A553E2B54F"},  // basic/long mismatch
+     NULL},  // basic/long mismatch: first 30 bytes are a correctable basic codeword with a non-zero type
     {"DO-282B Table 2-105 #37",
      "041FAD506C2ACF832E6E709A64393C100253641E26C3D92D0F2AA4C38AF490867B135A1DB2EEC69474D7F594AC5738D8",
      DecodedUATADSBPacket::kUATADSBMessageFormatShort, "041F97506C2ACF832E6E709A39398410024E"},
@@ -379,7 +379,7 @@ const struct {
     {"DO-282B Table 2-105 #50",
      "20884C02075C59B503CFC353E1A553E2B54F4009EAF8C20E0BFC64C93C52D0AA219E83E952864A5EE34E5C06B43ED570",
      DecodedUATADSBPacket::kUATADSBMessageFormatInvalid,
-     "20884C02075C59B503CF0A92E1A553E2B54F"},  // basic/long mismatch
+     NULL},  // basic/long mismatch: first 30 bytes are a correctable basic codeword with a non-zero type
     {"DO-282B Table 2-105 #51",
      "1F83699AD2D74238C1453855F89980C7524F5C70390ED83AD89CE7A9BEF8BA105D9D83DADD3FC8DC9842693A4E9D7E63",
      DecodedUATADSBPacket::kUATADSBMessageFormatLong,
@@ -399,9 +399,20 @@ TEST(DecodedUATPacket, DO282BDownlinkPacketsDecodeAndPacketType) {
         DecodedUATADSBPacket packet = DecodedUATADSBPacket(test_case.raw_encoded_adsb_message);
         EXPECT_EQ(packet.message_format, test_case.expected_format);
         EXPECT_EQ(test_case.expected_format != DecodedUATADSBPacket::kUATADSBMessageFormatInvalid, packet.IsValid());
+        // All of these vectors are 48-byte receptions. A frame that decodes as a basic message must be forwarded as
+        // a 30-byte basic message (Beast/raw outputs label and size the frame by buffer_len_bytes).
+        if (test_case.expected_format == DecodedUATADSBPacket::kUATADSBMessageFormatShort) {
+            EXPECT_EQ(packet.raw.buffer_len_bytes, RawUATADSBPacket::kShortADSBMessageNumBytes);
+        } else if (test_case.expected_format == DecodedUATADSBPacket::kUATADSBMessageFormatLong) {
+            EXPECT_EQ(packet.raw.buffer_len_bytes, RawUATADSBPacket::kLongADSBMessageNumBytes);
+        }
         if (test_case.expected_decoded_payload) {
             // Only check the buffer if the expected decoded payload is not nullptr.
             EXPECT_TRUE(ByteBufferMatchesString(packet.raw.buffer, test_case.expected_decoded_payload));
+        }
+        if (test_case.expected_format == DecodedUATADSBPacket::kUATADSBMessageFormatInvalid) {
+            // A rejected frame must be left exactly as received (no partial / rejected corrections applied).
+            EXPECT_TRUE(ByteBufferMatchesString(packet.raw.buffer, test_case.raw_encoded_adsb_message));
         }
     }
 }
@@ -516,4 +527,41 @@ TEST(UATFEC, EncodeShortUATADSBPacket) {
 
     // Check against the expected encoded message.
     EXPECT_STREQ(encoded_message_hex, expected_encoded_message_hex);
+}
+
+TEST(UATFEC, RejectedADSBDecodeLeavesBufferUnmodified) {
+    // A long RS(48,34) codeword carrying payload type 0 is RS-correctable but illegal (type 0 is basic-only), so the
+    // long decoder must reject it. It must do so without writing its correction into the buffer, since the caller
+    // retries the same buffer as a basic message.
+    uint8_t codeword[RawUATADSBPacket::kLongADSBMessageNumBytes] = {0};
+    for (uint16_t i = 1; i < RawUATADSBPacket::kLongADSBMessagePayloadNumBytes; i++) {
+        codeword[i] = static_cast<uint8_t>(i * 37 + 11);
+    }
+    codeword[0] = 0x00;  // Payload type 0, address qualifier 0.
+    ASSERT_TRUE(uat_rs.EncodeLongADSBMessage(codeword));
+
+    uint8_t received[RawUATADSBPacket::kLongADSBMessageNumBytes];
+    memcpy(received, codeword, sizeof(received));
+    received[5] ^= 0x5A;  // One correctable byte error.
+    uint8_t received_copy[RawUATADSBPacket::kLongADSBMessageNumBytes];
+    memcpy(received_copy, received, sizeof(received));
+
+    EXPECT_EQ(uat_rs.DecodeLongADSBMessage(received), -1);
+    EXPECT_EQ(memcmp(received, received_copy, sizeof(received)), 0);
+
+    // Same for the basic decoder with a basic codeword whose payload type is non-zero.
+    uint8_t short_codeword[RawUATADSBPacket::kShortADSBMessageNumBytes] = {0};
+    for (uint16_t i = 0; i < RawUATADSBPacket::kShortADSBMessagePayloadNumBytes; i++) {
+        short_codeword[i] = static_cast<uint8_t>(i * 53 + 7);
+    }
+    short_codeword[0] = 0x08;  // Payload type 1.
+    ASSERT_TRUE(uat_rs.EncodeShortADSBMessage(short_codeword));
+    uint8_t short_received[RawUATADSBPacket::kShortADSBMessageNumBytes];
+    memcpy(short_received, short_codeword, sizeof(short_received));
+    short_received[20] ^= 0x01;
+    uint8_t short_received_copy[RawUATADSBPacket::kShortADSBMessageNumBytes];
+    memcpy(short_received_copy, short_received, sizeof(short_received));
+
+    EXPECT_EQ(uat_rs.DecodeShortADSBMessage(short_received), -1);
+    EXPECT_EQ(memcmp(short_received, short_received_copy, sizeof(short_received)), 0);
 }
