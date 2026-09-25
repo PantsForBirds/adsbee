@@ -246,6 +246,21 @@
     goto finish;
   }
   /*
+   * ADSBee modification: an error located in the (virtual, always zero) pad
+   * of a shortened code is impossible, so the word is uncorrectable. Upstream
+   * silently skipped such locations below while still reporting success,
+   * which made the decoder accept ~1 in 800 random 30-byte words (UAT basic
+   * ADS-B) as "corrected". Same fix as Linux lib/reed_solomon "rslib: Fix
+   * remaining decoder flaws". Checked before any symbol is modified so that a
+   * failed decode leaves data[] untouched.
+   */
+  for (j = 0; j < count; j++) {
+    if (loc[j] < PAD) {
+      count = -1;
+      goto finish;
+    }
+  }
+  /*
    * Compute err+eras evaluator poly omega(x) = s(x)*lambda(x) (modulo
    * x**NROOTS). in index form. Also find deg(omega).
    */
