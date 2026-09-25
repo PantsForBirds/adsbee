@@ -180,8 +180,9 @@ static_assert(offsetof(Settings, rx_position) == 1058, "v13 rx_position offset d
 
 /**
  * v14 layout: v13 plus `led_enabled`, the GNSS settings (`gnss_enabled`, `gnss_receiver_type`, `gnss_notify`) and the
- * Remote ID *transmit* settings (remote_id_tx_*). This is the layout every release tagged with kSettingsVersion == 14
- * shipped (adsbee_1090 0.9.1-rc1/rc2, adsbee_1421 0.3.7 through 0.3.11-rc1). The GNSS fields were added (e1f28fe7) a
+ * Remote ID *transmit* settings (remote_id_tx_*). This is the layout every adsbee_1090 release tagged with
+ * kSettingsVersion == 14 shipped (0.9.1-rc1/rc2). (adsbee_1421 doesn't use this struct: its CC1314 firmware has its own
+ * settings in firmware/adsbee_1421/ti/settings, with its own version.) The GNSS fields were added (e1f28fe7) a
  * few commits after v14 was introduced (82f9813e) without a version bump, but no release carried the pre-GNSS layout,
  * so this is the only v14 layout real devices hold. The three GNSS bytes landed in what had been padding, so everything
  * from baud_rates onward sits at the same offsets either way.
