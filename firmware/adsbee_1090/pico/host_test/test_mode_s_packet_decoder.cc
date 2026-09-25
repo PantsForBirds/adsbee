@@ -47,20 +47,30 @@ TEST(ModeSPacketDecoder, HandleSingleBitError) {
     EXPECT_EQ(bit_flip_index, 111);  // Last bit of the packet was flipped (A7 -> A6).
 }
 
-TEST(ModeSPacketDecoder, CorrectSingleBitErrorInFirstBit) {
-    // Flipping the MSb of the DF field (bit index 0) must be correctable too.
+TEST(ModeSPacketDecoder, DontCorrectBitErrorsInDownlinkFormat) {
+    // Flipping the MSb of the DF field (bit index 0) turns a DF=17 into a DF=1. Only packets received as DF=17/18 are
+    // accepted as ADS-B (DO-260B 2.2.4.3.4.7.3.a), so this must not be "corrected" back into a DF=17.
     ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
     RawModeSPacket raw_packet((const char*)"0D40621D58C382D690C8AC2863A7");  // 8D -> 0D.
     decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
     decoder.UpdateDecoderLoop();
-    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
-    DecodedModeSPacket decoded_packet;
-    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
-    EXPECT_TRUE(decoded_packet.is_valid);
-    EXPECT_EQ(decoded_packet.downlink_format, 17);
-    uint16_t bit_flip_index = 1;
-    EXPECT_TRUE(decoder.decoded_mode_s_packet_bit_flip_locations_out_queue.Dequeue(bit_flip_index));
-    EXPECT_EQ(bit_flip_index, 0);
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 0);
+    EXPECT_EQ(decoder.decoded_mode_s_packet_bit_flip_locations_out_queue.Length(), 0);
+}
+
+TEST(ModeSPacketDecoder, OnlyCorrectExtendedSquitters) {
+    // DF=19 packet with a valid CRC (9D40621D58C382D690C8AC50B818) and its last bit flipped. Single bit correction is
+    // only applied to DF=17/18.
+    ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
+    RawModeSPacket raw_packet((const char*)"9D40621D58C382D690C8AC50B819");
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+    decoder.UpdateDecoderLoop();
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 0);
+
+    // The uncorrupted DF=19 packet still goes through.
+    decoder.raw_mode_s_packet_in_queue.Enqueue(RawModeSPacket((const char*)"9D40621D58C382D690C8AC50B818"));
+    decoder.UpdateDecoderLoop();
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
 }
 
 TEST(ModeSPacketDecoder, RejectDuplicateMessages) {
