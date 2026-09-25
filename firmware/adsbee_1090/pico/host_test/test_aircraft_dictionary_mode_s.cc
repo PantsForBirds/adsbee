@@ -1502,3 +1502,23 @@ TEST(AircraftDictionary, OperationStatusMessageVersion2) {
     EXPECT_EQ(aircraft.navigation_integrity_category_baro,
               ADSBTypes::kBAIGillHamInputCrossCheckedOrNonGillhamSource);
 }
+
+TEST(AircraftDictionary, OperationStatusSurfaceGPSAntennaOffset) {
+    // Surface Operational Status (TC=31, ST=1, v2). The GPS antenna offset is ME[33-40]: 3 lateral bits followed by 5
+    // longitudinal bits. DO-260B 2.2.3.2.7.2.4.7.
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft_ptr = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft_ptr);
+
+    // ME[33-40] = 0b101'00011: 2m right of the roll axis, 6m aft of the nose.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEFF9000000A34000D5B48C");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft_ptr->gnss_antenna_offset_right_of_reference_point_m, 2);
+
+    // ME[33-40] = 0b010'00000: 4m left of the roll axis, no longitudinal data.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEFF9000000404000E64899");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft_ptr->gnss_antenna_offset_right_of_reference_point_m, -4);
+}

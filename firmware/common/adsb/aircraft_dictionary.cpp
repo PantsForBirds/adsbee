@@ -983,7 +983,9 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
                 }
 
                 // ME[32-39] - GPS Antenna Offset (surface OM only; airborne uses ME[32-34] for NACv in v2).
-                switch (packet.GetNBitWordFromMessage(8, 32)) {
+                // ME[32-34] is the lateral offset (direction bit + 2 bit distance), ME[35-39] the longitudinal offset.
+                // DO-260B 2.2.3.2.7.2.4.7.
+                switch (packet.GetNBitWordFromMessage(3, 32)) {
                     case 0b000:  // No data.
                         break;
                     case 0b001:  // 2 meters left of roll axis.
