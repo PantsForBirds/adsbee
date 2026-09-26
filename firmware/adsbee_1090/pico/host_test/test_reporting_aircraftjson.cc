@@ -43,7 +43,7 @@ TEST(AircraftJSON, ModeSAircraftAllFields) {
     ModeSAircraft ac;
     ac.icao_address = 0xABCDEF;
     strcpy(ac.callsign, "UAL123");
-    ac.squawk = 01234;  // octal 1234
+    ac.squawk = 1234;
     ac.emitter_category = ADSBTypes::kEmitterCategoryMedium2;  // 3 → "A3"
     ac.latitude_deg = 37.12345f;
     ac.longitude_deg = -122.54321f;
@@ -217,7 +217,7 @@ TEST(AircraftJSON, UATAircraftAllFields) {
     // Use kADSBTargetWithICAO24BitAddress (AQ=0) so no '~' prefix, no upper bits set.
     ac.icao_address = 0xABCDEF;
     strcpy(ac.callsign, "AAL456");
-    ac.squawk = 07654;
+    ac.squawk = 7654;
     ac.emitter_category = ADSBTypes::kEmitterCategoryGliderSailplane;  // 9 → "B1"
     ac.latitude_deg = 40.0f;
     ac.longitude_deg = -75.0f;
@@ -373,4 +373,33 @@ TEST(AircraftJSON, EmitterCategoryStrings) {
 
     // Invalid → returns false.
     EXPECT_FALSE(EmitterCategoryToStr(cat, sizeof(cat), ADSBTypes::kEmitterCategoryInvalid));
+}
+
+// ─── Squawk formatting ─────────────────────────────────────────────────────
+
+// Squawks are stored as the decimal value of their octal digits, so codes with leading zeros must be zero-padded
+// back to four characters (readsb / tar1090 expect exactly four digits).
+TEST(AircraftJSON, SquawkLeadingZeros) {
+    char buf[kAircraftJSONMessageStrMaxLen];
+
+    ModeSAircraft mode_s;
+    mode_s.icao_address = 0x444444;
+    mode_s.squawk = 400;
+    WriteAircraftJSONModeSAircraftStr(buf, mode_s);
+    EXPECT_EQ(GetJSONValue(buf, "squawk"), "0400");
+    mode_s.squawk = 356;
+    WriteAircraftJSONModeSAircraftStr(buf, mode_s);
+    EXPECT_EQ(GetJSONValue(buf, "squawk"), "0356");
+    mode_s.squawk = 0;
+    WriteAircraftJSONModeSAircraftStr(buf, mode_s);
+    EXPECT_EQ(GetJSONValue(buf, "squawk"), "0000");
+
+    UATAircraft uat;
+    uat.icao_address = 0x555555;
+    uat.squawk = 400;
+    WriteAircraftJSONUATAircraftStr(buf, uat);
+    EXPECT_EQ(GetJSONValue(buf, "squawk"), "0400");
+    uat.squawk = 7700;  // Printed as decimal digits, not octal ("7024" before the squawk rework).
+    WriteAircraftJSONUATAircraftStr(buf, uat);
+    EXPECT_EQ(GetJSONValue(buf, "squawk"), "7700");
 }

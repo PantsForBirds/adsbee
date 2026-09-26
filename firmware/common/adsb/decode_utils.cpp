@@ -131,6 +131,9 @@ uint16_t IdentityCodeToSquawk(uint16_t identity_code) {
     uint8_t c2 = (identity_code & (0b1 << 10)) >> 10;
     uint8_t c4 = (identity_code & (0b1 << 8)) >> 8;
 
-    return (a4 << 11) | (a2 << 10) | (a1 << 9) | (b4 << 8) | (b2 << 7) | (b1 << 6) | (c4 << 5) | (c2 << 4) | (c1 << 3) |
-           (d4 << 2) | (d2 << 1) | d1;
+    uint16_t a = (a4 << 2) | (a2 << 1) | a1;
+    uint16_t b = (b4 << 2) | (b2 << 1) | b1;
+    uint16_t c = (c4 << 2) | (c2 << 1) | c1;
+    uint16_t d = (d4 << 2) | (d2 << 1) | d1;
+    return a * 1000 + b * 100 + c * 10 + d;
 }

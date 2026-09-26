@@ -28,6 +28,7 @@ elseif (TARGET host_test OR TARGET host_test_fpu)
             target_sources(${_test_tgt} PRIVATE
                 beast/beast_utils.cpp
                 gdl90/gdl90_utils.cpp
+                mavlink/mavlink_utils.cpp
                 raw/raw_utils.cpp
             )
             target_include_directories(${_test_tgt} PRIVATE

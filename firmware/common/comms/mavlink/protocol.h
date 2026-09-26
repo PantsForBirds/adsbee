@@ -10,7 +10,11 @@
         {0, 50, 9, 9, 0, 0, 0}, { 300, 217, 22, 22, 0, 0, 0 } \
     }
 #endif
+// Host tests build the message-packing helpers without the send path, which needs the firmware's comms_manager and
+// settings_manager.
+#ifndef MAVLINK_NO_CONVENIENCE_FUNCTIONS
 #define MAVLINK_USE_CONVENIENCE_FUNCTIONS
+#endif
 // End added by John McNelly.
 
 /*

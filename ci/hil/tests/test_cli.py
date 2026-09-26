@@ -7,8 +7,10 @@ from adsbee_hil import cli
 from adsbee_hil.lock import DeviceLock
 
 INFO_1421 = ("Part Code: 010260002D-TEST\r\nCC1314R10 Unique ID: 0011223344556677\r\n"
-             "CC1314R10 Firmware Version: 0.3.11-rc1\r\nOTA Key 0: supersecret\r\n")
-INFO_1090 = "Part Code: 010250002D-TEST\r\nRP2040 Firmware Version: 0.9.1-rc3\r\nOTA Key 0: hush\r\n"
+             "CC1314R10 Firmware Version: 0.3.11-rc1\r\nCC1314R10 Firmware Build: Release\r\n"
+             "OTA Key 0: supersecret\r\n")
+INFO_1090 = ("Part Code: 010250002D-TEST\r\nRP2040 Firmware Version: 0.9.1-rc3\r\n"
+             "RP2040 Firmware Build: Release\r\nOTA Key 0: hush\r\n")
 
 
 @pytest.fixture
@@ -16,10 +18,10 @@ def bench(tmp_path, fake_sysfs, fake_at):
     rx1421 = fake_at({"AT+UPTIME?": "+UPTIME=42", "AT+DEVICE_INFO?": INFO_1421,
                       "AT+RX_STATS?": "+RX_STATS=pkt_rx=5,crc_error=1,pbl_det=9"})
     rx1090 = fake_at({"AT+UPTIME?": "+UPTIME=7", "AT+DEVICE_INFO?": INFO_1090})
-    fake_sysfs.add("1-1.4", "2e8a", "000a", "J1421", "ADSBee", "ADSBee 1421 Programmer", "ttyACM1",
-                   "usb-ADSBee_ADSBee_1421_Programmer_J1421-if00", tty_target=rx1421.path)
-    fake_sysfs.add("1-1.3", "2e8a", "000a", "P1090", "Raspberry Pi", "Pico", "ttyACM0",
-                   "usb-Raspberry_Pi_Pico_P1090-if00", tty_target=rx1090.path)
+    fake_sysfs.add("1-1.4", "2e8a", "000a", "J1421", "Pants for Birds", "ADSBee 1421 Programmer", "ttyACM1",
+                   "usb-Pants_for_Birds_ADSBee_1421_Programmer_J1421-if00", tty_target=rx1421.path)
+    fake_sysfs.add("1-1.3", "2e8a", "000a", "P1090", "Pants for Birds", "ADSBee 1090", "ttyACM0",
+                   "usb-Pants_for_Birds_ADSBee_1090_P1090-if00", tty_target=rx1090.path)
     cfg = tmp_path / "bench.toml"
     cfg.write_text("""
 [bench]
@@ -49,7 +51,7 @@ def run(capsys, *argv):
 
 
 def test_discover_without_config(fake_sysfs, capsys):
-    fake_sysfs.add("1-1.4", "2e8a", "000a", "J1421", "ADSBee", "ADSBee 1421 Programmer", "ttyACM1")
+    fake_sysfs.add("1-1.4", "2e8a", "000a", "J1421", "Pants for Birds", "ADSBee 1421 Programmer", "ttyACM1")
     fake_sysfs.add("1-1.5", "2e8a", "0003", "BOOTROM1", "Raspberry Pi", "RP2 Boot")
     rc, out, _ = run(capsys, "discover")
     assert rc == 0
@@ -90,13 +92,14 @@ def test_info_parallel_all(bench, capsys):
 
 def test_select_by_model_and_tag(bench, capsys):
     rc, out, _ = run(capsys, "-c", bench["cfg"], "port", "--tag", "ci")
-    assert rc == 0 and out.strip().endswith("usb-Raspberry_Pi_Pico_P1090-if00")
+    assert rc == 0 and out.strip().endswith("usb-Pants_for_Birds_ADSBee_1090_P1090-if00")
     rc, out, _ = run(capsys, "-c", bench["cfg"], "port", "--model", "adsbee_1421")
     assert out.strip().endswith("ADSBee_1421_Programmer_J1421-if00")
 
 
 def test_ad_hoc_serial_without_bench(bench, capsys):
-    # The 1421 jig is identifiable by its product string; a bare Pico needs --model.
+    # The 1421 jig is identifiable by its product string; an "ADSBee 1090" could be any RP2040 variant, so it
+    # needs --model.
     rc, out, _ = run(capsys, "at", "-d", "J1421", "AT+UPTIME?")
     assert rc == 0 and "UPTIME=42" in out
     rc, out, err = run(capsys, "at", "-d", "P1090", "AT+UPTIME?")

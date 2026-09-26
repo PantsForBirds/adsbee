@@ -269,6 +269,14 @@ jobs:
     - name: Build
       working-directory: firmware/adsbee_1421/ti/build/Release
       run: cmake --build . --config Release --target all -j 22
+    - name: Check that RF test commands are not in the Release image
+      working-directory: firmware/adsbee_1421/ti/build/Release
+      # AT+TX_CW transmits on demand and is compiled into Debug builds only (ADSBEE_DEBUG_BUILD).
+      run: |
+        if grep -a -q 'TX_CW' adsbee_1421.elf; then
+          echo "::error::AT+TX_CW found in the Release image; it must only be built into Debug images."
+          exit 1
+        fi
     - name: Extract firmware version
       id: fwver
       working-directory: firmware/adsbee_1421/ti

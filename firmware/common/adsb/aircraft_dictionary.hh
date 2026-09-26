@@ -334,7 +334,7 @@ class ModeSAircraft : public Aircraft {
     uint16_t transponder_capability = 0;
     uint32_t icao_address = 0;
     char callsign[kCallSignMaxNumChars + 1] = "?";  // put extra EOS character at end
-    uint16_t squawk = ADSBTypes::kSquawkCodeNotYetReceived;
+    uint16_t squawk = ADSBTypes::kSquawkCodeNotYetReceived;  // Squawk digits as a decimal value, e.g. 7700.
     ADSBTypes::EmitterCategory emitter_category = ADSBTypes::kEmitterCategoryNoCategoryInfo;
     uint8_t emitter_category_raw = 0;  // Non-enum category in case we want the value without a many to one mapping.
 
@@ -598,7 +598,7 @@ class UATAircraft : public Aircraft {
     uint16_t transponder_capability = 0;
     uint32_t icao_address = 0;
     char callsign[ModeSAircraft::kCallSignMaxNumChars + 1] = "?";  // put extra EOS character at end
-    uint16_t squawk = ADSBTypes::kSquawkCodeNotYetReceived;
+    uint16_t squawk = ADSBTypes::kSquawkCodeNotYetReceived;  // Squawk digits as a decimal value, e.g. 7700.
     ADSBTypes::EmitterCategory emitter_category = ADSBTypes::kEmitterCategoryNoCategoryInfo;
     uint8_t emitter_category_raw = 0;  // Non-enum category.
     EmergencyPriorityStatus emergency_priority_status =

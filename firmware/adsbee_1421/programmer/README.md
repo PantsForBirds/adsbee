@@ -42,13 +42,17 @@ JTAG flash or the `AT+BOOT_UART_BOOTLOADER=1DEADBEE` self-erase path first.
 
 ## Build
 
-The baked firmware image comes from the adsbee_1421 Release build, so build that first:
+The baked firmware image comes from the adsbee_1421 build of the same configuration, so build that first:
 
 ```sh
 cd firmware/adsbee_1421
 ./build.sh ti
 ./build.sh programmer
 ```
+
+With `-d` (`./build.sh -d ti`, `./build.sh -d programmer`, or `./build.sh -d build_and_flash`) both are
+built in Debug and the jig bakes in `ti/build/Debug/adsbee_1421.hex`. Only Debug images contain the RF test
+command `AT+TX_CW`; see [firmware/README.md](../../README.md#debug-builds-and-rf-test-commands).
 
 Artifact: `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` —
 hold BOOT on the RP2040-Zero while plugging it in and drag the file onto the `RPI-RP2` drive.

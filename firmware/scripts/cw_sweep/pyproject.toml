@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "cw-sweep"
+version = "1.0.0"
+description = "Step an ADSBee 1421 CW carrier across a frequency range over the AT console (filter / harmonic mapping)"
+authors = []
+packages = [{include = "cw_sweep.py"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+pyserial = "^3.5"
+
+[tool.poetry.scripts]
+cw-sweep = "cw_sweep:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
