@@ -112,6 +112,12 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
                               object_dictionary.kFirmwareVersionMinor, object_dictionary.kFirmwareVersionPatch,
                               object_dictionary.kFirmwareVersionReleaseCandidate);
             }
+            // Debug builds include RF test commands (AT+TX_CW); tools key off this line to find them.
+#ifdef ADSBEE_DEBUG_BUILD
+            CPP_AT_PRINTF("CC1314R10 Firmware Build: Debug\r\n");
+#else
+            CPP_AT_PRINTF("CC1314R10 Firmware Build: Release\r\n");
+#endif
 
             for (uint16_t i = 0; i < SettingsManager::DeviceInfo::kNumOTAKeys; i++) {
                 CPP_AT_PRINTF("OTA Key %d: %s\r\n", i, device_info.ota_keys[i]);
@@ -900,6 +906,8 @@ static constexpr uint16_t kLrLfMaxMHz = 1100;
 static constexpr uint16_t kLrHfMinMHz = 1900;
 static constexpr uint16_t kLrHfMaxMHz = 2700;
 
+#ifdef ADSBEE_DEBUG_BUILD
+// Transmits RF on demand, so it is compiled into Debug builds only (see ADSBEE_DEBUG_BUILD in CMakeLists.txt).
 CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     // LR2021 TX power bounds, in whole dBm (DS.LR2021: LF -9.5..22 dBm, HF -19.5..12 dBm).
     static constexpr int32_t kLrLfMinPowerDbm = -9;
@@ -920,7 +928,8 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     // filter characterization. It is rounded to the nearest kHz to keep float error out of the Hz value.
     float freq_mhz_f = 0.0f;
     CPP_AT_TRY_ARG2NUM(1, freq_mhz_f);
-    if (!(freq_mhz_f >= 0.0f) || freq_mhz_f > 65535.0f) {
+    // The upper bound sits well above every band but low enough that freq_hz below can't wrap a uint32_t.
+    if (!(freq_mhz_f >= 0.0f) || freq_mhz_f > 4000.0f) {
         CPP_AT_ERROR("Invalid frequency '%s'.", args[1].data());
     }
     uint32_t freq_khz = (uint32_t)lroundf(freq_mhz_f * 1000.0f);
@@ -1027,6 +1036,8 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
 
     CPP_AT_SUCCESS();
 }
+
+#endif  // ADSBEE_DEBUG_BUILD
 
 // Formats an RSSI value in half-dB units (dBm * 2) as e.g. "-93.5" into buf. Both radios report in
 // half-dB resolution or better, so this avoids float printf.
@@ -1287,6 +1298,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 1,
      .help_string = "Run hardware self-tests.",
      .callback = ATTestCallback},
+#ifdef ADSBEE_DEBUG_BUILD
     {.command = "TX_CW",
      .min_args = 2,
      .max_args = 3,
@@ -1296,6 +1308,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "(default 0 dBm) applies to LR2021 bands only: LRLF -9..22 dBm, LRHF -19..12 dBm.\r\n\tSUBG "
                     "power is fixed at +12 dBm by the SmartRF TX power table; a power argument is an error.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTxCWCallback, comms_manager)},
+#endif
     {.command = "RX_CW",
      .min_args = 2,
      .max_args = 2,

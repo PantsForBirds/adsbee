@@ -374,13 +374,16 @@ bool SubGHzRadio::StartPacketRx() {
 }
 
 #ifdef HARDWARE_UNIT_TESTS
+#ifdef ADSBEE_DEBUG_BUILD
 // Handle for the CW test command so it can be cancelled by StopCWTest().
 static RF_CmdHandle cw_test_cmd_handle = -1;
+#endif
 // CMD_FS frequency saved before the CW test retunes the synth, so RX can be restored to the UAT
 // default (978 MHz) afterward. Initialized to the smartrf default in case Stop runs without Start.
 static uint16_t saved_fs_frequency = 0x03D2;  // 978 MHz.
 static uint16_t saved_fs_fract = 0;
 
+#ifdef ADSBEE_DEBUG_BUILD
 bool SubGHzRadio::StartCWTest(uint32_t freq_mhz) {
     // CMD_FS / CMD_TX_TEST need an open RF client. If the receiver is user-disabled (RF client closed), open it
     // now; the RX command Init() posts is cancelled immediately below, and StopCWTest() -> RestoreRx() honors the
@@ -466,6 +469,8 @@ bool SubGHzRadio::StopCWTest() {
     RF_cmdFs.fractFreq = saved_fs_fract;  // Restore the pre-test frequency before Init() re-runs CMD_FS.
     return RestoreRx();  // Leaves the RF client closed if the receiver is user-disabled.
 }
+
+#endif  // ADSBEE_DEBUG_BUILD
 
 bool SubGHzRadio::StartRssiScan(uint32_t freq_mhz) {
     // Stop normal reception and prevent Update() from restarting it while the scan owns the RX

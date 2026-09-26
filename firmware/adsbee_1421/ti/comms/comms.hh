@@ -141,7 +141,9 @@ class CommsManager {
     CPP_AT_CALLBACK(ATUptimeCallback);
     CPP_AT_CALLBACK(ATWatchdogCallback);
 #ifdef HARDWARE_UNIT_TESTS
-    CPP_AT_CALLBACK(ATTxCWCallback);
+#ifdef ADSBEE_DEBUG_BUILD
+    CPP_AT_CALLBACK(ATTxCWCallback);  // Transmits RF: Debug builds only.
+#endif
     CPP_AT_CALLBACK(ATRxCWCallback);
 #endif
 

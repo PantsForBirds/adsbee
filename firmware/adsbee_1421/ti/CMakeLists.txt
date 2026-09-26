@@ -48,6 +48,9 @@ add_compile_definitions(DeviceFamily_CC13X4)
 add_compile_definitions(ON_TI)
 add_compile_definitions(ON_EMBEDDED_DEVICE)
 add_compile_definitions(HARDWARE_UNIT_TESTS)
+# ADSBEE_DEBUG_BUILD is set only for Debug builds. It compiles in commands that transmit RF on demand for bench
+# testing (AT+TX_CW); Release builds must never contain them.
+add_compile_definitions($<$<CONFIG:Debug>:ADSBEE_DEBUG_BUILD>)
 add_compile_definitions(AIRCRAFT_DICTIONARY_MAX_NUM_AIRCRAFT=400)
 
 add_compile_options(-Wno-packed-bitfield-compat) # Ignore the packed bitfield compatibility warning from GCC 4.4, since we never used GCC that old.
