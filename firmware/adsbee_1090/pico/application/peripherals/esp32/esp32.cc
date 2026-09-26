@@ -58,6 +58,9 @@ bool ESP32::Update() {
         queued_log_messages_packed_size_bytes = device_status.queued_log_messages_packed_size_bytes;
         num_queued_sc_command_requests = device_status.num_queued_sc_command_requests;
         remote_id_status = device_status.remote_id_status;
+        hardware_capabilities = device_status.hardware_capabilities;
+        psram_total_kb = device_status.psram_total_kb;
+        psram_free_kb = device_status.psram_free_kb;
     } else {
         CONSOLE_ERROR("ESP32::Update", "Unable to read ESP32 status.");
         return false;
@@ -142,6 +145,10 @@ bool ESP32::Update() {
                 .gnss_fix_valid = gnss->HasValidFix(),
                 .gnss_latitude_deg = gnss_fix.latitude_deg,
                 .gnss_longitude_deg = gnss_fix.longitude_deg,
+                .gnss_altitude_ft = gnss_fix.altitude_ft,
+                .gnss_heading_deg = gnss_fix.heading_deg,
+                .gnss_speed_kts = gnss_fix.speed_kts,
+                .gnss_num_satellites = gnss_fix.num_satellites,
                 .gnss_utc_time_valid = gnss_fix.utc_time_valid,
                 .gnss_utc_hour = gnss_fix.utc_hour,
                 .gnss_utc_minute = gnss_fix.utc_minute,

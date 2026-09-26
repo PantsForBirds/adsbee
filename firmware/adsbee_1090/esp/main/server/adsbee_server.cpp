@@ -109,8 +109,20 @@ bool ADSBeeServer::Init() {
             },
     });  // Require ack.
 
-    // Wait for the callback to complete
-    xSemaphoreTake(settings_read_semaphore, portMAX_DELAY);
+    // Wait for the callback to complete. If the RP2040 runs firmware with a different Settings layout, it rejects this
+    // request (length mismatch) and it never completes. Continuing without settings isn't safe (defaults would bring up
+    // a default WiFi AP and start the default feeds), so keep waiting, but report why instead of hanging silently. Log
+    // messages still reach the RP2040 console over SPI while we wait.
+    static constexpr uint32_t kSettingsWaitReportIntervalMs = 10000;
+    uint32_t settings_wait_s = 0;
+    while (xSemaphoreTake(settings_read_semaphore, pdMS_TO_TICKS(kSettingsWaitReportIntervalMs)) != pdTRUE) {
+        settings_wait_s += kSettingsWaitReportIntervalMs / 1000;
+        CONSOLE_ERROR("ADSBeeServer::Init",
+                      "No settings from the RP2040 after %lu s. This ESP32 firmware expects %u-byte version %lu "
+                      "settings; if the RP2040 firmware differs, reflash the ESP32 (AT+ESP32_FLASH or a reboot).",
+                      (unsigned long)settings_wait_s, (unsigned)sizeof(SettingsManager::Settings),
+                      (unsigned long)kSettingsVersion);
+    }
     vSemaphoreDelete(settings_read_semaphore);
     settings_manager.Print();
     settings_manager.Apply();
@@ -706,9 +718,13 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              ", \"gnss\": { \"enabled\": %s, \"fix_valid\": %s, \"latitude_deg\": %.6f, "
-             "\"longitude_deg\": %.6f, \"utc_time\": \"%s\" }",
+             "\"longitude_deg\": %.6f, \"altitude_ft\": %ld, \"heading_deg\": %.1f, \"speed_kts\": %ld, "
+             "\"num_satellites\": %u, \"utc_time\": \"%s\" }",
              rp2040_status.gnss_enabled ? "true" : "false", rp2040_status.gnss_fix_valid ? "true" : "false",
-             rp2040_status.gnss_latitude_deg, rp2040_status.gnss_longitude_deg, gnss_utc_time);
+             rp2040_status.gnss_latitude_deg, rp2040_status.gnss_longitude_deg,
+             static_cast<long>(rp2040_status.gnss_altitude_ft), rp2040_status.gnss_heading_deg,
+             static_cast<long>(rp2040_status.gnss_speed_kts), static_cast<unsigned int>(rp2040_status.gnss_num_satellites),
+             gnss_utc_time);
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              ", \"subg\": { \"uptime_ms\": %lu, \"user_core_usage_percent\": %u, "

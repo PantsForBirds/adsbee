@@ -207,3 +207,4 @@ By hand, or to recover a device that will not enumerate:
 | ESP32 keeps old behavior after flashing | Firmware version unchanged | Increment firmware version |
 | RP2040 build fails (missing binary) | ESP32 or CC1312 not built yet | Run `bash build.sh all` or build in order |
 | Settings reset on every boot | `kSettingsVersion` mismatch | Ensure both processors run the same firmware |
+| ESP32 aborts at boot on one hardware revision only | An sdkconfig option that requires PSRAM (e.g. `BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL`, `SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY`) or > 4 MB flash | The one ESP32 image must run on the ESP32-S3-MINI-1U-N8 (8 MB flash, no PSRAM) and -N4R2 (4 MB flash, 2 MB PSRAM); see `adsbee_1090/esp/README.md`. Gate RAM-hungry features at runtime on `HardwareCapabilities::HasPSRAM()` |

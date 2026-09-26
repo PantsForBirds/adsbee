@@ -21,6 +21,11 @@ class SettingsMigrator {
     // The oldest stored version this utility can migrate from.
     static constexpr uint32_t kOldestMigratableVersion = 12;
 
+    // NOTE on v14 -> v15: both e1f28fe7 (GNSS fields) and #224 (feeds_enabled) inserted fields into the live struct
+    // without bumping kSettingsVersion. settings_v14 is the layout every v14 release shipped (with GNSS, without
+    // feeds_enabled). Unreleased dev builds from between #224 and v15 stored a feeds_enabled layout under the v14 tag;
+    // those blobs migrate with log_level onward misread, and SettingsManager::Sanitize() keeps the result safe.
+
     /**
      * Migrates a stored settings blob at `from_version` forward to the current kSettingsVersion layout.
      * @param[in] blob Raw stored settings bytes (starts with the uint32_t settings_version at offset 0).
@@ -35,9 +40,10 @@ class SettingsMigrator {
    private:
     // Per-version upgrade steps, chained: each takes the frozen layout of version N and produces version N+1. Steps that
     // land on an intermediate frozen version write that frozen struct; only the final step (the one that reaches the
-    // current version) writes the live SettingsManager::Settings. To add v15: freeze v14 in settings_versions.hh, change
-    // MigrateV13ToV14 to emit settings_v14::Settings, add MigrateV14ToV15 emitting the live struct, and extend
-    // Migrate()'s dispatch with a `case 14:`.
+    // current version) writes the live SettingsManager::Settings. To add v16: freeze v15 in settings_versions.hh, change
+    // MigrateV14ToV15 to emit settings_v15::Settings, add MigrateV15ToV16 emitting the live struct, and extend
+    // Migrate()'s dispatch with a `case 15:`.
     static void MigrateV12ToV13(const settings_v12::Settings& in, settings_v13::Settings& out);
-    static void MigrateV13ToV14(const settings_v13::Settings& in, SettingsManager::Settings& out);
+    static void MigrateV13ToV14(const settings_v13::Settings& in, settings_v14::Settings& out);
+    static void MigrateV14ToV15(const settings_v14::Settings& in, SettingsManager::Settings& out);
 };

@@ -216,6 +216,12 @@ jobs:
         .venv/bin/pip install -r ci/test_usb_and_ota_flash/requirements.txt
 
     - name: Run hardware test
+      env:
+        # USB serial number of the 1090U under test (repository variable). With several RP2040
+        # boards on the bench, /dev/ttyACM0 and "the first RPI-RP2 drive" are ambiguous; the
+        # serial selects the console and the BOOTSEL drive (by USB port) unambiguously and locks
+        # the board for the run (ci/hil). Unset: the old /dev/ttyACM0 behaviour.
+        HIL_1090U_SERIAL: ${{ vars.HIL_1090U_SERIAL }}
       run: |
         # Derive the expected firmware version from source so the post-OTA
         # health check can confirm the RP2040 actually reports it (see
@@ -227,8 +233,13 @@ jobs:
         rc=$(grep -oP 'kFirmwareVersionReleaseCandidate\s*=\s*\K[0-9]+' "$dict")
         if [ "$rc" -eq 0 ]; then ver="$maj.$min.$pat"; else ver="$maj.$min.$pat-rc$rc"; fi
         echo "Expecting RP2040 firmware version: $ver"
+        if [ -n "$HIL_1090U_SERIAL" ]; then
+          target=(--serial "$HIL_1090U_SERIAL")
+        else
+          target=(-p /dev/ttyACM0)
+        fi
         .venv/bin/python3 ci/test_usb_and_ota_flash/test_ota.py \
-          -p /dev/ttyACM0 \
+          "${target[@]}" \
           --uf2 firmware/adsbee_1090/pico/build/application/combined.uf2 \
           --ota-fw firmware/adsbee_1090/pico/build/application/adsbee_1090.ota \
           --expected-version "$ver"
@@ -324,28 +335,28 @@ jobs:
         path: firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.elf
         retention-days: 1
 
-  # version_sync_check:
-  #   # Fail the PR if the Settings struct version changed without a firmware version bump.
-  #   # See firmware/scripts/check_version_sync.sh.
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #   - name: Checkout repository
-  #     uses: actions/checkout@v4
-  #     with:
-  #       # Full history so we can diff against the base branch / previous commit.
-  #       fetch-depth: 0
-  #   - name: Check Settings/firmware version sync
-  #     run: |
-  #       if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
-  #         # Pull request: compare the base branch against the PR head.
-  #         old="${{ github.event.pull_request.base.sha }}"
-  #       else
-  #         # Push: compare against the commit before the push so every commit in a
-  #         # multi-commit push is covered (not just the tip).
-  #         old="${{ github.event.before }}"
-  #         # First push to a new branch reports an all-zero "before"; fall back to the parent.
-  #         if [ -z "$old" ] || [ "$old" = "0000000000000000000000000000000000000000" ]; then
-  #           old="HEAD^"
-  #         fi
-  #       fi
-  #       firmware/scripts/check_version_sync.sh "$old" HEAD
+  version_sync_check:
+    # Fail the PR if the Settings struct version changed without a firmware version bump.
+    # See firmware/scripts/check_version_sync.sh.
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        # Full history so we can diff against the base branch / previous commit.
+        fetch-depth: 0
+    - name: Check Settings/firmware version sync
+      run: |
+        if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+          # Pull request: compare the base branch against the PR head.
+          old="${{ github.event.pull_request.base.sha }}"
+        else
+          # Push: compare against the commit before the push so every commit in a
+          # multi-commit push is covered (not just the tip).
+          old="${{ github.event.before }}"
+          # First push to a new branch reports an all-zero "before"; fall back to the parent.
+          if [ -z "$old" ] || [ "$old" = "0000000000000000000000000000000000000000" ]; then
+            old="HEAD^"
+          fi
+        fi
+        firmware/scripts/check_version_sync.sh "$old" HEAD

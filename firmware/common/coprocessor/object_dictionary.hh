@@ -130,6 +130,10 @@ class ObjectDictionary {
         bool gnss_fix_valid = false;
         float gnss_latitude_deg = 0.0f;
         float gnss_longitude_deg = 0.0f;
+        int32_t gnss_altitude_ft = 0;
+        float gnss_heading_deg = 0.0f;
+        int32_t gnss_speed_kts = 0;
+        uint8_t gnss_num_satellites = 0;
         bool gnss_utc_time_valid = false;
         uint8_t gnss_utc_hour = 0;
         uint8_t gnss_utc_minute = 0;
@@ -161,9 +165,24 @@ class ObjectDictionary {
         // nothing pending. See the ESP32->RP2040 forwarding path in peripherals/esp32/esp32.cc.
         uint16_t pending_raw_packets_len_bytes = 0;
         // Bitfield reporting the live Remote ID receiver AND transmitter state (see RemoteIDManager::Status). Lets the
-        // RP2040 explain, e.g., "Remote ID requested but blocked because WiFi is enabled on a non-PSRAM build" in
+        // RP2040 explain, e.g., "Remote ID requested but blocked because WiFi is enabled on hardware without PSRAM" in
         // AT+REMOTE_ID? / AT+REMOTE_ID_TX?.
         uint16_t remote_id_status = 0;
+
+        // Bitfield of ESP32 module hardware capabilities detected at boot (see ESP32HardwareCapability). One ESP32 image
+        // runs on both the ESP32-S3-MINI-1U-N8 (no PSRAM) and the -N4R2 (2 MB PSRAM); the RP2040 uses this to accept or
+        // reject RAM-hungry settings (e.g. Remote ID alongside WiFi AP/STA) with a clear error on hardware without PSRAM.
+        uint8_t hardware_capabilities = 0;
+        uint16_t psram_total_kb = 0;  // PSRAM heap size (0 if no PSRAM).
+        uint16_t psram_free_kb = 0;   // Free PSRAM heap (0 if no PSRAM).
+    };
+
+    enum ESP32HardwareCapability : uint8_t {
+        // Always set by an ESP32 firmware that reports capabilities, so 0 means "not reported yet" (ESP32 not read yet,
+        // disabled, or running older firmware) rather than "no capabilities". Callers must not reject settings then.
+        kESP32HWCapReported = 1 << 0,
+        // Usable PSRAM (>= ~1.5 MB heap) was found. Allows Remote ID to coexist with WiFi AP/STA.
+        kESP32HWCapPSRAM = 1 << 1,
     };
 
     /**

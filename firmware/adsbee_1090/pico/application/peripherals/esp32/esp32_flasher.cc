@@ -72,20 +72,50 @@ esp_binaries_t bin = {
 bool ESP32SerialFlasher::FlashESP32() {
     CONSOLE_INFO("ESP32SerialFlasher::FlashESP32", "Beginning serial initialization.");
     Init();
-    if (connect_to_target(config_.esp32_higher_baudrate) == ESP_LOADER_SUCCESS) {
+    const partition_attr_t *images[] = {&bin.boot, &bin.part, &bin.app};
+    const char *image_names[] = {"bootloader", "partition table", "application"};
+    bool success = false;
+    for (uint16_t attempt = 1; attempt <= kFlashAttempts && !success; attempt++) {
+        if (attempt > 1) {
+            CONSOLE_WARNING("ESP32SerialFlasher::FlashESP32", "Retrying ESP32 flash (attempt %u/%u).", attempt,
+                            kFlashAttempts);
+            // A failed attempt may have left the link at the higher baud rate. esp_loader_connect() resets the ESP32
+            // into its ROM bootloader, which syncs at the initial rate.
+            SetBaudRate(initial_baudrate_);
+        }
+        esp_loader_error_t err = connect_to_target(config_.esp32_higher_baudrate);
+        if (err != ESP_LOADER_SUCCESS) {
+            CONSOLE_ERROR("ESP32SerialFlasher::FlashESP32",
+                          "Unable to connect to the ESP32 bootloader (attempt %u/%u, error %d).", attempt,
+                          kFlashAttempts, err);
+            continue;
+        }
         CONSOLE_INFO("ESP32SerialFlasher::FlashESP32", "Connected to target.");
-
-        flash_binary(bin.boot.data, bin.boot.size, bin.boot.addr);
-        flash_binary(bin.part.data, bin.part.size, bin.part.addr);
-        flash_binary(bin.app.data, bin.app.size, bin.app.addr);
-        CONSOLE_INFO("ESP32SerialFlasher::FlashESP32", "Firmware upload complete.");
-    } else {
-        CONSOLE_ERROR("ESP32SerialFlasher::FlashESP32", "Serial initialization failed.");
+        success = true;
+        for (uint16_t i = 0; i < sizeof(images) / sizeof(images[0]); i++) {
+            err = flash_binary(images[i]->data, images[i]->size, images[i]->addr);
+            if (err != ESP_LOADER_SUCCESS) {
+                CONSOLE_ERROR("ESP32SerialFlasher::FlashESP32",
+                              "Failed to flash the ESP32 %s (attempt %u/%u, error %d).", image_names[i], attempt,
+                              kFlashAttempts, err);
+                success = false;
+                break;
+            }
+        }
     }
     ResetTarget();
     DeInit();
+    // Start the next FlashESP32() call from the bootloader sync rate. Only the stored value: the UART is deinitialized
+    // (held in reset) now, and Init() applies config_.esp32_baudrate through uart_init().
+    config_.esp32_baudrate = initial_baudrate_;
 
-    return true;
+    if (success) {
+        CONSOLE_INFO("ESP32SerialFlasher::FlashESP32", "Firmware upload complete.");
+    } else {
+        CONSOLE_ERROR("ESP32SerialFlasher::FlashESP32", "ESP32 firmware update failed after %u attempts.",
+                      kFlashAttempts);
+    }
+    return success;
 }
 
 #if SERIAL_FLASHER_DEBUG_TRACE

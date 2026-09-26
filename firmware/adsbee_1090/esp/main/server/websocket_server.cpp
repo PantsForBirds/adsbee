@@ -1,6 +1,7 @@
 #include "websocket_server.hh"
 
 #include "esp_heap_caps.h"
+#include "hardware_capabilities.hh"  // Internal-RAM heap guards (PSRAM must not mask an internal shortage).
 
 #include "comms.hh"
 #include "hal.hh"
@@ -70,7 +71,7 @@ esp_err_t WebSocketServer::Handler(httpd_req_t* req) {
 
     if (req->method == HTTP_GET) {
         CONSOLE_INFO("WebSocketServer::Handler", " [%s] Handshake done, new connection was opened.", config_.label);
-        uint32_t free_heap_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        uint32_t free_heap_bytes = HardwareCapabilities::GetInternalFreeBytes();
         bool heap_ok = free_heap_bytes >= kMinFreeHeapBytesToAcceptClient;
         if (!heap_ok) {
             CONSOLE_WARNING("WebSocketServer::Handler",
@@ -174,7 +175,7 @@ void WebSocketServer::BroadcastMessage(const char* message, int16_t len_bytes) {
     if (GetNumClients() == 0) {
         return;
     }
-    uint32_t free_heap_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    uint32_t free_heap_bytes = HardwareCapabilities::GetInternalFreeBytes();
     if (free_heap_bytes < kMinFreeHeapBytesToBroadcast) {
         // Sending queues TCP segments on the heap; when it's this low, dropping the message is the safe choice.
         uint32_t timestamp_ms = get_time_since_boot_ms();
