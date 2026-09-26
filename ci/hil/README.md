@@ -38,13 +38,15 @@ adsbee-hil flash -m adsbee_1421 adsbee_1421-0.3.11-rc1.hex   # every 1421 on the
 Example `discover` output from a bench with a 1090U and a 1421 jig:
 
 ```
-1-1.3      2e8a:000a app     serial=E000000000000001 id=1090u   model=adsbee_1090u  'Raspberry Pi Pico'
-           console /dev/serial/by-id/usb-Raspberry_Pi_Pico_E000000000000001-if00
-1-1.4      2e8a:000a app     serial=E000000000000002 id=1421    model=adsbee_1421   'ADSBee ADSBee 1421 Programmer'
-           console /dev/serial/by-id/usb-ADSBee_ADSBee_1421_Programmer_E000000000000002-if00
+1-1.3      2e8a:000a app     serial=E000000000000001 id=1090u   model=adsbee_1090u  'Pants for Birds ADSBee 1090'
+           console /dev/serial/by-id/usb-Pants_for_Birds_ADSBee_1090_E000000000000001-if00
+1-1.4      2e8a:000a app     serial=E000000000000002 id=1421    model=adsbee_1421   'Pants for Birds ADSBee 1421 Programmer'
+           console /dev/serial/by-id/usb-Pants_for_Birds_ADSBee_1421_Programmer_E000000000000002-if00
 ```
 
-The 1090U uses the stock Pico USB strings, so without a bench file it shows as `model=?`. Pass
+Every RP2040 ADSBee 1090 variant (1090, 1090U, m1090, GS3M, Winglet) runs the same firmware image and enumerates
+as `Pants for Birds` / `ADSBee 1090` (firmware before 0.9.1-rc7 used the stock `Raspberry Pi` / `Pico` strings).
+The string doesn't say which variant it is, so without a bench file a 1090U shows as `model=?`. Pass
 `--model adsbee_1090u` to use it ad hoc, or `discover --probe` to ask it for `AT+DEVICE_INFO?`.
 
 ## Bench file

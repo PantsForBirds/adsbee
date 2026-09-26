@@ -26,9 +26,11 @@ RPI_RP2_INFO_FILE = "INFO_UF2.TXT"
 SYSFS_ROOT = "/sys"
 DEV_ROOT = "/dev"
 
-# USB product strings that identify a model without talking to it. The 1090U enumerates with the
-# stock Pico SDK strings ("Raspberry Pi" / "Pico"), so it is only identifiable by serial (bench
-# config) or by asking it (`discover --probe`).
+# USB product strings that identify a model without talking to it. Every RP2040 ADSBee 1090 variant
+# (1090, 1090U, m1090, GS3M, Winglet, ...) runs the same image and enumerates as "Pants for Birds" /
+# "ADSBee 1090" (older firmware: the stock Pico SDK "Raspberry Pi" / "Pico"). That string doesn't say
+# which variant it is, so it isn't a hint here: those boards are identified by serial (bench config) or
+# by asking them (`discover --probe`).
 PRODUCT_HINTS = {
     "ADSBee 1421 Programmer": "adsbee_1421",
 }
