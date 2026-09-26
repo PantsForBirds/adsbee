@@ -7,7 +7,11 @@ Drives AT+TX_CW over the console UART, dwelling at each frequency so a spectrum 
 notch / balun / filter response on the LR2021 LRHF (2.4 GHz) output, but works for LRLF
 and SUBG too.
 
-Requires adsbee_1421 firmware >= 0.3.11rc2 (AT+TX_CW accepts fractional MHz).
+Requires a Debug build of adsbee_1421 firmware >= 0.3.11-rc6 (AT+TX_CW accepts fractional MHz). AT+TX_CW is
+compiled into Debug builds only (build with `./build.sh -d` in firmware/adsbee_1421); Release firmware rejects it.
+
+Conducted measurements only: connect the RF output to the analyzer through an attenuator or into a dummy load,
+never to an antenna. See README.md.
 
 Usage:
   python cw_sweep.py [--port DEV] [--baud N] [--band LRHF] [--start 1900] [--stop 2700]
@@ -33,7 +37,7 @@ import csv
 import glob
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 try:
     import serial
@@ -113,6 +117,8 @@ def read_until(ser: serial.Serial, needles: tuple[str, ...], timeout_s: float, e
 def probe_baud(port: str, requested: int | None, verbose: bool) -> serial.Serial:
     """Open the port at the requested baud, or walk the firmware whitelist until the device answers."""
     bauds = (requested,) if requested else ALLOWED_BAUDS
+    # Probing at a wrong rate delivers a few garbage bytes to the device's AT parser. That is harmless (at worst it
+    # prints an ERROR) and the "\r\n" sent first at the right rate clears any partial line.
     for baud in bauds:
         ser = open_port(port, baud)
         # Flush any half-typed junk on the device side, then ask a harmless query. Queries print no OK, so we
@@ -130,6 +136,29 @@ def probe_baud(port: str, requested: int | None, verbose: bool) -> serial.Serial
         if verbose:
             print(f"No response at {baud} baud.")
     raise SweepError(f"Device did not answer on {port} at {'requested baud' if requested else 'any whitelisted baud'}.")
+
+
+def check_debug_build(ser: serial.Serial, verbose: bool) -> None:
+    """AT+TX_CW only exists in Debug firmware. Fail early with a clear message instead of on the first step.
+
+    Firmware that predates the "Firmware Build" line in AT+DEVICE_INFO? is let through; AT+TX_CW then reports
+    its own error if it's missing.
+    """
+    ser.reset_input_buffer()
+    ser.write(b"AT+DEVICE_INFO?\r\n")
+    # AT+DEVICE_INFO? prints no OK; the OTA keys follow the build line. Don't echo them.
+    matched, seen = read_until(ser, ("OTA Key", "ERROR"), 2.0)
+    for line in seen.splitlines():
+        if "Firmware Build:" in line:
+            build = line.split("Firmware Build:", 1)[1].strip()
+            if verbose:
+                print(f"Firmware build type: {build}")
+            if build != "Debug":
+                raise SweepError(f"Device firmware is a {build} build; AT+TX_CW needs a Debug build "
+                                 "(firmware/adsbee_1421: ./build.sh -d).")
+            return
+    if verbose:
+        print("Firmware does not report its build type; assuming AT+TX_CW is available.")
 
 
 def start_cw(ser: serial.Serial, band: str, freq_mhz: float, power_dbm: int | None, verbose: bool) -> str:
@@ -203,6 +232,12 @@ def main(argv: list[str] | None = None) -> int:
     except (SweepError, serial.SerialException) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+    try:
+        check_debug_build(ser, args.verbose)
+    except SweepError as e:
+        ser.close()
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
 
     csv_file = None
     writer = None
@@ -229,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
             carrier_on = False
             print(f"  ok ({on_s:.1f} s)")
             if writer:
-                writer.writerow([datetime.utcnow().isoformat(timespec="milliseconds"), args.band, f"{f:.3f}",
+                writer.writerow([datetime.now(timezone.utc).isoformat(timespec="milliseconds"), args.band, f"{f:.3f}",
                                  "" if power is None else power, f"{on_s:.2f}"])
                 csv_file.flush()
         print("Sweep complete.")
