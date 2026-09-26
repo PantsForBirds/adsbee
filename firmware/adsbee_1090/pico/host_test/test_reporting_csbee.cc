@@ -263,3 +263,35 @@ TEST(CSBeeUtils, CSBeeStatisticsMessage) {
     printf("Reported CRC=%s Calculated CRC=%s\r\n", std::string(crc_str).c_str(), calculated_crc_string);
     EXPECT_EQ(crc_str.compare(calculated_crc_string), 0);
 }
+// Squawks with leading zeros keep all four digits in the CSBee SQUAWK field; an unknown squawk prints "?".
+TEST(CSBeeUtils, SquawkLeadingZeros) {
+    char message[kCSBeeMessageStrMaxLen];
+
+    ModeSAircraft mode_s;
+    mode_s.icao_address = 0x12345E;
+    mode_s.squawk = 400;
+    WriteCSBeeModeSAircraftMessageStr(message, mode_s);
+    std::string_view message_view(message);
+    GetNextToken(&message_view);  // ICAO address
+    GetNextToken();               // Flags
+    GetNextToken();               // Callsign
+    EXPECT_EQ(GetNextToken().compare("0400"), 0);
+
+    mode_s.squawk = ADSBTypes::kSquawkCodeNotYetReceived;
+    WriteCSBeeModeSAircraftMessageStr(message, mode_s);
+    message_view = std::string_view(message);
+    GetNextToken(&message_view);
+    GetNextToken();
+    GetNextToken();
+    EXPECT_EQ(GetNextToken().compare("?"), 0);
+
+    UATAircraft uat;
+    uat.icao_address = 0x12345E;
+    uat.squawk = 356;
+    WriteCSBeeUATAircraftMessageStr(message, uat);
+    message_view = std::string_view(message);
+    GetNextToken(&message_view);
+    GetNextToken();
+    GetNextToken();
+    EXPECT_EQ(GetNextToken().compare("0356"), 0);
+}
