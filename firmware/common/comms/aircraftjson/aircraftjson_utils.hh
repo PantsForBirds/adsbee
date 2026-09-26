@@ -62,7 +62,7 @@ inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft
 
     // squawk
     if (aircraft.squawk != ADSBTypes::kSquawkCodeNotYetReceived) {
-        n += snprintf(buf + n, max - n, ",\"squawk\":\"%04u\"", aircraft.squawk);
+        n += snprintf(buf + n, max - n, ",\"squawk\":\"%04u\"", static_cast<unsigned>(aircraft.squawk % 10000));
         n = n < max ? n : max;
     }
 
@@ -251,7 +251,7 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
 
     // squawk
     if (aircraft.squawk != ADSBTypes::kSquawkCodeNotYetReceived) {
-        n += snprintf(buf + n, max - n, ",\"squawk\":\"%04u\"", aircraft.squawk);
+        n += snprintf(buf + n, max - n, ",\"squawk\":\"%04u\"", static_cast<unsigned>(aircraft.squawk % 10000));
         n = n < max ? n : max;
     }
 

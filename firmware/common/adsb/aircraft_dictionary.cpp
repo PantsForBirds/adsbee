@@ -1246,6 +1246,8 @@ bool UATAircraft::ApplyUATADSBModeStatus(const DecodedUATADSBPacket::UATModeStat
             }
             squawk_temp = squawk_temp * 10 + (callsign_temp[i] - '0');
         }
+        // Intentionally keep the previously received squawk (or kSquawkCodeNotYetReceived) when the field is
+        // malformed, rather than overwriting it with a bogus value.
         if (squawk_valid) {
             squawk = squawk_temp;
         }
