@@ -47,20 +47,30 @@ TEST(ModeSPacketDecoder, HandleSingleBitError) {
     EXPECT_EQ(bit_flip_index, 111);  // Last bit of the packet was flipped (A7 -> A6).
 }
 
-TEST(ModeSPacketDecoder, CorrectSingleBitErrorInFirstBit) {
-    // Flipping the MSb of the DF field (bit index 0) must be correctable too.
+TEST(ModeSPacketDecoder, DontCorrectBitErrorsInDownlinkFormat) {
+    // Flipping the MSb of the DF field (bit index 0) turns a DF=17 into a DF=1. Only packets received as DF=17/18 are
+    // accepted as ADS-B (DO-260B 2.2.4.3.4.7.3.a), so this must not be "corrected" back into a DF=17.
     ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
     RawModeSPacket raw_packet((const char*)"0D40621D58C382D690C8AC2863A7");  // 8D -> 0D.
     decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
     decoder.UpdateDecoderLoop();
-    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
-    DecodedModeSPacket decoded_packet;
-    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
-    EXPECT_TRUE(decoded_packet.is_valid);
-    EXPECT_EQ(decoded_packet.downlink_format, 17);
-    uint16_t bit_flip_index = 1;
-    EXPECT_TRUE(decoder.decoded_mode_s_packet_bit_flip_locations_out_queue.Dequeue(bit_flip_index));
-    EXPECT_EQ(bit_flip_index, 0);
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 0);
+    EXPECT_EQ(decoder.decoded_mode_s_packet_bit_flip_locations_out_queue.Length(), 0);
+}
+
+TEST(ModeSPacketDecoder, OnlyCorrectExtendedSquitters) {
+    // DF=19 packet with a valid CRC (9D40621D58C382D690C8AC50B818) and its last bit flipped. Single bit correction is
+    // only applied to DF=17/18.
+    ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
+    RawModeSPacket raw_packet((const char*)"9D40621D58C382D690C8AC50B819");
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+    decoder.UpdateDecoderLoop();
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 0);
+
+    // The uncorrupted DF=19 packet still goes through.
+    decoder.raw_mode_s_packet_in_queue.Enqueue(RawModeSPacket((const char*)"9D40621D58C382D690C8AC50B818"));
+    decoder.UpdateDecoderLoop();
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
 }
 
 TEST(ModeSPacketDecoder, RejectDuplicateMessages) {
@@ -171,4 +181,79 @@ TEST(ModeSPacketDecoder, DebugMessagesGatedOnLogLevel) {
     EXPECT_NE(strstr(message.message, "8D40621D58C382D690C8AC2863A7"), nullptr);
 
     settings_manager.settings.log_level = original_log_level;
+}
+
+TEST(ModeSPacketDecoder, ForwardAllCallReplyWithInterrogatorCode) {
+    // DF=11 replies to interrogators with a nonzero II code are forwarded for ICAO confirmation, not dropped.
+    ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
+    decoder.raw_mode_s_packet_in_queue.Enqueue(RawModeSPacket((const char*)"5D7C0B6DB05073"));
+    decoder.UpdateDecoderLoop();
+    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+    DecodedModeSPacket decoded_packet;
+    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
+    EXPECT_TRUE(decoded_packet.is_address_parity);
+    EXPECT_EQ(decoded_packet.icao_address, 0x7C0B6Du);
+}
+
+TEST(ModeSPacketDecoder, RejectDuplicateSquittersWithTrailingBits) {
+    // A 56-bit packet read out of the demodulator as 3 words keeps the bits received after the end of the message in
+    // the low byte of its second word. They aren't part of the packet, so they mustn't defeat the duplicate filter.
+    ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
+    RawModeSPacket raw_packet((const char*)"5D7C0B6DB05076");
+    ASSERT_EQ(raw_packet.buffer_len_bytes, 7);  // 56 bits.
+    raw_packet.source = 0;
+    raw_packet.mlat_48mhz_64bit_counts = 123456;
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+
+    RawModeSPacket raw_packet_trailing_bits = raw_packet;
+    raw_packet_trailing_bits.buffer[1] |= 0xA5;  // Bits 56-63.
+    raw_packet_trailing_bits.source = 1;
+    raw_packet_trailing_bits.mlat_48mhz_64bit_counts = 123456 + kCountsPerMs / 4;
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet_trailing_bits);
+    decoder.UpdateDecoderLoop();
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+
+    // A packet that differs within its 56 bits is not a duplicate.
+    RawModeSPacket different_packet((const char*)"5D7C0B6DB05073");
+    different_packet.source = 2;
+    different_packet.mlat_48mhz_64bit_counts = 123456 + kCountsPerMs / 2;
+    decoder.raw_mode_s_packet_in_queue.Enqueue(different_packet);
+    decoder.UpdateDecoderLoop();
+    EXPECT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 2);
+}
+
+TEST(ModeSPacketDecoder, TrimShortFormatsReceivedAs112Bits) {
+    ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
+    // Valid DF=11 (5D7C0B6DB05076) followed by 56 zero bits, as handed over when the demodulation interval runs long.
+    // It is also a valid 112-bit codeword, but must come out as a 56-bit packet.
+    RawModeSPacket raw_packet((const char*)"5D7C0B6DB0507600000000000000");
+    ASSERT_EQ(raw_packet.buffer_len_bytes, 14);
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+    decoder.UpdateDecoderLoop();
+    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+    DecodedModeSPacket decoded_packet;
+    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
+    EXPECT_TRUE(decoded_packet.is_valid);
+    EXPECT_EQ(decoded_packet.raw.buffer_len_bytes, 7);
+    EXPECT_EQ(decoded_packet.icao_address, 0x7C0B6Du);
+
+    // DF=11 with interrogator code 5 and trailing garbage: only decodable once trimmed to 56 bits.
+    raw_packet = RawModeSPacket((const char*)"5D7C0B6DB05073A5000000000000");
+    raw_packet.mlat_48mhz_64bit_counts = 10 * kCountsPerMs;  // Outside the duplicate window.
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+    decoder.UpdateDecoderLoop();
+    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
+    EXPECT_TRUE(decoded_packet.is_address_parity);
+    EXPECT_EQ(decoded_packet.raw.buffer_len_bytes, 7);
+
+    // Long formats are left alone.
+    raw_packet = RawModeSPacket((const char*)"8D40621D58C382D690C8AC2863A7");
+    raw_packet.mlat_48mhz_64bit_counts = 20 * kCountsPerMs;
+    decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
+    decoder.UpdateDecoderLoop();
+    ASSERT_EQ(decoder.decoded_mode_s_packet_out_queue.Length(), 1);
+    EXPECT_TRUE(decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet));
+    EXPECT_EQ(decoded_packet.raw.buffer_len_bytes, 14);
+    EXPECT_TRUE(decoded_packet.is_valid);
 }

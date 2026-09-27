@@ -7,7 +7,7 @@ Drives AT+TX_CW over the console UART, dwelling at each frequency so a spectrum 
 notch / balun / filter response on the LR2021 LRHF (2.4 GHz) output, but works for LRLF
 and SUBG too.
 
-Requires a Debug build of adsbee_1421 firmware >= 0.3.11-rc6 (AT+TX_CW accepts fractional MHz). AT+TX_CW is
+Requires a Debug build of adsbee_1421 firmware >= 0.3.11-rc2 (AT+TX_CW accepts fractional MHz). AT+TX_CW is
 compiled into Debug builds only (build with `./build.sh -d` in firmware/adsbee_1421); Release firmware rejects it.
 
 Conducted measurements only: connect the RF output to the analyzer through an attenuator or into a dummy load,

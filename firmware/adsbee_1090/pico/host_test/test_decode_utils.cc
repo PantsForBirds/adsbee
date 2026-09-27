@@ -384,6 +384,16 @@ TEST(DecodeUtils, GillhamToAltitudeFt) {
     EXPECT_EQ(126700, GillhamToAltitudeFt(0b010000000001));
 }
 
+TEST(DecodeUtils, AC12ToAltitudeFt) {
+    EXPECT_EQ(AC12ToAltitudeFt(0), kAltitudeDecodeErrorNotAvailableOrInvalid);
+    // Q=1: 25ft increments with the Q bit (bit 4) removed. N=1440 -> 35000ft.
+    EXPECT_EQ(AC12ToAltitudeFt(0xB50), 35000);
+    // Q=1: N=0 -> -1000ft.
+    EXPECT_EQ(AC12ToAltitudeFt(0b000000010000), -1000);
+    // Q=0: Gillham code, same result as the equivalent 13-bit Mode C altitude code with M=0.
+    EXPECT_EQ(AC12ToAltitudeFt(0xA0A), AltitudeCodeToAltitudeFt(0b1010000001010));
+}
+
 TEST(DecodeUtils, AltitudeCodeToAltitudeFt) {
     // Altitude in meters.
     EXPECT_EQ(AltitudeCodeToAltitudeFt(0b0101111011100), 4921);

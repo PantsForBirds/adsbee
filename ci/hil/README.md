@@ -45,7 +45,7 @@ Example `discover` output from a bench with a 1090U and a 1421 jig:
 ```
 
 Every RP2040 ADSBee 1090 variant (1090, 1090U, m1090, GS3M, Winglet) runs the same firmware image and enumerates
-as `Pants for Birds` / `ADSBee 1090` (firmware before 0.9.1-rc7 used the stock `Raspberry Pi` / `Pico` strings).
+as `Pants for Birds` / `ADSBee 1090` (firmware before 0.9.1-rc3 used the stock `Raspberry Pi` / `Pico` strings).
 The string doesn't say which variant it is, so without a bench file a 1090U shows as `model=?`. Pass
 `--model adsbee_1090u` to use it ad hoc, or `discover --probe` to ask it for `AT+DEVICE_INFO?`.
 

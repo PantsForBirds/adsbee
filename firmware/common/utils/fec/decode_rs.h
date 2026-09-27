@@ -215,7 +215,24 @@
   /* Find roots of the error+erasure locator polynomial by Chien search */
   memcpy(&reg[1],&lambda[1],NROOTS*sizeof(reg[0]));
   count = 0;		/* Number of roots of lambda(x) */
-  for (i = 1,k=IPRIM-1; i <= NN; i++,k = MODNN(k+IPRIM)) {
+  i = 1;
+  k = IPRIM-1;
+  if (PRIM == 1) {
+    /*
+     * ADSBee modification: with PRIM == 1, step i tests location k = i-1, so
+     * the first PAD steps only test pad locations, which can never hold an
+     * error (see the pad check below). Jump straight to i = PAD+1 by
+     * advancing reg[] by PAD steps. A root in the pad then simply isn't
+     * found, and deg_lambda != count rejects the word as uncorrectable.
+     */
+    for (j = deg_lambda; j > 0; j--) {
+      if (reg[j] != A0)
+        reg[j] = MODNN(reg[j] + j * PAD);
+    }
+    i = PAD + 1;
+    k = PAD;
+  }
+  for (; i <= NN; i++,k = MODNN(k+IPRIM)) {
     q = 1; /* lambda[0] is always 0 */
     for (j = deg_lambda; j > 0; j--){
       if (reg[j] != A0) {
@@ -244,6 +261,21 @@
      */
     count = -1;
     goto finish;
+  }
+  /*
+   * ADSBee modification: an error located in the (virtual, always zero) pad
+   * of a shortened code is impossible, so the word is uncorrectable. Upstream
+   * silently skipped such locations below while still reporting success,
+   * which made the decoder accept ~1 in 800 random 30-byte words (UAT basic
+   * ADS-B) as "corrected". Same fix as Linux lib/reed_solomon "rslib: Fix
+   * remaining decoder flaws". Checked before any symbol is modified so that a
+   * failed decode leaves data[] untouched.
+   */
+  for (j = 0; j < count; j++) {
+    if (loc[j] < PAD) {
+      count = -1;
+      goto finish;
+    }
   }
   /*
    * Compute err+eras evaluator poly omega(x) = s(x)*lambda(x) (modulo

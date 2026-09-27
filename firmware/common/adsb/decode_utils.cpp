@@ -114,6 +114,11 @@ int32_t AltitudeCodeToAltitudeFt(uint16_t altitude_code) {
     }
 }
 
+int32_t AC12ToAltitudeFt(uint16_t ac12) {
+    // Re-insert a 0 M bit to the left of B1 to get a 13-bit Mode C altitude code.
+    return AltitudeCodeToAltitudeFt(((ac12 & 0b111111000000) << 1) | (ac12 & 0b111111));
+}
+
 uint16_t IdentityCodeToSquawk(uint16_t identity_code) {
     uint8_t d1 = (identity_code & (0b1 << 4)) >> 4;
     uint8_t d2 = (identity_code & (0b1 << 2)) >> 2;

@@ -8,6 +8,7 @@
 #include "fec.hh"
 #include "fixedmath/fixed_math.hpp"
 #include "geo_utils.hh"
+#include "macros.hh"  // for MIN
 #include "utils/buffer_utils.hh"  // for CHAR_TO_HEX
 
 const fixedmath::fixed_t kDegPerTrackAngleHeadingTick =
@@ -25,8 +26,18 @@ RawUATADSBPacket::RawUATADSBPacket(const char* rx_string, int16_t sigs_dbm_in, i
 RawUATADSBPacket::RawUATADSBPacket(uint8_t rx_buffer[kADSBMessageMaxSizeBytes], uint16_t rx_buffer_len_bytes,
                                    int16_t sigs_dbm_in, int16_t sigq_bits_in, uint64_t mlat_48mhz_64bit_counts_in)
     : sigs_dbm(sigs_dbm_in), sigq_bits(sigq_bits_in), mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
-    memcpy(buffer, rx_buffer, rx_buffer_len_bytes);
-    buffer_len_bytes = rx_buffer_len_bytes;
+    buffer_len_bytes = MIN(rx_buffer_len_bytes, kADSBMessageMaxSizeBytes);
+    memcpy(buffer, rx_buffer, buffer_len_bytes);
+}
+
+uint16_t UATMessageLenBytesFromSyncAndPayloadType(uint8_t sync_word_ls4, uint8_t payload_type_code) {
+    uint8_t distance_to_adsb = __builtin_popcount((sync_word_ls4 ^ RawUATADSBPacket::kSyncWordLS4) & 0xF);
+    uint8_t distance_to_uplink = __builtin_popcount((sync_word_ls4 ^ RawUATUplinkPacket::kSyncWordLS4) & 0xF);
+    if (distance_to_uplink < distance_to_adsb) {
+        return RawUATUplinkPacket::kUplinkMessageNumBytes;
+    }
+    return payload_type_code == 0 ? RawUATADSBPacket::kShortADSBMessageNumBytes
+                                  : RawUATADSBPacket::kLongADSBMessageNumBytes;
 }
 
 DecodedUATADSBPacket::DecodedUATADSBPacket(const char* rx_string, int32_t sigs_dbm, int32_t sigq_bits,
@@ -58,6 +69,10 @@ ADSBTypes::DirectionType DecodedUATADSBPacket::HorizontalVelocityToDirectionDegA
             }
             CalculateTrackAndSpeedFromNEVelocities(north_velocity_kts, east_velocity_kts, direction_deg_ref,
                                                    speed_kts_ref);
+            if (north_velocity_kts == 0 && east_velocity_kts == 0) {
+                // Speed is a valid 0 kts, but the track angle of a zero velocity vector is undefined.
+                return ADSBTypes::kDirectionTypeNotAvailable;
+            }
             return ADSBTypes::kDirectionTypeTrueTrackAngle;
         } break;
         case ADSBTypes::kAirGroundStateOnGround: {
@@ -199,17 +214,25 @@ void DecodedUATADSBPacket::ConstructUATADSBPacket(bool run_fec) {
 #if defined(ON_TI) || defined(ON_HOST)
         // Correct in place. If correction fails, the buffer will not be
         // modified.
-        raw.sigq_bits = uat_rs.DecodeLongADSBMessage(raw.buffer);
+        // A reception shorter than a long message can't hold one: its tail would just be the zero-fill of buffer[].
+        raw.sigq_bits = raw.buffer_len_bytes >= RawUATADSBPacket::kLongADSBMessageNumBytes
+                            ? uat_rs.DecodeLongADSBMessage(raw.buffer)
+                            : -1;
         if (raw.sigq_bits >= 0) {
             // CONSOLE_INFO("DecodedUATADSBPacket", "Decoded Long ADS-B message with %d bytes corrected.",
             // raw.sigq_bits);
             message_format = kUATADSBMessageFormatLong;
+            raw.buffer_len_bytes = RawUATADSBPacket::kLongADSBMessageNumBytes;
         } else {
             raw.sigq_bits = uat_rs.DecodeShortADSBMessage(raw.buffer);
             if (raw.sigq_bits >= 0) {
                 // CONSOLE_INFO("DecodedUATADSBPacket", "Decoded Short ADS-B message with %d bytes corrected.",
                 //  raw.sigq_bits);
                 message_format = kUATADSBMessageFormatShort;
+                // The receiver may have captured a long message's worth of bytes (the length is chosen from the
+                // uncorrected payload type code). Downstream consumers (Beast, raw) label and size the frame by
+                // buffer_len_bytes, so drop the trailing bytes that aren't part of the basic message.
+                raw.buffer_len_bytes = RawUATADSBPacket::kShortADSBMessageNumBytes;
             } else {
                 // CONSOLE_ERROR("DecodedUATADSBPacket", "Failed to decode UAT ADS-B message, invalid packet.");
                 is_valid = false;  // Invalid packet.
@@ -347,9 +370,8 @@ void DecodedUATADSBPacket::DecodeTargetState(uint8_t* data, UATTargetState& targ
 RawUATUplinkPacket::RawUATUplinkPacket(const char* rx_string, int16_t sigs_dbm_in, int16_t sigq_bits_in,
                                        uint64_t mlat_48mhz_64bit_counts_in)
     : sigs_dbm(sigs_dbm_in), sigq_bits(sigq_bits_in), mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
-    uint16_t rx_num_bytes =
-        strnlen(rx_string, kUplinkMessageNumBytes * kBytesPerWord * kNibblesPerByte) / kNibblesPerByte;
-    for (uint16_t i = 0; i < rx_num_bytes && i < kUplinkMessageNumBytes * kBytesPerWord; i++) {
+    uint16_t rx_num_bytes = strnlen(rx_string, kUplinkMessageNumBytes * kNibblesPerByte) / kNibblesPerByte;
+    for (uint16_t i = 0; i < rx_num_bytes && i < kUplinkMessageNumBytes; i++) {
         uint8_t byte = (CHAR_TO_HEX(rx_string[i * kNibblesPerByte]) << kBitsPerNibble) |
                        CHAR_TO_HEX(rx_string[i * kNibblesPerByte + 1]);
         encoded_message[i] = byte;
@@ -360,8 +382,8 @@ RawUATUplinkPacket::RawUATUplinkPacket(const char* rx_string, int16_t sigs_dbm_i
 RawUATUplinkPacket::RawUATUplinkPacket(uint8_t rx_buffer[kUplinkMessageNumBytes], uint16_t rx_buffer_len_bytes,
                                        int16_t sigs_dbm_in, int16_t sigq_bits_in, uint64_t mlat_48mhz_64bit_counts_in)
     : sigs_dbm(sigs_dbm_in), sigq_bits(sigq_bits_in), mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
-    memcpy(encoded_message, rx_buffer, rx_buffer_len_bytes);
-    encoded_message_len_bytes = rx_buffer_len_bytes;
+    encoded_message_len_bytes = MIN(rx_buffer_len_bytes, kUplinkMessageNumBytes);
+    memcpy(encoded_message, rx_buffer, encoded_message_len_bytes);
 }
 
 DecodedUATUplinkPacket::DecodedUATUplinkPacket(const char* rx_string, int32_t sigs_dbm, int32_t sigq_bits,

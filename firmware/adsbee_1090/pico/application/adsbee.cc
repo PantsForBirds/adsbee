@@ -1,5 +1,6 @@
 #include "adsbee.hh"
 
+#include <hardware/structs/scb.h>
 #include <hardware/structs/systick.h>
 
 #include "hardware/adc.h"
@@ -276,8 +277,26 @@ void ADSBee::ForceBlinkStatusLED(uint32_t duration_ms) {
 uint64_t __time_critical_func(ADSBee::GetMLAT48MHzCounts)(uint16_t num_bits) {
     // Combine the wrap counter with the current value of the SysTick register and mask to 48 bits.
     // Note: 24-bit SysTick value is subtracted from UINT_24_MAX to make it count up instead of down.
-    return (mlat_counter_wraps_ + ((0xFFFFFF - systick_hw->cvr) * MLAT_SYSTEM_CLOCK_RATIO)) &
-           (UINT64_MAX >> (64 - num_bits));
+    // The SysTick counter can reload without mlat_counter_wraps_ being incremented yet: either the wrap handler runs
+    // between the two reads (called from thread mode), or it is pending because we were called from an ISR it can't
+    // preempt (on the RP2040 only the top two priority bits are implemented, so the GPIO, demod complete and SysTick
+    // priorities set in adsbee.hh are all equal). Either way the timestamp would jump back by a full wrap (~134ms).
+    uint64_t wraps;
+    uint32_t elapsed_sys_clk_counts;
+    bool wrap_pending;
+    do {
+        wraps = mlat_counter_wraps_;
+        elapsed_sys_clk_counts = 0xFFFFFF - systick_hw->cvr;
+        wrap_pending = scb_hw->icsr & M0PLUS_ICSR_PENDSTSET_BITS;
+        if (wrap_pending) {
+            // The counter has reloaded but the wrap hasn't been counted. Re-read it so it's known to be post-reload.
+            elapsed_sys_clk_counts = 0xFFFFFF - systick_hw->cvr;
+        }
+    } while (wraps != mlat_counter_wraps_);  // Wrap handler ran while we were reading, try again.
+    if (wrap_pending) {
+        wraps += kMLATWrapCounterIncrement;
+    }
+    return (wraps + (elapsed_sys_clk_counts * MLAT_SYSTEM_CLOCK_RATIO)) & (UINT64_MAX >> (64 - num_bits));
 }
 
 uint64_t ADSBee::GetMLAT12MHzCounts(uint16_t num_bits) {

@@ -122,8 +122,9 @@ class ModeSAircraft : public Aircraft {
     // These variables define filter bounds for time between CPR packets. If the time between packets is greater than
     // the time delta limit, the old CPR packet is discarded and the CPR packet pair is not used for position decoding.
     static constexpr uint32_t kDefaultCPRIntervalMs = 10e3;  // CPR interval when starting from scratch or stale track.
-    static constexpr uint32_t kRefCPRIntervalMs = 19e3;      // Reference interval for rejecting CPR packet pairs.
-    static constexpr uint32_t kMaxCPRIntervalMs = 30e3;  // Never accept CPR packet pairs more than 30 seconds apart.
+    // DO-260C 2.2.10.3.1: even/odd airborne position pairs are accepted within MIN(20, 10000 / ground speed kts) seconds.
+    static constexpr uint32_t kRefCPRIntervalMs = 20e3;  // Reference interval for rejecting CPR packet pairs at 500kts.
+    static constexpr uint32_t kMaxCPRIntervalMs = 20e3;  // Never accept CPR packet pairs more than 20 seconds apart.
     static constexpr uint32_t kMaxTrackUpdateIntervalMs = 20e3;  // Tracks older than this are considered stale.
 
     static constexpr uint16_t kCallSignMaxNumChars = 8;
@@ -345,8 +346,8 @@ class ModeSAircraft : public Aircraft {
 
     // Aircraft Operation Status Message
     // Navigation Integrity Category (NIC)
-    uint8_t nic_bits_valid = 0b000;  // MSb to LSb: nic_c_valid nic_b_valid nic_a_valid.
-    uint8_t nic_bits = 0b000;        // MSb to LSb: nic_c nic_b nic_a.
+    uint8_t nic_bits_valid = 0b000;  // MSb to LSb: nic_d1_valid nic_d0_valid nic_c_valid nic_b_valid nic_a_valid.
+    uint8_t nic_bits = 0b000;        // MSb to LSb: nic_d1 nic_d0 nic_c nic_b nic_a.
     ADSBTypes::NICRadiusOfContainment navigation_integrity_category = ADSBTypes::kROCUnknown;  // 4 bits.
     ADSBTypes::NICBarometricAltitudeIntegrity navigation_integrity_category_baro =
         ADSBTypes::kBAIGillhamInputNotCrossChecked;  // 1 bit. Default to worst case.
@@ -562,13 +563,25 @@ class UATAircraft : public Aircraft {
     inline void WriteBitFlag(BitFlag bit, bool value) { value ? flags |= (0b1 << bit) : flags &= ~(0b1 << bit); }
 
     /**
-     * UAT state vector contains latitude and longitude as 24-bit Angular Weighted Binary (AWB). Convert to 32-bit
-     * angular weighted binary.
-     * @param[in] uat_lat_awb 24-bit UAT latitude in AWB format.
+     * UAT state vector contains longitude as 24-bit Angular Weighted Binary (AWB). Convert to 32-bit angular weighted
+     * binary.
+     * @param[in] uat_lon_awb 24-bit UAT longitude in AWB format.
+     * @retval 32-bit longitude in AWB format.
+     */
+    static inline uint32_t UATLonAWBToAWB32(uint32_t uat_lon_awb) {
+        return (uat_lon_awb << 8);  // Shift left to convert from 24-bit to 32-bit AWB.
+    }
+
+    /**
+     * UAT state vector contains latitude as 24-bit AWB with the MSB omitted (23 bits, UAT Tech Manual Table 2-12 note
+     * 1): valid latitudes are 0x000000-0x400000 (0 to 90N) and 0xC00000-0xFFFFFF (90S to 0), so the two MSBs are
+     * always equal apart from the north pole. Restore the MSB, then convert to 32-bit AWB.
+     * @param[in] uat_lat_awb 23-bit UAT latitude.
      * @retval 32-bit latitude in AWB format.
      */
-    inline uint32_t UATAWBToAWB32(uint32_t uat_awb) {
-        return (uat_awb << 8);  // Shift left to convert from 24-bit to 32-bit AWB.
+    static inline uint32_t UATLatAWBToAWB32(uint32_t uat_lat_awb) {
+        uint32_t lat_awb24 = uat_lat_awb > 0x400000 ? (uat_lat_awb | 0x800000) : uat_lat_awb;
+        return (lat_awb24 << 8);
     }
 
     /**
@@ -982,11 +995,20 @@ class AircraftDictionary {
     bool IngestModeSAltitudeReplyPacket(const ModeSAltitudeReplyPacket& packet);
 
     /**
+     * Ingests a DF=0 or DF=16 (ACAS air-air surveillance) reply and uses its vertical status and altitude to update the
+     * relevant aircraft. Exposed for testing, but usually called by IngestDecodedModeSPacket. The packet must be valid
+     * (i.e. its address parity already confirmed against the dictionary).
+     * @param[in] packet DecodedModeSPacket with DF=0 or DF=16 to ingest.
+     * @retval True if successful, false if something broke.
+     */
+    bool IngestModeSAirAirSurveillancePacket(const DecodedModeSPacket& packet);
+
+    /**
      * Ingests an All Call Reply packet and uses it to update the relevant aircraft. Exposed for testing, but usually
      * called by IngestDecodedModeSPacket.
      *
-     * Currently, we only accept all call reply packets with an interrogator ID of 0 (replies to spontaneous acquisition
-     * squitters), since we don't have a way to know the interrogator ID of ground based surveillance stations.
+     * All call replies with an interrogator code of 0 (acquisition squitters) validate themselves. Replies to
+     * interrogators with a nonzero code are only accepted once their ICAO address is in the dictionary.
      */
     bool IngestModeSAllCallReplyPacket(const ModeSAllCallReplyPacket& packet);
 

@@ -79,13 +79,14 @@ class ADSBTypes {
 
     enum NACHorizontalVelocityError : uint8_t {
         kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond = 0b000,
-        kHVELessThan10MetersPerSecond = 0b110,
+        kHVELessThan10MetersPerSecond = 0b001,
         kHVELessThan3MetersPerSecond = 0b010,
         kHVELessThan1MeterPerSecond = 0b011,
         kHVELessThan0p3MetersPerSecond = 0b100
     };
 
-    enum NICBit : uint16_t { kNICBitA = 0, kNICBitB = 1, kNICBitC = 2 };
+    // NIC supplement D (version 3 only) is a 2-bit value stored as kNICBitD0 (LSB) and kNICBitD1 (MSB).
+    enum NICBit : uint16_t { kNICBitA = 0, kNICBitB = 1, kNICBitC = 2, kNICBitD0 = 3, kNICBitD1 = 4 };
 
     enum NICRadiusOfContainment : uint8_t {
         kROCUnknown = 0,

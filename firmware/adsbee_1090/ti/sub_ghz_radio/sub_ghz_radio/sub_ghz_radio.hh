@@ -78,6 +78,11 @@ public:
     // raced the RX command ending -- packets may be truncated or over-read.
     volatile uint32_t set_len_error_count = 0;
 
+    // Receptions where the volatile current_packet_len_bytes (set by the SET_LEN handler) disagreed with the data
+    // entry's own length word at HandlePacketRx time, i.e. the coalesced-event staleness race fired. Dispatch uses the
+    // entry-derived length, so this is visibility only. Counted from the RF callback (SWI context).
+    volatile uint32_t uat_len_mismatch_count = 0;
+
 private:
     SubGHzRadioConfig config_;
 

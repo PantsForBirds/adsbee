@@ -22,12 +22,8 @@ class UATPacketDecoder {
                                       .overwrite_when_full = true});
 
     static inline uint16_t SyncWordLSBAndMDBTypeCodeToMessageLenBytes(uint8_t sync_word_ls4, uint8_t mdb_type_code) {
-        if (sync_word_ls4 == RawUATADSBPacket::kSyncWordLS4) {
-            return mdb_type_code == 0 ? RawUATADSBPacket::kShortADSBMessageNumBytes
-                                      : RawUATADSBPacket::kLongADSBMessageNumBytes;
-        } else {
-            return RawUATUplinkPacket::kUplinkMessageNumBytes;
-        }
+        // Nearest-pattern sync classification, host tested in common code.
+        return UATMessageLenBytesFromSyncAndPayloadType(sync_word_ls4, mdb_type_code);
     }
     bool Update();
 

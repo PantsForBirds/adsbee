@@ -283,12 +283,18 @@ TEST(ModeSAircraft, CalculateMaxAllowedCPRInterval) {
     aircraft.speed_kts = 0;
     EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kMaxCPRIntervalMs);
 
-    // Mid-speed aircraft = calculated CPR interval between max and min allowed.
+    // DO-260C 2.2.10.3.1: X = MIN(20, 10000 / V) seconds.
+    // Aircraft at or below 500kts = 20 seconds.
+    aircraft.speed_kts = 250;
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
     aircraft.speed_kts = 400;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
+    aircraft.speed_kts = 500;
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
 
     // Very fast aircraft = same equation, no minimum interval enforced.
     aircraft.speed_kts = 1000;
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 10000u);
     EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
 }
 
@@ -420,7 +426,31 @@ TEST(AircraftDictionary, IngestAirbornePositionGNSSAltitude) {
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
     EXPECT_EQ(aircraft.altitude_source, ADSBTypes::AltitudeSource::kAltitudeSourceGNSS);
-    EXPECT_EQ(aircraft.gnss_altitude_ft, 8431);
+    // Altitude subfield is 0xA0A: Q=0, so it's Gillham coded like a barometric altitude (DO-260B 2.2.3.2.3.4.2). It
+    // used to be decoded as 2570 meters (8431ft).
+    EXPECT_EQ(aircraft.gnss_altitude_ft, GillhamToAltitudeFt(AltitudeCodeToGillham(0b1010000001010)));
+}
+
+TEST(AircraftDictionary, IngestAirbornePositionGNSSAltitudeQBit) {
+    AircraftDictionary dictionary = AircraftDictionary();
+    // DF=17, TC=20, altitude subfield 0xB50: Q=1, N=1440 -> 25 * 1440 - 1000 = 35000ft GNSS height. Decoding the
+    // subfield as meters would give 2896m (9501ft).
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEFA0B502468AABCD71F32A");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ModeSAircraft* aircraft = dictionary.GetAircraftPtr<ModeSAircraft>(
+        Aircraft::ICAOToUID(0xABCDEF, Aircraft::kAircraftTypeModeS));
+    ASSERT_NE(aircraft, nullptr);
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+    EXPECT_EQ(aircraft->altitude_source, ADSBTypes::AltitudeSource::kAltitudeSourceGNSS);
+    EXPECT_EQ(aircraft->gnss_altitude_ft, 35000);
+
+    // Same message with an all zeros altitude subfield: GNSS height not available.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEFA00002468AABCD37D5AC");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+    EXPECT_EQ(aircraft->altitude_source, ADSBTypes::AltitudeSource::kAltitudeSourceNotAvailable);
 }
 
 TEST(AircraftDictionary, IngestAirborneVelocityMessage) {
@@ -475,6 +505,7 @@ TEST(AircraftDictionary, IngestAirborneVelocityMessage) {
         dictionary.GetAircraftPtr<ModeSAircraft>(Aircraft::ICAOToUID(0x485020, Aircraft::kAircraftTypeModeS));
     aircraft_ptr->baro_altitude_ft = 2000;
     aircraft_ptr->altitude_source = ADSBTypes::kAltitudeSourceBaro;
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
     // Re-ingest message A to make sure the GNSS altitude gets corrected.
     ASSERT_TRUE(dictionary.IngestModeSADSBPacket(packet));
     EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude));
@@ -501,6 +532,144 @@ TEST(AircraftDictionary, IngestAirborneVelocityMessage) {
     EXPECT_NEAR(aircraft.speed_kts, 375.0f, 0.01);
 }
 
+TEST(AircraftDictionary, IngestAirborneVelocityMessageNotAvailable) {
+    AircraftDictionary dictionary = AircraftDictionary();
+    uint32_t uid = Aircraft::ICAOToUID(0xABCDEF, Aircraft::kAircraftTypeModeS);
+
+    // Subtype 1 (ground speed), 100kts east and 100kts north: speed and direction available.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB00000514EEC");
+    ASSERT_TRUE(tpacket.is_valid);
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ModeSAircraft* aircraft = dictionary.GetAircraftPtr<ModeSAircraft>(uid);
+    ASSERT_NE(aircraft, nullptr);
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid));
+    EXPECT_EQ(aircraft->speed_kts, 141);
+    EXPECT_NEAR(aircraft->direction_deg, 45.0f, 0.01f);
+
+    // Subtype 1 with the east-west velocity subfield set to 0 (not available): neither speed nor track is known.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900000CB00000FD855A");
+    ASSERT_TRUE(tpacket.is_valid);
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid));
+    EXPECT_EQ(aircraft->speed_source, ADSBTypes::kSpeedSourceNotAvailable);
+
+    // Subtype 3 (airspeed), heading status bit = 0, IAS 250kts: speed is available but heading is not.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9B00001F70000019B69C");
+    ASSERT_TRUE(tpacket.is_valid);
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid));
+    EXPECT_EQ(aircraft->speed_kts, 250);
+    EXPECT_EQ(aircraft->speed_source, ADSBTypes::kSpeedSourceAirspeedIndicated);
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid));
+
+    // Subtype 3, heading status bit = 1 with heading 90 degrees, airspeed subfield 0 (not available).
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9B050000100000C441AC");
+    ASSERT_TRUE(tpacket.is_valid);
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHorizontalSpeedValid));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagDirectionValid));
+    EXPECT_NEAR(aircraft->direction_deg, 90.0f, 0.01f);
+}
+
+
+TEST(AircraftDictionary, AirborneVelocityDifferenceFromBaroAltitude) {
+    // DO-260C N.4.2.4: the geometric altitude is only derived from the Difference From Baro Altitude subfield when the
+    // barometric altitude is valid and the difference isn't all ones (>= 3137.5ft).
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft);
+
+    // TC=11, baro altitude 35000ft.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEF58B50024685678F135E9");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ASSERT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    ASSERT_EQ(aircraft->baro_altitude_ft, 35000);
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+
+    // Velocity with the difference subfield all ones: geometric altitude is not derived.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB0047F947AAC");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+
+    // Velocity with GNSS 550ft above baro.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB00417964810");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+    EXPECT_EQ(aircraft->gnss_altitude_ft, 35550);
+
+    // TC=11 with an undecodable Gillham altitude: baro altitude is no longer valid, so the next difference must not be
+    // applied to the stale 35000ft.
+    aircraft->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, false);
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF5800102468567887BF8F");
+    ASSERT_TRUE(tpacket.is_valid);
+    dictionary.IngestDecodedModeSPacket(tpacket);
+    ASSERT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB00417964810");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+}
+
+TEST(AircraftDictionary, AirborneVelocityDifferenceFromBaroAltitudeWithGNSSPosition) {
+    // An aircraft reporting GNSS height in its position messages (TC=20-22) usually does so because its barometric
+    // altitude is unavailable, and the difference subfield may then be relative to zero pressure altitude (DO-260C
+    // N.4.2.4, Note). The barometric altitude must not be derived from it.
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft);
+
+    // TC=20, GNSS height 35000ft.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEFA0B5002468567885D284");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ASSERT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
+    ASSERT_EQ(aircraft->gnss_altitude_ft, 35000);
+
+    // Velocity with GNSS 550ft below baro.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB00497914ED0");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft->gnss_altitude_ft, 35000);
+}
+
+TEST(AircraftDictionary, AirborneVelocityNACv) {
+    // NACv for airborne aircraft is ME[11-13] of the Airborne Velocity message (all ADS-B versions; NUCr in v0 maps
+    // one-for-one). DO-260C 2.2.3.2.6.1.5, N.2.3.8, Table N-26.
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft);
+
+    // DF17 TC=19 subtype 1, NACv=2 (< 3 m/s).
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEF9910650CB00400C4B984");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity, ADSBTypes::kHVELessThan3MetersPerSecond);
+
+    // DF18 CF=2 (fine TIS-B): ME[10-13] are NACp in TIS-B velocity messages (DO-260C 2.2.17.3.4.4), not NACv.
+    tpacket = DecodedModeSPacket((char*)"92ABCDEF9918650CB004005FB735");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity, ADSBTypes::kHVELessThan3MetersPerSecond);
+
+    // v2 airborne Operational Status with ME[33-35] = 110 (reserved): NACv from the velocity message is kept.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEFF8302036C0576A000000");
+    tpacket.is_valid = true;
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->adsb_version, 2);
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity, ADSBTypes::kHVELessThan3MetersPerSecond);
+
+    // NACv=0 (unknown or >= 10 m/s).
+    tpacket = DecodedModeSPacket((char*)"8DABCDEF9900650CB004006978EC");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity,
+              ADSBTypes::kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond);
+}
 TEST(AircraftDictionary, IngestAltitudeReply) {
     ModeSAircraft* aircraft_ptr;
     // Try ingesting a altitude reply packet that's marked as valid so that it doesn't require a cross-check with the
@@ -550,6 +719,74 @@ TEST(AircraftDictionary, IngestAltitudeReply) {
     EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent));
     EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert));
     EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+}
+
+TEST(AircraftDictionary, IngestAltitudeReplyAltitudeNotAvailable) {
+    AircraftDictionary dictionary = AircraftDictionary();
+    ModeSAircraft* aircraft_ptr = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0x7C1B28u));
+    ASSERT_TRUE(aircraft_ptr);
+    // DF=4 from 0x7C1B28 with a 10000ft altitude.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"200006A2DE8B1C");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft_ptr->baro_altitude_ft, 10000);
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+
+    // Same aircraft, AC field all zeros: altitude not available. Must not be reported as a valid altitude.
+    tpacket = DecodedModeSPacket((char*)"20000000FC7D77");
+    EXPECT_EQ(tpacket.icao_address, 0x7C1B28u);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_GT(aircraft_ptr->baro_altitude_ft, kAltitudeDecodeErrorInvalid);  // Error code was not written.
+}
+
+TEST(AircraftDictionary, IngestAirAirSurveillanceAndCommBReplies) {
+    AircraftDictionary dictionary = AircraftDictionary();
+
+    // Address parity packets from an aircraft that isn't in the dictionary are dropped.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"020186A2FDD380");  // DF=0, 10000ft, airborne.
+    EXPECT_FALSE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(dictionary.GetNumAircraft(), 0);
+
+    ModeSAircraft* aircraft_ptr = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0x7C1B28u));
+    ASSERT_TRUE(aircraft_ptr);
+
+    // DF=0 (short air-air surveillance), VS=1 (on ground), AC=10000ft.
+    set_time_since_boot_ms(1000);
+    tpacket = DecodedModeSPacket((char*)"060186A25226CC");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(tpacket.is_valid);
+    EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft_ptr->baro_altitude_ft, 10000);
+    EXPECT_EQ(aircraft_ptr->last_message_timestamp_ms, 1000u);
+
+    // DF=0, VS=0 (airborne).
+    tpacket = DecodedModeSPacket((char*)"020186A2FDD380");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));
+
+    // DF=16 (long air-air surveillance), VS=0, AC=10000ft.
+    aircraft_ptr->baro_altitude_ft = 0;
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
+    tpacket = DecodedModeSPacket((char*)"800186A20000000000000065791D");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft_ptr->baro_altitude_ft, 10000);
+
+    // DF=20 (Comm-B altitude reply), FS=0 (airborne), AC=10000ft.
+    aircraft_ptr->baro_altitude_ft = 0;
+    aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, false);
+    set_time_since_boot_ms(2000);
+    tpacket = DecodedModeSPacket((char*)"A00006A2000000000000002CBC7D");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid));
+    EXPECT_EQ(aircraft_ptr->baro_altitude_ft, 10000);
+    EXPECT_EQ(aircraft_ptr->last_message_timestamp_ms, 2000u);
+
+    // DF=21 (Comm-B identity reply), same ID field as the DF=5 packet 2C0006A2DEE500.
+    tpacket = DecodedModeSPacket((char*)"A80006A200000000000000EF2BA6");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft_ptr->squawk, IdentityCodeToSquawk(0x6A2));
 }
 
 TEST(AircraftDictionary, IngestIdentityReply) {
@@ -668,8 +905,8 @@ TEST(AircraftDictionary, NICAssignment) {
         EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan0p1NauticalMiles);
     }
 
-    // TC=11, NIC_A=0, NIC_B=1: RC < 75m → kROCLessThan75Meters (NIC=9).
-    // Bit 7 of ME[0] toggled: 0x58 → 0x59. CRC invalid; force is_valid.
+    // TC=11 needs NIC_A=1 and NIC_B=1 for RC < 75m (NIC=9); NIC_A=0, NIC_B=1 is not a defined combination.
+    // DO-260C Table 2-11. Bit 7 of ME[0] toggled: 0x58 → 0x59 (NIC_B=1). CRC invalid; force is_valid.
     {
         const uint32_t icao = 0x40621Du;
         aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(
@@ -678,34 +915,127 @@ TEST(AircraftDictionary, NICAssignment) {
         DecodedModeSPacket packet((char*)"8D40621D59C382D690C8AC2863A7");
         packet.is_valid = true;
         ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
+        EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan0p1NauticalMiles);  // Unchanged.
+        aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitA, 1);
+        ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
         EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan75Meters);
     }
 
-    // TC=16, NIC_A=0, NIC_B=0: RC < 4 NM → kROCLessThan4NauticalMiles (NIC=3).
+    // TC=16, NIC_A=0, NIC_B=0: RC < 8 NM → kROCLessThan8NauticalMiles (NIC=2).
     // ME[0] changed to 0x80 (TypeCode=16, NIC_B=0). Force is_valid.
     {
         const uint32_t icao = 0x40621Du;
         aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(
             Aircraft::ICAOToUID(icao, Aircraft::kAircraftTypeModeS));
         ASSERT_TRUE(aircraft_ptr);
+        aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitA, 0);
         DecodedModeSPacket packet((char*)"8D40621D80C382D690C8AC2863A7");
         packet.is_valid = true;
         ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
-        EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan4NauticalMiles);
+        EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan8NauticalMiles);
     }
 
-    // TC=16, NIC_A=1, NIC_B=0: RC < 8 NM → kROCLessThan8NauticalMiles (NIC=2).
+    // TC=16, NIC_A=1, NIC_B=1: RC < 4 NM → kROCLessThan4NauticalMiles (NIC=3). ME[0] = 0x81 (NIC_B=1).
     {
         const uint32_t icao = 0x40621Du;
         aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(
             Aircraft::ICAOToUID(icao, Aircraft::kAircraftTypeModeS));
         ASSERT_TRUE(aircraft_ptr);
         aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitA, 1);
+        DecodedModeSPacket packet((char*)"8D40621D81C382D690C8AC2863A7");
+        packet.is_valid = true;
+        ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
+        EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan4NauticalMiles);
+    }
+
+    // Version 1 has only one NIC supplement (NIC_A) and ME[8] is the single antenna flag: TC=16 with NIC_A=1 is
+    // RC < 4 NM regardless of ME[8]. DO-260C Table N-16.
+    {
+        const uint32_t icao = 0x40621Du;
+        aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(
+            Aircraft::ICAOToUID(icao, Aircraft::kAircraftTypeModeS));
+        ASSERT_TRUE(aircraft_ptr);
+        aircraft_ptr->adsb_version = 1;
+        aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitA, 1);
         DecodedModeSPacket packet((char*)"8D40621D80C382D690C8AC2863A7");
         packet.is_valid = true;
         ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
+        EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan4NauticalMiles);
+        aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitA, 0);
+        ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
         EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan8NauticalMiles);
     }
+}
+
+TEST(AircraftDictionary, GNSSPositionNICVersion3) {
+    // Version 3 redefined the NIC of TYPE codes 20-22: TC=21 is NIC 7 (RC < 0.2NM), and TC=20 / TC=22 are refined by
+    // NIC supplement D in Airborne Velocity ME[47-48]. DO-260C Table 2-11, Table 2-28. Versions 0-2: TC=20 NIC 11,
+    // TC=21 NIC 10, TC=22 NIC 0 (DO-260C Table N-24).
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft);
+    DecodedModeSPacket tc20((char*)"8DABCDEFA0B5002468567885D284");
+    DecodedModeSPacket tc21((char*)"8DABCDEFA8B50024685678662111");
+    DecodedModeSPacket tc22((char*)"8DABCDEFB0B50024685678BDC1A7");
+    DecodedModeSPacket velocity_nic_d_2((char*)"8DABCDEF9900650CB006007563EC");
+    ASSERT_TRUE(tc20.is_valid && tc21.is_valid && tc22.is_valid && velocity_nic_d_2.is_valid);
+
+    // Version 2 Operational Status (NIC_A=1).
+    DecodedModeSPacket status((char*)"8DABCDEFF8302036C0576A000000");
+    status.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(status));
+    ASSERT_EQ(aircraft->adsb_version, 2);
+    dictionary.IngestDecodedModeSPacket(tc21);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan25Meters);
+    dictionary.IngestDecodedModeSPacket(tc20);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan7p5Meters);
+
+    // Version 3 Operational Status.
+    status = DecodedModeSPacket((char*)"8DABCDEFF8302036C0776A000000");
+    status.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(status));
+    ASSERT_EQ(aircraft->adsb_version, 3);
+    dictionary.IngestDecodedModeSPacket(tc21);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan0p2NauticalMiles);
+    // No NIC supplement D received yet: lowest NIC for the TYPE code.
+    dictionary.IngestDecodedModeSPacket(tc20);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan0p1NauticalMiles);
+    dictionary.IngestDecodedModeSPacket(tc22);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCUnknown);
+
+    // Velocity with NIC supplement D = 2 (difference from baro altitude not available).
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(velocity_nic_d_2));
+    dictionary.IngestDecodedModeSPacket(tc20);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan25Meters);
+    dictionary.IngestDecodedModeSPacket(tc22);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan1NauticalMile);
+    dictionary.IngestDecodedModeSPacket(tc21);
+    EXPECT_EQ(aircraft->navigation_integrity_category, ADSBTypes::kROCLessThan0p2NauticalMiles);
+}
+
+TEST(AircraftDictionary, SurfaceNICAssignment) {
+    // Surface position NIC from TYPE code, NIC_A and NIC_C. DO-260C Table 2-11: TC=7 is RC < 75m with NIC_A=1,
+    // NIC_C=0 and RC < 0.1NM with NIC_A=0, NIC_C=0. ME[0] = 0x38 (TC=7). Force is_valid.
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft_ptr = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0x40621Du));
+    ASSERT_TRUE(aircraft_ptr);
+    DecodedModeSPacket packet((char*)"8D40621D38C382D690C8AC2863A7");
+    packet.is_valid = true;
+
+    aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitA, 0);
+    aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitC, 0);
+    dictionary.IngestDecodedModeSPacket(packet);
+    EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan0p1NauticalMiles);
+
+    aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitA, 1);
+    dictionary.IngestDecodedModeSPacket(packet);
+    EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan75Meters);
+
+    // NIC_A=0, NIC_C=1 is not a defined TC=7 combination: NIC is left unchanged.
+    aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitA, 0);
+    aircraft_ptr->WriteNICBit(ADSBTypes::kNICBitC, 1);
+    dictionary.IngestDecodedModeSPacket(packet);
+    EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan75Meters);
 }
 
 TEST(AircraftDictionary, IngestAllCallReply) {
@@ -716,6 +1046,24 @@ TEST(AircraftDictionary, IngestAllCallReply) {
     ModeSAircraft aircraft;
     EXPECT_TRUE(dictionary.GetAircraft(0x7C0B6Du, aircraft));
     EXPECT_EQ(aircraft.transponder_capability, 5);
+}
+
+TEST(AircraftDictionary, IngestAllCallReplyWithInterrogatorCode) {
+    AircraftDictionary dictionary = AircraftDictionary();
+    // DF=11 reply to an interrogator with II=5. Its CRC can't be checked on its own, so it must not create an aircraft.
+    DecodedModeSPacket iid_packet = DecodedModeSPacket((const char*)"5D7C0B6DB05073");
+    EXPECT_FALSE(dictionary.IngestDecodedModeSPacket(iid_packet));
+    EXPECT_FALSE(iid_packet.is_valid);
+    EXPECT_EQ(dictionary.GetNumAircraft(), 0);
+
+    // Once the aircraft is known (acquisition squitter with II=0), the same reply is accepted.
+    DecodedModeSPacket squitter = DecodedModeSPacket((const char*)"5D7C0B6DB05076");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(squitter));
+    EXPECT_EQ(dictionary.GetNumAircraft(), 1);
+    iid_packet = DecodedModeSPacket((const char*)"5D7C0B6DB05073");
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(iid_packet));
+    EXPECT_TRUE(iid_packet.is_valid);
+    EXPECT_EQ(dictionary.GetNumAircraft(), 1);
 }
 
 TEST(AircraftDictionary, MetricsToJSON) {
@@ -1281,8 +1629,8 @@ TEST(AircraftDictionary, OperationStatusMessageVersion0) {
 TEST(AircraftDictionary, OperationStatusMessageVersion1) {
     // Version 1 (DO-260A): individual CC/OM flags; ME[48-49] = BAQ (different encoding from GVA).
     // Packet byte layout (ICAO=0x123456, airborne ST=0):
-    //   Byte 5  = 0x30: ME[10]=1 (TCAS Op), ME[11]=1 (1090ES In)
-    //   Byte 6  = 0x20: ME[18]=1 (UAT In)
+    //   Byte 5  = 0x30: ME[10]=1 (Not-TCAS in v1: TCAS not operational), ME[11]=1 (CDTI, same as 1090ES In)
+    //   Byte 6  = 0x20: ME[18]=1 (not defined in v1, not UAT In)
     //   Byte 7  = 0x36: ME[26]=1 (TCAS RA), ME[27]=1 (IDENT), ME[29]=1 (SingleAnt), ME[30]=1 (SDA=2)
     //   Byte 8  = 0x00: OM lower (NACv not present in v1 airborne)
     //   Byte 9  = 0x37: ME[40-42]=001 (v1), ME[43]=1 (NICa), ME[44-47]=0111 (NACp=7)
@@ -1310,20 +1658,49 @@ TEST(AircraftDictionary, OperationStatusMessageVersion1) {
     // NIC Baro set from ME[52].
     EXPECT_EQ(aircraft.navigation_integrity_category_baro,
               ADSBTypes::kBAIGillHamInputCrossCheckedOrNonGillhamSource);
-    // Flags from CC/OM.
+    // Flags from CC/OM. The v1 CC bit ME[10] is "Not-TCAS" and maps inversely; v1 has no UAT In bit. DO-260C Table
+    // N-20.
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHas1090ESIn));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASRA));
+    EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASOperational));
+    EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn));
+
+    // Not-TCAS = 0: TCAS operational.
+    tpacket = DecodedModeSPacket((char*)"8D123456F810203600376A000000");
+    tpacket.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagTCASOperational));
-    EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagHasUATIn));
+}
+
+TEST(AircraftDictionary, OperationStatusSurfaceVersion1) {
+    // The version 1 surface CC has no UAT In, NACv or NIC supplement C (DO-260C Table N-20).
+    // Byte 6 = 0x50: ME[16-18]=010 (NACv=2 in v2+), ME[19]=1 (NIC_C in v2+). Byte 9: version 1 (0x20) / 2 (0x40).
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0x123456u));
+    ASSERT_TRUE(aircraft);
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8D123456F9005000002000000000");
+    tpacket.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->adsb_version, 1);
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity,
+              ADSBTypes::kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond);
+    EXPECT_FALSE(aircraft->NICBitIsValid(ADSBTypes::kNICBitC));
+
+    tpacket = DecodedModeSPacket((char*)"8D123456F9005000004000000000");
+    tpacket.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft->adsb_version, 2);
+    EXPECT_EQ(aircraft->navigation_accuracy_category_velocity, ADSBTypes::kHVELessThan3MetersPerSecond);
+    EXPECT_TRUE(aircraft->NICBitIsValid(ADSBTypes::kNICBitC));
 }
 
 TEST(AircraftDictionary, OperationStatusMessageVersion2) {
-    // Version 2 (DO-260B): GVA at ME[48-49]; SIL supplement at ME[54]; NACv in airborne OM ME[32-34].
+    // Version 2 (DO-260B): GVA at ME[48-49]; SIL supplement at ME[54]. Airborne OM ME[32-39] are reserved.
     // Packet byte layout (ICAO=0x123456, airborne ST=0):
     //   Byte 5  = 0x30: ME[10]=1 (TCAS Op), ME[11]=1 (1090ES In)
     //   Byte 6  = 0x20: ME[18]=1 (UAT In)
     //   Byte 7  = 0x36: ME[26]=1 (TCAS RA), ME[27]=1 (IDENT), ME[29]=1 (SingleAnt), ME[30]=1 (SDA=2)
-    //   Byte 8  = 0xC0: ME[32-34]=110 (NACv=6 = kHVELessThan10MetersPerSecond)
+    //   Byte 8  = 0xC0: ME[32-34]=110 (reserved in the v2 airborne OM, must not be read as NACv)
     //   Byte 9  = 0x57: ME[40-42]=010 (v2), ME[43]=1 (NICa), ME[44-47]=0111 (NACp=7)
     //   Byte 10 = 0x6A: ME[48-49]=01 (GVA=1 = <=150m), ME[50-51]=10 (SIL=2), ME[52]=1 (NICbaro), ME[54]=1 (SILs=1)
     //   Combined SIL: (SILs<<2)|SIL = (1<<2)|2 = 6 = kPOERCLessThanOrEqualTo1em5PerSample
@@ -1344,10 +1721,53 @@ TEST(AircraftDictionary, OperationStatusMessageVersion2) {
     // SIL 3-bit composite: (SILs<<2)|SIL = (1<<2)|2 = 6.
     EXPECT_EQ(aircraft.surveillance_integrity_level,
               ADSBTypes::kPOERCLessThanOrEqualTo1em5PerSample);
-    // NACv=6 from airborne OM ME[32-34] (v2 only).
+    // NACv is not carried by the airborne OM; it comes from the Airborne Velocity message. DO-260C Table N-26/N-27.
     EXPECT_EQ(aircraft.navigation_accuracy_category_velocity,
-              ADSBTypes::kHVELessThan10MetersPerSecond);
+              ADSBTypes::kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond);
     // NIC Baro set from ME[52].
     EXPECT_EQ(aircraft.navigation_integrity_category_baro,
               ADSBTypes::kBAIGillHamInputCrossCheckedOrNonGillhamSource);
+}
+
+TEST(AircraftDictionary, OperationStatusMessageVersion3) {
+    // Version 3 (DO-260C): same as v2 except that airborne ME[52] (NICbaro in v1/v2) is reserved and ME[32-38] hold the
+    // CA Coordination Capability Bits. DO-260C Figure 2-12, Table 2-55.
+    // Same packet as the v2 test with the version number set to 3 (byte 9 = 0x77).
+    AircraftDictionary dictionary;
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8D123456F8302036C0776A000000");
+    tpacket.is_valid = true;
+    ASSERT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    ASSERT_EQ(dictionary.GetNumAircraft(), 1);
+    auto& aircraft = std::get<ModeSAircraft>(dictionary.dict.begin()->second);
+
+    EXPECT_EQ(aircraft.adsb_version, 3);
+    EXPECT_TRUE(aircraft.NICBitIsValid(ADSBTypes::kNICBitA));
+    EXPECT_EQ(aircraft.navigation_accuracy_category_position, ADSBTypes::kEPULessThan0p1NauticalMiles);
+    EXPECT_EQ(aircraft.geometric_vertical_accuracy, ADSBTypes::GVALessThanOrEqualTo150Meters);
+    EXPECT_EQ(aircraft.surveillance_integrity_level, ADSBTypes::kPOERCLessThanOrEqualTo1em5PerSample);
+    // ME[52] is reserved in v3: NICbaro keeps its default.
+    EXPECT_EQ(aircraft.navigation_integrity_category_baro, ADSBTypes::kBAIGillhamInputNotCrossChecked);
+    // CCCB bits are not NACv.
+    EXPECT_EQ(aircraft.navigation_accuracy_category_velocity,
+              ADSBTypes::kHVEUnknownOrGreaterThanOrEqualTo10MetersPerSecond);
+}
+
+TEST(AircraftDictionary, OperationStatusSurfaceGPSAntennaOffset) {
+    // Surface Operational Status (TC=31, ST=1, v2). The GPS antenna offset is ME[33-40]: 3 lateral bits followed by 5
+    // longitudinal bits. DO-260B 2.2.3.2.7.2.4.7.
+    AircraftDictionary dictionary;
+    ModeSAircraft* aircraft_ptr = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
+    ASSERT_TRUE(aircraft_ptr);
+
+    // ME[33-40] = 0b101'00011: 2m right of the roll axis, 6m aft of the nose.
+    DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEFF9000000A34000D5B48C");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft_ptr->gnss_antenna_offset_right_of_reference_point_m, 2);
+
+    // ME[33-40] = 0b010'00000: 4m left of the roll axis, no longitudinal data.
+    tpacket = DecodedModeSPacket((char*)"8DABCDEFF9000000404000E64899");
+    ASSERT_TRUE(tpacket.is_valid);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
+    EXPECT_EQ(aircraft_ptr->gnss_antenna_offset_right_of_reference_point_m, -4);
 }

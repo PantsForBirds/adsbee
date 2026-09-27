@@ -18,7 +18,7 @@ class UATReedSolomon {
      * Buffer will only be modified if decode is successful.
      * @param message_buf Buffer with the encoded message to decode. If decode is successful, buffer will be modified in
      * place to contain the decoded payload. If decode is unsuccessful, buffer will not be modified.
-     * @return Number of bits corrected. 0 if message had no errors, positive number if errors were corrected, -1 if
+     * @return Number of bytes corrected. 0 if message had no errors, positive number if errors were corrected, -1 if
      * message was invalid and not correctable.
      */
     int DecodeShortADSBMessage(uint8_t message_buf[]);
@@ -28,7 +28,7 @@ class UATReedSolomon {
      * Buffer will only be modified if decode is successful.
      * @param message_buf Buffer with the encoded message to decode. If decode is successful, buffer will be modified in
      * place to contain the decoded payload. If decode is unsuccessful, buffer will not be modified
-     * @return Number of bits corrected. 0 if message had no errors, positive number if errors were corrected, -1 if
+     * @return Number of bytes corrected. 0 if message had no errors, positive number if errors were corrected, -1 if
      * message was invalid and not correctable.
      */
     int DecodeLongADSBMessage(uint8_t message_buf[]);
