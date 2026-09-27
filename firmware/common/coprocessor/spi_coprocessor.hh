@@ -13,6 +13,7 @@
 #include "object_dictionary.hh"
 #include "settings.hh"
 #include "spi_coprocessor_interface.hh"
+#include "spi_link_gate.hh"
 #include "spi_coprocessor_packet.hh"
 
 class SPICoprocessor : public SPICoprocessorInterface {
@@ -136,6 +137,12 @@ class SPICoprocessor : public SPICoprocessorInterface {
         return true;
     }
 
+    /**
+     * Returns true if the last transaction exhausted its retries and no transaction has succeeded since. While the link
+     * is down, transactions fail immediately except for a single-attempt probe every SPILinkGate::kProbeIntervalMs.
+     */
+    bool IsLinkDown() const { return link_gate_.IsDown(); }
+
 #ifdef HARDWARE_UNIT_TESTS
     bool TestSPIHandshakeDeadlock();
     bool TestSPIPersistentDesync();
@@ -193,6 +200,7 @@ class SPICoprocessor : public SPICoprocessorInterface {
     bool SPIWaitForAck();
 
     uint32_t last_update_timestamp_ms_ = 0;  // Timestamp of the last device status update.
+    SPILinkGate link_gate_;
 #endif                                       // ON_COPRO_MASTER
 
 #ifndef ON_TI

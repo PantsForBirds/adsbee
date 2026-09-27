@@ -10,6 +10,9 @@
 #endif
 
 bool SPICoprocessor::Init() {
+#ifdef ON_COPRO_MASTER
+    link_gate_.Reset();
+#endif
     if (!config_.interface.Init()) {
         CONSOLE_ERROR("SPICoprocessor::Init", "Failed to initialize SPI coprocessor interface.");
         return false;  // Initialization failed.
@@ -50,7 +53,9 @@ bool SPICoprocessor::Update() {
     // Rely on the slave interface to query device status and process SCCommand requests, since behavior varies by
     // device.
     if (!config_.interface.Update()) {
-        CONSOLE_ERROR("SPICoprocessor::Update", "Failed to update SPI coprocessor interface.");
+        if (!link_gate_.IsDown()) {  // Don't repeat this every pass while the link is down.
+            CONSOLE_ERROR("SPICoprocessor::Update", "Failed to update SPI coprocessor interface.");
+        }
         return false;  // Update failed.
     }
 
@@ -329,6 +334,12 @@ bool SPICoprocessor::PartialWrite(ObjectDictionary::Address addr, uint8_t* objec
     if (spi_write_in_progress) {
         return false;
     }
+    // Fail fast while the link is down (see SPILinkGate), and don't flood the console while probing it.
+    const uint16_t max_attempts = link_gate_.AttemptsAllowed(kSPITransactionMaxNumRetries);
+    if (max_attempts == 0) {
+        return false;
+    }
+    const bool quiet = link_gate_.IsDown();
     spi_write_in_progress = true;
 
     write_packet.cmd = require_ack ? ObjectDictionary::SCCommand::kCmdWriteToSlaveRequireAck
@@ -344,7 +355,7 @@ bool SPICoprocessor::PartialWrite(ObjectDictionary::Address addr, uint8_t* objec
     char error_message[kErrorMessageMaxLen + 1] = "No error.";
     error_message[kErrorMessageMaxLen] = '\0';
     bool ret = true;
-    while (num_attempts < kSPITransactionMaxNumRetries) {
+    while (num_attempts < max_attempts) {
         // Don't end the transaction yet to allow recovery of packets from kErrorHandshakeHigh.
         int bytes_written = SPIWriteBlocking(write_packet.GetBuf(), write_packet.GetBufLenBytes(), true);
 
@@ -362,15 +373,16 @@ bool SPICoprocessor::PartialWrite(ObjectDictionary::Address addr, uint8_t* objec
         ret = true;
         break;
     PARTIAL_WRITE_FAILED:
-        CONSOLE_WARNING("SPICoprocessor::PartialWrite", "[%s] %s", config_.tag_str, error_message);
+        if (!quiet) CONSOLE_WARNING("SPICoprocessor::PartialWrite", "[%s] %s", config_.tag_str, error_message);
         num_attempts++;
         ret = false;
         continue;
     }
-    if (!ret) {
+    if (!ret && !quiet) {
         CONSOLE_ERROR("SPICoprocessor::PartialWrite", "[%s] Failed after %d tries: %s", config_.tag_str, num_attempts,
                       error_message);
     }
+    link_gate_.Report(ret);
     spi_write_in_progress = false;
     return ret;
 }
@@ -382,6 +394,12 @@ bool SPICoprocessor::PartialRead(ObjectDictionary::Address addr, uint8_t* object
     if (spi_read_in_progress) {
         return false;
     }
+    // Fail fast while the link is down (see SPILinkGate), and don't flood the console while probing it.
+    const uint16_t max_attempts = link_gate_.AttemptsAllowed(kSPITransactionMaxNumRetries);
+    if (max_attempts == 0) {
+        return false;
+    }
+    const bool quiet = link_gate_.IsDown();
     spi_read_in_progress = true;
 
     read_request_packet.cmd = ObjectDictionary::SCCommand::kCmdReadFromSlave;
@@ -400,7 +418,7 @@ bool SPICoprocessor::PartialRead(ObjectDictionary::Address addr, uint8_t* object
     error_message[kErrorMessageMaxLen] = '\0';
     bool ret = true;
     static SPICoprocessorPacket::SCResponsePacket response_packet;
-    while (num_attempts < kSPITransactionMaxNumRetries) {
+    while (num_attempts < max_attempts) {
         // On the master, reading from the slave is two transactions: The read request is sent, then we wait on the
         // handshake line to read the reply.
 
@@ -454,16 +472,17 @@ bool SPICoprocessor::PartialRead(ObjectDictionary::Address addr, uint8_t* object
         memcpy(object_buf + offset, response_packet.data, response_packet.data_len_bytes);
         break;
     PARTIAL_READ_FAILED:
-        CONSOLE_WARNING("SPICoprocessor::PartialRead", "[%s] %s", config_.tag_str, error_message);
+        if (!quiet) CONSOLE_WARNING("SPICoprocessor::PartialRead", "[%s] %s", config_.tag_str, error_message);
         num_attempts++;
         ret = false;
         continue;
     }
 
-    if (!ret) {
+    if (!ret && !quiet) {
         CONSOLE_ERROR("SPICoprocessor::PartialRead", "[%s] Failed after %d tries: %s", config_.tag_str, num_attempts,
                       error_message);
     }
+    link_gate_.Report(ret);
     spi_read_in_progress = false;
     return ret;
 }
