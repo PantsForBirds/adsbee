@@ -536,14 +536,14 @@ static esp_err_t css_handler(httpd_req_t* req) {
 
 static esp_err_t adsbee_js_handler(httpd_req_t* req) {
     httpd_resp_set_type(req, "application/javascript");
-    httpd_resp_send(req, (const char*)adsbee_js_start, adsbee_js_end - adsbee_js_start - 1);
+    httpd_resp_send(req, (const char*)adsbee_js_start, adsbee_js_end - adsbee_js_start);
     return ESP_OK;
 }
 
 static esp_err_t settings_js_handler(httpd_req_t* req) {
     httpd_resp_set_type(req, "application/javascript");
     // EMBED_TXTFILES null-terminates the embedded file; don't send the terminator.
-    httpd_resp_send(req, (const char*)settings_js_start, settings_js_end - settings_js_start - 1);
+    httpd_resp_send(req, (const char*)settings_js_start, settings_js_end - settings_js_start);
     return ESP_OK;
 }
 
