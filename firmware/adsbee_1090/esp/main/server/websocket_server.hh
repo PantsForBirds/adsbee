@@ -4,6 +4,8 @@
 #include <functional>
 
 #include "esp_http_server.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 class WebSocketServer {
    public:
@@ -25,6 +27,9 @@ class WebSocketServer {
     static constexpr uint32_t kMinFreeHeapBytesToAcceptClient = 36 * 1024;
     static constexpr uint32_t kMinFreeHeapBytesToBroadcast = 14 * 1024;
     static constexpr uint32_t kLowHeapWarningIntervalMs = 5000;
+    // How long a frame write waits for another write to the same server to finish before the frame is dropped.
+    static constexpr uint32_t kSendMutexTimeoutMs = 100;
+    static constexpr uint16_t kControlFramePayloadMaxLen = 125;  // RFC 6455 section 5.5.
 
     struct WebSocketServerConfig {
         char label[kWebSocketLabelMaxLen] = "Untitled";
@@ -117,7 +122,23 @@ class WebSocketServer {
 
     bool UpdateActivityTimer(int client_fd);
 
+    /**
+     * Writes one frame to a client while holding send_mutex_.
+     * httpd_ws_send_frame_async() writes the frame header and the payload with two separate send() calls and no
+     * locking, so every frame written to a socket must go through here, including the PONG / CLOSE replies to control
+     * frames, which are written from the httpd task while broadcasts come from other tasks.
+     * @retval Result of httpd_ws_send_frame_async, or ESP_FAIL if the mutex could not be taken in time.
+     */
+    esp_err_t SendFrameLocked(int client_fd, httpd_ws_frame_t *frame);
+
+    /**
+     * Handles a PING, PONG or CLOSE frame whose header has already been read with httpd_ws_recv_frame().
+     * @retval ESP_OK to keep the session, ESP_FAIL to have httpd close it (after a CLOSE).
+     */
+    esp_err_t HandleControlFrame(httpd_req_t *req, int client_fd, httpd_ws_frame_t &ws_pkt);
+
     WebSocketServerConfig config_;
+    SemaphoreHandle_t send_mutex_ = nullptr;  // Created in Init(), after the object has been copied into place.
     uint32_t last_low_heap_warning_timestamp_ms_ = 0;
 
     WSClientInfo clients_[kMaxNumClients] = {0};
