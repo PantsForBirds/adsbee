@@ -167,8 +167,9 @@ inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft
     n = n < max ? n : max;
 
     // rssi and message count (always present)
-    n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%u", aircraft.last_message_signal_strength_dbm,
-                  (unsigned)(aircraft.metrics.valid_squitter_frames + aircraft.metrics.valid_extended_squitter_frames));
+    // "messages" is the total since the aircraft was first seen (readsb semantics), not the last metrics interval.
+    n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%lu", aircraft.last_message_signal_strength_dbm,
+                  (unsigned long)aircraft.num_frames_received);
     n = n < max ? n : max;
 
     // alert / spi (only when set)
@@ -362,8 +363,8 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
     }
 
     // rssi and message count (always present)
-    n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%u", aircraft.last_message_signal_strength_dbm,
-                  (unsigned)aircraft.metrics.valid_frames);
+    n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%lu", aircraft.last_message_signal_strength_dbm,
+                  (unsigned long)aircraft.num_frames_received);
     n = n < max ? n : max;
 
     // emergency (only if not none)
