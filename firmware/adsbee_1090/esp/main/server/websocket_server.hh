@@ -30,6 +30,11 @@ class WebSocketServer {
     // How long a frame write waits for another write to the same server to finish before the frame is dropped.
     static constexpr uint32_t kSendMutexTimeoutMs = 100;
     static constexpr uint16_t kControlFramePayloadMaxLen = 125;  // RFC 6455 section 5.5.
+    // Websocket frame writes block the calling task. Bound each send() on a client socket (httpd's default is 5 s, and
+    // a frame is two sends), and drop a client whose send times out or that fails this many sends in a row: a client
+    // that stopped reading would otherwise stall the sending task on every broadcast.
+    static constexpr uint32_t kClientSendTimeoutMs = 1000;
+    static constexpr uint8_t kMaxConsecutiveSendFailures = 3;
 
     struct WebSocketServerConfig {
         char label[kWebSocketLabelMaxLen] = "Untitled";
@@ -110,6 +115,7 @@ class WebSocketServer {
         bool in_use = false;
         int client_fd = 0;
         uint32_t last_message_timestamp_ms = 0;
+        uint8_t consecutive_send_failures = 0;
     };
 
     /**

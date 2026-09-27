@@ -287,6 +287,14 @@ bool ADSBeeServer::Update() {
     }
 
     // Prune inactive WebSocket clients and other housekeeping.
+    // Broadcast RP2040 console output queued by the SPI receive task.
+    if (network_console_tx_buf_) {
+        char console_chunk[kNetworkConsoleTxChunkLenBytes];
+        size_t len;
+        while ((len = xStreamBufferReceive(network_console_tx_buf_, console_chunk, sizeof(console_chunk), 0)) > 0) {
+            network_console.BroadcastMessage(console_chunk, len);
+        }
+    }
     network_console.Update();
     network_metrics.Update();
     network_aircraft.Update();
