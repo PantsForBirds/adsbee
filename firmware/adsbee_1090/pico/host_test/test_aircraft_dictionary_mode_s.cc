@@ -1794,3 +1794,43 @@ TEST(AircraftDictionary, OperationStatusSurfaceGPSAntennaOffset) {
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
     EXPECT_EQ(aircraft_ptr->gnss_antenna_offset_right_of_reference_point_m, -4);
 }
+
+// Field case (GS3M running 0.9.0-rc19): one corrupted-but-CRC-valid airborne position packet produced a bogus position
+// (e.g. latitude -218.99 deg) for 2-4 s in the middle of a clean track. The filter rejected the first bogus decode but
+// stored it as its reference, then the same bad packet decoded against the next complementary packet landed right next
+// to it and "confirmed" the jump.
+TEST(AircraftDictionary, SingleCorruptCPRPacketCannotConfirmItself) {
+    const uint32_t kEvenLat = 93000, kEvenLon = 51372, kOddLat = 74158, kOddLon = 50194;  // ~52.26N, 3.92E
+    for (uint32_t corrupt_lat_delta : {3000u, 6000u, 12000u, 24000u}) {
+        SCOPED_TRACE(corrupt_lat_delta);
+        ModeSAircraft aircraft;
+        set_time_since_boot_ms(100e3);
+        uint32_t t = 100e3;
+        // Establish a track.
+        ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
+        ASSERT_TRUE(aircraft.SetCPRLatLon(kOddLat, kOddLon, true, t += 500));
+        ASSERT_TRUE(aircraft.DecodeAirbornePosition());
+        const float lat0 = aircraft.latitude_deg, lon0 = aircraft.longitude_deg;
+
+        // Corrupted odd packet, decoded against the current even packet and then against the next even packet.
+        ASSERT_TRUE(aircraft.SetCPRLatLon((kOddLat + corrupt_lat_delta) & 0x1FFFF, kOddLon, true, t += 500));
+        bool first = aircraft.DecodeAirbornePosition();
+        ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
+        bool second = aircraft.DecodeAirbornePosition();
+        EXPECT_NEAR(aircraft.latitude_deg, lat0, 0.05) << "first=" << first << " second=" << second;
+        EXPECT_NEAR(aircraft.longitude_deg, lon0, 0.05);
+        EXPECT_GE(aircraft.latitude_deg, -90.0f);
+        EXPECT_LE(aircraft.latitude_deg, 90.0f);
+
+        // Good packets resume; the track continues from the real position.
+        for (int i = 0; i < 4; i++) {
+            ASSERT_TRUE(aircraft.SetCPRLatLon(kOddLat, kOddLon, true, t += 500));
+            aircraft.DecodeAirbornePosition();
+            ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
+            aircraft.DecodeAirbornePosition();
+        }
+        EXPECT_NEAR(aircraft.latitude_deg, lat0, 0.05);
+        EXPECT_NEAR(aircraft.longitude_deg, lon0, 0.05);
+        EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid));
+    }
+}

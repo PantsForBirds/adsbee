@@ -436,6 +436,11 @@ class ModeSAircraft : public Aircraft {
         0;  // received_timestamp_ms for the last packet that was fed to the filter.
     uint32_t lat_awb32_ = 0;
     uint32_t lon_awb32_ = 0;
+    // Received timestamps of the even and odd packets that produced the pending, unconfirmed jump candidate in
+    // lat_awb32_ / lon_awb32_ (0 if none). A jump is only confirmed by a packet pair that shares neither packet, so a
+    // single corrupted CPR packet can't confirm itself when it is decoded against two consecutive complementary packets.
+    uint32_t candidate_even_received_timestamp_ms_ = 0;
+    uint32_t candidate_odd_received_timestamp_ms_ = 0;
 #endif
 
     Metrics metrics_counter_;
