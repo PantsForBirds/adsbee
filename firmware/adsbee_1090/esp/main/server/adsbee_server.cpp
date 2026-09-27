@@ -292,7 +292,9 @@ bool ADSBeeServer::Update() {
     network_aircraft.Update();
 
     // Check to see whether the RP2040 sent over new metrics.
-    xQueueReceive(rp2040_aircraft_dictionary_metrics_queue, &rp2040_aircraft_dictionary_metrics, 0);
+    if (xQueueReceive(rp2040_aircraft_dictionary_metrics_queue, &rp2040_aircraft_dictionary_metrics, 0) == pdTRUE) {
+        last_rp2040_metrics_timestamp_ms_ = get_time_since_boot_ms();
+    }
 
     return ret;
 }
@@ -656,6 +658,11 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
     // ESP32 can't see number of attempted demodulations or raw packets, so steal that from RP2040 metrics
     // dictionary.
     AircraftDictionary::Metrics combined_metrics = aircraft_dictionary.metrics;
+    // The RP2040 sends its metrics every second. If they stop arriving (e.g. the SPI link is down), report zeros
+    // instead of repeating the last snapshot as if it were current.
+    if (get_time_since_boot_ms() - adsbee_server.last_rp2040_metrics_timestamp_ms_ > kRP2040MetricsStaleTimeoutMs) {
+        adsbee_server.rp2040_aircraft_dictionary_metrics = AircraftDictionary::Metrics();
+    }
     // Steal demods_1090.
     combined_metrics.demods_1090 = adsbee_server.rp2040_aircraft_dictionary_metrics.demods_1090;
     for (uint16_t i = 0; i < AircraftDictionary::kMaxNumSources; i++) {
