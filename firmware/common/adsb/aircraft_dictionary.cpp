@@ -45,7 +45,8 @@ bool ModeSAircraft::CanDecodePosition() {
     }
     uint32_t cpr_interval_ms = MIN(last_odd_packet_.received_timestamp_ms - last_even_packet_.received_timestamp_ms,
                                    last_even_packet_.received_timestamp_ms - last_odd_packet_.received_timestamp_ms);
-    if (cpr_interval_ms > GetMaxAllowedCPRIntervalMs()) {
+    if (cpr_interval_ms > GetMaxAllowedCPRIntervalMs(
+                              MAX(last_odd_packet_.received_timestamp_ms, last_even_packet_.received_timestamp_ms))) {
         // Reject CPR packet pairings that are too far apart in time.
         WriteBitFlag(BitFlag::kBitFlagPositionValid,
                      false);  // keep last known good coordinates, but mark as invalid
@@ -2175,7 +2176,7 @@ bool ModeSAircraft::SetCPRLatLon(uint32_t n_lat_cpr, uint32_t n_lon_cpr, bool od
     uint32_t received_timestamp_delta_ms = received_timestamp_ms > complementary_packet.received_timestamp_ms
                                                ? received_timestamp_ms - complementary_packet.received_timestamp_ms
                                                : complementary_packet.received_timestamp_ms - received_timestamp_ms;
-    if (received_timestamp_delta_ms > GetMaxAllowedCPRIntervalMs()) {
+    if (received_timestamp_delta_ms > GetMaxAllowedCPRIntervalMs(received_timestamp_ms)) {
         // Clear out old packet to avoid an invalid decode from packets that are too far apart in time.
         ClearCPRPackets();
     }
