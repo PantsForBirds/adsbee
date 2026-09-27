@@ -4,6 +4,8 @@
 #include "composite_array.hh"
 #include "data_structures.hh"
 #include "esp_http_server.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/stream_buffer.h"
 #include "websocket_server.hh"
 
 class ADSBeeServer {
@@ -32,12 +34,17 @@ class ADSBeeServer {
     static const uint32_t kRP2040MetricsStaleTimeoutMs = 3000;
 
     static const uint16_t kNetworkConsoleQueueLen = 10;
+    // RP2040 console output waiting to be broadcast to /console clients. Sized for one full console write from the
+    // RP2040 (CommsManager::kNetworkConsoleBufMaxLen); anything that doesn't fit is dropped.
+    static const uint16_t kNetworkConsoleTxBufLenBytes = 4096;
+    static const uint16_t kNetworkConsoleTxChunkLenBytes = 512;  // Max bytes per /console frame when draining.
 
     /**
      * Constructor.
      */
     ADSBeeServer() {
         rp2040_aircraft_dictionary_metrics_queue = xQueueCreate(1, sizeof(AircraftDictionary::Metrics));
+        network_console_tx_buf_ = xStreamBufferCreate(kNetworkConsoleTxBufLenBytes, 1);
         raw_packets_buf_ = (uint8_t*)heap_caps_malloc(CompositeArray::RawPackets::kMaxLenBytes, MALLOC_CAP_8BIT);
     };
 
@@ -53,6 +60,19 @@ class ADSBeeServer {
 
     bool Init();
     bool Update();
+
+    /**
+     * Queues console output from the RP2040 for broadcast to /console clients. Called from the SPI receive task, so it
+     * must never block: websocket sends can block for seconds on a client that stops reading, and a blocked SPI task
+     * stops all RP2040 <-> ESP32 traffic until the RP2040 power-cycles the ESP32. Update() does the broadcast.
+     * @param[in] buf Console bytes.
+     * @param[in] buf_len Number of bytes.
+     * @retval Number of bytes queued. Bytes that don't fit are dropped.
+     */
+    size_t QueueNetworkConsoleMessage(const uint8_t* buf, size_t buf_len) {
+        if (!network_console_tx_buf_) return 0;
+        return xStreamBufferSend(network_console_tx_buf_, buf, buf_len, 0);
+    }
 
     /**
      * Task that runs continuously to receive SPI messages.
@@ -143,6 +163,7 @@ class ADSBeeServer {
     RawUATUplinkPacket raw_uat_uplink_packet_in_queue_buffer_[kMaxNumUATUplinkPackets];
 
     uint8_t* raw_packets_buf_ = nullptr;
+    StreamBufferHandle_t network_console_tx_buf_ = nullptr;
 
     uint32_t last_raw_packet_process_timestamp_ms_ = 0;
     uint32_t last_aircraft_dictionary_update_timestamp_ms_ = 0;

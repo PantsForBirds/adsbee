@@ -5,6 +5,7 @@
 
 #include "comms.hh"
 #include "hal.hh"
+#include "lwip/sockets.h"
 
 /**
  * This helper function digs out the WebSocketServer stored in the user context of an HTTP request in order to allow the
@@ -158,6 +159,13 @@ bool WebSocketServer::AddClient(int client_fd) {
             clients_[i].in_use = true;
             clients_[i].client_fd = client_fd;
             clients_[i].last_message_timestamp_ms = get_time_since_boot_ms();
+            clients_[i].consecutive_send_failures = 0;
+            struct timeval send_timeout = {.tv_sec = kClientSendTimeoutMs / 1000,
+                                           .tv_usec = (kClientSendTimeoutMs % 1000) * 1000};
+            if (setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout)) != 0) {
+                CONSOLE_WARNING("WebSocketServer::AddClient", "[%s] Failed to set send timeout on fd %d.",
+                                config_.label, client_fd);
+            }
             CONSOLE_INFO("WebSocketServer::AddClient", "[%s] New client stored at index %d.", config_.label, i);
             return true;
         }
@@ -202,8 +210,23 @@ void WebSocketServer::BroadcastMessage(const char* message, int16_t len_bytes) {
     }
     for (int i = 0; i < config_.num_clients_allowed; i++) {
         if (clients_[i].in_use) {
+            uint32_t send_start_ms = get_time_since_boot_ms();
             esp_err_t ret = SendMessage(clients_[i].client_fd, message, len_bytes);
-            if (ret != ESP_OK) {
+            uint32_t send_duration_ms = get_time_since_boot_ms() - send_start_ms;
+            if (ret == ESP_OK) {
+                clients_[i].consecutive_send_failures = 0;
+            } else if (send_duration_ms >= kClientSendTimeoutMs ||
+                       ++clients_[i].consecutive_send_failures >= kMaxConsecutiveSendFailures) {
+                // The client stopped reading (the send timed out) or keeps failing. Part of a frame may already be on
+                // the wire, so the stream can't be resynchronized anyway: drop the client.
+                CONSOLE_WARNING("WebSocketServer::BroadcastMessage",
+                                "[%s] Dropping client %d: send failed with %s after %lu ms (%d failures in a row).",
+                                config_.label, i, esp_err_to_name(ret), (unsigned long)send_duration_ms,
+                                clients_[i].consecutive_send_failures);
+                int fd = clients_[i].client_fd;
+                RemoveClient(fd);
+                httpd_sess_trigger_close(config_.server, fd);
+            } else {
                 if (ret == ESP_ERR_NO_MEM || ret == ESP_FAIL) {
                     // Transient resource exhaustion — drop this message but keep the session alive.
                     CONSOLE_WARNING("WebSocketServer::BroadcastMessage",
