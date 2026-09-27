@@ -622,3 +622,38 @@ TEST(CompositeArray, RawPacketsHeaderIsValid) {
                         1 * sizeof(RawUATADSBPacket) + 1 * sizeof(RawUATUplinkPacket);
     EXPECT_TRUE(packets.IsValid());
 }
+
+// A composite array of kMaxLenBytes (what the RP2040 sends to the ESP32) can carry several UAT uplink packets. A
+// receiving queue shallower than that drops the tail of the array, which is what the ESP32 did with a depth of 2.
+TEST(CompositeArray, FullArrayOfUATUplinksNeedsMatchingQueueDepth) {
+    constexpr uint16_t kUplinksPerArray =
+        (CompositeArray::RawPackets::kMaxLenBytes - sizeof(CompositeArray::RawPackets::Header)) /
+        sizeof(RawUATUplinkPacket);
+    ASSERT_GE(kUplinksPerArray, 3);  // Needs more than the ESP32's old queue depth of 2 to be meaningful.
+
+    uint8_t buffer[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    PFBQueue<RawUATUplinkPacket> tx_queue =
+        PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = 10, .buffer = nullptr, .overwrite_when_full = false});
+    RawUATUplinkPacket uplink;
+    for (uint16_t i = 0; i < 10; i++) {
+        uplink.encoded_message[0] = i;
+        ASSERT_TRUE(tx_queue.Enqueue(uplink));
+    }
+    CompositeArray::RawPackets packets =
+        CompositeArray::PackRawPacketsBuffer(buffer, sizeof(buffer), nullptr, nullptr, &tx_queue);
+    ASSERT_TRUE(packets.IsValid());
+    EXPECT_EQ(packets.header->num_uat_uplink_packets, kUplinksPerArray);
+
+    PFBQueue<RawUATUplinkPacket> short_queue = PFBQueue<RawUATUplinkPacket>(
+        {.buf_len_num_elements = kUplinksPerArray - 1, .buffer = nullptr, .overwrite_when_full = false});
+    EXPECT_FALSE(
+        CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, nullptr, nullptr, &short_queue));
+
+    PFBQueue<RawUATUplinkPacket> rx_queue = PFBQueue<RawUATUplinkPacket>(
+        {.buf_len_num_elements = kUplinksPerArray, .buffer = nullptr, .overwrite_when_full = false});
+    EXPECT_TRUE(CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, nullptr, nullptr, &rx_queue));
+    for (uint16_t i = 0; i < kUplinksPerArray; i++) {
+        ASSERT_TRUE(rx_queue.Dequeue(uplink));
+        EXPECT_EQ(uplink.encoded_message[0], i);
+    }
+}

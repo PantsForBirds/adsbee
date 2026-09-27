@@ -13,7 +13,15 @@ class ADSBeeServer {
     // just eat static RAM that the heap needs.
     static const uint16_t kMaxNumModeSPackets = 150;
     static const uint16_t kMaxNumUATADSBPackets = 20;   // Depth of queue for incoming UAT ADS-B packets from RP2040.
-    static const uint16_t kMaxNumUATUplinkPackets = 2;  // Depth of queue for incoming UAT uplink packets from RP2040.
+    // A single composite array from the RP2040 can carry this many UAT uplink packets. The in-queue must hold at least
+    // that many, or UnpackRawPacketsBufferToQueues() drops the rest of the array ("UAT Uplink queue full, cannot
+    // enqueue packet 2 / 3"). The RP2040 flushes every 200 ms, the same as the Update() drain interval, so leave room
+    // for two arrays.
+    static constexpr uint16_t kMaxNumUATUplinkPacketsPerCompositeArray =
+        (CompositeArray::RawPackets::kMaxLenBytes - sizeof(CompositeArray::RawPackets::Header)) /
+        sizeof(RawUATUplinkPacket);
+    static const uint16_t kMaxNumUATUplinkPackets =
+        2 * kMaxNumUATUplinkPacketsPerCompositeArray;  // Depth of queue for incoming UAT uplink packets from RP2040.
     // (The Remote ID -> RP2040 out-queue lives in RemoteIDManager, allocated lazily only when Remote ID runs, so this
     // build pays no internal SRAM for it when Remote ID is disabled. See RemoteIDManager::GetOutQueue().)
     static const uint32_t kAircraftDictionaryUpdateIntervalMs = 1000;
