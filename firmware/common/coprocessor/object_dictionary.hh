@@ -6,9 +6,14 @@
 #define ON_COPRO_SLAVE
 #endif
 
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+
 #include "composite_array.hh"
 #include "data_structures.hh"
 #include "hal.hh"
+#include "macros.hh"
 #include "mode_s_packet.hh"
 #include "settings.hh"
 #include "stdint.h"
@@ -274,6 +279,32 @@ class ObjectDictionary {
         char message[kLogMessageMaxNumChars + 1] = {'\0'};
     };
 
+    /**
+     * Formats "[tag] message" into log_message.message and sets num_chars to the number of characters actually stored.
+     * snprintf/vsnprintf return the untruncated length, so adding their return values directly let num_chars exceed
+     * kLogMessageMaxNumChars; the next vsnprintf size then wrapped to a huge size_t and wrote past the buffer, and the
+     * RP2040 rejected the message ("Invalid log message length").
+     * @param[out] log_message LogMessage to fill in (log_level is left untouched).
+     * @param[in] tag Tag to prepend in brackets, or an empty string for none.
+     * @param[in] format printf-style format string.
+     * @param[in] args Arguments for format.
+     * @retval Number of characters stored, at most kLogMessageMaxNumChars.
+     */
+    static uint16_t FormatLogMessage(LogMessage& log_message, const char* tag, const char* format, va_list args) {
+        int num_chars = 0;
+        log_message.message[0] = '\0';
+        if (strnlen(tag, kLogMessageTagMaxNumChars) > 0) {
+            int ret = snprintf(log_message.message, kLogMessageMaxNumChars + 1, "[%s] ", tag);
+            num_chars = ret < 0 ? 0 : MIN(ret, kLogMessageMaxNumChars);
+        }
+        int ret = vsnprintf(log_message.message + num_chars, kLogMessageMaxNumChars + 1 - num_chars, format, args);
+        if (ret > 0) {
+            num_chars = MIN(num_chars + ret, kLogMessageMaxNumChars);
+        }
+        log_message.num_chars = static_cast<uint16_t>(num_chars);
+        return log_message.num_chars;
+    }
+
 #ifdef ON_COPRO_SLAVE
     /**
      * Setter for writing data to the address space.
@@ -354,7 +385,12 @@ class ObjectDictionary {
     PFBQueue<LogMessage> log_message_queue = PFBQueue<LogMessage>({
         .buf_len_num_elements = kLogMessageQueueDepth,
         .buffer = log_message_queue_buffer_,
-        .overwrite_when_full = true  // Some of you may die, but that is a sacrifice I am willing to make.
+        .overwrite_when_full = true,  // Some of you may die, but that is a sacrifice I am willing to make.
+#ifdef ON_ESP32
+        // Every ESP32 task logs (SPI receive task, main task, IP and httpd tasks on both cores) while the SPI task
+        // packs messages for the RP2040.
+        .is_thread_safe = true
+#endif
     });
 
 #ifdef ON_COPRO_SLAVE

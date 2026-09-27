@@ -22,6 +22,7 @@ class SPICoprocessor : public SPICoprocessorInterface {
 
     // Max num retries per block in a multi-transfer transaction.
     static constexpr uint16_t kSPITransactionMaxNumRetries = 3;
+    static constexpr uint32_t kLogMessageMutexTimeoutMs = 5;  // ESP32: max wait for the shared log scratch buffer.
     static const uint16_t kTagStrMaxLen = 32;
     static const uint16_t kMaxNumSCCommandRequestsPerUpdate = 5;
     static const uint16_t kDefaultUpdateIntervalMs = 100;  // 10Hz updates by default.

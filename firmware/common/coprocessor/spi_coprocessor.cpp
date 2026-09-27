@@ -2,6 +2,11 @@
 
 #include "buffer_utils.hh"
 
+#ifdef ON_ESP32
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#endif
+
 #ifdef ON_PICO
 #include "hal.hh"
 #elif defined(ON_coprocessor)
@@ -241,18 +246,21 @@ bool SPICoprocessor::LogMessage(SettingsManager::LogLevel log_level, const char*
     // Make the scratch LogMessage static so that we don't need to allocate it all the time.
     // Allocating a LogMessage buffer on the stack can cause overflows in some limited resource event handlers.
     static ObjectDictionary::LogMessage log_message;
-    log_message.log_level = log_level;
-    log_message.num_chars = 0;
-    log_message.message[0] = '\0';  // Initialize to empty string.
-
-    if (strnlen(tag, ObjectDictionary::kLogMessageTagMaxNumChars) > 0) {
-        log_message.num_chars += snprintf(log_message.message, ObjectDictionary::kLogMessageMaxNumChars, "[%s] ", tag);
+#ifdef ON_ESP32
+    // Tasks on both cores log through here, and they share the static scratch message above. Drop a message rather
+    // than block the caller (which may be the SPI receive task) if another task is mid-format.
+    static SemaphoreHandle_t log_message_mutex = xSemaphoreCreateMutex();
+    if (!log_message_mutex || xSemaphoreTake(log_message_mutex, pdMS_TO_TICKS(kLogMessageMutexTimeoutMs)) != pdTRUE) {
+        return false;
     }
-
-    log_message.num_chars += vsnprintf(log_message.message + log_message.num_chars,
-                                       ObjectDictionary::kLogMessageMaxNumChars - log_message.num_chars, format, args);
-
-    return object_dictionary.log_message_queue.Enqueue(log_message);
+#endif
+    log_message.log_level = log_level;
+    ObjectDictionary::FormatLogMessage(log_message, tag, format, args);
+    bool ret = object_dictionary.log_message_queue.Enqueue(log_message);
+#ifdef ON_ESP32
+    xSemaphoreGive(log_message_mutex);
+#endif
+    return ret;
 }
 #endif
 
