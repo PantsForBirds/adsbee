@@ -657,3 +657,49 @@ TEST(CompositeArray, FullArrayOfUATUplinksNeedsMatchingQueueDepth) {
         EXPECT_EQ(uplink.encoded_message[0], i);
     }
 }
+
+// When one destination queue is full, the other packet types in the same array must still be enqueued, and the drops
+// are counted instead of being logged one line per array.
+TEST(CompositeArray, FullQueueOnlyDropsItsOwnPacketType) {
+    uint8_t buffer[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    PFBQueue<RawModeSPacket> mode_s_tx =
+        PFBQueue<RawModeSPacket>({.buf_len_num_elements = 5, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATADSBPacket> uat_adsb_tx =
+        PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 3, .buffer = nullptr, .overwrite_when_full = false});
+    RawModeSPacket mode_s_packet;
+    RawUATADSBPacket uat_adsb_packet;
+    for (uint16_t i = 0; i < 5; i++) ASSERT_TRUE(mode_s_tx.Enqueue(mode_s_packet));
+    for (uint16_t i = 0; i < 3; i++) {
+        uat_adsb_packet.buffer[0] = i;
+        ASSERT_TRUE(uat_adsb_tx.Enqueue(uat_adsb_packet));
+    }
+    CompositeArray::RawPackets packets =
+        CompositeArray::PackRawPacketsBuffer(buffer, sizeof(buffer), &mode_s_tx, &uat_adsb_tx, nullptr);
+    ASSERT_TRUE(packets.IsValid());
+    ASSERT_EQ(packets.header->num_mode_s_packets, 5);
+    ASSERT_EQ(packets.header->num_uat_adsb_packets, 3);
+
+    // Mode S queue with room for 2 of the 5 packets.
+    PFBQueue<RawModeSPacket> mode_s_rx =
+        PFBQueue<RawModeSPacket>({.buf_len_num_elements = 2, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATADSBPacket> uat_adsb_rx =
+        PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 10, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATUplinkPacket> uat_uplink_rx =
+        PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = 10, .buffer = nullptr, .overwrite_when_full = false});
+    CompositeArray::QueueFullDrops drops_before = CompositeArray::queue_full_drops;
+    EXPECT_FALSE(CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, &mode_s_rx, &uat_adsb_rx,
+                                                                &uat_uplink_rx));
+    EXPECT_EQ(mode_s_rx.Length(), 2);
+    ASSERT_EQ(uat_adsb_rx.Length(), 3);  // Previously all 3 were dropped along with the Mode S overflow.
+    for (uint16_t i = 0; i < 3; i++) {
+        ASSERT_TRUE(uat_adsb_rx.Dequeue(uat_adsb_packet));
+        EXPECT_EQ(uat_adsb_packet.buffer[0], i);
+    }
+    EXPECT_EQ(CompositeArray::queue_full_drops.mode_s - drops_before.mode_s, 3u);
+    EXPECT_EQ(CompositeArray::queue_full_drops.uat_adsb - drops_before.uat_adsb, 0u);
+
+    // A second overflow within the log interval is still counted.
+    EXPECT_FALSE(CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, &mode_s_rx, &uat_adsb_rx,
+                                                                &uat_uplink_rx));
+    EXPECT_EQ(CompositeArray::queue_full_drops.mode_s - drops_before.mode_s, 8u);
+}
