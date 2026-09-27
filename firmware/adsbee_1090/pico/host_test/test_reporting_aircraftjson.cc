@@ -63,8 +63,7 @@ TEST(AircraftJSON, ModeSAircraftAllFields) {
     ac.system_design_assurance = static_cast<ADSBTypes::SystemDesignAssurance>(2);
     ac.adsb_version = 2;
     ac.last_message_signal_strength_dbm = -75;
-    ac.metrics.valid_squitter_frames = 5;
-    ac.metrics.valid_extended_squitter_frames = 10;
+    ac.num_frames_received = 15;
 
     // Set validity flags.
     ac.WriteBitFlag(ModeSAircraft::kBitFlagPositionValid, true);
@@ -101,7 +100,7 @@ TEST(AircraftJSON, ModeSAircraftAllFields) {
     EXPECT_EQ(GetJSONValue(json, "sda"), "2");
     EXPECT_EQ(GetJSONValue(json, "version"), "2");
     EXPECT_EQ(GetJSONValue(json, "rssi"), "-75");
-    EXPECT_EQ(GetJSONValue(json, "messages"), "15");  // 5 + 10
+    EXPECT_EQ(GetJSONValue(json, "messages"), "15");
 
     // alert and spi absent when flags not set.
     EXPECT_FALSE(HasJSONKey(json, "alert"));
@@ -237,7 +236,7 @@ TEST(AircraftJSON, UATAircraftAllFields) {
     ac.system_design_assurance = static_cast<ADSBTypes::SystemDesignAssurance>(1);
     ac.uat_version = 0;
     ac.last_message_signal_strength_dbm = -60;
-    ac.metrics.valid_frames = 7;
+    ac.num_frames_received = 7;
     ac.emergency_priority_status = UATAircraft::kEmergencyStatusMinimumFuel;
 
     ac.WriteBitFlag(UATAircraft::kBitFlagPositionValid, true);
@@ -402,4 +401,30 @@ TEST(AircraftJSON, SquawkLeadingZeros) {
     uat.squawk = 7700;  // Printed as decimal digits, not octal ("7024" before the squawk rework).
     WriteAircraftJSONUATAircraftStr(buf, uat);
     EXPECT_EQ(GetJSONValue(buf, "squawk"), "7700");
+}
+
+// "messages" follows readsb: a running total for the aircraft, not the count from the last 1 s metrics interval.
+TEST(AircraftJSON, MessagesIsCumulativeAcrossMetricsIntervals) {
+    char buf[kAircraftJSONMessageStrMaxLen];
+
+    ModeSAircraft mode_s_ac(0xabcdef);
+    for (int i = 0; i < 3; i++) mode_s_ac.IncrementNumFramesReceived(false);
+    for (int i = 0; i < 4; i++) mode_s_ac.IncrementNumFramesReceived(true);
+    mode_s_ac.UpdateMetrics();
+    mode_s_ac.IncrementNumFramesReceived(true);
+    mode_s_ac.UpdateMetrics();  // Last interval only saw 1 frame.
+    int16_t len = WriteAircraftJSONModeSAircraftStr(buf, mode_s_ac);
+    ASSERT_GT(len, 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf, len), "messages"), "8");
+    mode_s_ac.UpdateMetrics();  // Nothing received in this interval.
+    len = WriteAircraftJSONModeSAircraftStr(buf, mode_s_ac);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf, len), "messages"), "8");
+
+    UATAircraft uat_ac(0x123456);
+    for (int i = 0; i < 5; i++) uat_ac.IncrementNumFramesReceived();
+    uat_ac.UpdateMetrics();
+    uat_ac.UpdateMetrics();
+    len = WriteAircraftJSONUATAircraftStr(buf, uat_ac);
+    ASSERT_GT(len, 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf, len), "messages"), "5");
 }

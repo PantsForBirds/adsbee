@@ -262,6 +262,7 @@ class ModeSAircraft : public Aircraft {
     inline void IncrementNumFramesReceived(bool is_extended_squitter = false) {
         is_extended_squitter ? metrics_counter_.valid_extended_squitter_frames++
                              : metrics_counter_.valid_squitter_frames++;
+        num_frames_received++;
     }
 
     /**
@@ -331,6 +332,7 @@ class ModeSAircraft : public Aircraft {
     int16_t last_message_signal_quality_db = 0;    // Ratio of RSSI to noise floor during message receipt.
     uint32_t last_track_update_timestamp_ms = 0;   // Timestamp of the last time that the position was updated.
     Metrics metrics;
+    uint32_t num_frames_received = 0;  // Valid frames received since the aircraft was added, never reset.
 
     uint16_t transponder_capability = 0;
     uint32_t icao_address = 0;
@@ -542,7 +544,10 @@ class UATAircraft : public Aircraft {
     /**
      * Increments the number of valid frames received.
      */
-    inline void IncrementNumFramesReceived() { metrics_counter_.valid_frames++; }
+    inline void IncrementNumFramesReceived() {
+        metrics_counter_.valid_frames++;
+        num_frames_received++;
+    }
 
     /**
      * Resets just the flag bits that show that something updated within the last reporting interval.
@@ -607,6 +612,7 @@ class UATAircraft : public Aircraft {
     int16_t last_message_signal_quality_bits = 0;  // Number of bits corrected with FEC during last message reception.
     uint32_t last_track_update_timestamp_ms = 0;   // Timestamp of the last time that the position was updated.
     Metrics metrics;
+    uint32_t num_frames_received = 0;  // Valid frames received since the aircraft was added, never reset.
 
     uint16_t transponder_capability = 0;
     uint32_t icao_address = 0;
