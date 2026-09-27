@@ -265,7 +265,7 @@ TEST(AircraftDictionary, ApplyAirbornePositionMessage) {
 TEST(ModeSAircraft, CalculateMaxAllowedCPRInterval) {
     ModeSAircraft aircraft;
     // CPR interval enforced at reference limit when aircraft is not initialized.
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kDefaultCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kDefaultCPRIntervalMs);
 
     // Setting velocity source to something other than kSpeedSourceNotAvailable or kSpeedSourceNotSet should
     // return CPR interval as a calculated function of aircraft velocity.
@@ -274,22 +274,45 @@ TEST(ModeSAircraft, CalculateMaxAllowedCPRInterval) {
     // Stale track enforces default CPR interval.
     set_time_since_boot_ms(100e3);
     aircraft.last_track_update_timestamp_ms = 100e3 - ModeSAircraft::kMaxTrackUpdateIntervalMs - 1;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kDefaultCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kDefaultCPRIntervalMs);
 
     // Set track to be fresh.
     aircraft.last_track_update_timestamp_ms = 100e3;
 
     // Stationary aircraft = maximum allowed CPR interval.
     aircraft.speed_kts = 0;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kMaxCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kMaxCPRIntervalMs);
 
     // Mid-speed aircraft = calculated CPR interval between max and min allowed.
     aircraft.speed_kts = 400;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
 
     // Very fast aircraft = same equation, no minimum interval enforced.
     aircraft.speed_kts = 1000;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+}
+
+// The ESP32 runs the same dictionary on packets timestamped by the RP2040's MLAT counter, while its own
+// get_time_since_boot_ms() counts from the ESP32's boot (a few seconds later, or hours later after an ESP32 reset).
+// Track freshness must be judged in packet time, or every track looks stale and fast-moving aircraft get the short
+// default CPR window.
+TEST(ModeSAircraft, CPRIntervalUsesPacketTimeNotLocalClock) {
+    ModeSAircraft aircraft;
+    aircraft.speed_source = ADSBTypes::kSpeedSourceGroundSpeed;
+    aircraft.speed_kts = 400;
+    const uint32_t mlat_now_ms = 25000e3;           // RP2040 up for ~7 h.
+    aircraft.last_track_update_timestamp_ms = mlat_now_ms - 5e3;  // Fresh track in packet time.
+
+    set_time_since_boot_ms(35e3);  // ESP32 rebooted 35 s ago.
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(mlat_now_ms), ModeSAircraft::kRefCPRIntervalMs * 500 / 400);
+    set_time_since_boot_ms(mlat_now_ms - 3500);  // ESP32 booted 3.5 s after the RP2040.
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(mlat_now_ms), ModeSAircraft::kRefCPRIntervalMs * 500 / 400);
+
+    // Stale in packet time is still stale.
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(mlat_now_ms + ModeSAircraft::kMaxTrackUpdateIntervalMs),
+              ModeSAircraft::kDefaultCPRIntervalMs);
+    // A packet slightly older than the last track update is not treated as stale.
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(mlat_now_ms - 6e3), ModeSAircraft::kRefCPRIntervalMs * 500 / 400);
 }
 
 // This test case verifies that you can't ingest airborne position messages that are too far apart in time, which could
@@ -315,7 +338,7 @@ TEST(AircraftDictionary, TimeFilterAirbornePositionMessages) {
 
     // Case 1: Aircraft has no speed data. Default packet valid interval should be used.
     ASSERT_EQ(aircraft.speed_source, ADSBTypes::kSpeedSourceNotSet);
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kDefaultCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kDefaultCPRIntervalMs);
     // Ingest the odd position packet. This should be rejected since the timestamp is too far apart from the even
     // packet. Ingestion will succeed, and the packet will be retained, but the aircraft will still not have a valid
     // location.
@@ -331,16 +354,16 @@ TEST(AircraftDictionary, TimeFilterAirbornePositionMessages) {
     // Case 2: Aircraft has speed data and is traveling at 1000 knots.
     aircraft.speed_kts = 1000;
     aircraft.speed_source = ADSBTypes::kSpeedSourceGroundSpeed;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
 
     // Case 3: Aircraft is flying slowly but has a stale track.
     aircraft.speed_kts = 0;
     aircraft.speed_source = ADSBTypes::kSpeedSourceGroundSpeed;
     // Stationary aircraft should get the max interval.
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kMaxCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kMaxCPRIntervalMs);
     // Set the track update timestamp to be too old. This should enforce the default CPR interval.
     aircraft.last_track_update_timestamp_ms = get_time_since_boot_ms() - ModeSAircraft::kMaxTrackUpdateIntervalMs - 1;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kDefaultCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kDefaultCPRIntervalMs);
 }
 
 TEST(AircraftDictionary, IngestAirbornePositionBaroAltitudeNonGillham) {

@@ -234,11 +234,18 @@ class ModeSAircraft : public Aircraft {
 
     /**
      * Returns the maximum time delta between CPR packets that will be accepted for decoding.
+     * @param[in] received_timestamp_ms MLAT timestamp of the newest CPR packet, in ms. Track age is measured against
+     * this rather than the local clock because last_track_update_timestamp_ms holds packet (MLAT) time, which is the
+     * RP2040's clock. On the ESP32, get_time_since_boot_ms() counts from the ESP32's own boot, so comparing the two made
+     * every track look stale and pinned the interval at kDefaultCPRIntervalMs.
      * @retval Maximum allowed time delta between CPR packets.
      */
-    uint32_t GetMaxAllowedCPRIntervalMs() const {
+    uint32_t GetMaxAllowedCPRIntervalMs(uint32_t received_timestamp_ms) const {
+        uint32_t track_age_ms = received_timestamp_ms > last_track_update_timestamp_ms
+                                    ? received_timestamp_ms - last_track_update_timestamp_ms
+                                    : 0;  // Packets can arrive slightly out of order.
         if (speed_source == ADSBTypes::kSpeedSourceNotSet || speed_source == ADSBTypes::kSpeedSourceNotAvailable ||
-            get_time_since_boot_ms() - last_track_update_timestamp_ms > kMaxTrackUpdateIntervalMs) {
+            track_age_ms > kMaxTrackUpdateIntervalMs) {
             return kDefaultCPRIntervalMs;
         }
         // Scale time delta threshold based on the velocity of the aircraft relative to 500kts, but clamp the result to
