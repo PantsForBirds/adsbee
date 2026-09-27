@@ -2342,7 +2342,7 @@
                 }
             } else if (serial.connected) {
                 // Bare Enter: forward a newline as a raw keystroke (bypassing the AT queue) so blocking
-                // commands that wait for "any key" (AT+RX_CW, AT+TX_CW) can be stopped from the console.
+                // commands that wait for "any key" (AT+RX_CW; AT+TX_CW on Debug builds) can be stopped from the console.
                 // The firmware ignores blank lines otherwise, so this is silent when idle. Not added to
                 // history.
                 appendToTerminal('> \n');
@@ -3583,6 +3583,7 @@ function makeRxEnableEntry() {
                         if ((m = l.match(/^Part Code:\s*(.*)$/))) items.push(['Part Code', m[1]]);
                         else if ((m = l.match(/^CC1314R10 Unique ID:\s*(.*)$/))) items.push(['Unique ID', m[1]]);
                         else if ((m = l.match(/^CC1314R10 Firmware Version:\s*(.*)$/))) items.push(['Firmware', m[1]]);
+                        else if ((m = l.match(/^CC1314R10 Firmware Build:\s*(.*)$/))) items.push(['Build', m[1]]);
                     }
                     this.render(items);
                 } catch (_) { /* device info stays absent */ }

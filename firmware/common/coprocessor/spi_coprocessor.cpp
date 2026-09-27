@@ -276,8 +276,9 @@ bool SPICoprocessor::ExecuteSCCommandRequest(const ObjectDictionary::SCCommandRe
                     // Write settings data to coprocessor.
                     if (request.len != sizeof(settings_manager.settings)) {
                         CONSOLE_ERROR("SPICoprocessor::ExecuteSCCommandRequest",
-                                      "Settings data write with invalid length (%d). Expected %d.", request.len,
-                                      sizeof(settings_manager.settings));
+                                      "Settings data write with invalid length (%d). Expected %d. The coprocessor's "
+                                      "firmware uses a different Settings layout; reflash it to match this firmware.",
+                                      request.len, sizeof(settings_manager.settings));
                         return false;
                     }
                     if (!Write(request.addr, settings_manager.settings, write_requires_ack)) {

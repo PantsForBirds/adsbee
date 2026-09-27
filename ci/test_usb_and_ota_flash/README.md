@@ -25,6 +25,9 @@ the expected build.
 | `check_device.py` | Polls `/metrics` to confirm both the ESP32 and RP2040 are alive (and the RP2040's reported uptime is actively advancing, not just stale/cached), plus an optional `AT+DEVICE_INFO?` version check. |
 | `requirements.txt` | Python deps (`websockets`). |
 
+`--serial` device selection and locking come from the bench toolkit in
+[`../hil`](../hil) (standard library only; nothing extra to install).
+
 `test_ota.py` imports the other three as siblings via `sys.path`, so this
 directory is meant to be invoked as a unit, not split apart.
 
@@ -49,6 +52,11 @@ python3 test_ota.py --usb-only --uf2 combined.uf2
 
 # OTA upload + health check only; device must already be running base firmware.
 python3 test_ota.py --ota-only --ota-fw adsbee_1090.ota
+
+# On a bench with several RP2040 boards: select the board by USB serial number.
+# The console, the RPI-RP2 drive (matched by USB port) and a per-device lock all
+# follow from it; see ../hil (`adsbee-hil discover` lists the serials).
+python3 test_ota.py --serial E000000000000001 --uf2 combined.uf2 --ota-fw adsbee_1090.ota
 ```
 
 Run `python3 test_ota.py --help` for the full flag list (`--port`/`--host` for
@@ -61,7 +69,9 @@ Invoked from the `hardware_test` job in
 [`.github/workflows/firmware.yml`](../../.github/workflows/firmware.yml) on a
 self-hosted runner with real ADSBee hardware attached. The workflow derives
 `--expected-version` from `firmware/common/coprocessor/object_dictionary.cpp`
-so the version check always matches the build under test.
+so the version check always matches the build under test. If the repository
+variable `HIL_1090U_SERIAL` is set, the job passes `--serial` with it instead of
+`-p /dev/ttyACM0`.
 
 **Currently disabled.** While the HIL fixture is down the job is gated on the
 `HIL_ENABLED` repository variable and marked `continue-on-error`, so it is

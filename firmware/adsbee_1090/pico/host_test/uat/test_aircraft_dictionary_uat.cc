@@ -187,3 +187,45 @@ TEST(AircraftDictionary, GetLowestAircraftPositionMixedModeSAndUAT) {
     EXPECT_NEAR(heading_deg, 270.0f, 0.0001f);
     EXPECT_NEAR(speed_kts, 80.0f, 0.0001f);
 }
+// Builds a UAT Mode Status payload whose callsign field (CSID=0) carries the given 4-character squawk, using the UAT
+// base-40 callsign alphabet ("0-9", "A-Z", " ").
+static DecodedUATADSBPacket::UATModeStatus MakeSquawkModeStatus(const char squawk_chars[4]) {
+    auto code = [](char c) -> uint16_t {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'A' && c <= 'Z') return 10 + (c - 'A');
+        return 36;  // Space.
+    };
+    DecodedUATADSBPacket::UATModeStatus mode_status = {};
+    mode_status.emitter_category_and_callsign_chars_1_2 = code(squawk_chars[0]) * 40 + code(squawk_chars[1]);
+    mode_status.callsign_chars_3_4_5 = code(squawk_chars[2]) * 1600 + code(squawk_chars[3]) * 40 + code(' ');
+    mode_status.callsign_chars_6_7_8 = code(' ') * 1600 + code(' ') * 40 + code(' ');
+    mode_status.csid = 0;  // Callsign field carries a squawk.
+    return mode_status;
+}
+
+TEST(UATAircraft, ModeStatusSquawk) {
+    UATAircraft aircraft;
+    EXPECT_TRUE(aircraft.ApplyUATADSBModeStatus(MakeSquawkModeStatus("7700")));
+    EXPECT_EQ(aircraft.squawk, 7700);
+    EXPECT_TRUE(aircraft.ApplyUATADSBModeStatus(MakeSquawkModeStatus("0400")));
+    EXPECT_EQ(aircraft.squawk, 400);
+    EXPECT_TRUE(aircraft.ApplyUATADSBModeStatus(MakeSquawkModeStatus("0000")));
+    EXPECT_EQ(aircraft.squawk, 0);
+}
+
+TEST(UATAircraft, ModeStatusSquawkRejectsNonOctalDigits) {
+    UATAircraft aircraft;
+    // Digits 8 and 9 can't appear in a Mode A code; a malformed field leaves the squawk unset.
+    aircraft.ApplyUATADSBModeStatus(MakeSquawkModeStatus("7780"));
+    EXPECT_EQ(aircraft.squawk, ADSBTypes::kSquawkCodeNotYetReceived);
+    aircraft.ApplyUATADSBModeStatus(MakeSquawkModeStatus("1239"));
+    EXPECT_EQ(aircraft.squawk, ADSBTypes::kSquawkCodeNotYetReceived);
+    aircraft.ApplyUATADSBModeStatus(MakeSquawkModeStatus("12A4"));
+    EXPECT_EQ(aircraft.squawk, ADSBTypes::kSquawkCodeNotYetReceived);
+
+    // ...and keeps a previously received valid squawk.
+    aircraft.ApplyUATADSBModeStatus(MakeSquawkModeStatus("1200"));
+    ASSERT_EQ(aircraft.squawk, 1200);
+    aircraft.ApplyUATADSBModeStatus(MakeSquawkModeStatus("8888"));
+    EXPECT_EQ(aircraft.squawk, 1200);
+}

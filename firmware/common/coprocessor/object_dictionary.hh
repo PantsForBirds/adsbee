@@ -130,6 +130,10 @@ class ObjectDictionary {
         bool gnss_fix_valid = false;
         float gnss_latitude_deg = 0.0f;
         float gnss_longitude_deg = 0.0f;
+        int32_t gnss_altitude_ft = 0;
+        float gnss_heading_deg = 0.0f;
+        int32_t gnss_speed_kts = 0;
+        uint8_t gnss_num_satellites = 0;
         bool gnss_utc_time_valid = false;
         uint8_t gnss_utc_hour = 0;
         uint8_t gnss_utc_minute = 0;

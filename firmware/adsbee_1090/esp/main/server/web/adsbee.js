@@ -370,6 +370,18 @@ class MetricsWebSocket {
                     displayValue = value ? 'Yes' : 'No';
                 } else if (key === 'latitude_deg' || key === 'longitude_deg') {
                     displayValue = Number(value).toFixed(6);
+                } else if (key === 'altitude_ft') {
+                    displayKey = 'Altitude';
+                    displayValue = `${Math.round(value).toLocaleString()} ft`;
+                } else if (key === 'heading_deg') {
+                    displayKey = 'Heading';
+                    displayValue = `${Number(value).toFixed(1)}°`;
+                } else if (key === 'speed_kts') {
+                    displayKey = 'Speed';
+                    displayValue = `${value} kts`;
+                } else if (key === 'num_satellites') {
+                    displayKey = 'Satellites';
+                    displayValue = `${value}`;
                 }
 
                 statusHtml += `<div class="status-item">

@@ -125,7 +125,30 @@ bash firmware/build.sh adsbee_1421 [options] [target]
 | `flash` | Reflash using the jig uf2 already on disk; runs no build steps, warns if it or its baked-in hex is stale |
 | `clean [target]` | Delete the target's build directory |
 
-The `-d` flag selects a Debug build, as for adsbee_1090.
+The `-d` flag selects a Debug build, as for adsbee_1090. `./build.sh -d build_and_flash` builds the Debug
+CC1314 image and bakes it into the programmer jig, so the m1421 is flashed with the Debug image.
+
+### Debug builds and RF test commands
+
+Commands that make a device transmit on demand for bench testing are compiled into **Debug builds only**. Release
+builds (which is what CI and the published releases produce) don't contain them: `AT+HELP` doesn't list them and
+sending one returns an unknown-command error.
+
+| Product | Debug-only commands |
+|---------|---------------------|
+| ADSBee 1421 / m1421 (CC1314) | `AT+TX_CW`: unmodulated CW carrier on the CC1314 (SUBG) or LR2021 (LRLF/LRHF) until a key is pressed |
+| ADSBee 1090 family (RP2040) | None. The RP2040 has no RF test transmit commands. |
+
+`AT+REMOTE_ID_TX` (Remote ID broadcast) is an operational feature and is present in all builds. `AT+RX_CW` only
+receives and is present in all builds.
+
+`AT+DEVICE_INFO?` reports which kind of build is running, as `CC1314R10 Firmware Build: Debug|Release` on the
+1421 and `RP2040 Firmware Build: Debug|Release` on the 1090. Older firmware omits the line. In CMake, Debug
+builds define `ADSBEE_DEBUG_BUILD`.
+
+Only use `AT+TX_CW` for conducted measurements into a spectrum analyzer through an attenuator, or into a dummy
+load. Don't connect an antenna: the LR2021 bands cover licensed and aviation spectrum (including 978, 1030 and
+1090 MHz). See [scripts/cw_sweep/README.md](scripts/cw_sweep/README.md).
 
 ### Build Output
 

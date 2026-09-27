@@ -1,3 +1,4 @@
 **.DS_Store
 /.vscode/
 **__pycache__/
+ci/test_usb_and_ota_flash/.venv/

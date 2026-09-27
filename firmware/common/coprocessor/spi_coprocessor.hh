@@ -52,6 +52,11 @@ class SPICoprocessor : public SPICoprocessorInterface {
     inline bool IsEnabled() { return config_.interface.IsEnabled(); }
     inline void SetEnable(bool enabled) { config_.interface.SetEnable(enabled); }
 
+    // Set when a boot-time firmware update of this coprocessor failed, so it runs mismatched firmware (or none) and was
+    // disabled. It stays disabled for the rest of this boot, but the disable is not persisted to settings: the next
+    // boot retries the update. Cleared by a successful manual reflash (e.g. AT+ESP32_FLASH).
+    bool firmware_update_failed = false;
+
     /**
      * Gets the timestamp of the last successful device status query from the ESP32.
      * @retval Timestamp in milliseconds since boot.

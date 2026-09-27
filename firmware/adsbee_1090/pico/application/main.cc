@@ -166,8 +166,11 @@ int main() {
             if (!esp32.DeInit()) {
                 CONSOLE_ERROR("main", "Error while de-initializing ESP32 before flashing.");
             } else if (!esp32_flasher.FlashESP32()) {
-                CONSOLE_ERROR("main", "Error while flashing ESP32. Disabling.");
-                esp32.SetEnable(false);  // Disable ESP32 if flashing failed.
+                CONSOLE_ERROR("main",
+                              "Error while flashing ESP32. Disabling it until the next boot, which retries the "
+                              "update. WiFi, Ethernet and the web interface are unavailable until then.");
+                esp32.SetEnable(false);  // Don't talk to an ESP32 running mismatched firmware.
+                esp32.firmware_update_failed = true;
             } else if (!esp32.Init()) {
                 CONSOLE_ERROR("main", "Error while re-initializing ESP32 after flashing.");
             }

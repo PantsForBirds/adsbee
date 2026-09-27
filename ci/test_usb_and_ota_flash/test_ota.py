@@ -25,6 +25,8 @@ Usage (USB flash + health check only):
 
 Usage (OTA upload + health check only, device already running base firmware):
   python3 test_ota.py --ota-only --ota-fw adsbee_1090.ota
+
+On a bench with several boards, select the device with --serial <USB serial> (see ci/hil).
 """
 
 import argparse
@@ -41,6 +43,11 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import check_device
 import ota_upload
 import reboot_to_bootloader
+
+# Device selection and locking are shared with the bench toolkit in ci/hil (stdlib only here).
+sys.path.insert(0, str(SCRIPT_DIR.parent / "hil"))
+from adsbee_hil import lock as hil_lock  # noqa: E402
+from adsbee_hil import usb as hil_usb  # noqa: E402
 
 RED    = '\033[0;31m'
 GREEN  = '\033[0;32m'
@@ -63,6 +70,15 @@ def find_rpi_mount() -> Path | None:
     ]:
         if candidate.is_dir():
             return candidate
+    return None
+
+
+def usb_port_of_tty(port: str) -> str | None:
+    """USB port path (e.g. "1-1.3") of the device that owns a tty such as /dev/ttyACM0 or a by-id link."""
+    name = os.path.basename(os.path.realpath(port))
+    for d in hil_usb.usb_devices():
+        if name in d.ttys:
+            return d.port_path
     return None
 
 
@@ -92,6 +108,12 @@ def main() -> None:
                       help="OTA upload + verify only; skip UF2 flash (device must already be running)")
     parser.add_argument("-p", "--port", metavar="DEV",
                         help="USB serial device (e.g. /dev/ttyACM0) — no WiFi needed for BOOTSEL")
+    parser.add_argument("-s", "--serial", metavar="USB_SERIAL",
+                        help="select the device by USB serial number (implies --port); unambiguous on "
+                             "a bench with several RP2040 boards. The RPI-RP2 drive is then matched "
+                             "by USB port and the device is locked for the run (see ci/hil)")
+    parser.add_argument("--lock-timeout", type=float, default=1800.0, metavar="SEC",
+                        help="with --serial: max wait for another job using the device (default: 1800)")
     parser.add_argument("-H", "--host", metavar="NAME", default="cibee.local",
                         help="device hostname or IP (default: cibee.local)")
     parser.add_argument("--boot-wait", type=int, default=5, metavar="SEC",
@@ -124,6 +146,21 @@ def main() -> None:
 
     host = args.host
 
+    # With --serial, resolve the console and USB port from the serial number, and hold the
+    # device's lock (shared with ci/hil's adsbee-hil) so nothing else drives it meanwhile.
+    usb_port: str | None = None
+    if args.serial:
+        dev = hil_usb.find_by_serial(args.serial)
+        if not dev or not dev.console:
+            sys.exit(f"Error: no USB serial console for serial {args.serial} "
+                     f"(attached: {[d.serial for d in hil_usb.adsbee_candidates()]})")
+        args.port = dev.console
+        usb_port = dev.port_path
+        info(f"Device {args.serial}: {args.port} on USB port {usb_port}")
+        hil_lock.DeviceLock(args.serial, timeout=args.lock_timeout, purpose="test_ota.py").acquire()
+    elif args.port:
+        usb_port = usb_port_of_tty(args.port)
+
     durations: dict[str, float] = {}
     overall_t0 = time.monotonic()
 
@@ -141,11 +178,21 @@ def main() -> None:
 
         time.sleep(2)
 
-        info("Waiting for RPI-RP2 USB drive (up to 30s)...")
-        rpi_mount = wait_for_rpi_mount(30)
-        if not rpi_mount:
-            fail("RPI-RP2 drive did not appear. Is the device in BOOTSEL mode?")
-            sys.exit(1)
+        if usb_port:
+            # Only the drive on this device's USB port: another board on the bench may be in
+            # BOOTSEL too, and copying there would flash the wrong device.
+            info(f"Waiting for the RPI-RP2 drive on USB port {usb_port} (up to 30s)...")
+            try:
+                rpi_mount = Path(hil_usb.mount_rp2_drive(usb_port, timeout=30))
+            except RuntimeError as exc:
+                fail(f"RPI-RP2 drive did not appear: {exc}")
+                sys.exit(1)
+        else:
+            info("Waiting for RPI-RP2 USB drive (up to 30s)...")
+            rpi_mount = wait_for_rpi_mount(30)
+            if not rpi_mount:
+                fail("RPI-RP2 drive did not appear. Is the device in BOOTSEL mode?")
+                sys.exit(1)
         info(f"Found RPI-RP2 at {rpi_mount}")
 
         info(f"Copying {uf2} → {rpi_mount} ...")

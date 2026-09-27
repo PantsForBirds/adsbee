@@ -7,6 +7,8 @@ if (ON_EMBEDDED_DEVICE)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         # set(PICO_DEOPTIMIZED_DEBUG 1)
         add_compile_definitions(HARDWARE_UNIT_TESTS)
+        # Reported as "RP2040 Firmware Build: Debug" by AT+DEVICE_INFO?.
+        add_compile_definitions(ADSBEE_DEBUG_BUILD)
     endif()
 
     # Create C header file with the name <pio program>.pio.h

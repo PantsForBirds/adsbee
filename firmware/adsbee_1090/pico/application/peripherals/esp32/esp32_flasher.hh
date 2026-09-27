@@ -28,7 +28,11 @@ class ESP32SerialFlasher {
 
     enum ESP32SerialFlasherStatus { kESP32FlasherOkay = 1, kESP32FlasherErrorTimeout, kESP32FlasherError };
 
-    ESP32SerialFlasher(ESP32SerialFlasherConfig config_in) : config_(config_in) {};
+    // Number of connect + flash attempts FlashESP32() makes before giving up.
+    static constexpr uint16_t kFlashAttempts = 3;
+
+    ESP32SerialFlasher(ESP32SerialFlasherConfig config_in)
+        : config_(config_in), initial_baudrate_(config_in.esp32_baudrate) {};
 
     bool DeInit() {
         CONSOLE_INFO("ESP32SerialFlasher::DeInit", "De-Initializing ESP32 firmware upgrade peripherals.");
@@ -37,6 +41,8 @@ class ESP32SerialFlasher {
         gpio_deinit(config_.esp32_uart_tx_pin);
         gpio_deinit(config_.esp32_uart_rx_pin);
 
+        RestoreSharedUartPins();
+
         // Re-enable receiver after update if it was previously enabled.
         adsbee.SetReceiver1090Enable(receiver_was_enabled_before_update_);
         return true;
@@ -44,6 +50,10 @@ class ESP32SerialFlasher {
 
     bool Init() {
         CONSOLE_INFO("ESP32SerialFlasher::Init", "Initializing ESP32 firmware upgrade peripherals.");
+        // Other pins can be muxed to the same UART: GPIO 0/1 connect the GNSS module to uart0, which is also the
+        // flasher's UART. The RP2040 combines the RX inputs of every pin selected for a UART, so the module's NMEA
+        // output would reach the flasher's RX FIFO and break the ESP32 bootloader handshake. Park those pins first.
+        ParkSharedUartPins();
         // Initialize the UART.
         gpio_set_function(config_.esp32_uart_tx_pin, GPIO_FUNC_UART);
         gpio_set_function(config_.esp32_uart_rx_pin, GPIO_FUNC_UART);
@@ -130,7 +140,50 @@ class ESP32SerialFlasher {
     }
 
    private:
+    // UART instance (0 or 1) a GPIO connects to when its function is GPIO_FUNC_UART (RP2040 datasheet, GPIO function
+    // table: GPIO 0-3 -> UART0, 4-11 -> UART1, 12-19 -> UART0, 20-27 -> UART1, 28-29 -> UART0).
+    static uint GpioUartIndex(uint gpio) { return ((gpio + 4) >> 3) & 1; }
+
+    /**
+     * Switches every pin other than the flasher's own TX/RX that is muxed to the flasher's UART over to a plain SIO
+     * input with a pull-up (idle level for a UART line), remembering its previous pulls so RestoreSharedUartPins()
+     * can undo it.
+     */
+    void ParkSharedUartPins() {
+        parked_pins_mask_ = 0;
+        uint uart_index = uart_get_index(config_.esp32_uart_handle);
+        for (uint gpio = 0; gpio < NUM_BANK0_GPIOS; gpio++) {
+            if (gpio == config_.esp32_uart_tx_pin || gpio == config_.esp32_uart_rx_pin) continue;
+            if (gpio_get_function(gpio) != GPIO_FUNC_UART || GpioUartIndex(gpio) != uart_index) continue;
+            parked_pins_mask_ |= 1u << gpio;
+            parked_pin_pulled_up_[gpio] = gpio_is_pulled_up(gpio);
+            parked_pin_pulled_down_[gpio] = gpio_is_pulled_down(gpio);
+            gpio_set_dir(gpio, GPIO_IN);
+            gpio_set_function(gpio, GPIO_FUNC_SIO);
+            gpio_set_pulls(gpio, true, false);
+            CONSOLE_INFO("ESP32SerialFlasher::ParkSharedUartPins",
+                         "Disconnected GPIO %u from uart%u for the ESP32 flash.", gpio, uart_index);
+        }
+    }
+
+    /**
+     * Returns the pins parked by ParkSharedUartPins() to GPIO_FUNC_UART with their original pulls. Their owner (e.g.
+     * the GNSS receiver) still has to re-initialize the UART itself, since DeInit() deinitializes it.
+     */
+    void RestoreSharedUartPins() {
+        for (uint gpio = 0; gpio < NUM_BANK0_GPIOS; gpio++) {
+            if (!(parked_pins_mask_ & (1u << gpio))) continue;
+            gpio_set_pulls(gpio, parked_pin_pulled_up_[gpio], parked_pin_pulled_down_[gpio]);
+            gpio_set_function(gpio, GPIO_FUNC_UART);
+        }
+        parked_pins_mask_ = 0;
+    }
+
     ESP32SerialFlasherConfig config_;
+    uint32_t initial_baudrate_;  // Bootloader sync baud rate; config_.esp32_baudrate changes during a flash.
+    uint32_t parked_pins_mask_ = 0;
+    bool parked_pin_pulled_up_[NUM_BANK0_GPIOS] = {};
+    bool parked_pin_pulled_down_[NUM_BANK0_GPIOS] = {};
     bool receiver_was_enabled_before_update_;
     LEDFlasher led_flasher_{LEDFlasher::LEDFlasherConfig{}};
 };
