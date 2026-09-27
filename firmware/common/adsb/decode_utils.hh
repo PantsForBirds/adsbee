@@ -74,10 +74,10 @@ uint16_t AltitudeCodeToGillham(uint16_t altitude_code);
 int32_t AltitudeCodeToAltitudeFt(uint16_t altitude_code);
 
 /**
- * Converts a Mode A (Surveillance Identity Reply) ID field into a squawk code in octal.
+ * Converts a Mode A (Surveillance Identity Reply) ID field into a squawk code.
  * @param[in] identity_code Mode C packet ID field, in the format (MSB to LSB):
  *                              C1 A1 C2 A2 C4 A4 M(X) B1 Q(D1) B2 D2 B4 D4
- * @retval Squawk code in octal (12 bits).
+ * @retval Squawk code as a decimal value whose digits are the four squawk digits (e.g. squawk 7700 returns 7700).
  */
 uint16_t IdentityCodeToSquawk(uint16_t identity_code);
 

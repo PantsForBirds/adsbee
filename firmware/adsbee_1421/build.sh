@@ -97,6 +97,8 @@ build_app() {
             # picotool is not installed in the image, and the Pico SDK builds it from source to make
             # .uf2 files. Cache it outside build/ so `clean` does not force another download+build.
             extra_cmake_args="-DPICOTOOL_FETCH_FROM_GIT_PATH=/firmware/adsbee_1421/.picotool"
+            # Bake the ti hex of the same config, so `-d build_and_flash` flashes a Debug image.
+            extra_cmake_args+=" -DADSBEE_1421_HEX=/firmware/adsbee_1421/ti/build/${CONFIG}/adsbee_1421.hex"
             ;;
     esac
 

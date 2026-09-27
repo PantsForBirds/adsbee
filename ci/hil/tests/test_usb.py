@@ -2,10 +2,10 @@ from adsbee_hil import usb
 
 
 def populate(fs):
-    fs.add("1-1.3", "2e8a", "000a", "E000000000000001", "Raspberry Pi", "Pico", "ttyACM0",
-           "usb-Raspberry_Pi_Pico_E000000000000001-if00")
-    fs.add("1-1.4", "2e8a", "000a", "E000000000000002", "ADSBee", "ADSBee 1421 Programmer", "ttyACM1",
-           "usb-ADSBee_ADSBee_1421_Programmer_E000000000000002-if00")
+    fs.add("1-1.3", "2e8a", "000a", "E000000000000001", "Pants for Birds", "ADSBee 1090", "ttyACM0",
+           "usb-Pants_for_Birds_ADSBee_1090_E000000000000001-if00")
+    fs.add("1-1.4", "2e8a", "000a", "E000000000000002", "Pants for Birds", "ADSBee 1421 Programmer", "ttyACM1",
+           "usb-Pants_for_Birds_ADSBee_1421_Programmer_E000000000000002-if00")
     fs.add("1-1.5", "2e8a", "0003", "B00000000001", "Raspberry Pi", "RP2 Boot", block="sda")
     fs.add("1-1.1", "0424", "ec00", product="Some hub")
 
@@ -16,7 +16,7 @@ def test_enumeration(fake_sysfs):
     assert set(devs) == {"1-1.1", "1-1.3", "1-1.4", "1-1.5"}
     pico = devs["1-1.3"]
     assert pico.vidpid == "2e8a:000a" and pico.mode == "app" and pico.ttys == ["ttyACM0"]
-    assert pico.console.endswith("by-id/usb-Raspberry_Pi_Pico_E000000000000001-if00")
+    assert pico.console.endswith("by-id/usb-Pants_for_Birds_ADSBee_1090_E000000000000001-if00")
     assert pico.model_hint is None
     assert devs["1-1.4"].model_hint == "adsbee_1421"
     assert devs["1-1.5"].mode == "bootsel" and devs["1-1.5"].console is None

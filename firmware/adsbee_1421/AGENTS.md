@@ -32,7 +32,7 @@ From this `firmware/adsbee_1421/` directory (or via the dispatcher:
 
 ```bash
 ./build.sh               # build the CC1314 app (ti) in Release
-./build.sh -d            # build ti in Debug
+./build.sh -d            # build ti in Debug (includes the RF test command AT+TX_CW; Release omits it)
 ./build.sh programmer    # build the RP2040 flashing jig (requires ti built first)
 ./build.sh build_and_flash  # build ti + programmer, then reflash an attached m1421 via the jig
                          # (prompts to put the jig in BOOT mode, copies the uf2, monitors)

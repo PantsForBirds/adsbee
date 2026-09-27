@@ -27,7 +27,7 @@ TEST(CSBeeUtils, ModeSAircraftToCSBeeString) {
     aircraft.transponder_capability = ModeSADSBPacket::Capability::kCALevel2PlusTransponderOnSurfaceCanSetCA7;
     aircraft.icao_address = 0x12345E;
     strcpy(aircraft.callsign, "ABCDEFG");
-    aircraft.squawk = 01234;
+    aircraft.squawk = 1234;
     aircraft.emitter_category = ADSBTypes::kEmitterCategoryGliderSailplane;
     aircraft.baro_altitude_ft = 1000;
     aircraft.gnss_altitude_ft = 997;
@@ -110,7 +110,7 @@ TEST(CSBeeUtils, UATAircraftToCSBeeString) {
     aircraft.transponder_capability = ModeSADSBPacket::Capability::kCALevel2PlusTransponderOnSurfaceCanSetCA7;
     aircraft.icao_address = 0x12345E;
     strcpy(aircraft.callsign, "ABCDEFG");
-    aircraft.squawk = 01234;
+    aircraft.squawk = 1234;
     aircraft.emitter_category = ADSBTypes::kEmitterCategoryGliderSailplane;
     aircraft.baro_altitude_ft = 1000;
     aircraft.gnss_altitude_ft = 997;
@@ -262,4 +262,36 @@ TEST(CSBeeUtils, CSBeeStatisticsMessage) {
              CalculateCRC16((uint8_t*)message, message_view.length() - crc_str.length()));
     printf("Reported CRC=%s Calculated CRC=%s\r\n", std::string(crc_str).c_str(), calculated_crc_string);
     EXPECT_EQ(crc_str.compare(calculated_crc_string), 0);
+}
+// Squawks with leading zeros keep all four digits in the CSBee SQUAWK field; an unknown squawk prints "?".
+TEST(CSBeeUtils, SquawkLeadingZeros) {
+    char message[kCSBeeMessageStrMaxLen];
+
+    ModeSAircraft mode_s;
+    mode_s.icao_address = 0x12345E;
+    mode_s.squawk = 400;
+    WriteCSBeeModeSAircraftMessageStr(message, mode_s);
+    std::string_view message_view(message);
+    GetNextToken(&message_view);  // ICAO address
+    GetNextToken();               // Flags
+    GetNextToken();               // Callsign
+    EXPECT_EQ(GetNextToken().compare("0400"), 0);
+
+    mode_s.squawk = ADSBTypes::kSquawkCodeNotYetReceived;
+    WriteCSBeeModeSAircraftMessageStr(message, mode_s);
+    message_view = std::string_view(message);
+    GetNextToken(&message_view);
+    GetNextToken();
+    GetNextToken();
+    EXPECT_EQ(GetNextToken().compare("?"), 0);
+
+    UATAircraft uat;
+    uat.icao_address = 0x12345E;
+    uat.squawk = 356;
+    WriteCSBeeUATAircraftMessageStr(message, uat);
+    message_view = std::string_view(message);
+    GetNextToken(&message_view);
+    GetNextToken();
+    GetNextToken();
+    EXPECT_EQ(GetNextToken().compare("0356"), 0);
 }

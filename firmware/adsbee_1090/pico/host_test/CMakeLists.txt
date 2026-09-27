@@ -19,6 +19,9 @@ set_target_properties(libgtest PROPERTIES IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/
 target_link_libraries(host_test PRIVATE libgtest Threads::Threads)
 target_link_libraries(host_test_fpu PRIVATE libgtest Threads::Threads)
 target_compile_definitions(host_test_fpu PRIVATE HAS_FPU)
+# MAVLink send helpers need the firmware's comms_manager; tests only exercise message packing.
+target_compile_definitions(host_test PRIVATE MAVLINK_NO_CONVENIENCE_FUNCTIONS)
+target_compile_definitions(host_test_fpu PRIVATE MAVLINK_NO_CONVENIENCE_FUNCTIONS)
 
 add_subdirectory(${ADSBEE_COMMON_DIR} ${CMAKE_BINARY_DIR}/adsbee_common)
 add_subdirectory(${CMAKE_SOURCE_DIR}/bootloader ${CMAKE_BINARY_DIR}/bootloader)
@@ -51,6 +54,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_reporting_beast.cc
         test_reporting_csbee.cc
         test_reporting_gdl90.cc
+        test_reporting_mavlink.cc
         test_reporting_raw.cc
         test_settings.cc
         test_spi_coprocessor.cc

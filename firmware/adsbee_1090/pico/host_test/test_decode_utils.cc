@@ -402,5 +402,8 @@ TEST(DecodeUtils, AltitudeCodeToAltitudeFt) {
 }
 
 TEST(DecodeUtils, IdentityCodeToSquawk) {
-    EXPECT_EQ(IdentityCodeToSquawk(0b1000101101101), 0356);  // Octal 0356.
+    EXPECT_EQ(IdentityCodeToSquawk(0b1000101101101), 356);  // Squawk 0356.
+    EXPECT_EQ(IdentityCodeToSquawk(0b0000000000000), 0);
+    EXPECT_EQ(IdentityCodeToSquawk(0b0101010101010), 7700);
+    EXPECT_EQ(IdentityCodeToSquawk(0b1111110111111), 7777);  // X bit (bit 6) is not part of the squawk.
 }

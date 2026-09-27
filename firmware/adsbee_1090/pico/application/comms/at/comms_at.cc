@@ -374,6 +374,11 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
                               object_dictionary.kFirmwareVersionMinor, object_dictionary.kFirmwareVersionPatch,
                               object_dictionary.kFirmwareVersionReleaseCandidate);
             }
+#ifdef ADSBEE_DEBUG_BUILD
+            CPP_AT_PRINTF("RP2040 Firmware Build: Debug\r\n");
+#else
+            CPP_AT_PRINTF("RP2040 Firmware Build: Release\r\n");
+#endif
 
             for (uint16_t i = 0; i < SettingsManager::DeviceInfo::kNumOTAKeys; i++) {
                 CPP_AT_PRINTF("OTA Key %d: %s\r\n", i, device_info.ota_keys[i]);

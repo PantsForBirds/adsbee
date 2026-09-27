@@ -561,7 +561,7 @@ TEST(AircraftDictionary, IngestIdentityReply) {
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
     ModeSAircraft aircraft;
     EXPECT_TRUE(dictionary.GetAircraft(0x739EE9u, aircraft));
-    EXPECT_EQ(aircraft.squawk, 06520u);
+    EXPECT_EQ(aircraft.squawk, 6520u);
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent));
 
@@ -571,7 +571,7 @@ TEST(AircraftDictionary, IngestIdentityReply) {
     dictionary.InsertAircraft(ModeSAircraft(tpacket.icao_address));
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
     EXPECT_TRUE(dictionary.GetAircraft(0x5863BAu, aircraft));
-    EXPECT_EQ(aircraft.squawk, 06520u);
+    EXPECT_EQ(aircraft.squawk, 6520u);
     EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent));
 
@@ -581,7 +581,7 @@ TEST(AircraftDictionary, IngestIdentityReply) {
     dictionary.InsertAircraft(ModeSAircraft(tpacket.icao_address));
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
     EXPECT_TRUE(dictionary.GetAircraft(0xA8BBE7u, aircraft));
-    EXPECT_EQ(aircraft.squawk, 01260);
+    EXPECT_EQ(aircraft.squawk, 1260);
     EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert));
     EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));
@@ -592,7 +592,7 @@ TEST(AircraftDictionary, IngestIdentityReply) {
     dictionary.InsertAircraft(ModeSAircraft(tpacket.icao_address));
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
     EXPECT_TRUE(dictionary.GetAircraft(0x7C1471u, aircraft));
-    EXPECT_EQ(aircraft.squawk, 03236);
+    EXPECT_EQ(aircraft.squawk, 3236);
     EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert));
     EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent));
     EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));

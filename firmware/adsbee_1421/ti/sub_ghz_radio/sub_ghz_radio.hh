@@ -118,6 +118,7 @@ public:
     bool RxIsEnabled() const { return rx_requested_; }
 
 #ifdef HARDWARE_UNIT_TESTS
+#ifdef ADSBEE_DEBUG_BUILD
     /**
      * Starts an unmodulated continuous-wave (CW) carrier for testing. Cancels any in-progress packet
      * reception and keeps the carrier on until StopCWTest() is called. Debug builds only.
@@ -131,6 +132,7 @@ public:
      * @retval True if the carrier was stopped and Rx resumed successfully, false otherwise.
      */
     bool StopCWTest();
+#endif  // ADSBEE_DEBUG_BUILD
 
     /**
      * Retunes the synthesizer to the requested frequency and restarts packet RX so instantaneous RSSI

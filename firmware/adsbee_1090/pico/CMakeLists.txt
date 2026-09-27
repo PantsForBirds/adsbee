@@ -63,7 +63,12 @@ if (ON_EMBEDDED_DEVICE)
         # Change magic baud rate for resetting USB to 1234 baud, since 1200 baud is used by some programs like
         # pymavlink as a Linux kernel workaround during device connection.
         PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE=0XDEADBEE
-    ) 
+        # Override the default "Raspberry Pi" / "Pico" USB strings so hosts can identify the device. VID/PID are left
+        # at the Raspberry Pi CDC defaults so stock host drivers and tooling still bind. The SDK truncates each USB
+        # string to USBD_DESC_STR_MAX - 1 = 19 characters.
+        USBD_MANUFACTURER="Pants for Birds"
+        USBD_PRODUCT="ADSBee 1090"
+    )
 
     # Initialize the SDK
     pico_sdk_init()
