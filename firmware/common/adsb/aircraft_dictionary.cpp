@@ -108,6 +108,10 @@ bool ModeSAircraft::DecodePosition(bool is_airborne, uint32_t ref_lat_awb32, uin
 #endif                 // ADSB_VERBOSE_PACKET_WARNINGS
         return false;  // Aircraft crossed between latitude zones, can't decode from this packet pair.
     }
+    float wrapped_latitude_deg = WrapCPRDecodeLatitude(result.lat_deg);
+    if (wrapped_latitude_deg > 90.0f || wrapped_latitude_deg < -90.0f) {
+        return false;  // Not a latitude; a corrupted CPR packet got through CRC.
+    }
 
 #ifdef FILTER_CPR_POSITIONS
     if (filter_cpr_position) {
@@ -146,14 +150,27 @@ bool ModeSAircraft::DecodePosition(bool is_airborne, uint32_t ref_lat_awb32, uin
             CONSOLE_WARNING("ModeSAircraft::DecodePosition",
                             "Filtered CPR position update for ICAO 0x%lx, distance %lu m exceeds max %lu m.",
                             icao_address, distance_meters, max_distance_meters);
-#endif                     // ADSB_VERBOSE_PACKET_WARNINGS
+#endif  // ADSB_VERBOSE_PACKET_WARNINGS
+            // Remember which packets produced this candidate so that they can't be used to confirm it.
+            candidate_even_received_timestamp_ms_ = last_even_packet_.received_timestamp_ms;
+            candidate_odd_received_timestamp_ms_ = last_odd_packet_.received_timestamp_ms;
             return false;  // Filter out CPR positions that are too far from the last known position.
         }
+        if (candidate_even_received_timestamp_ms_ != 0 &&
+            (last_even_packet_.received_timestamp_ms == candidate_even_received_timestamp_ms_ ||
+             last_odd_packet_.received_timestamp_ms == candidate_odd_received_timestamp_ms_)) {
+            // Close to a pending jump candidate, but decoded with one of the packets that produced it. A corrupted
+            // packet decodes to nearly the same bogus position against each complementary packet, so this is no
+            // confirmation. Wait for a pair of entirely new packets.
+            return false;
+        }
+        candidate_even_received_timestamp_ms_ = 0;
+        candidate_odd_received_timestamp_ms_ = 0;
     }
 #endif
 
     WriteBitFlag(BitFlag::kBitFlagPositionValid, true);
-    latitude_deg = WrapCPRDecodeLatitude(result.lat_deg);
+    latitude_deg = wrapped_latitude_deg;
     longitude_deg = WrapCPRDecodeLongitude(result.lon_deg);
     last_track_update_timestamp_ms = most_recent_received_timestamp_ms;  // Update last track update timestamp.
 
