@@ -59,6 +59,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_reporting_raw.cc
         test_settings.cc
         test_spi_coprocessor.cc
+        test_spi_link_gate.cc
         test_squitter_packets.cc
         test_transponder_packet.cc
         test_unit_conversions.cc
