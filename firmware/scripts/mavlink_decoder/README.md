@@ -58,6 +58,6 @@ MAVLink `ADSB_VEHICLE.squawk` carries the four octal Mode A digits as a plain de
 7700 (`0x1E14`), and 0356 as 356. The script zero-pads it back to four digits. A real squawk of 0000 is sent as 0 with
 `ADSB_FLAGS_VALID_SQUAWK` set; an aircraft whose squawk hasn't been received yet is sent as 0 with the flag clear.
 
-Firmware before ADSBee 1090 0.9.1-rc7 / ADSBee 1421 0.3.11-rc6 packed the digits as an octal value instead
+Firmware before ADSBee 1090 0.9.1-rc3 / ADSBee 1421 0.3.11-rc2 packed the digits as an octal value instead
 (7700 was sent as 4032), set the valid flag for aircraft with no squawk yet (sending 65535), and treated a real 0000
 as invalid.
