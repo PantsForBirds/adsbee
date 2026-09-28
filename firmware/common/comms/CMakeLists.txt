@@ -32,7 +32,6 @@ elseif (TARGET host_test OR TARGET host_test_fpu)
                 raw/raw_utils.cpp
             )
             target_include_directories(${_test_tgt} PRIVATE
-                .
                 aircraftjson
                 beast
                 csbee

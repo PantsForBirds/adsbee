@@ -1,4 +1,3 @@
-#include "at_text.hh"
 #include "settings.hh"
 
 #ifdef ON_PICO
@@ -292,63 +291,63 @@ void SettingsManager::PrintAT() {
     // AT+BAUD_RATE
     // Note: Baud rate cannot be changed for CONSOLE since it is a virtual COM port. Don't print its baud rate.
     for (uint16_t i = SerialInterface::kCommsUART; i < SerialInterface::kNumSerialInterfaces; i++) {
-        CONSOLE_PRINTF(AT_PLUS "BAUD_RATE=%s,%lu\r\n", kSerialInterfaceStrs[i], settings.baud_rates[i]);
+        CONSOLE_PRINTF("AT+BAUD_RATE=%s,%lu\r\n", kSerialInterfaceStrs[i], settings.baud_rates[i]);
     }
 
     // AT+BIAS_TEE_ENABLE
-    CONSOLE_PRINTF(AT_PLUS "BIAS_TEE_ENABLE=%d\r\n", settings.r1090_bias_tee_enabled);
+    CONSOLE_PRINTF("AT+BIAS_TEE_ENABLE=%d\r\n", settings.r1090_bias_tee_enabled);
 
     // AT+DEVICE_INFO: Don't store this.
 
     // AT+ESP32_ENABLE
-    CONSOLE_PRINTF(AT_PLUS "ESP32_ENABLE=%d\r\n", settings.core_network_settings.esp32_enabled);
+    CONSOLE_PRINTF("AT+ESP32_ENABLE=%d\r\n", settings.core_network_settings.esp32_enabled);
 
     // AT+ETHERNET
-    CONSOLE_PRINTF(AT_PLUS "ETHERNET=%d\r\n", settings.core_network_settings.ethernet_enabled);
+    CONSOLE_PRINTF("AT+ETHERNET=%d\r\n", settings.core_network_settings.ethernet_enabled);
 
     // AT+FEED
     for (uint16_t i = 0; i < Settings::kMaxNumFeeds; i++) {
-        CONSOLE_PRINTF(AT_PLUS "FEED=%d,%s,%u,%d,%s\r\n", i, settings.feed_uris[i], settings.feed_ports[i],
+        CONSOLE_PRINTF("AT+FEED=%d,%s,%u,%d,%s\r\n", i, settings.feed_uris[i], settings.feed_ports[i],
                        settings.feed_is_active[i], kReportingProtocolStrs[settings.feed_protocols[i]]);
     }
 
     // AT+LED_ENABLE
-    CONSOLE_PRINTF(AT_PLUS "LED_ENABLE=%d\r\n", settings.led_enabled);
+    CONSOLE_PRINTF("AT+LED_ENABLE=%d\r\n", settings.led_enabled);
 
     // AT+FEED_ENABLE
-    CONSOLE_PRINTF(AT_PLUS "FEED_ENABLE=%d\r\n", settings.feeds_enabled);
+    CONSOLE_PRINTF("AT+FEED_ENABLE=%d\r\n", settings.feeds_enabled);
 
     // AT+GNSS
-    CONSOLE_PRINTF(AT_PLUS "GNSS=%d,%s,%d\r\n", settings.gnss_enabled,
+    CONSOLE_PRINTF("AT+GNSS=%d,%s,%d\r\n", settings.gnss_enabled,
                    GNSSReceiverTypeToStr(settings.gnss_receiver_type), settings.gnss_notify);
 
     // AT+LOG_LEVEL
-    CONSOLE_PRINTF(AT_PLUS "LOG_LEVEL=%s\r\n", kConsoleLogLevelStrs[settings.log_level]);
+    CONSOLE_PRINTF("AT+LOG_LEVEL=%s\r\n", kConsoleLogLevelStrs[settings.log_level]);
 
     // AT+PROTOCOL_OUT
     for (uint16_t i = 0; i < SerialInterface::kGNSSUART; i++) {
-        CONSOLE_PRINTF(AT_PLUS "PROTOCOL_OUT=%s,%s\r\n", kSerialInterfaceStrs[i],
+        CONSOLE_PRINTF("AT+PROTOCOL_OUT=%s,%s\r\n", kSerialInterfaceStrs[i],
                        kReportingProtocolStrs[settings.reporting_protocols[i]]);
     }
 
     // AT+RX_ENABLE
-    CONSOLE_PRINTF(AT_PLUS "RX_ENABLE=%d\r\n", settings.r1090_rx_enabled);
+    CONSOLE_PRINTF("AT+RX_ENABLE=%d\r\n", settings.r1090_rx_enabled);
 
     // AT+SUBG_ENABLE
-    CONSOLE_PRINTF(AT_PLUS "SUBG_ENABLE=%s\r\n", SettingsManager::EnableStateToATValueStr(settings.subg_enabled));
+    CONSOLE_PRINTF("AT+SUBG_ENABLE=%s\r\n", SettingsManager::EnableStateToATValueStr(settings.subg_enabled));
 
     // AT+TL_OFFSET
-    CONSOLE_PRINTF(AT_PLUS "TL_OFFSET=%u\r\n", settings.tl_offset_mv);
+    CONSOLE_PRINTF("AT+TL_OFFSET=%u\r\n", settings.tl_offset_mv);
 
     // AT+WATCHDOG
-    CONSOLE_PRINTF(AT_PLUS "WATCHDOG=%lu\r\n", settings.watchdog_timeout_sec);
+    CONSOLE_PRINTF("AT+WATCHDOG=%lu\r\n", settings.watchdog_timeout_sec);
 
     // AT+WIFI_AP
-    CONSOLE_PRINTF(AT_PLUS "WIFI_AP=%d,%s,%s,%d\r\n", settings.core_network_settings.wifi_ap_enabled,
+    CONSOLE_PRINTF("AT+WIFI_AP=%d,%s,%s,%d\r\n", settings.core_network_settings.wifi_ap_enabled,
                    settings.core_network_settings.wifi_ap_ssid, settings.core_network_settings.wifi_ap_password,
                    settings.core_network_settings.wifi_ap_channel);
 
     // AT+WIFI_STA
-    CONSOLE_PRINTF(AT_PLUS "WIFI_STA=%d,%s,%s\r\n", settings.core_network_settings.wifi_sta_enabled,
+    CONSOLE_PRINTF("AT+WIFI_STA=%d,%s,%s\r\n", settings.core_network_settings.wifi_sta_enabled,
                    settings.core_network_settings.wifi_sta_ssid, settings.core_network_settings.wifi_sta_password);
 }

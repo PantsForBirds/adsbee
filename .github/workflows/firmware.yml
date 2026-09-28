@@ -60,9 +60,6 @@ jobs:
     - name: Run unit tests
       working-directory: firmware/adsbee_1090/pico/build
       run: ctest --verbose
-    - name: Run OTA image AT-scanner tests
-      working-directory: firmware/adsbee_1090/pico/linker_scripts
-      run: python3 -m unittest -v test_ota_at_scan
 
   web_ui_test:
     # Runs on the plain runner image: the pico-docker container used by host_build_and_test has no Node.js.

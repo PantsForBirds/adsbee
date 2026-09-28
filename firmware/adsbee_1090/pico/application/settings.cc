@@ -1,4 +1,3 @@
-#include "at_text.hh"
 #include "settings.hh"
 
 #include "adsbee.hh"
@@ -256,7 +255,7 @@ bool SettingsManager::Apply() {
         if (esp32.firmware_update_failed) {
             CONSOLE_ERROR("SettingsManager::Apply",
                           "Not enabling ESP32: its firmware update failed this boot. Reboot to retry, or use "
-                          AT_PLUS "ESP32_FLASH.");
+                          "AT+ESP32_FLASH.");
         } else if (!esp32.IsEnabled()) {
             CONSOLE_INFO("SettingsManager::Apply", "Enabling ESP32.");
             success &= esp32.Init();

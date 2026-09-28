@@ -16,14 +16,9 @@
 //   - OK / READY / ERROR are matched as whole lines: late payload echoed in parse errors can contain "OK".
 //   - If the update fails, the log level, receivers and console protocol are put back as they were, and the ADSBee
 //     keeps running its current firmware (the new partition is only marked bootable by OTA=VERIFY).
-//
-// "AT" + "+" is never written contiguously in this file: it is stored in the firmware image, and firmware up to
-// 0.9.1-rc4 can run AT commands found in an image it is receiving (see firmware/common/comms/at_text.hh).
 
 (function (root) {
     'use strict';
-
-    const AT = 'AT' + '+';
 
     const OTA_HEADER_SIZE_BYTES = 5 * 4;
     const OTA_APP_OFFSET_BYTES = 4 * 1024;
@@ -246,25 +241,25 @@
                     return null;
                 }
             };
-            const lvl = await q(AT + 'LOG_LEVEL?', /^\+?LOG_LEVEL=(\w+)$/);
+            const lvl = await q('AT+LOG_LEVEL?', /^\+?LOG_LEVEL=(\w+)$/);
             if (lvl) this.saved.logLevel = lvl[1];
-            const r1090 = await q(AT + 'RX_ENABLE?', /^1090 Receiver: (ENABLED|DISABLED)$/);
+            const r1090 = await q('AT+RX_ENABLE?', /^1090 Receiver: (ENABLED|DISABLED)$/);
             const subg = r1090 ? await this.ch.waitLine(/^SubG Receiver: (ENABLED|DISABLED)$/, this.opt.queryTimeoutMs).catch(() => null) : null;
             if (r1090 && subg) {
                 this.saved.rx = [r1090[1] === 'ENABLED' ? 1 : 0, subg.endsWith('ENABLED') ? 1 : 0];
             }
-            const proto = await q(AT + 'PROTOCOL_OUT?', /^\+?PROTOCOL_OUT=CONSOLE,(\w+)/);
+            const proto = await q('AT+PROTOCOL_OUT?', /^\+?PROTOCOL_OUT=CONSOLE,(\w+)/);
             if (proto) this.saved.consoleProtocol = proto[1];
             await this.ch.drainUntilQuiet(300, 2000);
             this.log(`saved state: ${JSON.stringify(this.saved)}`);
         }
 
         async erase(offset, len) {
-            await this.cmd(`${AT}OTA=ERASE,${offset.toString(16)},${len}`, 'OK', this.opt.eraseTimeoutMs);
+            await this.cmd(`AT+OTA=ERASE,${offset.toString(16)},${len}`, 'OK', this.opt.eraseTimeoutMs);
         }
 
         async writeOnce(offset, data) {
-            const text = `${AT}OTA=WRITE,${offset.toString(16)},${data.length},${crc32(data).toString(16)}`;
+            const text = `AT+OTA=WRITE,${offset.toString(16)},${data.length},${crc32(data).toString(16)}`;
             this.log(`> ${text}`);
             this.ch.sendText(text + '\r\n');
             await this.ch.waitLine('READY', this.opt.readyTimeoutMs);
@@ -346,13 +341,13 @@
             this.progress('restore', null, 'Update failed; restoring the receiver settings...');
             try {
                 await this.reconnect();
-                if (this.saved.logLevel) await this.cmd(`${AT}LOG_LEVEL=${this.saved.logLevel}`).catch(() => {});
+                if (this.saved.logLevel) await this.cmd(`AT+LOG_LEVEL=${this.saved.logLevel}`).catch(() => {});
                 if (this.saved.consoleProtocol) {
-                    await this.cmd(`${AT}PROTOCOL_OUT=CONSOLE,${this.saved.consoleProtocol}`).catch(() => {});
+                    await this.cmd(`AT+PROTOCOL_OUT=CONSOLE,${this.saved.consoleProtocol}`).catch(() => {});
                 }
                 // Per-receiver form (empty first argument), as the settings page uses.
                 const rx = this.saved.rx || [1, 1];
-                await this.cmd(`${AT}RX_ENABLE=,${rx[0]},${rx[1]}`).catch(() => {});
+                await this.cmd(`AT+RX_ENABLE=,${rx[0]},${rx[1]}`).catch(() => {});
             } catch (e) {
                 this.log(`restore failed: ${e.message}`);
             }
@@ -370,10 +365,10 @@
                 stage = 'preparing';
                 this.progress('prepare', 0, 'Preparing the ADSBee...');
                 await this.saveState();
-                await this.cmd(`${AT}LOG_LEVEL=${this.opt.logLevelDuringUpdate}`);
-                await this.cmd(`${AT}PROTOCOL_OUT=CONSOLE,NONE`);
-                await this.cmd(`${AT}RX_ENABLE=0`);
-                const partLine = await this.cmd(`${AT}OTA=GET_PARTITION`, /^Partition: (\d+)$/, this.opt.cmdTimeoutMs);
+                await this.cmd(`AT+LOG_LEVEL=${this.opt.logLevelDuringUpdate}`);
+                await this.cmd('AT+PROTOCOL_OUT=CONSOLE,NONE');
+                await this.cmd('AT+RX_ENABLE=0');
+                const partLine = await this.cmd('AT+OTA=GET_PARTITION', /^Partition: (\d+)$/, this.opt.cmdTimeoutMs);
                 await this.ch.waitLine('OK', this.opt.cmdTimeoutMs).catch(() => {});
                 const partition = parseInt(partLine.match(/(\d+)/)[1], 10);
                 const { image, appLen } = parseOtaImage(fileBytes, partition);
@@ -403,13 +398,13 @@
 
                 stage = 'verifying';
                 this.progress('verify', 100, 'Verifying...');
-                await this.cmd(`${AT}OTA=VERIFY`, 'OK', this.opt.verifyTimeoutMs);
+                await this.cmd('AT+OTA=VERIFY', 'OK', this.opt.verifyTimeoutMs);
 
                 stage = 'rebooting';
                 booting = true;
                 this.progress('boot', 100, 'Rebooting into the new firmware...');
-                this.log(`> ${AT}OTA=BOOT`);
-                this.ch.sendText(`${AT}OTA=BOOT\r\n`);
+                this.log(`> AT+OTA=BOOT`);
+                this.ch.sendText(`AT+OTA=BOOT\r\n`);
                 await this.clock.sleep(500);
                 return { retries: this.retries, partition };
             } catch (e) {

@@ -1,7 +1,3 @@
-// "AT" + "+" is never written contiguously in these files: they are stored in the firmware image, and firmware up
-// to 0.9.1-rc4 can run AT commands found in an OTA image it is receiving (see firmware/common/comms/at_text.hh).
-const AT_PLUS = 'AT' + '+';
-
 const METRIC_UNITS = {
     'num_mode_s_aircraft': 'aircraft',
     'num_uat_aircraft': 'aircraft',
@@ -528,8 +524,8 @@ class FeedEditor {
         const statusEl = document.getElementById('feed-modal-status');
         statusEl.textContent = 'Removing...';
         try {
-            await consoleWebSocket.sendAndCapture(`${AT_PLUS}FEED=${slot},-,0,0,NONE\r\n`, 'OK', 5000);
-            await consoleWebSocket.sendAndCapture(`${AT_PLUS}SETTINGS=SAVE\r\n`, 'OK', 5000);
+            await consoleWebSocket.sendAndCapture(`AT+FEED=${slot},-,0,0,NONE\r\n`, 'OK', 5000);
+            await consoleWebSocket.sendAndCapture(`AT+SETTINGS=SAVE\r\n`, 'OK', 5000);
             statusEl.textContent = 'Removed.';
             setTimeout(() => FeedEditor.close(), 800);
         } catch (e) {
@@ -547,8 +543,8 @@ class FeedEditor {
 
         statusEl.textContent = 'Saving...';
         try {
-            await consoleWebSocket.sendAndCapture(`${AT_PLUS}FEED=${slot},${uri},${port},${active},${protocol}\r\n`, 'OK', 5000);
-            await consoleWebSocket.sendAndCapture(`${AT_PLUS}SETTINGS=SAVE\r\n`, 'OK', 5000);
+            await consoleWebSocket.sendAndCapture(`AT+FEED=${slot},${uri},${port},${active},${protocol}\r\n`, 'OK', 5000);
+            await consoleWebSocket.sendAndCapture(`AT+SETTINGS=SAVE\r\n`, 'OK', 5000);
             statusEl.textContent = 'Saved.';
             setTimeout(() => FeedEditor.close(), 800);
         } catch (e) {
@@ -898,10 +894,10 @@ class SettingsManager {
     async downloadSettings() {
         const adsbee = new ADSBeeAT(this.adsbeeUrl);
         await adsbee.connect();
-        const response = await adsbee.sendCmd(AT_PLUS + 'SETTINGS?DUMP\r\n', 0, true, true);
+        const response = await adsbee.sendCmd('AT+SETTINGS?DUMP\r\n', 0, true, true);
 
-        // Only keep lines starting with AT＋
-        const settingsLines = response.filter(line => line.startsWith(AT_PLUS));
+        // Only keep lines starting with AT+
+        const settingsLines = response.filter(line => line.startsWith('AT+'));
 
         const blob = new Blob([settingsLines.join('\n')], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);

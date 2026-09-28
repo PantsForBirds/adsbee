@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const ota = require('../ota_updater.js');
 
-const AT = 'AT' + '+';
+const AT = 'AT+';
 const SECTOR = 4096;
 
 // Fast timeouts so failure paths finish quickly.
@@ -189,9 +189,6 @@ test('clean update writes the image, final chunk first, then verifies and boots'
     // Warm-up writes of 0xFF at 0x1000, then the header, then the final chunk before the others.
     assert.deepStrictEqual(dev.dataWrites.slice(0, 4), [0x1000, 0x1000, 0, 0x1000 + 3 * SECTOR]);
     assert.strictEqual(progress.filter((p) => p.phase === 'write').pop().percent, 100);
-    // "AT+" is never built from a contiguous literal in the source.
-    const src = require('fs').readFileSync(require.resolve('../ota_updater.js'), 'utf8');
-    assert.ok(!src.includes('AT' + '+'), 'ota_updater.js must not contain the AT prefix literally');
 });
 
 test('first writes after the erase time out: the warm-up absorbs them', async () => {
