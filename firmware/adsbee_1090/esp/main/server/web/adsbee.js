@@ -752,6 +752,7 @@ class FirmwareUploader {
     }
 
     showModal() {
+        this.setModalTitle('Firmware Update In Progress');
         const log = document.getElementById('firmware-modal-log');
         if (log) log.innerHTML = '';
         document.getElementById('firmware-modal').style.display = 'flex';
@@ -784,13 +785,20 @@ class FirmwareUploader {
         document.getElementById('firmware-modal-text').textContent = `${percent}%`;
     }
 
+    setModalTitle(text) {
+        const title = document.querySelector('#firmware-modal-box h2');
+        if (title) title.textContent = text;
+    }
+
     showSuccess(message) {
         this.uploadButton.innerHTML = 'Upload Complete';
+        this.setModalTitle('Firmware Update Complete');
         this.setModalStatus(message);
     }
 
     showError(message) {
         this.uploadButton.innerHTML = 'Upload Failed';
+        this.setModalTitle('Firmware Update Failed');
         this.setModalStatus(message);
         const close = document.getElementById('firmware-modal-close');
         if (close) close.style.display = '';
@@ -828,6 +836,9 @@ class FirmwareUploader {
         metricsWebSocket.pause();
         let ok = false;
         try {
+            // Opening the updater's /console connection right after closing the page's own is reset by the ESP32;
+            // give it a moment to release the old session.
+            await new Promise((r) => setTimeout(r, 1500));
             const bytes = new Uint8Array(await file.arrayBuffer());
             const updater = new AdsbeeOta.OtaUpdater({
                 makeTransport: () => AdsbeeOta.webSocketTransport(`ws://${this.adsbeeUrl}/console`),

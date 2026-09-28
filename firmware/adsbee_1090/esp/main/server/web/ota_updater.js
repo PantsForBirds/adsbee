@@ -47,6 +47,10 @@
         drainQuietMs: 3000,
         drainMaxMs: 60000,
         reconnectDelayMs: 2000,
+        // The ESP32 allows 4 /console clients, and sessions of a page that was just closed or reloaded can hold a
+        // slot for a while, so the first connection may be refused.
+        connectAttempts: 6,
+        connectRetryDelayMs: 5000,
         interWriteDelayMs: 50,
         logLevelDuringUpdate: 'ERRORS',
     };
@@ -268,10 +272,26 @@
             await this.ch.waitLine('OK', this.opt.writeTimeoutMs, `OK for the write at 0x${offset.toString(16)}`);
         }
 
+        /** Opens the console connection, retrying while the ADSBee refuses it. */
+        async openWithRetry() {
+            for (let attempt = 1; ; attempt++) {
+                try {
+                    await this.ch.open();
+                    return;
+                } catch (e) {
+                    this.ch.close();
+                    if (attempt >= this.opt.connectAttempts) throw e;
+                    this.log(`connection attempt ${attempt} failed: ${e.message}`);
+                    this.progress('connect', null, `The ADSBee refused the connection; retrying (${attempt}/${this.opt.connectAttempts - 1})...`);
+                    await this.clock.sleep(this.opt.connectRetryDelayMs);
+                }
+            }
+        }
+
         async reconnect() {
             this.ch.close();
             await this.clock.sleep(this.opt.reconnectDelayMs);
-            await this.ch.open();
+            await this.openWithRetry();
             await this.ch.drainUntilQuiet(300, 2000);
         }
 
@@ -344,7 +364,7 @@
             let booting = false;
             try {
                 this.progress('connect', 0, 'Connecting...');
-                await this.ch.open();
+                await this.openWithRetry();
                 await this.ch.drainUntilQuiet(300, 2000);
 
                 stage = 'preparing';

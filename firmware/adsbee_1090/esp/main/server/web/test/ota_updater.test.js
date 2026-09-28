@@ -9,6 +9,7 @@ const SECTOR = 4096;
 
 // Fast timeouts so failure paths finish quickly.
 const FAST = {
+    connectRetryDelayMs: 10,
     cmdTimeoutMs: 300, readyTimeoutMs: 300, writeTimeoutMs: 400, eraseTimeoutMs: 500, verifyTimeoutMs: 500,
     queryTimeoutMs: 150, drainQuietMs: 60, drainMaxMs: 1000, reconnectDelayMs: 10, interWriteDelayMs: 0,
 };
@@ -70,6 +71,10 @@ class FakeAdsbee {
         const c = { open: null, onText: null, onClose: null, openState: false };
         return {
             open(onText, onClose) {
+                if (dev.faults.refuseConnections > 0) {
+                    dev.faults.refuseConnections--;
+                    return Promise.reject(new ota.OtaError('cannot connect'));
+                }
                 c.onText = onText; c.onClose = onClose; c.openState = true;
                 dev.conn = c;
                 dev.pending = null;
@@ -244,6 +249,15 @@ test('an update that cannot write gives up, restores the settings and never boot
     assert.deepStrictEqual(dev.rx, [1, 0]);
     assert.strictEqual(dev.consoleProtocol, 'CSBEE');
     assert.ok(progress.some((p) => p.phase === 'restore'));
+});
+
+test('a refused first connection is retried', async () => {
+    const { file, parts } = makeOta(SECTOR);
+    const dev = new FakeAdsbee({ refuseConnections: 2 });
+    const { u, progress } = updater(dev);
+    await u.run(file);
+    assertFlashed(dev, parts[1]);
+    assert.ok(progress.some((p) => /refused the connection/.test(p.message || '')));
 });
 
 test('parseOtaImage rejects damaged files', () => {
