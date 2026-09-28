@@ -55,7 +55,8 @@ built in Debug and the jig bakes in `ti/build/Debug/adsbee_1421.hex`. Only Debug
 command `AT+TX_CW`; see [firmware/README.md](../../README.md#debug-builds-and-rf-test-commands).
 
 Artifact: `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` —
-hold BOOT on the RP2040-Zero while plugging it in and drag the file onto the `RPI-RP2` drive.
+hold BOOT on the RP2040-Zero while plugging it in (or, on a jig already running a build with the
+1200-baud reboot, open its port at 1200 baud) and drag the file onto the `RPI-RP2` drive.
 Or run `./build.sh build_and_flash`, which builds both apps, prompts for bootloader mode, copies
 the uf2, and watches the jig's console while it reflashes the attached m1421. `./build.sh flash`
 does the same without building, using the uf2 already on disk; because the ti hex is baked in at
@@ -107,6 +108,10 @@ physical pin low):
   that keep DTR asserted don't hold the device in reset.
 - **Host baud changes are applied to the UART directly**, so tools that manage their own baud
   (the web console, the python flasher's bootloader phase) work through the jig unmodified.
+- **Except 1200 baud**, which reboots the jig's RP2040 into its USB bootloader (`RPI-RP2`) to update
+  the jig without pressing BOOT, e.g. `python3 -c "import serial; serial.Serial('/dev/ttyACM0', 1200).close()"`.
+  1200 is never a console or flasher rate. Jigs running firmware older than this change need BOOT
+  held while plugging in once.
 - After a host-driven reset with SYNC low the device console reboots at its *saved* baud
   (factory default 1 M). If the host's line coding matches the rate the console was last
   negotiated to, the jig stays transparent; otherwise it automatically re-negotiates (sweep +

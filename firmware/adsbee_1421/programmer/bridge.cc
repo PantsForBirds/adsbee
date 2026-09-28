@@ -2,6 +2,7 @@
 
 #include "board.hh"
 #include "bootsel.hh"
+#include "pico/bootrom.h"
 #include "pico/stdlib.h"
 #include "status.hh"
 #include "target_ctl.hh"
@@ -19,6 +20,11 @@ static bool last_dtr = false;
 extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* coding) {
     (void)itf;
     if (coding->bit_rate == 0) return;
+    if (coding->bit_rate == kRebootToBootselBaud) {
+        // Checked in every jig state, including while it flashes the module: an interrupted flash is redone by the CRC
+        // check on the next boot.
+        reset_usb_boot(0, 0);
+    }
     host_baud = coding->bit_rate;
     if (bridge_active) baud_change_pending = true;
 }

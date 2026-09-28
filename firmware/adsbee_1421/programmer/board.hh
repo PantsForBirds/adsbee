@@ -30,4 +30,8 @@ static const uint32_t kBootWaitMs   = 800;  // App boot time before the first AT
 static const uint32_t kConsoleBaud = 1000000;  // Factory default / preferred pass-through rate.
 static const uint32_t kConsoleBaudCandidates[] = {1000000, 921600, 460800, 230400, 115200};
 static const uint32_t kBootloaderBaud = 1000000;
+// Host line coding that reboots the jig's own RP2040 into its USB bootloader (RPI-RP2), so the jig can be updated
+// without pressing BOOT: the pico-sdk / Arduino "1200 baud touch". Never a console rate (kConsoleBaudCandidates) or a
+// bootloader/flasher rate, so pass-through tools don't hit it.
+static const uint32_t kRebootToBootselBaud = 1200;
 static const int kBootloaderEntryAttempts = 6;
