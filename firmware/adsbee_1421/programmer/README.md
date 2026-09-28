@@ -122,12 +122,11 @@ in pass-through (green LED):
 
 A host-side ROM bootloader client can flash a module *through* the jig: it enters the
 bootloader with RTS deasserted and a DTR edge, and while SYNC is high the jig stays fully
-transparent and never injects traffic. The web console's **Upload Firmware** doesn't drive
-RTS/DTR, and opening the port through the jig pulses reset (DTR edge) while the page parks
-SYNC low, so from the page it only works reliably on a module that stays in the bootloader across resets (for example
-after `AT+BOOT_UART_BOOTLOADER=1DEADBEE`). Whichever tool flashes a different image, the jig
-reflashes its baked image at its next recheck (power-up, BOOTSEL tap, or failed console
-negotiation) if the two don't match.
+transparent and never injects traffic. The web console's **Enter bootloader** button does
+exactly this. Opening the port is itself a DTR edge (the OS asserts DTR and RTS), so it resets
+the module into its application; enter the bootloader after opening, not before. Whichever
+tool flashes a different image, the jig reflashes its baked image at its next recheck
+(power-up, BOOTSEL tap, or failed console negotiation) if the two don't match.
 
 ## Troubleshooting (yellow blink / no green)
 

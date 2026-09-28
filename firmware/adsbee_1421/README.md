@@ -149,15 +149,14 @@ Tools that already drive the backdoor:
 | Tool | Drives RTS/DTR itself? |
 |---|---|
 | [Programmer jig](programmer/README.md) | Yes. It drives SYNC and RESET_N directly at power-up and on a BOOTSEL tap, and passes host RTS/DTR through during pass-through. |
-| [Web console](../../software/adsbee_1421_console/README.md#firmware-upload-wiring) **Upload Firmware** | **No.** The page never uses RTS/DTR to enter the bootloader: you put the module there first. After opening the port it parks the lines in the normal-run state (RTS asserted = SYNC low, DTR deasserted). |
+| [Web console](../../software/adsbee_1421_console/README.md#firmware-upload-wiring) **Upload Firmware** | Yes. **Enter bootloader** drives RTS/DTR with Web Serial `setSignals()` (SYNC high, DTR deasserted → asserted 50 ms → deasserted, which suits both the jig and a plain adapter), checks the ROM answers, and after flashing drives SYNC low and restarts the module. A manual **Check bootloader** path remains for adapters without RTS/DTR wired. |
 | Your own script | Yes, with the snippet above in front of any client that speaks the CC13x4 ROM bootloader protocol. |
 
-A note on the web console behind the jig: opening a serial port asserts DTR, which the jig turns
-into a reset pulse, and the page then asserts RTS (SYNC low). A module that is in the bootloader
-only because of the backdoor is therefore likely to be reset back into the application when the
-page connects. Flashing through the jig from the web console works reliably only for a module
-that stays in the bootloader across resets: one with no valid image, for example after
-`AT+BOOT_UART_BOOTLOADER=1DEADBEE` or an interrupted flash.
+Opening a serial port resets a module behind the jig or a DTR-wired adapter: the operating
+system asserts DTR and RTS on open, which is a DTR edge with SYNC low. A module that is in the
+bootloader only because of the backdoor is booted back into its application, so a tool should
+enter the bootloader after opening the port and keep the port open for the whole session, as
+the web console and the snippet above do.
 
 ### SYNC and sleep
 
