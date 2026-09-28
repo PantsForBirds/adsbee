@@ -2,6 +2,7 @@
 
 #include "board.hh"
 #include "bootsel.hh"
+#include "host_line_coding.hh"
 #include "modem_lines.hh"
 #include "pico/bootrom.h"
 #include "pico/stdlib.h"
@@ -18,16 +19,31 @@ static ModemLines lines;  // Only touched from tud_task() callbacks and the brid
 
 static uint32_t NowMs() { return to_ms_since_boot(get_absolute_time()); }
 
+static constexpr bool IsConsoleOrBootloaderBaud(uint32_t baud) {
+    if (baud == kBootloaderBaud) return true;
+    for (uint32_t candidate : kConsoleBaudCandidates) {
+        if (baud == candidate) return true;
+    }
+    return false;
+}
+static_assert(!IsConsoleOrBootloaderBaud(kRebootToBootselBaud),
+              "The reboot-to-BOOTSEL baud must not be a rate pass-through tools use");
+
 extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* coding) {
     (void)itf;
-    if (coding->bit_rate == 0) return;
-    if (coding->bit_rate == kRebootToBootselBaud) {
-        // Checked in every jig state, including while it flashes the module: an interrupted flash is redone by the CRC
-        // check on the next boot.
-        reset_usb_boot(0, 0);
+    switch (ClassifyHostBaud(coding->bit_rate)) {
+        case HostBaudAction::kIgnore:
+            return;
+        case HostBaudAction::kRebootToBootsel:
+            // Checked in every jig state, including while it flashes the module: an interrupted flash is redone by the
+            // CRC check on the next boot. Does not return, so the magic baud never reaches host_baud or the UART.
+            reset_usb_boot(0, 0);
+            return;
+        case HostBaudAction::kApply:
+            host_baud = coding->bit_rate;
+            if (bridge_active) baud_change_pending = true;
+            return;
     }
-    host_baud = coding->bit_rate;
-    if (bridge_active) baud_change_pending = true;
 }
 
 extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {

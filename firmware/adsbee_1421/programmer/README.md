@@ -56,7 +56,7 @@ command `AT+TX_CW`; see [firmware/README.md](../../README.md#debug-builds-and-rf
 
 Artifact: `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` —
 hold BOOT on the RP2040-Zero while plugging it in (or, on a jig already running a build with the
-1200-baud reboot, open its port at 1200 baud) and drag the file onto the `RPI-RP2` drive.
+magic-baud reboot, open its port at 233495534 baud, see below) and drag the file onto the `RPI-RP2` drive.
 Or run `./build.sh build_and_flash`, which builds both apps, prompts for bootloader mode, copies
 the uf2, and watches the jig's console while it reflashes the attached m1421. `./build.sh flash`
 does the same without building, using the uf2 already on disk; because the ti hex is baked in at
@@ -115,10 +115,15 @@ physical pin low):
   in with RTS deasserted and another DTR edge.
 - **Host baud changes are applied to the UART directly**, so tools that manage their own baud
   (the web console, the python flasher's bootloader phase) work through the jig unmodified.
-- **Except 1200 baud**, which reboots the jig's RP2040 into its USB bootloader (`RPI-RP2`) to update
-  the jig without pressing BOOT, e.g. `python3 -c "import serial; serial.Serial('/dev/ttyACM0', 1200).close()"`.
-  1200 is never a console or flasher rate. Jigs running firmware older than this change need BOOT
-  held while plugging in once.
+- **Except 233495534 baud (`0xDEADBEE`)**, which reboots the jig's RP2040 into its USB bootloader
+  (`RPI-RP2`) to update the jig without pressing BOOT, e.g.
+  `python3 -c "import serial; serial.Serial('/dev/ttyACM0', 0xDEADBEE).close()"`. It is the same
+  magic baud as the ADSBee 1090 (`PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE` in
+  `firmware/adsbee_1090/pico/CMakeLists.txt`; the jig's copy is `kRebootToBootselBaud` in
+  `host_line_coding.hh`, and the host test checks they match). That baud is never forwarded to the
+  module. 1200 baud is an ordinary rate here, as on the 1090, because tools such as pymavlink open
+  ports at 1200. Jig images from before the magic baud need BOOT held while plugging in once (the
+  0.3.11-rc3 jig image from 83e8f60e/4a0bc13e reboots on 1200 instead).
 - After a host-driven reset with SYNC low the device console reboots at its *saved* baud
   (factory default 1 M). If the host's line coding matches the rate the console was last
   negotiated to, the jig stays transparent; otherwise it automatically re-negotiates (sweep +
@@ -132,7 +137,7 @@ transparent and never injects traffic.
 
 ## Troubleshooting (yellow blink / no green)
 
-Open the jig's CDC port (any terminal, any baud — e.g. `python3 -m serial.tools.miniterm`) to
+Open the jig's CDC port (any terminal, any baud except the magic reboot baud above — e.g. `python3 -m serial.tools.miniterm`) to
 see per-attempt diagnostics. The jig re-prints its last diagnosis every ~5 s while waiting.
 
 | Message | Meaning |

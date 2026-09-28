@@ -60,8 +60,10 @@ if (ON_EMBEDDED_DEVICE)
     add_compile_definitions(
         # Can't pass in expression in parentheses or else it's a "functional" macro that isn't supported.
         PICO_FLASH_SIZE_BYTES=16777216 # 16MB = 16*1024*1024 Bytes of flash.
-        # Change magic baud rate for resetting USB to 1234 baud, since 1200 baud is used by some programs like
-        # pymavlink as a Linux kernel workaround during device connection.
+        # Change magic baud rate for resetting USB to 0xDEADBEE (233495534) baud, since 1200 baud is used by some
+        # programs like pymavlink as a Linux kernel workaround during device connection. The ADSBee 1421 programmer jig
+        # reboots on the same baud (kRebootToBootselBaud, firmware/adsbee_1421/programmer/host_line_coding.hh); its host
+        # test reads the value from this line.
         PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE=0XDEADBEE
         # Override the default "Raspberry Pi" / "Pico" USB strings so hosts can identify the device. VID/PID are left
         # at the Raspberry Pi CDC defaults so stock host drivers and tooling still bind. The SDK truncates each USB

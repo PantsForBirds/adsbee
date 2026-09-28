@@ -153,6 +153,8 @@ flash_m1421() {
     echo "=== Reflash an attached ADSBee m1421 via its programmer jig ==="
     echo "Put the ADSBee 1421 programmer (RP2040-Zero) into its UF2 bootloader:"
     echo "  hold BOOT while plugging it in, or hold BOOT and tap its RESET button."
+    echo "  A running jig reboots into it when its port is opened at 233495534 baud (0xDEADBEE), e.g."
+    echo "  python3 -c \"import serial; serial.Serial('/dev/ttyACM0', 0xDEADBEE).close()\""
     echo "Waiting up to 120 s for the RPI-RP2 drive to appear (Ctrl-C to abort) ..."
 
     local drive="" i
