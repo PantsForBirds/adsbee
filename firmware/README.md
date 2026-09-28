@@ -157,8 +157,9 @@ load. Don't connect an antenna: the LR2021 bands cover licensed and aviation spe
 | CC1314 (Release) | `firmware/adsbee_1421/ti/build/Release/adsbee_1421.hex` (+ `.elf`, `.map`, version-stamped copies) |
 | Programmer | `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` (+ `.elf`, version-stamped `-fw<version>` copies) |
 
-See [adsbee_1421/AGENTS.md](adsbee_1421/AGENTS.md) for flashing, debugging, and the SYNC
-low-power sleep contract.
+See [adsbee_1421/AGENTS.md](adsbee_1421/AGENTS.md) for JTAG flashing, debugging, and the SYNC
+low-power sleep contract, and [adsbee_1421/README.md](adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor)
+for reflashing over UART through the SYNC bootloader backdoor (no debugger needed).
 
 ---
 

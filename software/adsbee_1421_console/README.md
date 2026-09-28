@@ -78,8 +78,7 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
     AT command in the GUI, add one entry to the schema table.
 - **Upload Firmware** — flashes a `.hex` image (from
   `firmware/adsbee_1421/ti/build/<Config>/adsbee_1421-<ver>.hex`) via the
-  CC13x4 factory ROM serial bootloader, a direct port of
-  `software/adsbee_1421_flasher/adsbee_1421_flasher.py`. Runs at the detected
+  CC13x4 factory ROM serial bootloader. Runs at the detected
   baud (the ROM auto-bauds up to ~1.2 M): ~15 s for a ~600 KB image at 1 M
   instead of ~2 min at 115200. After the post-flash reboot the page re-detects
   the link automatically.
@@ -87,10 +86,14 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
 ## Firmware upload wiring
 
 The device must be in the ROM bootloader **before** flashing, and putting it there is
-a manual step. The page does not drive the modem control lines to do it: that only
-worked on an adapter wired like the programmer jig, it spent ~40 s failing on any
-other adapter, and a failed attempt left SYNC high, which puts a running module to
-sleep. The dialog prints the procedure instead:
+a manual step. The mechanism (the CCFG bootloader backdoor on SYNC) is documented in
+[Reflashing over UART: the SYNC bootloader backdoor](../../firmware/adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
+The page does **not** drive the modem control lines (RTS → SYNC, DTR → RESET_N) to
+enter the bootloader: that only worked on an adapter wired like the programmer jig, it
+spent ~40 s failing on any other adapter, and a failed attempt left SYNC high, which
+puts a running module to sleep. On connect it only parks the lines in the normal-run
+state (RTS asserted = SYNC low, DTR deasserted = RESET_N released). The dialog prints
+the procedure instead, for an adapter whose control lines are not wired to the module:
 
 1. Wire the adapter to the module: TX → SURX (pin 20, DIO_2), RX → SUTX (pin 21,
    DIO_3), and ground to ground.
@@ -101,11 +104,24 @@ sleep. The dialog prints the procedure instead:
 5. Press **Check bootloader**.
 
 The firmware's CCFG must enable the bootloader backdoor, which
-`firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg` does (DIO_5, active high). The
+`firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg` does (DIO_5, active high; every
+release since `adsbee_1421-0.3.7`). The
 baud rate does not need to match anything: the ROM locks onto whatever rate the page
 sends its sync bytes at. If the SYNC pin is unreachable,
 `AT+BOOT_UART_BOOTLOADER=1DEADBEE` also enters the bootloader, at the cost of erasing
-the vector table, so the device stays there until it is reflashed.
+the vector table (flash sector 0 only; settings survive), so the device stays there
+until it is reflashed.
+
+**Behind the programmer jig** you can't hold SYNC by hand (the jig drives it), and
+opening the port asserts DTR, which the jig turns into a reset pulse, while the page
+parks RTS asserted (SYNC low). A module put into the bootloader through the backdoor is
+therefore likely to be reset back into the application when the page connects. To
+flash through the jig from the page, connect, send `AT+BOOT_UART_BOOTLOADER=1DEADBEE`
+in the terminal (the module then stays in the bootloader across resets), and open
+**Upload Firmware**. To use the backdoor itself
+through the jig, drive RTS/DTR from a host script instead (see the
+[pyserial example](../../firmware/adsbee_1421/README.md#using-it-from-a-host)). The
+jig reflashes its own baked image at its next recheck if yours differs.
 
 **Check bootloader** is the gate on flashing. It syncs, pings, and reads the chip ID,
 and only a device that answers all three unlocks the **Flash firmware** button. A

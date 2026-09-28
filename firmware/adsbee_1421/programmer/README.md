@@ -7,7 +7,7 @@ module's console (normally at the factory-default 1,000,000 baud).
 At power-up the jig:
 
 1. Enters the CC1314's factory ROM UART bootloader (SYNC backdoor held high through a reset
-   pulse — same mechanism as `software/adsbee_1421_flasher/`).
+   pulse; see [Reflashing over UART: the SYNC bootloader backdoor](../README.md#reflashing-over-uart-the-sync-bootloader-backdoor)).
 2. Compares the on-chip flash against the baked-in image using the bootloader's `CRC32` command
    (per-segment CRCs are computed at build time). On blank or mismatched devices, only the 2 KB
    flash sectors the image actually covers are erased (`SECTOR_ERASE`, never `BANK_ERASE`), then
@@ -36,9 +36,12 @@ module any time) and reports a diagnosis on the CDC port every few seconds.
 | GP26        | ~SRST (pin 17)              | Reset, active low, driven open-drain|
 | GND         | GND                         |                                    |
 
-The module's firmware must have the CCFG bootloader backdoor enabled (all builds since it was
-encoded in `firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg`). Older boards need one
-JTAG flash or the `AT+BOOT_UART_BOOTLOADER=1DEADBEE` self-erase path first.
+The module's firmware must have the CCFG bootloader backdoor enabled: every adsbee_1421 build
+from this repository does (release `adsbee_1421-0.3.7` onward; it is set in
+`firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg`). Older boards need one JTAG flash or the
+`AT+BOOT_UART_BOOTLOADER=1DEADBEE` fallback first. The backdoor itself, its wiring convention and
+the SYNC sleep interaction are documented in
+[`../README.md`](../README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
 ## Build
 
@@ -99,14 +102,17 @@ To bake a different image, pass `-DADSBEE_1421_HEX=<path>` to CMake.
 
 The bridge emulates a TTL USB-UART adapter wired the way the existing host tools expect
 (`adapter RTS → SYNC`, `DTR → RESET_N`, where asserting a modem-control line drives the
-physical pin low):
+physical pin low), so a host tool that drives RTS/DTR can put the module into the ROM bootloader
+and reflash it through the jig with no button presses (see the
+[pyserial example](../README.md#using-it-from-a-host)). The modem-control lines are honored only
+in pass-through (green LED):
 
 - **RTS asserted → SYNC low** (device awake); **RTS deasserted → SYNC high** (device asleep /
   backdoor armed). Most terminals assert RTS on open.
 - **DTR assert edge → 50 ms reset pulse.** Edge-triggered rather than level-held so terminals
   that keep DTR asserted don't hold the device in reset.
 - **Host baud changes are applied to the UART directly**, so tools that manage their own baud
-  (the web console, the python flasher's bootloader phase) work through the jig unmodified.
+  (the web console, a host-side bootloader client) work through the jig unmodified.
 - After a host-driven reset with SYNC low the device console reboots at its *saved* baud
   (factory default 1 M). If the host's line coding matches the rate the console was last
   negotiated to, the jig stays transparent; otherwise it automatically re-negotiates (sweep +
@@ -114,9 +120,14 @@ physical pin low):
   the host probing the whitelist itself (line-coding changes retune the jig UART live) or by
   the BOOTSEL recheck.
 
-Both `software/adsbee_1421_flasher/` (default flags) and the web console's built-in flasher can
-flash a module *through* the jig; during those sessions SYNC is high, so the jig stays fully
-transparent and never injects traffic.
+A host-side ROM bootloader client can flash a module *through* the jig: it enters the
+bootloader with RTS deasserted and a DTR edge, and while SYNC is high the jig stays fully
+transparent and never injects traffic. The web console's **Upload Firmware** doesn't drive
+RTS/DTR, and opening the port through the jig pulses reset (DTR edge) while the page parks
+SYNC low, so from the page it only works reliably on a module that stays in the bootloader across resets (for example
+after `AT+BOOT_UART_BOOTLOADER=1DEADBEE`). Whichever tool flashes a different image, the jig
+reflashes its baked image at its next recheck (power-up, BOOTSEL tap, or failed console
+negotiation) if the two don't match.
 
 ## Troubleshooting (yellow blink / no green)
 
@@ -136,8 +147,10 @@ see per-attempt diagnostics. The jig re-prints its last diagnosis every ~5 s whi
 | `Settings erase ARMED` / `Settings erased; ...` | A BOOTSEL long press was registered, and the Settings sectors were erased at the next bootloader entry. The device now boots with factory defaults. |
 
 Modules running pre-backdoor firmware can't be entered via SYNC at all: flash them once via
-JTAG, or connect a console directly and send `AT+BOOT_UART_BOOTLOADER=1DEADBEE` (erases the
-app and drops into the ROM bootloader; the jig will then flash it on the next check).
+JTAG, or connect a console directly (the jig won't reach pass-through with such a module) and
+send `AT+BOOT_UART_BOOTLOADER=1DEADBEE`. It erases only flash sector 0 (the vector table), so
+the module stays in the ROM bootloader, and Settings and Device Info survive. The jig then
+flashes it on the next check. See [Prerequisites](../README.md#prerequisites).
 
 ## Limitations
 
