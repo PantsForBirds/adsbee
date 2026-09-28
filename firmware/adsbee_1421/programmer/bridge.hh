@@ -10,7 +10,9 @@
 //   host DTR bit asserted  -> RESET_N pulse   python flasher are written against that polarity)
 //
 // DTR is edge-triggered (a 50 ms reset pulse on assert) rather than level-held so terminals that
-// keep DTR asserted for the whole session do not hold the device in reset. Host line-coding baud
+// keep DTR asserted for the whole session do not hold the device in reset. RTS deasserted only
+// drives SYNC high while DTR is asserted (port open) or around a DTR-edge reset, so closing the
+// port, which drops both lines, leaves the device awake (see modem_lines.hh). Host line-coding baud
 // changes are applied to the UART directly.
 
 enum class BridgeExit {

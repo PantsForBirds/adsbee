@@ -50,6 +50,7 @@ add_executable(adsbee_1421_programmer
     flasher.cc
     at_client.cc
     bridge.cc
+    modem_lines.cc
     status.cc
     bootsel.cc
     usb_descriptors.c

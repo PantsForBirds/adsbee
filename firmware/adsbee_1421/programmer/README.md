@@ -103,9 +103,16 @@ The bridge emulates a TTL USB-UART adapter wired the way the existing host tools
 physical pin low):
 
 - **RTS asserted → SYNC low** (device awake); **RTS deasserted → SYNC high** (device asleep /
-  backdoor armed). Most terminals assert RTS on open.
-- **DTR assert edge → 50 ms reset pulse.** Edge-triggered rather than level-held so terminals
+  backdoor armed) while DTR is asserted. Opening the port asserts both, so deasserting RTS on an
+  open port puts the module to sleep.
+- **DTR assert edge → 50 ms reset pulse**, with SYNC set from RTS at the edge and held for 250 ms
+  after the pulse so the boot ROM samples it. Edge-triggered rather than level-held so terminals
   that keep DTR asserted don't hold the device in reset.
+- **With DTR deasserted, SYNC is low** (outside that post-reset hold), so **closing the port
+  leaves the module awake**: the OS drops DTR and RTS together on close (Linux and macOS with the
+  default HUPCL), which used to read as RTS deasserted and put the module to sleep until the next
+  open. Once in the ROM bootloader the module no longer looks at SYNC, and a host still gets back
+  in with RTS deasserted and another DTR edge.
 - **Host baud changes are applied to the UART directly**, so tools that manage their own baud
   (the web console, the python flasher's bootloader phase) work through the jig unmodified.
 - **Except 1200 baud**, which reboots the jig's RP2040 into its USB bootloader (`RPI-RP2`) to update
