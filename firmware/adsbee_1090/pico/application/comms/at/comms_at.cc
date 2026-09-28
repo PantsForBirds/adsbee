@@ -970,6 +970,9 @@ CPP_AT_CALLBACK(CommsManager::ATOTACallback) {
                     }
                     uint8_t buf[len_bytes];
 
+                    // From READY on, the next len_bytes console bytes are payload, never AT commands: the guard keeps
+                    // any nested UpdateAT() off the input and discards whatever part of the payload arrives late.
+                    at_console_guard_.BeginBinaryPayload(len_bytes);
                     // Send OK to indicate that we're ready to receive data.
                     CPP_AT_PRINTF("READY\r\n");
 
@@ -977,6 +980,7 @@ CPP_AT_CALLBACK(CommsManager::ATOTACallback) {
                     esp32.update_interval_ms = kOTAHeartbeatMs;  // Faster heartbeat during OTA.
                     int32_t buf_len_bytes = ATReadConsole(reinterpret_cast<char*>(buf), len_bytes, kOTAWriteTimeoutMs);
                     esp32.update_interval_ms = old_esp32_heartbeat_ms;  // Restore old heartbeat.
+                    at_console_guard_.EndBinaryPayload(buf_len_bytes, get_time_since_boot_ms());
 
                     if (buf_len_bytes < 0) {
                         adsbee.SetReceiver1090Enable(receiver_was_enabled);  // Re-enable receiver before exit.
@@ -2019,46 +2023,51 @@ const CppAT::ATCommandDef_t at_command_list[] = {
 const uint16_t at_command_list_num_commands = sizeof(at_command_list) / sizeof(at_command_list[0]);
 
 bool CommsManager::UpdateAT() {
-    static char stdio_at_command_buf[kATCommandBufMaxLen + 1];
-    static uint16_t stdio_at_command_buf_len = 0;
-    // Check for new AT commands from STDIO. Process up to one line per loop.
-    char c = static_cast<char>(getchar_timeout_us(0));
-    while (static_cast<int8_t>(c) != PICO_ERROR_TIMEOUT) {
-        stdio_at_command_buf[stdio_at_command_buf_len] = c;
-        stdio_at_command_buf_len++;
-        stdio_at_command_buf[stdio_at_command_buf_len] = '\0';
-        if (stdio_at_command_buf_len >= kATCommandBufMaxLen) {
-            CONSOLE_ERROR("CommsManager::UpdateAT", "AT command buffer overflow.");
-            stdio_at_command_buf_len = 0;
-            stdio_at_command_buf[stdio_at_command_buf_len] = '\0';  // clear command buffer
+    // While an AT+OTA=WRITE payload is being read, every console byte belongs to ATReadConsole(). UpdateAT() can be
+    // reached from inside that callback (network_console_putc() used to call it), so don't touch the input then.
+    if (at_console_guard_.PayloadInProgress()) {
+        return true;
+    }
+    // Check for new AT commands from STDIO.
+    int ci = getchar_timeout_us(0);
+    while (ci != PICO_ERROR_TIMEOUT) {
+        switch (stdio_at_line_.Push(static_cast<char>(ci), get_time_since_boot_ms())) {
+            case ATLineAssembler<kATCommandBufMaxLen>::kLine:
+                at_parser_.ParseMessage(stdio_at_line_.line());
+                break;
+            case ATLineAssembler<kATCommandBufMaxLen>::kOverflow:
+                CONSOLE_ERROR("CommsManager::UpdateAT", "AT command buffer overflow.");
+                break;
+            case ATLineAssembler<kATCommandBufMaxLen>::kBinaryLine:
+                CONSOLE_WARNING("CommsManager::UpdateAT", "Dropped a console line containing binary data.");
+                break;
+            default:
+                break;
         }
-        if (c == '\n') {
-            at_parser_.ParseMessage(std::string_view(stdio_at_command_buf));
-            stdio_at_command_buf_len = 0;
-            stdio_at_command_buf[stdio_at_command_buf_len] = '\0';  // clear command buffer
+        if (at_console_guard_.PayloadInProgress()) {
+            return true;  // A command above started reading a binary payload (can't happen after it returns, but be safe).
         }
-        c = static_cast<char>(getchar_timeout_us(0));
+        ci = getchar_timeout_us(0);
     }
 
     if (esp32.IsEnabled()) {
         // Receive incoming network console characters.
-        static char esp32_console_rx_buf[kATCommandBufMaxLen + 1];
-        static uint16_t esp32_console_rx_buf_len = 0;
-        while (esp32_console_rx_queue.Dequeue(c)) {
-            esp32_console_rx_buf[esp32_console_rx_buf_len] = c;
-            esp32_console_rx_buf_len++;
-            esp32_console_rx_buf[esp32_console_rx_buf_len] = '\0';
-            if (esp32_console_rx_buf_len >= kATCommandBufMaxLen) {
-                CONSOLE_ERROR("CommsManager::UpdateAT", "Network console buffer overflow.");
-                esp32_console_rx_buf_len = 0;
-                esp32_console_rx_buf[esp32_console_rx_buf_len] = '\0';  // clear command buffer
-            }
-            if (c == '\n') {
-                CONSOLE_INFO("CommsManager::UpdateAT", "Received network console message: %s\r\n",
-                             esp32_console_rx_buf);
-                at_parser_.ParseMessage(std::string_view(esp32_console_rx_buf));
-                esp32_console_rx_buf_len = 0;
-                esp32_console_rx_buf[esp32_console_rx_buf_len] = '\0';  // clear command buffer
+        char c;
+        while (!at_console_guard_.PayloadInProgress() && esp32_console_rx_queue.Dequeue(c)) {
+            switch (network_at_line_.Push(c, get_time_since_boot_ms())) {
+                case ATLineAssembler<kATCommandBufMaxLen>::kLine:
+                    CONSOLE_INFO("CommsManager::UpdateAT", "Received network console message: %.*s\r\n",
+                                 (int)network_at_line_.line().length(), network_at_line_.line().data());
+                    at_parser_.ParseMessage(network_at_line_.line());
+                    break;
+                case ATLineAssembler<kATCommandBufMaxLen>::kOverflow:
+                    CONSOLE_ERROR("CommsManager::UpdateAT", "Network console buffer overflow.");
+                    break;
+                case ATLineAssembler<kATCommandBufMaxLen>::kBinaryLine:
+                    CONSOLE_WARNING("CommsManager::UpdateAT", "Dropped a network console line containing binary data.");
+                    break;
+                default:
+                    break;
             }
         }
     }

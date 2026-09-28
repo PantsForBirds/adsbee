@@ -248,8 +248,8 @@ bool CommsManager::network_console_putc(char c) {
     }
     recursion_alert = true;
     if (!comms_manager.esp32_console_tx_queue.Enqueue(c)) {
-        // Try flushing the buffer before dumping it.
-        comms_manager.UpdateAT();
+        // Try flushing the buffer before dumping it. Don't call UpdateAT() here: this can run inside an AT callback
+        // (e.g. while AT+OTA=WRITE waits for its payload), and parsing console input then misreads binary data.
         comms_manager.UpdateNetworkConsole();
         if (comms_manager.esp32_console_tx_queue.Enqueue(c)) {
             recursion_alert = false;
