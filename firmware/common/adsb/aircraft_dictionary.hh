@@ -1177,8 +1177,9 @@ class AircraftDictionary {
     // address (aircraft JSON, GDL90 traffic) report only one of them, so that clients don't flip between positions.
     // DO-260B/DO-282B intent (and readsb's source ranking): a receiver uses the aircraft's own ADS-B, and a rebroadcast
     // only while nothing better is being received. So: the best-ranked entry with a position updated in the last
-    // kPreferredReportPositionFreshMs wins; if none has a fresh position, the best-ranked entry wins. 15 s covers the
-    // TIS-B update interval (one radar scan, 4.8-12 s).
+    // kPreferredReportPositionFreshMs wins; if none has a fresh position, the newest position wins (then the best
+    // rank), so the report never falls back to an older position than the one it could show. 15 s covers the TIS-B
+    // update interval (one radar scan, 4.8-12 s).
     static constexpr uint32_t kPreferredReportPositionFreshMs = 15e3;
     enum AddressSourceRank : int8_t {
         kAddressSourceRankDirect = 0,       // 1090ES DF17 / Mode S replies, or UAT ADS-B with an ICAO address.

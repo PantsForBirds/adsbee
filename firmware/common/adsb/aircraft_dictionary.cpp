@@ -1620,10 +1620,14 @@ bool AircraftDictionary::IsPreferredReportForAddress(uint32_t uid, uint32_t time
             position_age_ms = timestamp_ms - ac->last_position_update_ms;
         }
         bool fresh = position_age_ms <= kPreferredReportPositionFreshMs;
-        // Fresh beats stale, then the better source, then the newer position.
+        // Fresh beats stale. Among fresh entries the better source wins, then the newer position. Among stale ones
+        // the newer position wins, then the better source: a direct ADS-B entry whose position froze a minute ago
+        // (other Mode S replies keep the entry alive) must not win over a TIS-B position that just missed one update,
+        // or the target jumps back to the old position until the next TIS-B update.
         bool better = (fresh != best_fresh) ? fresh
-                      : (rank != best_rank) ? rank < best_rank
-                                            : position_age_ms < best_position_age_ms;
+                      : fresh ? ((rank != best_rank) ? rank < best_rank : position_age_ms < best_position_age_ms)
+                              : ((position_age_ms != best_position_age_ms) ? position_age_ms < best_position_age_ms
+                                                                           : rank < best_rank);
         if (better) {
             best_uid = candidate_uid;
             best_fresh = fresh;

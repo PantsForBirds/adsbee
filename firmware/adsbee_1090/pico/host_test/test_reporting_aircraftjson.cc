@@ -492,9 +492,22 @@ TEST_F(PreferredReportForAddress, TISBBeatsDirectWithoutPosition) {
     EXPECT_TRUE(Preferred(tisb->GetUID()));
 }
 
-TEST_F(PreferredReportForAddress, DirectWinsWhenNothingIsFresh) {
-    ModeSAircraft* mode_s = AddModeS(true, 60000);
-    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 30000);
+TEST_F(PreferredReportForAddress, NewestPositionWinsWhenNothingIsFresh) {
+    // Field case (a8cfae, 1090U): TIS-B missed an update, so neither position was fresh, and the direct 1090ES entry
+    // with a position frozen for 72 s won and the target jumped 3.5 nm back until the next TIS-B update.
+    ModeSAircraft* mode_s = AddModeS(true, 72000);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 16000);
+    EXPECT_FALSE(Preferred(mode_s->GetUID()));
+    EXPECT_TRUE(Preferred(tisb->GetUID()));
+
+    tisb->last_position_update_ms = kNowMs - 80000;  // Now the direct position is the newer one.
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, DirectWinsWhenNoEntryHasAPosition) {
+    ModeSAircraft* mode_s = AddModeS(false, 0);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, false, 0);
     EXPECT_TRUE(Preferred(mode_s->GetUID()));
     EXPECT_FALSE(Preferred(tisb->GetUID()));
 }
