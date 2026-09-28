@@ -63,6 +63,19 @@ jobs:
     - name: Run OTA image AT-scanner tests
       working-directory: firmware/adsbee_1090/pico/linker_scripts
       run: python3 -m unittest -v test_ota_at_scan
+
+  web_ui_test:
+    # Runs on the plain runner image: the pico-docker container used by host_build_and_test has no Node.js.
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.adsbee_1090 == 'true'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
     - name: Run web UI firmware updater tests
       working-directory: firmware/adsbee_1090/esp/main/server/web
       run: node --test test/ota_updater.test.js
