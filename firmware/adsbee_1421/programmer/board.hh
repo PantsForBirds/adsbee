@@ -1,4 +1,4 @@
-// Pin and timing constants for the ADSBee 1421 programmer jig (Waveshare RP2040-Zero).
+// Pin and timing constants for the ADSBee 1421 Programmer (Waveshare RP2040-Zero).
 //
 // Wiring to the ADSBee m1421 module:
 //   GP28 (UART0 TX) -> SURX  (pin 20, CC1314 DIO_2, UART RX)
@@ -20,7 +20,7 @@ static const uint kPinSync   = 27;  // SYNC / DIO_5 backdoor, active high, push-
 static const uint kPinUartTx = 28;  // UART0 TX -> module SURX (DIO_2).
 static const uint kPinUartRx = 29;  // UART0 RX <- module SUTX (DIO_3).
 
-static const uint32_t kResetPulseMs = 50;   // RESET_N low time, matches the python flasher.
+static const uint32_t kResetPulseMs = 50;   // RESET_N low time; host tools use the same pulse.
 static const uint32_t kBootWaitMs   = 800;  // App boot time before the first AT probe.
 
 // The ROM bootloader auto-bauds to 1 M (proven on hardware; ROM ceiling ~1.2 M). The app

@@ -4,7 +4,8 @@
 #include <stdint.h>
 
 // CC13x4 factory ROM serial bootloader protocol (TRM SWCU194 chapter 10) over target_uart.
-// Port of CC13x4Bootloader in software/adsbee_1421_flasher/adsbee_1421_flasher.py.
+// The web console (software/adsbee_1421_console/adsbee_1421_console.html, CC13x4Bootloader)
+// implements the same protocol in JavaScript.
 class Cc13x4Bootloader {
    public:
     static const size_t kMaxDataChunk = 248;  // SEND_DATA payload cap (252) rounded to flash words.

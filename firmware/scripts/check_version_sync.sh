@@ -17,6 +17,11 @@
 # settings version changed without a matching firmware version bump, or if watched firmware
 # paths changed without a firmware version bump.
 #
+# Documentation-only changes are exempt from the watched-paths check: Markdown files (*.md, any
+# case) under the watched paths never feed a build, so editing a README or AGENTS.md doesn't
+# require a bump. Nothing else is exempt. In particular *.txt is not (CMakeLists.txt, test
+# input data), and neither are images (the ESP32 web server embeds its favicon.png).
+#
 # Usage: check_version_sync.sh <old_source> <new_source>
 #   Each source is one of:
 #     WORKTREE   - the current files on disk (unstaged + staged changes)
@@ -75,14 +80,19 @@ extract() {
         | grep -oE '[0-9]+$'
 }
 
-# True (exit 0) if any of the given paths differ between old_source and new_source.
+# Pathspecs excluded from the watched-paths check: documentation that never feeds a build.
+# See the header comment before adding anything here.
+doc_only_excludes=(':(exclude,glob,icase)**/*.md')
+
+# True (exit 0) if any of the given paths differ between old_source and new_source, ignoring
+# documentation-only files (doc_only_excludes).
 paths_changed() {
     local old="$1" new="$2"
     shift 2
     case "$new" in
-        WORKTREE) ! git -C "$root" diff --quiet "$old" -- "$@" ;;
-        INDEX)    ! git -C "$root" diff --quiet --cached "$old" -- "$@" ;;
-        *)        ! git -C "$root" diff --quiet "$old" "$new" -- "$@" ;;
+        WORKTREE) ! git -C "$root" diff --quiet "$old" -- "$@" "${doc_only_excludes[@]}" ;;
+        INDEX)    ! git -C "$root" diff --quiet --cached "$old" -- "$@" "${doc_only_excludes[@]}" ;;
+        *)        ! git -C "$root" diff --quiet "$old" "$new" -- "$@" "${doc_only_excludes[@]}" ;;
     esac
 }
 
@@ -123,9 +133,9 @@ check_product() {
     # Broader guard. Firmware is only reflashed onto coprocessors / targets when the reported
     # firmware version differs, so any change to the watched firmware paths that is NOT paired
     # with a version bump silently leaves devices running a stale build. Harmless edits
-    # (comments, formatting) also trip it, but a bump is cheap.
+    # (comments, formatting) also trip it, but a bump is cheap. Markdown-only changes don't.
     if [ "$firmware_old" = "$firmware_new" ] && paths_changed "$old_source" "$new_source" "${watched_paths[@]}"; then
-        echo "ERROR: $product firmware paths (${watched_paths[*]}) changed but the version in"
+        echo "ERROR: $product firmware paths (${watched_paths[*]}, excluding *.md) changed but the version in"
         echo "       $firmware_version_file was NOT bumped."
         echo "       Firmware is only reflashed on a version mismatch, so devices will keep"
         echo "       running STALE firmware after reflashing. Bump kFirmwareVersionPatch (or"

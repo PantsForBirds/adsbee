@@ -6,7 +6,7 @@ This repo hosts firmware for two products, sharing the code in `firmware/common/
 `firmware/modules/`:
 
 - **`adsbee_1090/`** — ADSBee 1090 (RP2040 + ESP32-S3 + CC1312). Documented in this file.
-- **`adsbee_1421/`** — ADSBee m1421 (CC1314R10 + LR2021), plus its RP2040 flashing jig. See
+- **`adsbee_1421/`** — ADSBee m1421 (CC1314R10 + LR2021), plus the ADSBee 1421 Programmer (RP2040) that flashes it. See
   [`adsbee_1421/AGENTS.md`](adsbee_1421/AGENTS.md).
 
 Build either through the dispatcher at `firmware/build.sh`:
@@ -136,7 +136,10 @@ static constexpr uint32_t kSettingsVersion = N;
 3. If firmware version is unchanged, RP2040 skips reflashing the coprocessors — symptom: old behavior persists after flashing new `combined.uf2`
 
 ### Automated enforcement
-These rules are checked automatically by `scripts/check_version_sync.sh` (covers both products):
+These rules are checked automatically by `scripts/check_version_sync.sh` (covers both products).
+Markdown-only changes (`*.md`: READMEs, AGENTS.md) are exempt and need no bump; any other file under
+the watched paths, including `CMakeLists.txt`, scripts, and assets, still does. The CI
+`version_sync_check` job runs the check and its tests (`scripts/test_check_version_sync.sh`).
 - **`build.sh`** (both products') runs the check locally before every build, but only **warns** —
   a failed check never blocks a local build.
 - **Local git hook** — the enforcing gate; catches it before you even commit. A native `pre-commit` hook (no external tooling) is installed by the dev setup script:
