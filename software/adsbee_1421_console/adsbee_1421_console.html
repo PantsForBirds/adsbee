@@ -2082,9 +2082,8 @@
          * firmware's baud whitelist to find the device's saved console rate.
          * UI ported from the ADSBee ESP32 web interface
          * (firmware/modules/adsbee/firmware/adsbee_1090/esp/main/server/web/), with the
-         * WebSocket transport replaced by a serial line router, and the firmware uploader
-         * ported from software/adsbee_1421_flasher/adsbee_1421_flasher.py (CC13x4 ROM
-         * serial bootloader, TRM SWCU194 ch. 10).
+         * WebSocket transport replaced by a serial line router, and a firmware uploader
+         * for the CC13x4 ROM serial bootloader (TRM SWCU194 ch. 10).
          */
 
         'use strict';
@@ -4440,9 +4439,9 @@ function makeRxEnableEntry() {
 
         // ─── Intel HEX parser ────────────────────────────────────────────────────
 
-        // Mirrors load_segments() in software/adsbee_1421_flasher/adsbee_1421_flasher.py:
-        // records → contiguous segments, padded to 4-byte alignment with 0xFF, split
-        // into main flash (1 MB @ 0x0) and CCFG (2 KB @ 0x50000000).
+        // Records → contiguous segments, padded to 4-byte alignment with 0xFF, split
+        // into main flash (1 MB @ 0x0) and CCFG (2 KB @ 0x50000000). The programmer jig
+        // bakes images with the same rules (firmware/adsbee_1421/programmer/scripts/hex_to_c.py).
         const IntelHex = {
             MAIN_FLASH_BASE: 0x00000000,
             MAIN_FLASH_SIZE: 0x00100000,   // CC1314R10: 1 MB main bank
@@ -4525,8 +4524,9 @@ function makeRxEnableEntry() {
 
         // ─── CC13x4 ROM serial bootloader ────────────────────────────────────────
 
-        // Port of the CC13x4Bootloader class in adsbee_1421_flasher.py (TRM SWCU194
-        // section 10.2). Runs over the RawSink while the read loop keeps pumping.
+        // CC13x4 ROM serial bootloader client (TRM SWCU194 section 10.2; the programmer
+        // jig's firmware/adsbee_1421/programmer/cc13x4_bootloader.cc is the C++ equivalent).
+        // Runs over the RawSink while the read loop keeps pumping.
         const BL = {
             ACK: 0xCC, NACK: 0x33,
             CMD_PING: 0x20, CMD_DOWNLOAD: 0x21, CMD_GET_STATUS: 0x23, CMD_SEND_DATA: 0x24,

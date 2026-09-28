@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Bake an adsbee_1421 Intel HEX image into a C source file for the RP2040 programmer jig.
 
-Parses the hex into 4-byte-aligned segments exactly like the host flasher
-(software/adsbee_1421_flasher/adsbee_1421_flasher.py load_segments()), computes each
+Parses the hex into 4-byte-aligned segments exactly like the web console's uploader
+(IntelHex in software/adsbee_1421_console/adsbee_1421_console.html), computes each
 segment's IEEE 802.3 CRC32 (zlib.crc32 -- the same polynomial the CC13x4 ROM bootloader's
 CRC32 command uses), and emits an array of FirmwareSegment records plus the firmware
 version string parsed from object_dictionary.cpp.
