@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bake an adsbee_1421 Intel HEX image into a C source file for the RP2040 programmer jig.
+"""Bake an adsbee_1421 Intel HEX image into a C source file for the ADSBee 1421 Programmer (RP2040).
 
 Parses the hex into 4-byte-aligned segments exactly like the web console's uploader
 (IntelHex in software/adsbee_1421_console/adsbee_1421_console.html), computes each

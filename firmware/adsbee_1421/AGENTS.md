@@ -8,8 +8,8 @@ the **`ti-lpf2`** Docker container defined in [`compose.yml`](compose.yml) — t
 carries the ARM GCC toolchain and the TI SimpleLink Low Power F2 SDK. There is no need (and no
 supported path) to install the toolchain on the host.
 
-For flashing without a debugger (the SYNC bootloader backdoor, the programmer jig, and host
-tools), see [`README.md`](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
+Flashing without a debugger (the SYNC bootloader backdoor, the ADSBee 1421 Programmer and host
+tools) is covered in [`README.md`](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
 Applications in this directory:
 
@@ -109,7 +109,7 @@ adsbee_1090's. Any change under `firmware/adsbee_1421/` or the shared `firmware/
 paired with an adsbee_1421 firmware version bump — enforced by
 [`../scripts/check_version_sync.sh`](../scripts/check_version_sync.sh), which `build.sh` runs
 before every build (as a warning only — it never blocks the build) and which the repo pre-commit
-hook runs on every commit (where it does block). Note that a
+hook runs on every commit (where it does block). A
 `firmware/common/` change requires bumping **both** products' versions. Markdown-only
 changes (`*.md`) are exempt.
 
@@ -127,9 +127,9 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 
 > The module can also be reflashed over its console UART through the CC1314 ROM serial
 > bootloader, with no debugger: hold SYNC high through a reset (the CCFG bootloader backdoor),
-> or use `AT+BOOT_UART_BOOTLOADER=1DEADBEE` as a fallback. The [`programmer/`](programmer/) jig
-> does this automatically, and any host tool that drives RTS → SYNC / DTR → RESET_N can do it
-> through the jig. See [Reflashing over UART: the SYNC bootloader backdoor](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
+> or use `AT+BOOT_UART_BOOTLOADER=1DEADBEE` as a fallback. The ADSBee 1421 Programmer
+> ([`programmer/`](programmer/)) does this automatically, and any host tool that drives
+> RTS → SYNC and DTR → RESET_N can do it through the Programmer. See [Reflashing over UART: the SYNC bootloader backdoor](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
 ## SYNC low-power sleep
 
@@ -144,8 +144,8 @@ restores the bus (`RestoreInterface()`) and re-runs `ApplyReceiverConfig()` to r
 LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` restart the console and UAT RX.
 
 > **SYNC is also the bootloader backdoor pin:** the boot ROM samples it at every reset, and SYNC
-> high at reset (including a watchdog reset during a long sleep) starts the ROM serial bootloader
-> instead of this firmware. Drive SYNC low before resetting the module; see
+> high at reset (including a watchdog reset during a long sleep) starts the ROM serial bootloader,
+> so this firmware doesn't run. Drive SYNC low before resetting the module; see
 > [SYNC and sleep](README.md#sync-and-sleep).
 
 > **LR2021 bus handoff:** during sleep the CC1314 releases every LR2021 interface pin it normally

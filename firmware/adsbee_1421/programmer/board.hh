@@ -1,4 +1,4 @@
-// Pin and timing constants for the ADSBee 1421 programmer jig (Waveshare RP2040-Zero).
+// Pin and timing constants for the ADSBee 1421 Programmer (Waveshare RP2040-Zero).
 //
 // Wiring to the ADSBee m1421 module:
 //   GP28 (UART0 TX) -> SURX  (pin 20, CC1314 DIO_2, UART RX)

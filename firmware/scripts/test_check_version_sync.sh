@@ -52,7 +52,7 @@ expect() {
     local f
     for f in "$@"; do
         case "$f" in
-            # Bump the version rather than just touching the file.
+            # Bump the patch version; appending a line would leave the version unchanged.
             */object_dictionary.cpp)
                 sed 's/Patch = \([0-9]*\);/Patch = 99;/' "$f" > "$f.new" && mv "$f.new" "$f" ;;
             *) echo changed >> "$f" ;;

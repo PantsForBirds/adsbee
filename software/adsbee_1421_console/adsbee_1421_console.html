@@ -1302,7 +1302,7 @@
 
         /* Bootloader-entry instructions (automatic, then manual). The device must be in the
            ROM bootloader before flashing, so these are the main content of the preflight
-           panel rather than a footnote. */
+           panel. */
         #firmware-auto,
         #firmware-steps {
             background: #0d0d0d;
@@ -2034,7 +2034,7 @@
                 <p class="fw-warning">Flashing erases the current app image. The device will not run until a flash
                     completes successfully (the ROM bootloader stays available for retries &mdash; the board cannot be
                     bricked by this process).</p>
-                <p id="firmware-auto"><strong>Programmer jig, or an adapter wired
+                <p id="firmware-auto"><strong>ADSBee 1421 Programmer, or an adapter wired
                     <span class="pin">RTS &rarr; SYNC</span> and <span class="pin">DTR &rarr; RESET_N</span>:</strong>
                     press <strong>Enter bootloader</strong>. The page holds SYNC high, pulses reset, and checks
                     that the ROM bootloader answers. After flashing it drives SYNC low again and restarts the
@@ -2114,9 +2114,9 @@
         const LAST_BAUD_KEY = 'adsbee1421LastBaud';
 
         // How long to keep probing one rate before trying the next. Opening or reopening
-        // the port asserts DTR, which is wired (directly, or via the programmer jig's
-        // adapter emulation) to RESET_N — so the device is typically rebooting when the
-        // first probe goes out (~0.8 s app boot), and behind the programmer jig the jig
+        // the port asserts DTR, which is wired (directly, or via the ADSBee 1421 Programmer's
+        // adapter emulation) to RESET_N, so the device is typically rebooting when the
+        // first probe goes out (~0.8 s app boot). Behind the Programmer, the Programmer
         // itself then spends ~1–1.5 s re-negotiating the device to the host's rate
         // before pass-through resumes. Each attempt is ~250 ms of quiet + 200 ms pause,
         // so 6 attempts ≈ 2.7 s per rate; the device only pays this at rates it is NOT
@@ -2126,14 +2126,14 @@
         const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
         // Modem-control wiring for the SYNC bootloader backdoor, the same convention as the
-        // programmer jig (firmware/adsbee_1421/programmer/bridge.cc) and a plain USB-UART
+        // ADSBee 1421 Programmer (firmware/adsbee_1421/programmer/bridge.cc) and a plain USB-UART
         // adapter wired RTS -> SYNC, DTR -> RESET_N, where asserting a line drives its pin low:
         //   RTS asserted = SYNC low (awake), RTS deasserted = SYNC high (sleep; the next reset
-        //   enters the ROM bootloader). DTR asserted = RESET_N low: the jig acts on the assert
-        //   edge only (a fixed 50 ms pulse), a plain adapter holds reset for as long as DTR is
-        //   asserted. See "Reflashing over UART" in firmware/adsbee_1421/README.md.
+        //   enters the ROM bootloader). DTR asserted = RESET_N low: the Programmer acts on the
+        //   assert edge only (a fixed 50 ms pulse), and a plain adapter holds reset for as long
+        //   as DTR is asserted. See "Reflashing over UART" in firmware/adsbee_1421/README.md.
         const SIGNALS_RUN = { requestToSend: true, dataTerminalReady: false };
-        const BACKDOOR_RESET_PULSE_MS = 50;   // DTR asserted time; the jig's pulse is also 50 ms
+        const BACKDOOR_RESET_PULSE_MS = 50;   // DTR asserted time; the Programmer's pulse is also 50 ms
         const BACKDOOR_BOOT_WAIT_MS = 150;    // after the pulse, before the first sync bytes
         const hex8 = (v) => (v >>> 0).toString(16).padStart(8, '0');
 
@@ -2513,13 +2513,13 @@
                 this.connected = true;
                 this._closing = false;
                 // The OS asserts DTR and RTS when a port opens (Linux does it in the tty
-                // layer), which the programmer jig turns into a reset pulse with SYNC low
-                // and a plain DTR -> RESET_N adapter into a held reset. The page can't
+                // layer), which the ADSBee 1421 Programmer turns into a reset pulse with SYNC
+                // low and a plain DTR -> RESET_N adapter into a held reset. The page can't
                 // prevent that, so a module is reset into its application on connect, and
-                // the bootloader is entered afterwards from the firmware dialog instead.
+                // the bootloader is entered afterwards from the firmware dialog.
                 // Park the lines in the normal-run state: RTS asserted = SYNC pin low
                 // (awake, no bootloader backdoor), DTR deasserted = RESET_N released. Neither
-                // is an edge the jig acts on, so parking never resets or sleeps the module.
+                // is an edge the Programmer acts on, so parking never resets or sleeps the module.
                 try { await port.setSignals(SIGNALS_RUN); } catch (_) { }
                 this._readLoopPromise = this._readLoop();
             }
@@ -3474,7 +3474,7 @@ function makeRxEnableEntry() {
                 if (atQueue.tryConsume(line)) return;
                 const t = line.trim();
                 // Late answers to the page's own hidden AT+BAUD_RATE? probes: a bridge
-                // (the programmer jig) may hold probes while it re-negotiates the device
+                // (the ADSBee 1421 Programmer) may hold probes while it re-negotiates the device
                 // and deliver them in a burst afterwards, after the probe job that sent
                 // them has given up. Only a user-typed (visible) AT+BAUD_RATE? gets to
                 // print this line.
@@ -4470,8 +4470,8 @@ function makeRxEnableEntry() {
         // ─── Intel HEX parser ────────────────────────────────────────────────────
 
         // Records → contiguous segments, padded to 4-byte alignment with 0xFF, split
-        // into main flash (1 MB @ 0x0) and CCFG (2 KB @ 0x50000000). The programmer jig
-        // bakes images with the same rules (firmware/adsbee_1421/programmer/scripts/hex_to_c.py).
+        // into main flash (1 MB @ 0x0) and CCFG (2 KB @ 0x50000000). The ADSBee 1421
+        // Programmer bakes images with the same rules (firmware/adsbee_1421/programmer/scripts/hex_to_c.py).
         const IntelHex = {
             MAIN_FLASH_BASE: 0x00000000,
             MAIN_FLASH_SIZE: 0x00100000,   // CC1314R10: 1 MB main bank
@@ -4554,8 +4554,8 @@ function makeRxEnableEntry() {
 
         // ─── CC13x4 ROM serial bootloader ────────────────────────────────────────
 
-        // CC13x4 ROM serial bootloader client (TRM SWCU194 section 10.2; the programmer
-        // jig's firmware/adsbee_1421/programmer/cc13x4_bootloader.cc is the C++ equivalent).
+        // CC13x4 ROM serial bootloader client (TRM SWCU194 section 10.2; the ADSBee 1421
+        // Programmer's firmware/adsbee_1421/programmer/cc13x4_bootloader.cc is the C++ equivalent).
         // Runs over the RawSink while the read loop keeps pumping.
         const BL = {
             ACK: 0xCC, NACK: 0x33,
@@ -4690,9 +4690,9 @@ function makeRxEnableEntry() {
         // The device must be in the ROM bootloader before flashing: SYNC (DIO_5) held high
         // across a reset makes the boot ROM start the serial bootloader. Two ways in:
         //  - enterBootloader() drives it through the modem-control lines (RTS -> SYNC,
-        //    DTR -> RESET_N), which works through the programmer jig and through any adapter
-        //    wired that way. It makes one attempt (a few seconds, not a retry loop), and if
-        //    the ROM doesn't answer it puts SYNC back low so a running module isn't left
+        //    DTR -> RESET_N), which works through the ADSBee 1421 Programmer and through any
+        //    adapter wired that way. It makes a single attempt that takes a few seconds. If
+        //    the ROM doesn't answer, it puts SYNC back low so a running module isn't left
         //    asleep.
         //  - By hand (SYNC jumpered high, then a reset) or AT+BOOT_UART_BOOTLOADER, followed
         //    by checkBootloader(), for adapters without RTS/DTR wired to the module.
@@ -4787,7 +4787,7 @@ function makeRxEnableEntry() {
                     ' (settings and device info preserved)';
                 this.els.summary.textContent = txt;
                 this.setStatus(serial.connected
-                    ? 'Press Enter bootloader (programmer jig or RTS/DTR-wired adapter), or put the device into the ROM bootloader by hand and press Check bootloader.'
+                    ? 'Press Enter bootloader (ADSBee 1421 Programmer or RTS/DTR-wired adapter), or put the device into the ROM bootloader by hand and press Check bootloader.'
                     : 'Not connected — connect to the serial port first.');
                 this.els.check.disabled = false;
                 this.els.enter.disabled = false;
@@ -4857,7 +4857,7 @@ function makeRxEnableEntry() {
             // SYNC through RTS: asserted = pin low. See SIGNALS_RUN.
             async _setSync(high) { await serial.setSignals({ requestToSend: !high }); },
 
-            // Reset through DTR, shaped to work on both wirings: an assert edge (the jig
+            // Reset through DTR, shaped to work on both wirings: an assert edge (the Programmer
             // pulses RESET_N for 50 ms on it) held for BACKDOOR_RESET_PULSE_MS (a plain
             // adapter holds RESET_N low meanwhile), then released.
             async _pulseReset() {
@@ -4981,14 +4981,14 @@ function makeRxEnableEntry() {
                         'fail');
                 } else if (appBaud !== null) {
                     this.setVerified(false,
-                        `The device is running its application firmware at ${appBaud} baud, not the ` +
-                        'ROM bootloader. Reset it with SYNC held high (steps 2 and 3), then check again.',
+                        `The device answered as its application firmware at ${appBaud} baud. ` +
+                        'Reset it with SYNC held high (steps 2 and 3), then check again.',
                         'fail');
                 } else {
                     this.setVerified(false,
                         'Nothing responded. Check TX, RX and ground against step 1, confirm the module ' +
                         'is powered, and make sure it is not being held in reset' +
-                        (entered ? ' (behind the programmer jig, wait for its LED to turn green).' : '.'),
+                        (entered ? ' (behind the ADSBee 1421 Programmer, wait for its LED to turn green).' : '.'),
                         'fail');
                 }
                 this.setStatus('Not in the bootloader — firmware update is blocked.');
@@ -5119,8 +5119,8 @@ function makeRxEnableEntry() {
                         this.logLine(`CRC32 verified @ 0x${hex8(seg.addr)} (0x${hex8(localCrc)})`);
                     }
 
-                    // SYNC low, then the bootloader's own RESET command rather than a
-                    // RESET_N pulse, so this works whether or not DTR is wired.
+                    // SYNC low, then the bootloader's own RESET command, which works whether
+                    // or not DTR is wired.
                     this.setStatus('Resetting device...');
                     await this._leaveBootloader(bl);
                     this.setProgress(100);
@@ -5137,10 +5137,9 @@ function makeRxEnableEntry() {
                     this._state = 'done';
                     this.setStatus('Flash complete — device is rebooting.');
                     // SYNC is only sampled at boot, so a board still jumpered high will
-                    // land straight back in the bootloader instead of running the new image.
+                    // land straight back in the bootloader and the new image won't run.
                     this.logLine('Done. SYNC driven low (RTS asserted). If you are holding SYNC (pin 28) ' +
-                        'high by hand, release it, or the next reset re-enters the bootloader instead of ' +
-                        'running the new firmware.');
+                        'high by hand, release it. While SYNC is high, every reset re-enters the bootloader.');
                     this.els.close.textContent = 'Close';
                     this.els.close.disabled = false;
                     connectionUI.renegotiateAfterReset();
@@ -5165,7 +5164,7 @@ function makeRxEnableEntry() {
 
             // Recovery for a device whose saved settings stop the console coming up: erase the four
             // Settings sectors and let the firmware rewrite defaults on the next boot (its magic/CRC
-            // check fails against blank flash). Mirrors EraseSettingsRegion() in the programmer jig.
+            // check fails against blank flash). Mirrors EraseSettingsRegion() in the ADSBee 1421 Programmer.
             //
             // Deliberately never automatic and never part of a flash: it discards the user's settings,
             // which is why a normal flash preserves this region. Device Info / OTA keys are untouched.
@@ -5234,9 +5233,9 @@ function makeRxEnableEntry() {
                     this.active = false;
                     this._state = 'done';
                     this.setStatus('Settings erased — device is rebooting with factory defaults.');
-                    this.logLine('The console is back at its default 1000000 baud. SYNC driven low; if you ' +
-                        'are holding SYNC (pin 28) high by hand, release it, or the next reset re-enters the ' +
-                        'bootloader instead of running the firmware.');
+                    this.logLine('The console is back at its default 1000000 baud. SYNC driven low. If you ' +
+                        'are holding SYNC (pin 28) high by hand, release it. While SYNC is high, every reset ' +
+                        're-enters the bootloader.');
                     this.els.close.textContent = 'Close';
                     this.els.close.disabled = false;
                     connectionUI.renegotiateAfterReset();
@@ -5382,10 +5381,9 @@ function makeRxEnableEntry() {
             // to `attempts` rounds (the device may still be booting after the DTR reset
             // that opening the port causes, or a bridge may still be bringing it up).
             //
-            // Any legible reply proves the link works, and the device's answer — not
-            // the rate this page opened the port at — is the truth about the console
-            // rate: behind a USB bridge (the programmer jig) the host's baud is virtual
-            // and the jig retunes the device on its own. When the two differ, a second
+            // Any legible reply proves the link works, and the rate the device reports
+            // is the console rate. Behind a USB bridge (the ADSBee 1421 Programmer) the
+            // host's baud is virtual and the Programmer retunes the device on its own. When the two differ, a second
             // consecutive legible reply is required so a single stale line buffered
             // from an earlier rate can't be mistaken for a live link.
             //

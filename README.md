@@ -94,7 +94,7 @@ ADSBee 1421 is an ultra-low-power dual band ADS-B receiver, built around a TI CC
 * UART console with a feature-rich AT command set (baud rate, output protocol, receiver position, gain, logging, …); settings persist in flash.
 * Multiple supported output protocols: Raw packets, CSBee, MAVLINK1, MAVLINK2, GDL90, Mode S Beast, Aircraft JSON.
 * SYNC line for host-controlled deep sleep (STANDBY with SRAM retained), which also hands the LR2021 SPI bus to an external MCU — e.g. to use the LR2021's 2.4 GHz radio for LoRa or mesh networking.
-* Firmware updates over the UART ROM bootloader (no debugger needed) or JTAG. Holding SYNC high through a reset enters the bootloader, so any host that drives a USB-UART adapter's RTS → SYNC and DTR → RESET_N (or the included programmer jig) can reflash the module remotely: see [Reflashing over UART: the SYNC bootloader backdoor](firmware/adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
+* Firmware updates over the UART ROM bootloader (no debugger needed) or JTAG. Holding SYNC high through a reset enters the bootloader, so any host that drives a USB-UART adapter's RTS → SYNC and DTR → RESET_N (or the included ADSBee 1421 Programmer) can reflash the module remotely. See [Reflashing over UART: the SYNC bootloader backdoor](firmware/adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 * Ultra-low power: ~19 mA at 1.8–3.3 V.
 
 ### Architecture
@@ -130,7 +130,7 @@ bash firmware/build.sh adsbee_1421        # CC1314R10 -> adsbee_1421-<version>.h
 * **[`firmware/README.md`](firmware/README.md)** — prerequisites, the build dispatcher, build targets and outputs.
 * **[`firmware/AGENTS.md`](firmware/AGENTS.md)** — firmware architecture overview and the version-management rules.
 * **ADSBee 1090:** [`firmware/adsbee_1090/Developers_Guide.md`](firmware/adsbee_1090/Developers_Guide.md) covers the three-processor build order, flashing (`combined.uf2` over USB BOOTSEL, or OTA through the ESP32 web interface), and recovery.
-* **ADSBee 1421:** [`firmware/adsbee_1421/AGENTS.md`](firmware/adsbee_1421/AGENTS.md) covers the build; flash over JTAG with a J-Link ([`firmware/adsbee_1421/ti/README.md`](firmware/adsbee_1421/ti/README.md)), or over UART using the ROM bootloader ([SYNC bootloader backdoor](firmware/adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor)) via the [RP2040-Zero programmer jig](firmware/adsbee_1421/programmer/README.md) (included in the Developer Kit), a host script driving RTS/DTR, or the **Upload Firmware** button in the [web console](software/adsbee_1421_console/README.md).
+* **ADSBee 1421:** [`firmware/adsbee_1421/AGENTS.md`](firmware/adsbee_1421/AGENTS.md) covers the build; flash over JTAG with a J-Link ([`firmware/adsbee_1421/ti/README.md`](firmware/adsbee_1421/ti/README.md)), or over UART using the ROM bootloader ([SYNC bootloader backdoor](firmware/adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor)) via the [ADSBee 1421 Programmer](firmware/adsbee_1421/programmer/README.md) (an RP2040-Zero board included in the Developer Kit), a host script driving RTS/DTR, or the **Upload Firmware** button in the [web console](software/adsbee_1421_console/README.md).
 
 Prebuilt firmware is published on the [Releases page](https://github.com/CoolNamesAllTaken/adsbee/releases). Releases are tagged per product as `adsbee_1090-<major>.<minor>.<patch>` and `adsbee_1421-<major>.<minor>.<patch>` (release candidates carry an `-rcN` suffix). `AT+DEVICE_INFO?` reports the firmware version running on a device.
 
