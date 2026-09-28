@@ -3,7 +3,7 @@
 Everything here reads plain files under /sys and /dev, so it needs no third-party packages and can
 be pointed at a fake tree in tests (``sysfs_root`` / ``dev_root``).
 
-Why not VID:PID? Every RP2040-based ADSBee device (1090U, the 1421 programmer jig, a Pico) shows
+Why not VID:PID? Every RP2040-based ADSBee device (1090U, the ADSBee 1421 Programmer, a Pico) shows
 up as 2e8a:000a in application mode and 2e8a:0003 in BOOTSEL, so VID:PID can't tell two boards
 apart, and ``/dev/ttyACMn`` numbering depends on enumeration order. Devices are addressed by USB
 serial number, and the BOOTSEL mass-storage drive by the USB *port path* (``1-1.3``), which stays
@@ -116,7 +116,7 @@ def usb_devices(sysfs_root: Optional[str] = None, dev_root: Optional[str] = None
 
 
 def adsbee_candidates(sysfs_root: Optional[str] = None, dev_root: Optional[str] = None) -> List[UsbDevice]:
-    """RP2040-family devices (app or BOOTSEL): every ADSBee receiver, jig and wiggler is one."""
+    """RP2040-family devices (app or BOOTSEL): every ADSBee receiver, ADSBee 1421 Programmer and wiggler is one."""
     return [d for d in usb_devices(sysfs_root, dev_root) if d.is_rp2040]
 
 

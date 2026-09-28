@@ -97,7 +97,8 @@ bool CommsManager::Init() {
     if (!OpenUART(config_.uart_baud_rate)) {
         // Never spin here: with no console there is no way to report the failure, and a silent hang is
         // indistinguishable from a dead board (and unrecoverable, since the app is what the recovery
-        // tooling talks to). Reset instead -- the resulting reboot loop is visible to the programmer jig.
+        // tooling talks to). So the firmware resets, and the resulting reboot loop is visible to the ADSBee 1421
+        // Programmer.
         SysCtrlSystemReset();
     }
     return true;
