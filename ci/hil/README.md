@@ -151,10 +151,12 @@ a USB↔UART bridge whose modem-control lines drive the module:
 - **Reflashes don't stick until the image is baked into the jig.** At every power-up, the jig
   CRC-checks the module against the image baked into its own firmware and reflashes the module
   if they differ. A `.hex` flashed as above therefore lasts until the jig next re-enumerates.
-- **Jig images (`.uf2`) need a human.** The jig has no software reboot into BOOTSEL.
-  `flash programmer.uf2` prints `HUMAN NEEDED` and waits (5 min by default) for someone to
-  hold BOOT on the jig while replugging it. It then copies the image to the RPI-RP2 drive on
-  that USB port, waits for the jig to reflash the module, and prints `AT+DEVICE_INFO?`.
+- **Jig images (`.uf2`)**: `flash programmer.uf2` opens the jig's port at 233495534 baud
+  (`0xDEADBEE`, the same magic baud as the ADSBee 1090), which reboots the jig into BOOTSEL. It
+  then copies the image to the RPI-RP2 drive on that USB port, waits for the jig to reflash the
+  module, and prints `AT+DEVICE_INFO?`. A jig image older than the magic-baud reboot doesn't
+  react; the command then prints `HUMAN NEEDED` and waits (5 min by default) for someone to hold
+  BOOT on the jig while replugging it.
 
 ### Adding a model
 

@@ -27,6 +27,19 @@ UF2_MAGIC = (0x0A324655, 0x9E5D5157)
 UF2_FAMILY_RP2040 = 0xE48BFF56
 UF2_FLAG_FAMILY = 0x2000
 BOOT_USB_UF2_CMD = "AT+BOOT_USB_UF2=1DEADBEE"
+# Opening the 1421 programmer jig's port at this baud reboots it into BOOTSEL: the ADSBee 1090's
+# PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE (kRebootToBootselBaud in firmware/adsbee_1421/programmer).
+JIG_REBOOT_TO_BOOTSEL_BAUD = 0xDEADBEE
+JIG_BOOTSEL_WAIT_S = 5.0  # The jig re-enumerates as RPI-RP2 within about 0.5 s.
+
+
+def open_at_magic_baud(port: str) -> None:
+    import serial  # pyserial
+
+    try:
+        serial.Serial(port, JIG_REBOOT_TO_BOOTSEL_BAUD).close()
+    except (OSError, serial.SerialException):
+        pass  # The device can drop off the bus before the port is closed.
 
 
 class HilError(RuntimeError):
@@ -349,7 +362,9 @@ class Adsbee1421(Receiver):
     part of this repository. It must erase only the sectors the image covers: a full bank erase
     also wipes the settings and device-info (OTA keys) sectors. The jig reflashes the module with
     its own baked image at every power-up if they differ, so a .hex flashed this way lasts until
-    the jig next re-enumerates. Jig images (.uf2) need a human to hold BOOT while replugging.
+    the jig next re-enumerates. Jig images (.uf2) are copied after opening the jig's port at
+    JIG_REBOOT_TO_BOOTSEL_BAUD, which reboots it into BOOTSEL; jig images older than that reboot
+    need a human to hold BOOT while replugging.
     """
 
     model = "adsbee_1421"
@@ -443,10 +458,16 @@ class Adsbee1421(Receiver):
             if not port_path:
                 raise HilError(f"{self.id}: jig not on USB and no usb_port in the bench file")
             d = usb.find_by_port(port_path)
+            if d and not d.is_bootsel and d.console:
+                print(f"[{self.id}] opening {d.console} at {JIG_REBOOT_TO_BOOTSEL_BAUD} baud to reboot the jig "
+                      f"into BOOTSEL (USB port {port_path})", flush=True)
+                open_at_magic_baud(d.console)
+                usb.wait_for(lambda: (x := usb.find_by_port(port_path)) and x.is_bootsel, JIG_BOOTSEL_WAIT_S, 0.2)
+                d = usb.find_by_port(port_path)
             if not (d and d.is_bootsel):
-                print(f"[{self.id}] HUMAN NEEDED: the jig has no software reboot to BOOTSEL. Hold BOOT on "
-                      f"the jig's RP2040 while replugging its USB (port {port_path}). Waiting "
-                      f"{human_timeout:.0f} s ...", flush=True)
+                print(f"[{self.id}] HUMAN NEEDED: the jig did not reboot to BOOTSEL (its image predates the "
+                      f"magic-baud reboot). Hold BOOT on the jig's RP2040 while replugging its USB (port "
+                      f"{port_path}). Waiting {human_timeout:.0f} s ...", flush=True)
             self._copy_to_bootsel(image, port_path, human_timeout)
             # The jig then CRC-checks the module against its baked image and reflashes it (~1 min).
             if not usb.wait_for(lambda: self.state() == "app", 60, 1.0):
