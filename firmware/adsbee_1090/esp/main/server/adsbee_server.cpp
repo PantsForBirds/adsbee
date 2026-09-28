@@ -1,3 +1,4 @@
+#include "at_text.hh"
 #include "adsbee_server.hh"
 
 #include "esp_heap_caps.h"
@@ -119,7 +120,7 @@ bool ADSBeeServer::Init() {
         settings_wait_s += kSettingsWaitReportIntervalMs / 1000;
         CONSOLE_ERROR("ADSBeeServer::Init",
                       "No settings from the RP2040 after %lu s. This ESP32 firmware expects %u-byte version %lu "
-                      "settings; if the RP2040 firmware differs, reflash the ESP32 (AT+ESP32_FLASH or a reboot).",
+                      "settings; if the RP2040 firmware differs, reflash the ESP32 (" AT_PLUS "ESP32_FLASH or a reboot).",
                       (unsigned long)settings_wait_s, (unsigned)sizeof(SettingsManager::Settings),
                       (unsigned long)kSettingsVersion);
     }

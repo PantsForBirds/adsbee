@@ -147,6 +147,11 @@ if (ON_EMBEDDED_DEVICE)
                     ${CMAKE_CURRENT_BINARY_DIR}/app1.bin
                     --header ${APPLICATION_HEADER_SECTION_NAME}
                     --ota ${CMAKE_CURRENT_BINARY_DIR}/adsbee_1090.ota
+            # Fail the build if the image holds text that firmware up to 0.9.1-rc4 could run as an AT command while
+            # receiving it over OTA (see ota_at_scan.py and common/comms/at_text.hh).
+            COMMAND ${Python3_EXECUTABLE} ${LINKER_SCRIPTS_DIR}/ota_at_scan.py
+                    ${CMAKE_CURRENT_BINARY_DIR}/adsbee_1090.ota
+                    --commands-from ${CMAKE_CURRENT_SOURCE_DIR}/comms/at/comms_at.cc
             DEPENDS app0 app1
             COMMENT "Calculating and appending CRC32 to application binary and UF2"
     )

@@ -1,3 +1,7 @@
+// "AT" + "+" is never written contiguously in these files: they are stored in the firmware image, and firmware up
+// to 0.9.1-rc4 can run AT commands found in an OTA image it is receiving (see firmware/common/comms/at_text.hh).
+const AT_PLUS = 'AT' + '+';
+
 const METRIC_UNITS = {
     'num_mode_s_aircraft': 'aircraft',
     'num_uat_aircraft': 'aircraft',
@@ -524,8 +528,8 @@ class FeedEditor {
         const statusEl = document.getElementById('feed-modal-status');
         statusEl.textContent = 'Removing...';
         try {
-            await consoleWebSocket.sendAndCapture(`AT+FEED=${slot},-,0,0,NONE\r\n`, 'OK', 5000);
-            await consoleWebSocket.sendAndCapture(`AT+SETTINGS=SAVE\r\n`, 'OK', 5000);
+            await consoleWebSocket.sendAndCapture(`${AT_PLUS}FEED=${slot},-,0,0,NONE\r\n`, 'OK', 5000);
+            await consoleWebSocket.sendAndCapture(`${AT_PLUS}SETTINGS=SAVE\r\n`, 'OK', 5000);
             statusEl.textContent = 'Removed.';
             setTimeout(() => FeedEditor.close(), 800);
         } catch (e) {
@@ -543,8 +547,8 @@ class FeedEditor {
 
         statusEl.textContent = 'Saving...';
         try {
-            await consoleWebSocket.sendAndCapture(`AT+FEED=${slot},${uri},${port},${active},${protocol}\r\n`, 'OK', 5000);
-            await consoleWebSocket.sendAndCapture(`AT+SETTINGS=SAVE\r\n`, 'OK', 5000);
+            await consoleWebSocket.sendAndCapture(`${AT_PLUS}FEED=${slot},${uri},${port},${active},${protocol}\r\n`, 'OK', 5000);
+            await consoleWebSocket.sendAndCapture(`${AT_PLUS}SETTINGS=SAVE\r\n`, 'OK', 5000);
             statusEl.textContent = 'Saved.';
             setTimeout(() => FeedEditor.close(), 800);
         } catch (e) {
@@ -735,8 +739,8 @@ class ADSBeeAT {
      * for firmware updates.
      */
     async silenceConsole() {
-        await this.sendCmd("AT+LOG_LEVEL=ERRORS\r\n", 0, true, true);
-        await this.sendCmd("AT+PROTOCOL_OUT=CONSOLE,NONE\r\n", 0, true, true);
+        await this.sendCmd(AT_PLUS + "LOG_LEVEL=ERRORS\r\n", 0, true, true);
+        await this.sendCmd(AT_PLUS + "PROTOCOL_OUT=CONSOLE,NONE\r\n", 0, true, true);
     }
 
     /**
@@ -745,7 +749,7 @@ class ADSBeeAT {
      * @return The current OTA flash partition.
      */
     async otaGetFlashPartition() {
-        const decodedResponse = await this.sendCmd("AT+OTA=GET_PARTITION\r\n", 0, true, true);
+        const decodedResponse = await this.sendCmd(AT_PLUS + "OTA=GET_PARTITION\r\n", 0, true, true);
 
         for (const line of decodedResponse) {
             const match = line.match(/Partition: (\d+)/);
@@ -763,7 +767,7 @@ class ADSBeeAT {
      */
     async otaWriteBytes(offset, data) {
         const crc32 = this.calculateCRC32(data);
-        const cmdResponse = await this.sendCmd(`AT+OTA=WRITE,${offset.toString(16)},${data.length},${crc32.toString(16)}\r\n`, 0, true, true, "READY");
+        const cmdResponse = await this.sendCmd(`${AT_PLUS}OTA=WRITE,${offset.toString(16)},${data.length},${crc32.toString(16)}\r\n`, 0, true, true, "READY");
         for (const line of cmdResponse) {
             if (line.includes('ERROR')) {
                 // Flush remaining lines then throw the error.
@@ -789,10 +793,10 @@ class ADSBeeAT {
     async otaErase(offsetBytes = NaN, lenBytes = NaN) {
         const ERASE_TIMEOUT_MS = 20000; // Allow 20 seconds for flash erase to complete.
         if (!isNaN(offsetBytes) && !isNaN(lenBytes)) {
-            await this.sendCmd(`AT+OTA=ERASE,${offsetBytes.toString(16)},${lenBytes}\r\n`, 0, true, true, "OK", ERASE_TIMEOUT_MS);
+            await this.sendCmd(`${AT_PLUS}OTA=ERASE,${offsetBytes.toString(16)},${lenBytes}\r\n`, 0, true, true, "OK", ERASE_TIMEOUT_MS);
         } else {
             // Allow 20 seconds for flash erase to complete.
-            await this.sendCmd("AT+OTA=ERASE\r\n", 0, true, true, "OK", ERASE_TIMEOUT_MS);
+            await this.sendCmd(AT_PLUS + "OTA=ERASE\r\n", 0, true, true, "OK", ERASE_TIMEOUT_MS);
         }
     }
 
@@ -859,14 +863,14 @@ class ADSBeeAT {
         }
 
         // Verify and boot the new partition
-        await this.sendCmd("AT+OTA=VERIFY\r\n", 0, true, true);
+        await this.sendCmd(AT_PLUS + "OTA=VERIFY\r\n", 0, true, true);
     }
 
     /**
      * Boot the current OTA flash partition.
      */
     async otaBoot() {
-        await this.sendCmd("AT+OTA=BOOT\r\n", 0, true);
+        await this.sendCmd(AT_PLUS + "OTA=BOOT\r\n", 0, true);
     }
 
     /**
@@ -1032,7 +1036,7 @@ class FirmwareUploader {
             await adsbee.flushInputBuffer();
 
             // Receiver already gets disabled during data chunk transfers, but this simplifies it a bit.
-            await adsbee.sendCmd('AT+RX_ENABLE=0\r\n', 0, true, true);
+            await adsbee.sendCmd(AT_PLUS + 'RX_ENABLE=0\r\n', 0, true, true);
 
             // Pause other WebSocket clients to prevent httpd async queue contention during OTA.
             consoleWebSocket.pause();
@@ -1091,10 +1095,10 @@ class SettingsManager {
     async downloadSettings() {
         const adsbee = new ADSBeeAT(this.adsbeeUrl);
         await adsbee.connect();
-        const response = await adsbee.sendCmd('AT+SETTINGS?DUMP\r\n', 0, true, true);
+        const response = await adsbee.sendCmd(AT_PLUS + 'SETTINGS?DUMP\r\n', 0, true, true);
 
-        // Only keep lines starting with AT+
-        const settingsLines = response.filter(line => line.startsWith('AT+'));
+        // Only keep lines starting with AT＋
+        const settingsLines = response.filter(line => line.startsWith(AT_PLUS));
 
         const blob = new Blob([settingsLines.join('\n')], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);

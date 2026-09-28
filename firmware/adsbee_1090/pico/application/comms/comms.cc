@@ -1,3 +1,4 @@
+#include "at_text.hh"
 #include "comms.hh"
 
 #include <cstdarg>  // For debug printf.
@@ -154,6 +155,7 @@ int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const ch
     if (res <= 0) {
         return res;  // vsnprintf failed.
     }
+    ATTextRestorePlus(buf);  // Text written with AT_PLUS (see at_text.hh) prints as "AT+".
     // Send buffer to interface, then manually push messages (otherwise they only pop out when the buffer gets full).
     if (iface_puts(iface, buf) && comms_manager.UpdateNetworkConsole()) {
         return res;  // Return number of characters written.

@@ -1,3 +1,4 @@
+#include "at_text.hh"
 #include <stdio.h>  // for printing
 
 #include <cstring>   // for strcat
@@ -99,7 +100,7 @@ CPP_AT_CALLBACK(CommsManager::ATBaudRateCallback) {
         case '=':
             if (!(CPP_AT_HAS_ARG(0) && CPP_AT_HAS_ARG(1))) {
                 CPP_AT_ERROR(
-                    "Requires two arguments: AT+BAUD_RATE=<iface>,<baud_rate> where <iface> can be one of [COMMS_UART, "
+                    "Requires two arguments: " AT_PLUS "BAUD_RATE=<iface>,<baud_rate> where <iface> can be one of [COMMS_UART, "
                     "GNSS_UART].");
             }
             SettingsManager::SerialInterface iface;
@@ -256,7 +257,7 @@ CPP_AT_CALLBACK(CommsManager::ATGNSSCallback) {
             break;
         case '=': {
             if (!CPP_AT_HAS_ARG(0)) {
-                CPP_AT_ERROR("Requires AT+GNSS=<0|1>[,<NONE|GENERIC|UBX_MIA>[,<0|1>]].");
+                CPP_AT_ERROR("Requires " AT_PLUS "GNSS=<0|1>[,<NONE|GENERIC|UBX_MIA>[,<0|1>]].");
             }
 
             bool enabled;
@@ -315,7 +316,7 @@ CPP_AT_CALLBACK(CommsManager::ATGNSSCallback) {
 
 CPP_AT_CALLBACK(CommsManager::ATGNSSFixCallback) {
     if (op != '?') {
-        CPP_AT_ERROR("Only AT+GNSS_FIX? is supported.");
+        CPP_AT_ERROR("Only " AT_PLUS "GNSS_FIX? is supported.");
     }
 
     const NMEAParser::GNSSFix& fix = gnss->fix();
@@ -504,7 +505,7 @@ CPP_AT_CALLBACK(CommsManager::ATESP32EnableCallback) {
             break;
         case '=':
             if (!CPP_AT_HAS_ARG(0)) {
-                CPP_AT_ERROR("Requires an argument (0 or 1). AT+ESP32_ENABLED=<enabled>");
+                CPP_AT_ERROR("Requires an argument (0 or 1). " AT_PLUS "ESP32_ENABLED=<enabled>");
             }
             bool enabled;
             bool already_enabled = esp32.IsEnabled();
@@ -594,7 +595,7 @@ CPP_AT_CALLBACK(CommsManager::ATEthernetCallback) {
             break;
         case '=':
             if (!CPP_AT_HAS_ARG(0)) {
-                CPP_AT_ERROR("Requires an argument (0 or 1). AT+ETHERNET=<enabled>");
+                CPP_AT_ERROR("Requires an argument (0 or 1). " AT_PLUS "ETHERNET=<enabled>");
             }
             bool enabled;
             CPP_AT_TRY_ARG2NUM(0, settings_manager.settings.core_network_settings.ethernet_enabled);
@@ -622,8 +623,8 @@ static bool WiFiAPOrSTAEnabled() {
 
 static const char kRemoteIDNeedsPSRAMError[] =
     "Remote ID can't run while WiFi AP or WiFi Station is enabled on this hardware: its ESP32 has no PSRAM, so there "
-    "isn't enough RAM for WiFi networking and Remote ID at the same time. Disable both (AT+WIFI_AP=0 and "
-    "AT+WIFI_STA=0) and use Ethernet, or use hardware with PSRAM.";
+    "isn't enough RAM for WiFi networking and Remote ID at the same time. Disable both (" AT_PLUS "WIFI_AP=0 and "
+    AT_PLUS "WIFI_STA=0) and use Ethernet, or use hardware with PSRAM.";
 
 // Warns when WiFi AP/STA is being enabled while Remote ID is on, on hardware without PSRAM. WiFi networking wins (it is
 // how most users reach the device), so the setting is accepted and Remote ID pauses; this makes that visible.
@@ -649,7 +650,7 @@ CPP_AT_CALLBACK(CommsManager::ATRemoteIDCallback) {
             break;
         case '=':
             if (!CPP_AT_HAS_ARG(0)) {
-                CPP_AT_ERROR("Requires at least one argument. AT+REMOTE_ID=<enabled>[,<transport_mask>]");
+                CPP_AT_ERROR("Requires at least one argument. " AT_PLUS "REMOTE_ID=<enabled>[,<transport_mask>]");
             }
             bool rx_enabled;
             CPP_AT_TRY_ARG2NUM(0, rx_enabled);
@@ -679,9 +680,9 @@ static void WarnIfRemoteIDTxPositionSourceNotTransmittable() {
     SettingsManager::RxPosition::PositionSource source = adsbee.rx_position.source;
     if (SettingsManager::RxPosition::MayBeTransmittedAsOwnPosition(source)) return;
     CPP_AT_PRINTF(
-        "WARNING: Remote ID transmit is enabled but AT+RX_POSITION source is %s, which is not this device's own "
-        "position and will NOT be transmitted. An unknown position will be broadcast instead. Use AT+RX_POSITION=FIXED "
-        "or AT+RX_POSITION=GNSS to transmit a position.\r\n",
+        "WARNING: Remote ID transmit is enabled but " AT_PLUS "RX_POSITION source is %s, which is not this device's own "
+        "position and will NOT be transmitted. An unknown position will be broadcast instead. Use " AT_PLUS "RX_POSITION=FIXED "
+        "or " AT_PLUS "RX_POSITION=GNSS to transmit a position.\r\n",
         SettingsManager::RxPosition::kPositionSourceStrs[source]);
 }
 
@@ -689,7 +690,7 @@ void ATRemoteIDTxHelpCallback() {
     CPP_AT_PRINTF(
         "\t[EXPERIMENTAL] Remote ID is not yet a stable part of the system; its settings and behavior may change in "
         "future firmware.\r\n"
-        "\tAT+REMOTE_ID_TX=<enabled>[,<transport_mask>[,<uas_id>[,<id_type>[,<ua_type>[,<operator_id>]]]]]\r\n"
+        "\t" AT_PLUS "REMOTE_ID_TX=<enabled>[,<transport_mask>[,<uas_id>[,<id_type>[,<ua_type>[,<operator_id>]]]]]\r\n"
         "\tTransmit Broadcast Remote ID (drone ID) from this device, for use as a Remote ID test transmitter or as a "
         "combined ADS-B receiver / Remote ID transmitter on a drone. No WiFi AP/STA is required.\r\n"
         "\ttransport_mask bits: 1=BT4 legacy, 2=BT5 Long Range, 4=WiFi beacon (default 7 = all methods).\r\n"
@@ -697,11 +698,11 @@ void ATRemoteIDTxHelpCallback() {
         "\tid_type = [1 SERIAL, 2 CAA_REGISTRATION, 3 UTM_UUID, 4 SESSION_ID].\r\n"
         "\tua_type = [1 AEROPLANE, 2 HELICOPTER_MULTIROTOR, ... 15 OTHER].\r\n"
         "\toperator_id = operator registration, up to %d chars ('-' to clear).\r\n"
-        "\tThe transmitted position comes from AT+RX_POSITION, but ONLY from the FIXED and GNSS sources, which\r\n"
+        "\tThe transmitted position comes from " AT_PLUS "RX_POSITION, but ONLY from the FIXED and GNSS sources, which\r\n"
         "\tdescribe this device. The aircraft-derived sources (LOWEST, ICAO) carry a received aircraft's position;\r\n"
         "\tbroadcasting those would place a fabricated drone on a real aircraft, so an unknown position is sent\r\n"
         "\tinstead.\r\n"
-        "\tAT+REMOTE_ID_TX?\r\n\tQuery transmit settings and the ESP32's live status bitfield.",
+        "\t" AT_PLUS "REMOTE_ID_TX?\r\n\tQuery transmit settings and the ESP32's live status bitfield.",
         SettingsManager::Settings::kRemoteIDIDMaxLen, SettingsManager::Settings::kRemoteIDIDMaxLen);
 }
 
@@ -726,7 +727,7 @@ CPP_AT_CALLBACK(CommsManager::ATRemoteIDTxCallback) {
             break;
         case '=': {
             if (!CPP_AT_HAS_ARG(0)) {
-                CPP_AT_ERROR("Requires at least one argument. AT+REMOTE_ID_TX=<enabled>[,<transport_mask>]");
+                CPP_AT_ERROR("Requires at least one argument. " AT_PLUS "REMOTE_ID_TX=<enabled>[,<transport_mask>]");
             }
             bool tx_enabled;
             CPP_AT_TRY_ARG2NUM(0, tx_enabled);
@@ -787,10 +788,10 @@ CPP_AT_CALLBACK(CommsManager::ATRemoteIDTxCallback) {
 
 void ATFeedHelpCallback() {
     CPP_AT_PRINTF(
-        "\tAT+FEED=<index>,<uri>,<port>,<active>,<protocol>\r\n\tSet details for a "
+        "\t" AT_PLUS "FEED=<index>,<uri>,<port>,<active>,<protocol>\r\n\tSet details for a "
         "network feed.\r\n\tindex = [0-%d], uri = ip address or URL, feed_port = [0-65535], "
-        "active = [0 1], protocol = [BEAST BEAST_RAW].\r\n\t\r\n\tAT+FEED?\r\n\tPrint details for all "
-        "feeds.\r\n\t\r\n\tAT+FEED?<index>\r\n\tPrint details for a specific feed.\r\n\tfeed_index = [0-%d]\r\n",
+        "active = [0 1], protocol = [BEAST BEAST_RAW].\r\n\t\r\n\t" AT_PLUS "FEED?\r\n\tPrint details for all "
+        "feeds.\r\n\t\r\n\t" AT_PLUS "FEED?<index>\r\n\tPrint details for a specific feed.\r\n\tfeed_index = [0-%d]\r\n",
         SettingsManager::Settings::kMaxNumFeeds - 1, SettingsManager::Settings::kMaxNumFeeds - 1);
 }
 
@@ -884,7 +885,7 @@ CPP_AT_CALLBACK(CommsManager::ATHostnameCallback) {
             break;
         case '=':
             if (!CPP_AT_HAS_ARG(0)) {
-                CPP_AT_ERROR("Requires an argument. AT+HOSTNAME=<hostname>");
+                CPP_AT_ERROR("Requires an argument. " AT_PLUS "HOSTNAME=<hostname>");
             }
             strncpy(cns.hostname, args[0].data(), SettingsManager::Settings::kHostnameMaxLen);
             cns.hostname[SettingsManager::Settings::kHostnameMaxLen] = '\0';
@@ -1053,9 +1054,9 @@ CPP_AT_CALLBACK(CommsManager::ATOTACallback) {
 
 CPP_AT_HELP_CALLBACK(CommsManager::ATOTAHelpCallback) {
     CPP_AT_PRINTF(
-        "AT+OTA?\r\n\tQueries current OTA status.\r\n\tAT+OTA=ERASE\r\n\tErase the sector to "
+        AT_PLUS "OTA?\r\n\tQueries current OTA status.\r\n\t" AT_PLUS "OTA=ERASE\r\n\tErase the sector to "
         "update. Responds with status messages for each erase operation, then OK when "
-        "complete.\r\n\tAT+OTA=WRITE,<offset>,<num_bytes>,<checksum>\r\n\tBegin an "
+        "complete.\r\n\t" AT_PLUS "OTA=WRITE,<offset>,<num_bytes>,<checksum>\r\n\tBegin an "
         "OTA write operation of num_bytes to offset bytes from the start of the partition with provided CRC32 "
         "checksum. Will respond with BEGIN, and then OK when complete, or ERROR if checksum doesn't match or timeout "
         "reached.\r\n");
@@ -1095,7 +1096,7 @@ CPP_AT_CALLBACK(CommsManager::ATMAVLINKIDCallback) {
             break;
         case '=':
             if (!(CPP_AT_HAS_ARG(0) && CPP_AT_HAS_ARG(1))) {
-                CPP_AT_ERROR("Requires two arguments: AT+MAVLINK_ID=<system_id>,<component_id>.");
+                CPP_AT_ERROR("Requires two arguments: " AT_PLUS "MAVLINK_ID=<system_id>,<component_id>.");
             }
             uint16_t system_id, component_id;
             CPP_AT_TRY_ARG2NUM(0, system_id);
@@ -1167,7 +1168,7 @@ CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
         case '=':
             // Set the reporting protocol for a given interface.
             if (!(CPP_AT_HAS_ARG(0) && CPP_AT_HAS_ARG(1))) {
-                CPP_AT_ERROR("Requires two arguments: AT+PROTOCOL=<iface>,<protocol>.");
+                CPP_AT_ERROR("Requires two arguments: " AT_PLUS "PROTOCOL=<iface>,<protocol>.");
             }
 
             // Match the selected serial interface. Don't allow selection of the GNSS interface.
@@ -1204,7 +1205,7 @@ CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
 
 CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
     CPP_AT_PRINTF("\tSet the reporting protocol used on a given serial interface:\r\n");
-    CPP_AT_PRINTF("\tAT+PROTOCOL_OUT=<iface>,<protocol>\r\n\t<iface> = ");
+    CPP_AT_PRINTF("\t" AT_PLUS "PROTOCOL_OUT=<iface>,<protocol>\r\n\t<iface> = ");
     for (uint16_t iface = 0; iface < SettingsManager::kGNSSUART; iface++) {
         CPP_AT_PRINTF("%s ", SettingsManager::kSerialInterfaceStrs[iface]);
     }
@@ -1213,7 +1214,7 @@ CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
         CPP_AT_PRINTF("\r\n\t\t%s ", SettingsManager::kReportingProtocolStrs[protocol]);
     }
     CPP_AT_PRINTF("\r\n\tQuery the reporting protocol used on all interfaces:\r\n");
-    CPP_AT_PRINTF("\tAT+PROTOCOL_OUT?\r\n\tPROTOCOL_OUT=<iface>,<protocol>\r\n\t...\r\n");
+    CPP_AT_PRINTF("\t" AT_PLUS "PROTOCOL_OUT?\r\n\tPROTOCOL_OUT=<iface>,<protocol>\r\n\t...\r\n");
 }
 
 CPP_AT_CALLBACK(CommsManager::ATRebootCallback) {
@@ -1259,14 +1260,14 @@ CPP_AT_HELP_CALLBACK(CommsManager::ATRxEnableHelpCallback) {
     CPP_AT_PRINTF(
         "RX_ENABLE=<all_enabled [1,0]>,<1090_enabled [1,0]>,<subg_enabled [1,0]>\r\n\tOK\r\n\tEnables or disables the "
         "receiver(s) "
-        "from receiving messages. First arg overrides others if present.\r\n\tAT+RX_ENABLE?\r\n\t1090 Receiver: "
+        "from receiving messages. First arg overrides others if present.\r\n\t" AT_PLUS "RX_ENABLE?\r\n\t1090 Receiver: "
         "<1090_enabled [ENABLED,DISABLED]>\r\n\tSubG Receiver: <subg_en> [ENABLED,DISABLED]>\r\n\tQuery whether the "
         "receiver(s) are enabled.\r\n");
 }
 
 void ATRxPositionHelpCallback() {
     CPP_AT_PRINTF(
-        "AT+RX_POSITION=<source>,<args>\r\n"
+        AT_PLUS "RX_POSITION=<source>,<args>\r\n"
         "\tSet the receiver's position and source.\r\n");
     CPP_AT_PRINTF(
         "\tsource:\r\n"
@@ -1278,16 +1279,16 @@ void ATRxPositionHelpCallback() {
         "\t\tICAO - Bootstrap receiver position from an aircraft with a given ICAO address. Takes an ICAO address as "
         "an additional arg.\r\n");
     CPP_AT_PRINTF(
-        "AT+RX_POSITION=FIXED,<lat_deg>,<lon_deg>,<gnss_alt_ft>,<baro_alt_ft>,<heading_deg>,<speed_kts>\r\n"
+        AT_PLUS "RX_POSITION=FIXED,<lat_deg>,<lon_deg>,<gnss_alt_ft>,<baro_alt_ft>,<heading_deg>,<speed_kts>\r\n"
         "\tlat_deg: Latitude in degrees (-90.0 to 90.0).\r\n"
         "\tlon_deg: Longitude in degrees (-180.0 to 180.0).\r\n"
         "\tgnss_alt_m: GNSS altitude in meters.\r\n"
         "\tbaro_alt_m: Barometric altitude in meters.\r\n"
         "\theading_deg: Heading in degrees [0.0-360.0)."
         "\tspeed_kts: Speed in kts."
-        "AT+RX_POSITION=ICAO,<icao>\r\n"
+        AT_PLUS "RX_POSITION=ICAO,<icao>\r\n"
         "\ticao: ICAO address in hex (e.g. 7ABCDEF) of aircraft to use for position bootstrap.\r\n"
-        "AT+RX_POSITION?\r\n\tQuery the receiver's position.\r\n");
+        AT_PLUS "RX_POSITION?\r\n\tQuery the receiver's position.\r\n");
 }
 
 CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
@@ -1770,13 +1771,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "BAUD_RATE",
      .min_args = 0,
      .max_args = 2,
-     .help_string = "AT+BAUD_RATE=<iface>,<baud_rate>\r\n\tSet the baud rate of a serial "
-                    "interface.\r\n\tAT+BAUD_RATE?\r\n\tQuery the baud rate of all serial interfaces.",
+     .help_string = AT_PLUS "BAUD_RATE=<iface>,<baud_rate>\r\n\tSet the baud rate of a serial "
+                    "interface.\r\n\t" AT_PLUS "BAUD_RATE?\r\n\tQuery the baud rate of all serial interfaces.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBaudRateCallback, comms_manager)},
     {.command = "BIAS_TEE_ENABLE",
      .min_args = 0,
      .max_args = 2,
-     .help_string = "AT+BIAS_TEE_ENABLE=<1090_bt_enabled>,<subg_bt_enabled>\r\n\tEnable or disable the bias "
+     .help_string = AT_PLUS "BIAS_TEE_ENABLE=<1090_bt_enabled>,<subg_bt_enabled>\r\n\tEnable or disable the bias "
                     "tees.\r\n\tBIAS_TEE_ENABLE?\r\n\tQuery the status of the bias tees.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBiasTeeEnableCallback, comms_manager)},
     {.command = "BOOT_USB_UF2",
@@ -1784,42 +1785,42 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 1,
      .help_string = "Reboot ADSBee into RP2040 USB Bootloader.\r\n\tDo not use unless you have a USB connection to the "
                     "ADSBee\r\n\t"
-                    "AT+BOOT_USB_UF2=1DEADBEE",
+                    AT_PLUS "BOOT_USB_UF2=1DEADBEE",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBootloader, comms_manager)},
     {.command = "DEVICE_INFO",
      .min_args = 0,
      .max_args = 5,  // TODO: check this value.
-     .help_string = "AT+DEVICE_INFO?\r\n\tQuery device information.",
+     .help_string = AT_PLUS "DEVICE_INFO?\r\n\tQuery device information.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATDeviceInfoCallback, comms_manager)},
     {.command = "ETHERNET",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+ETHERNET=<enabled>\r\n\tEnable or disable the Ethernet "
+     .help_string = AT_PLUS "ETHERNET=<enabled>\r\n\tEnable or disable the Ethernet "
                     "interface.\r\n\tETHERNET?\r\n\tQuery the status of the Ethernet interface.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATEthernetCallback, comms_manager)},
     {.command = "ESP32_ENABLE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+ESP32_ENABLE=<enabled>\r\n\tEnable or disable the ESP32.\r\n\tAT+ESP32_ENABLE?\r\n\tQuery "
+     .help_string = AT_PLUS "ESP32_ENABLE=<enabled>\r\n\tEnable or disable the ESP32.\r\n\t" AT_PLUS "ESP32_ENABLE?\r\n\tQuery "
                     "the enable status of the ESP32.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATESP32EnableCallback, comms_manager)},
     {.command = "ESP32_FLASH",
      .min_args = 0,
      .max_args = 0,
-     .help_string = "AT+ESP32_FLASH\r\n\tTriggers a firmware update of the ESP32 from the firmware image stored in "
+     .help_string = AT_PLUS "ESP32_FLASH\r\n\tTriggers a firmware update of the ESP32 from the firmware image stored in "
                     "the RP2040's flash memory.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATESP32FlashCallback, comms_manager)},
     {.command = "ESP32_REBOOT_INFO",
      .min_args = 0,
      .max_args = 0,
-     .help_string = "AT+ESP32_REBOOT_INFO?\r\n\tQuery the reason the ESP32 last rebooted. "
+     .help_string = AT_PLUS "ESP32_REBOOT_INFO?\r\n\tQuery the reason the ESP32 last rebooted. "
                     "In debug builds also prints the core dump backtrace if available.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATESP32RebootInfoCallback, comms_manager)},
 #ifdef HARDWARE_UNIT_TESTS
     {.command = "ESP32_TRIGGER_ABORT",
      .min_args = 0,
      .max_args = 0,
-     .help_string = "AT+ESP32_TRIGGER_ABORT\r\n\tTrigger an abort() on the ESP32 to test core dump functionality. "
+     .help_string = AT_PLUS "ESP32_TRIGGER_ABORT\r\n\tTrigger an abort() on the ESP32 to test core dump functionality. "
                     "Debug builds only.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATESP32TriggerAbortCallback, comms_manager)},
 #endif
@@ -1831,64 +1832,64 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "FEED_ENABLE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+FEED_ENABLE=<enabled>\r\n\tMaster switch for all outbound network feeds. Set to 0 to disable "
+     .help_string = AT_PLUS "FEED_ENABLE=<enabled>\r\n\tMaster switch for all outbound network feeds. Set to 0 to disable "
                     "all feeds, or 1 to allow feeds marked active. Does not change per-feed active flags set with "
-                    "AT+FEED.\r\n\tAT+FEED_ENABLE?\r\n\tQuery whether outbound feeds are enabled.",
+                    AT_PLUS "FEED.\r\n\t" AT_PLUS "FEED_ENABLE?\r\n\tQuery whether outbound feeds are enabled.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFeedEnableCallback, comms_manager)},
     {.command = "GNSS",
      .min_args = 0,
      .max_args = 3,
-     .help_string = "AT+GNSS=enable: <0|1>[, type: <NONE|GENERIC|UBX_MIA>[,notify: <0|1>]]\r\n\tEnable or disable GNSS power, optionally "
+     .help_string = AT_PLUS "GNSS=enable: <0|1>[, type: <NONE|GENERIC|UBX_MIA>[,notify: <0|1>]]\r\n\tEnable or disable GNSS power, optionally "
                     "select the GNSS type, and enable GNSS_FIX log messages for when the GNSS fix becomes valid or invalid. Notify defaults to off. "
-                    "Notifications are INFO-level log messages: they only appear on the console with AT+LOG_LEVEL=INFO. "
-                    "Poll AT+GNSS_FIX? to read the fix programmatically. "
+                    "Notifications are INFO-level log messages: they only appear on the console with " AT_PLUS "LOG_LEVEL=INFO. "
+                    "Poll " AT_PLUS "GNSS_FIX? to read the fix programmatically. "
                     "Type is optional, when not present the last configured type is reused, default is NONE; GNSS cannot be enabled while the saved type is NONE."
-                    "\r\n\tAT+GNSS?\r\n\tQuery the GNSS system state, type, and notification setting",
+                    "\r\n\t" AT_PLUS "GNSS?\r\n\tQuery the GNSS system state, type, and notification setting",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSCallback, comms_manager)},
     {.command = "GNSS_FIX",
      .min_args = 0,
      .max_args = 0,
-     .help_string = "AT+GNSS_FIX?\r\n\tReturn fix validity, latitude and longitude in degrees, altitude in feet, "
+     .help_string = AT_PLUS "GNSS_FIX?\r\n\tReturn fix validity, latitude and longitude in degrees, altitude in feet, "
                     "heading in degrees true, groundspeed in knots, active satellites, UTC time, and PPS count "
                     "since the last GNSS enable or disable operation.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSFixCallback, comms_manager)},
     {.command = "HOSTNAME",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+HOSTNAME=<hostname>\r\n\tSet the hostname for all network "
-                    "interfaces.\r\n\tAT+HOSTNAME?\r\n\tQuery the "
+     .help_string = AT_PLUS "HOSTNAME=<hostname>\r\n\tSet the hostname for all network "
+                    "interfaces.\r\n\t" AT_PLUS "HOSTNAME?\r\n\tQuery the "
                     "hostname used for all network interfaces.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATHostnameCallback, comms_manager)},
     {.command = "LED_BLINK",
      .min_args = 2,
      .max_args = 4,
-     .help_string = "AT+LED_BLINK=<duration_ms>,<led>[,<led>...]\r\n\tForce one or more LEDs (1090, SUBG, NETWORK, or "
-                    "ALL) solid ON for duration_ms (1-60000) then off.\r\n\tBypasses AT+LED_ENABLE; intended for test "
+     .help_string = AT_PLUS "LED_BLINK=<duration_ms>,<led>[,<led>...]\r\n\tForce one or more LEDs (1090, SUBG, NETWORK, or "
+                    "ALL) solid ON for duration_ms (1-60000) then off.\r\n\tBypasses " AT_PLUS "LED_ENABLE; intended for test "
                     "fixtures. Returns immediately.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLEDBlinkCallback, comms_manager)},
     {.command = "LED_ENABLE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+LED_ENABLE=<enabled>\r\n\tEnable or disable the hardware status/activity "
-                    "LEDs.\r\n\tAT+LED_ENABLE?\r\n\tQuery whether the hardware LEDs are enabled.",
+     .help_string = AT_PLUS "LED_ENABLE=<enabled>\r\n\tEnable or disable the hardware status/activity "
+                    "LEDs.\r\n\t" AT_PLUS "LED_ENABLE?\r\n\tQuery whether the hardware LEDs are enabled.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLEDEnableCallback, comms_manager)},
     {.command = "LOG_LEVEL",
      .min_args = 0,
      .max_args = 1,
      .help_string =
-         "AT+LOG_LEVEL=<log_level [SILENT ERRORS WARNINGS INFO]>\r\n\tSet how much stuff gets printed to the "
+         AT_PLUS "LOG_LEVEL=<log_level [SILENT ERRORS WARNINGS INFO]>\r\n\tSet how much stuff gets printed to the "
          "console.\r\n\t",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLogLevelCallback, comms_manager)},
     {.command = "MAVLINK_ID",
      .min_args = 0,
      .max_args = 2,
-     .help_string = "AT+MAVLINK_ID=<system_id>,<component_id>\r\n\tSet the MAVLink system and component IDs.\r\n\t"
-                    "AT+MAVLINK_ID?\r\n\tQuery the MAVLink system and component IDs.",
+     .help_string = AT_PLUS "MAVLINK_ID=<system_id>,<component_id>\r\n\tSet the MAVLink system and component IDs.\r\n\t"
+                    AT_PLUS "MAVLINK_ID?\r\n\tQuery the MAVLink system and component IDs.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATMAVLINKIDCallback, comms_manager)},
     {.command = "NETWORK_INFO",
      .min_args = 0,
      .max_args = 0,
-     .help_string = "AT+NETWORK_INFO?\r\n\tQueries network information.",
+     .help_string = AT_PLUS "NETWORK_INFO?\r\n\tQueries network information.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATNetworkInfoCallback, comms_manager)},
     {.command = "OTA",
      .min_args = 0,
@@ -1911,12 +1912,12 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .help_string =
          "[EXPERIMENTAL] Remote ID is not yet a stable part of the system; its settings and behavior may change in "
          "future firmware.\r\n\t"
-         "AT+REMOTE_ID=<enabled>[,<transport_mask>]\r\n\tEnable/disable Broadcast Remote ID (drone) reception on the "
+         AT_PLUS "REMOTE_ID=<enabled>[,<transport_mask>]\r\n\tEnable/disable Broadcast Remote ID (drone) reception on the "
          "ESP32.\r\n\ttransport_mask bits: 1=BT4 legacy, 2=BT5 Long Range, 4=WiFi beacon (default 7).\r\n\tOn "
-         "hardware whose ESP32 has no PSRAM (see AT+DEVICE_INFO?), Remote ID only runs when WiFi AP/STA are disabled "
+         "hardware whose ESP32 has no PSRAM (see " AT_PLUS "DEVICE_INFO?), Remote ID only runs when WiFi AP/STA are disabled "
          "and Ethernet is up; with PSRAM it runs alongside WiFi (the WiFi beacon receiver then listens on the WiFi "
          "channel only).\r\n\t"
-         "AT+REMOTE_ID?\r\n\tQuery Remote ID settings and the ESP32's live status bitfield.",
+         AT_PLUS "REMOTE_ID?\r\n\tQuery Remote ID settings and the ESP32's live status bitfield.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRemoteIDCallback, comms_manager)},
     {.command = "REMOTE_ID_TX",
      .min_args = 0,
@@ -1938,23 +1939,23 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "SETTINGS",
      .min_args = 0,
      .max_args = 3,
-     .help_string = "Load, save, or reset nonvolatile settings.\r\n\tAT+SETTINGS=<op [LOAD SAVE RESET]>\r\n\t"
-                    "Display nonvolatile settings.\r\n\tAT+SETTINGS?\r\n\t+SETTINGS=...\r\n\tDump settings in AT "
-                    "command format.\r\n\tAT+SETTINGS?DUMP\r\n\t+SETTINGS=...\r\n\tDump settings as a "
-                    "single-line JSON object keyed by AT command.\r\n\tAT+SETTINGS?JSON\r\n\tSETTINGS={...}",
+     .help_string = "Load, save, or reset nonvolatile settings.\r\n\t" AT_PLUS "SETTINGS=<op [LOAD SAVE RESET]>\r\n\t"
+                    "Display nonvolatile settings.\r\n\t" AT_PLUS "SETTINGS?\r\n\t+SETTINGS=...\r\n\tDump settings in AT "
+                    "command format.\r\n\t" AT_PLUS "SETTINGS?DUMP\r\n\t+SETTINGS=...\r\n\tDump settings as a "
+                    "single-line JSON object keyed by AT command.\r\n\t" AT_PLUS "SETTINGS?JSON\r\n\tSETTINGS={...}",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATSettingsCallback, comms_manager)},
     {.command = "SUBG_ENABLE",
      .min_args = 0,
      .max_args = 2,
-     .help_string = "AT+SUBG_ENABLE=<enabled [1,0,EXTERNAL]>\r\n\tEnable or disable the sub-GHz receiver. Receiver "
+     .help_string = AT_PLUS "SUBG_ENABLE=<enabled [1,0,EXTERNAL]>\r\n\tEnable or disable the sub-GHz receiver. Receiver "
                     "enable line can be driven with a low impedance GPIO output or left high impedance (with "
-                    "pulldown) for control via an external device.\r\n\tAT+SUBG_ENABLE?\r\n\t"
+                    "pulldown) for control via an external device.\r\n\t" AT_PLUS "SUBG_ENABLE?\r\n\t"
                     "Query the status of the sub-GHz receiver.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATSubGEnableCallback, comms_manager)},
     {.command = "SUBG_FLASH",
      .min_args = 0,
      .max_args = 0,
-     .help_string = "AT+SUBG_FLASH\r\n\tTriggers a firmware update of the sub-GHz radio from the firmware image "
+     .help_string = AT_PLUS "SUBG_FLASH\r\n\tTriggers a firmware update of the sub-GHz radio from the firmware image "
                     "stored in the RP2040's flash memory.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATSubGFlashCallback, comms_manager)},
 #ifdef HARDWARE_UNIT_TESTS
@@ -1962,7 +1963,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 1,
      .max_args = 4,
      .help_string = "Ingest a Mode S packet into the raw packet queue.\r\n\t"
-                    "AT+INGEST_MODE_S=<hex_data>,<sigs_dbm>,<sigq_db>,<mlat_counts>\r\n\t"
+                    AT_PLUS "INGEST_MODE_S=<hex_data>,<sigs_dbm>,<sigq_db>,<mlat_counts>\r\n\t"
                     "hex_data: 14 hex chars (squitter) or 28 hex chars (extended squitter).\r\n\t"
                     "sigs_dbm, sigq_db, mlat_counts are optional signal quality parameters.",
      .callback = ATIngestModeSCallback},
@@ -1970,7 +1971,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 1,
      .max_args = 4,
      .help_string = "Ingest a UAT packet into the raw packet queue.\r\n\t"
-                    "AT+INGEST_UAT=<hex_data>,<sigs_dbm>,<sigq_bits>,<mlat_counts>\r\n\t"
+                    AT_PLUS "INGEST_UAT=<hex_data>,<sigs_dbm>,<sigq_bits>,<mlat_counts>\r\n\t"
                     "hex_data: 60 hex chars (short ADS-B), 96 (long ADS-B), or 1104 (uplink).\r\n\t"
                     "sigs_dbm, sigq_bits, mlat_counts are optional signal quality parameters.",
      .callback = ATIngestUATCallback},
@@ -1985,14 +1986,14 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 0,
      .help_string =
          "Read ADC counts and mV value for the minimum trigger level threshold. Call with no ops nor arguments, "
-         "AT+TL_READ. Note this reads the trigger level, not the trigger level offset.",
+         AT_PLUS "TL_READ. Note this reads the trigger level, not the trigger level offset.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTLReadCallback, comms_manager)},
     {.command = "TL_OFFSET",
      .min_args = 0,
      .max_args = 1,
      .help_string = "Set minimum trigger level offset (trigger level distance above noise floor) for RF power "
-                    "detector.\r\n\tAT+TL_OFFSET=<tl_offset_mv>"
-                    "\tQuery trigger level offset.\r\n\tAT+TL_OFFSET?\r\n\t+TL_OFFSET=<tl_offset_mv>.",
+                    "detector.\r\n\t" AT_PLUS "TL_OFFSET=<tl_offset_mv>"
+                    "\tQuery trigger level offset.\r\n\t" AT_PLUS "TL_OFFSET?\r\n\t+TL_OFFSET=<tl_offset_mv>.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTLSetCallback, comms_manager)},
     {.command = "UPTIME",
      .min_args = 0,
@@ -2003,21 +2004,21 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 1,
      .help_string = "Set the watchdog timeout, in seconds, 0-65535. 0 = watchdog disabled, 65535 = "
-                    "18.2hrs.\r\n\tAT+WATCHDOG=<timeout_sec>\r\n\tTest watchdog by blocking for timeout_sec+1 "
-                    "seconds.\r\n\tAT+WATCHDOG=TEST",
+                    "18.2hrs.\r\n\t" AT_PLUS "WATCHDOG=<timeout_sec>\r\n\tTest watchdog by blocking for timeout_sec+1 "
+                    "seconds.\r\n\t" AT_PLUS "WATCHDOG=TEST",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWatchdogCallback, comms_manager)},
     {.command = "WIFI_AP",
      .min_args = 0,
      .max_args = 4,
      .help_string =
-         "Set WiFi access point params.\r\n\tAT+WIFI_AP=<enabled>,<ap_ssid>,<ap_pwd>,<ap_channel>\r\n\t"
-         "Get WiFi access point params.\r\n\tAT+WIFI_AP?\r\n\t+WIFI_AP=<enabled>,<ap_ssid>,<ap_pwd>,<ap_channel>",
+         "Set WiFi access point params.\r\n\t" AT_PLUS "WIFI_AP=<enabled>,<ap_ssid>,<ap_pwd>,<ap_channel>\r\n\t"
+         "Get WiFi access point params.\r\n\t" AT_PLUS "WIFI_AP?\r\n\t+WIFI_AP=<enabled>,<ap_ssid>,<ap_pwd>,<ap_channel>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiAPCallback, comms_manager)},
     {.command = "WIFI_STA",
      .min_args = 0,
      .max_args = 3,
-     .help_string = "Set WiFi station params.\r\n\tAT+WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>\r\n\t"
-                    "Get WiFi station params.\r\n\tAT+WIFI_STA?\r\n\t+WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>",
+     .help_string = "Set WiFi station params.\r\n\t" AT_PLUS "WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>\r\n\t"
+                    "Get WiFi station params.\r\n\t" AT_PLUS "WIFI_STA?\r\n\t+WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiSTACallback, comms_manager)},
 };
 const uint16_t at_command_list_num_commands = sizeof(at_command_list) / sizeof(at_command_list[0]);

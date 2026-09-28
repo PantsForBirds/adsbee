@@ -60,6 +60,9 @@ jobs:
     - name: Run unit tests
       working-directory: firmware/adsbee_1090/pico/build
       run: ctest --verbose
+    - name: Run OTA image AT-scanner tests
+      working-directory: firmware/adsbee_1090/pico/linker_scripts
+      run: python3 -m unittest -v test_ota_at_scan
 
   esp_target_build:
     runs-on: ubuntu-latest

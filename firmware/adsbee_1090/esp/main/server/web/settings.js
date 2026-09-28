@@ -9,10 +9,14 @@
 
 // ══════════ BEGIN SHARED SETTINGS ENGINE ══════════
 
+// "AT" + "+" is never written contiguously in these files: they are stored in the firmware image, and firmware up
+// to 0.9.1-rc4 can run AT commands found in an OTA image it is receiving (see firmware/common/comms/at_text.hh).
+const SETTINGS_AT = 'AT' + '+';
+
 // Schema-driven settings form. Each schema entry describes one AT command:
 //
 //   {
-//     cmd: 'WIFI_STA',              // AT+<cmd> (no '+' appears in responses: "WIFI_STA=...")
+//     cmd: 'WIFI_STA',              // AT＋<cmd> (no '+' appears in responses: "WIFI_STA=...")
 //     label: 'WiFi Station',
 //     group: 'Network',             // form section; sections appear in first-use order
 //     help: 'Join an existing WiFi network.',
@@ -22,11 +26,11 @@
 //     fields: [ { id, label, type, ... } ],
 //     parse(lines) { ... },         // optional; default: positional split of first matching line
 //     parseJson(raw) { ... },       // optional; maps this entry's value from the bulk
-//                                   // AT+SETTINGS?JSON dump; default: positional array
+//                                   // AT＋SETTINGS?JSON dump; default: positional array
 //                                   // mapped onto fields (writeOnly fields excluded)
-//     build(values, dirtyIds) {...},// optional; default: 'AT+<cmd>=' + all args joined by ','
+//     build(values, dirtyIds) {...},// optional; default: 'AT＋<cmd>=' + all args joined by ','
 //     async afterWrite(values) {...}// optional; awaited right after this entry's commands
-//                                   // succeed, before AT+SETTINGS=SAVE (e.g. the 1421
+//                                   // succeed, before AT＋SETTINGS=SAVE (e.g. the 1421
 //                                   // reopens its serial port after a baud change)
 //   }
 //
@@ -65,7 +69,7 @@ class SettingsEngine {
     // transport contract: sendCommand(cmd, {expect, terminator: 'ok'|'quiet', quietMs,
     // timeoutMs}) -> Promise<string[] of trimmed body lines>; rejects on a whole-line
     // 'ERROR ...' response or timeout.
-    // bulkQuery (optional): { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/ } — a
+    // bulkQuery (optional): { command: 'AT＋SETTINGS?JSON', expect: /^SETTINGS=/ } — a
     // one-round-trip read of every setting as a JSON object keyed by AT command name.
     // Entries the dump doesn't cover (or firmware without the command) fall back to
     // per-command queries automatically.
@@ -432,7 +436,7 @@ class SettingsEngine {
         while (parts.length > 0 && fields[parts.length - 1].writeOnly && parts[parts.length - 1] === '') {
             parts.pop();
         }
-        return [`AT+${entry.cmd}=${parts.join(',')}`];
+        return [`${SETTINGS_AT}${entry.cmd}=${parts.join(',')}`];
     }
 
     // ── Validation ──
@@ -495,7 +499,7 @@ class SettingsEngine {
 
     // Reads every setting in one round trip via the bulk JSON dump. Returns the Set of
     // cmds successfully populated, or null when the bulk query is unavailable (e.g.
-    // firmware predating AT+SETTINGS?JSON responds ERROR) so refresh() falls back to
+    // firmware predating AT＋SETTINGS?JSON responds ERROR) so refresh() falls back to
     // querying each command individually.
     async _refreshFromBulk() {
         this._status('Reading settings…');
@@ -528,7 +532,7 @@ class SettingsEngine {
         this._entryStatus(entry, '…');
         const query = entry.query || {};
         try {
-            const lines = await this.transport.sendCommand(`AT+${entry.cmd}?`, {
+            const lines = await this.transport.sendCommand(`${SETTINGS_AT}${entry.cmd}?`, {
                 expect: query.expect || new RegExp(`^${entry.cmd}=`),
                 terminator: 'quiet',
                 quietMs: query.quietMs ?? 350,
@@ -607,7 +611,7 @@ class SettingsEngine {
             if (succeeded > 0) {
                 this._status('Persisting to flash…');
                 try {
-                    await this.transport.sendCommand('AT+SETTINGS=SAVE', { terminator: 'ok', timeoutMs: 15000 });
+                    await this.transport.sendCommand(SETTINGS_AT + 'SETTINGS=SAVE', { terminator: 'ok', timeoutMs: 15000 });
                     this._status(failed === 0 ? `Saved ${succeeded} setting${succeeded === 1 ? '' : 's'}.`
                                               : `${succeeded} saved, ${failed} failed — see errors above.`);
                 } catch (e) {
@@ -615,7 +619,7 @@ class SettingsEngine {
                         this._status('Settings sent; the connection may have dropped while saving. ' +
                                      'Reconnect and Refresh to verify.');
                     } else {
-                        this._status(`Settings applied but AT+SETTINGS=SAVE failed: ${e.message}`);
+                        this._status(`Settings applied but ${SETTINGS_AT}SETTINGS=SAVE failed: ${e.message}`);
                     }
                 }
             } else {
@@ -680,10 +684,10 @@ function makeRxPositionEntry() {
         },
         build(v) {
             if (v.source === 'FIXED') {
-                return [`AT+RX_POSITION=FIXED,${v.lat},${v.lon},${v.gnss_alt},${v.baro_alt},${v.heading},${v.speed}`];
+                return [`${SETTINGS_AT}RX_POSITION=FIXED,${v.lat},${v.lon},${v.gnss_alt},${v.baro_alt},${v.heading},${v.speed}`];
             }
-            if (v.source === 'ICAO') return [`AT+RX_POSITION=ICAO,${v.icao}`];
-            return [`AT+RX_POSITION=${v.source}`];
+            if (v.source === 'ICAO') return [`${SETTINGS_AT}RX_POSITION=ICAO,${v.icao}`];
+            return [`${SETTINGS_AT}RX_POSITION=${v.source}`];
         },
     };
 }
@@ -707,7 +711,7 @@ function makeMavlinkIdEntry() {
             }
             return values.sys === undefined ? null : values;
         },
-        build(v) { return [`AT+MAVLINK_ID=${v.sys},${v.comp}`]; },
+        build(v) { return [`${SETTINGS_AT}MAVLINK_ID=${v.sys},${v.comp}`]; },
     };
 }
 
@@ -730,7 +734,7 @@ function makeRxEnableEntry() {
             return values.r1090 === undefined ? null : values;
         },
         // Leading empty arg skips the all-receivers override argument.
-        build(v) { return [`AT+RX_ENABLE=,${v.r1090 ? 1 : 0},${v.subg ? 1 : 0}`]; },
+        build(v) { return [`${SETTINGS_AT}RX_ENABLE=,${v.r1090 ? 1 : 0},${v.subg ? 1 : 0}`]; },
     };
 }
 
@@ -812,7 +816,7 @@ const SETTINGS_SCHEMA_1090 = [
             const m = lines[0] && lines[0].match(/^TL_OFFSET=(\d+)mV\s*\((-?\d+) dBm\)/);
             return m ? { offset_mv: parseInt(m[1], 10), dbm: `${m[2]} dBm` } : null;
         },
-        build(v) { return [`AT+TL_OFFSET=${v.offset_mv}`]; },
+        build(v) { return [`${SETTINGS_AT}TL_OFFSET=${v.offset_mv}`]; },
     },
     // ── Reporting ──
     {
@@ -830,7 +834,7 @@ const SETTINGS_SCHEMA_1090 = [
             }
             return values.CONSOLE === undefined ? null : values;
         },
-        build(v, dirty) { return [...dirty].map(iface => `AT+PROTOCOL_OUT=${iface},${v[iface]}`); },
+        build(v, dirty) { return [...dirty].map(iface => `${SETTINGS_AT}PROTOCOL_OUT=${iface},${v[iface]}`); },
     },
     makeMavlinkIdEntry(),
     // ── Position ──
@@ -852,7 +856,7 @@ const SETTINGS_SCHEMA_1090 = [
             { id: 'transports', label: 'Transports', type: 'bitmask', options: SETTINGS_RID_TRANSPORTS },
             { id: 'status', label: 'ESP32 Status', type: 'display' },
         ],
-        build(v) { return [`AT+REMOTE_ID=${v.en ? 1 : 0},${v.transports}`]; },
+        build(v) { return [`${SETTINGS_AT}REMOTE_ID=${v.en ? 1 : 0},${v.transports}`]; },
     },
     {
         cmd: 'REMOTE_ID_TX', label: 'Remote ID Transmit', group: 'Remote ID', experimental: true,
@@ -914,7 +918,7 @@ const SETTINGS_SCHEMA_1090 = [
         },
         // '-' clears a blank ID so the device falls back to its default.
         build(v) {
-            return [`AT+REMOTE_ID_TX=${v.en ? 1 : 0},${v.transports},${v.uas_id || '-'},${v.id_type},${v.ua_type},${v.operator_id || '-'}`];
+            return [`${SETTINGS_AT}REMOTE_ID_TX=${v.en ? 1 : 0},${v.transports},${v.uas_id || '-'},${v.id_type},${v.ua_type},${v.operator_id || '-'}`];
         },
     },
     // ── Serial ──
@@ -924,7 +928,7 @@ const SETTINGS_SCHEMA_1090 = [
             { id: 'COMMS_UART', label: 'Comms UART (baud)', type: 'int', min: 1200, max: 1000000 },
             { id: 'GNSS_UART', label: 'GNSS UART (baud)', type: 'int', min: 1200, max: 1000000 },
         ],
-        build(v, dirty) { return [...dirty].map(iface => `AT+BAUD_RATE=${iface},${v[iface]}`); },
+        build(v, dirty) { return [...dirty].map(iface => `${SETTINGS_AT}BAUD_RATE=${iface},${v[iface]}`); },
     },
     // ── System ──
     {
@@ -1074,7 +1078,7 @@ const settingsTab = {
             this.engine = new SettingsEngine({
                 schema: SETTINGS_SCHEMA_1090,
                 transport: this.transport,
-                bulkQuery: { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/ },
+                bulkQuery: { command: SETTINGS_AT + 'SETTINGS?JSON', expect: /^SETTINGS=/ },
                 formEl: document.getElementById('settings-form'),
                 statusEl: document.getElementById('settings-status'),
                 saveBtn: document.getElementById('settings-save-btn'),
