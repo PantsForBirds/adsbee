@@ -129,8 +129,10 @@ in the bootloader because of the backdoor (a module without a valid image stays 
 bootloader). The page can't prevent this, which is why it enters the bootloader itself,
 after connecting. Right after opening, the page parks the lines in the normal-run state
 (RTS asserted = SYNC low, DTR deasserted); neither is an edge the Programmer acts on.
-Closing the port on Linux deasserts both lines (HUPCL), which puts a module behind the
-Programmer to sleep until the next connection resets it.
+Closing the port on Linux or macOS deasserts both lines (HUPCL). The ADSBee 1421 Programmer
+holds SYNC low while DTR is deasserted, so a module behind it stays awake. On a plain adapter,
+or a Programmer image from 0.3.11-rc2 or earlier, RTS deasserted is SYNC high and the module
+sleeps until something drives SYNC low.
 
 **Check bootloader** is the gate on flashing. It syncs, pings, and reads the chip ID,
 and only a device that answers all three unlocks the **Flash firmware** button. A
