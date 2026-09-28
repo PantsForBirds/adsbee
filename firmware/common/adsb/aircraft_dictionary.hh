@@ -100,6 +100,9 @@ class Aircraft {
     // Values from other protocols will need to be translated.
 
     uint32_t last_message_timestamp_ms = 0;
+    // Local time (get_time_since_boot_ms()) of the last accepted position. Unlike the protocol-specific
+    // last_track_update_timestamp_ms (packet MLAT time for Mode S), this can be compared across aircraft types.
+    uint32_t last_position_update_ms = 0;
 
     float latitude_deg = 0.0f;
     float longitude_deg = 0.0f;
@@ -462,7 +465,8 @@ class UATAircraft : public Aircraft {
         kTISBTargetWithICAO24BitAddress = 2,
         kTISBTargetWithTrackFileIdentifier = 3,
         kSurfaceVehicle = 4,
-        kFixedADSBBeacon = 5
+        kFixedADSBBeacon = 5,
+        kADSRTargetWithNonICAOAddress = 6  // DO-282B; dump978's ADSR_OTHER.
     };
 
     enum BitFlag : uint32_t {
@@ -1166,6 +1170,39 @@ class AircraftDictionary {
      * @retval True if aircraft is in the dictionary, false if not.
      */
     bool ContainsAircraft(uint32_t uid) const;
+
+    // Several dictionary entries can describe the same 24-bit ICAO address: the aircraft's own 1090ES (Mode S entry),
+    // its own UAT ADS-B (UAT entry, address qualifier 0), and ground station rebroadcasts of it (DF18 on 1090, which
+    // marks the Mode S entry non-transponder, or UAT TIS-B/ADS-R with address qualifier 2). Outputs that are keyed by
+    // address (aircraft JSON, GDL90 traffic) report only one of them, so that clients don't flip between positions.
+    // DO-260B/DO-282B intent (and readsb's source ranking): a receiver uses the aircraft's own ADS-B, and a rebroadcast
+    // only while nothing better is being received. So: the best-ranked entry with a position updated in the last
+    // kPreferredReportPositionFreshMs wins; if none has a fresh position, the best-ranked entry wins. 15 s covers the
+    // TIS-B update interval (one radar scan, 4.8-12 s).
+    static constexpr uint32_t kPreferredReportPositionFreshMs = 15e3;
+    enum AddressSourceRank : int8_t {
+        kAddressSourceRankDirect = 0,       // 1090ES DF17 / Mode S replies, or UAT ADS-B with an ICAO address.
+        kAddressSourceRankRebroadcast = 1,  // DF18 (ADS-R / TIS-B / non-transponder on 1090).
+        kAddressSourceRankTISB = 2,         // UAT TIS-B or ADS-R with an ICAO address (address qualifier 2).
+        kAddressSourceRankUnique = -1       // Not an ICAO-addressed entry (Remote ID, track files, self-assigned).
+    };
+
+    /**
+     * Returns the source rank of a dictionary entry for de-duplicating reports of the same ICAO address.
+     * @param[in] entry Dictionary entry.
+     * @param[out] icao_address 24-bit ICAO address of the entry (only set if the rank isn't kAddressSourceRankUnique).
+     * @retval AddressSourceRank of the entry.
+     */
+    static AddressSourceRank GetAddressSourceRank(const AircraftEntry& entry, uint32_t& icao_address);
+
+    /**
+     * Returns whether the entry with the given UID is the one to report for its ICAO address (see
+     * kPreferredReportPositionFreshMs). Entries that aren't ICAO-addressed are always reported.
+     * @param[in] uid UID of the entry.
+     * @param[in] timestamp_ms Current local time, in ms.
+     * @retval True if the entry should be reported, false if another entry for the same address is preferred.
+     */
+    bool IsPreferredReportForAddress(uint32_t uid, uint32_t timestamp_ms) const;
 
     /**
      * Used to enable or disable the CPR position filter.

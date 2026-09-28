@@ -428,3 +428,89 @@ TEST(AircraftJSON, MessagesIsCumulativeAcrossMetricsIntervals) {
     ASSERT_GT(len, 0);
     EXPECT_EQ(GetJSONValue(std::string_view(buf, len), "messages"), "5");
 }
+
+// DO-282B address qualifier 6 is an ADS-R target with a non-ICAO address. It was reported as a direct "adsb_icao".
+TEST(AircraftJSON, UATAircraftADSRNonICAOAddress) {
+    char buf[kAircraftJSONMessageStrMaxLen];
+    UATAircraft ac;
+    ac.icao_address =
+        0x778899 | ((UATAircraft::kADSRTargetWithNonICAOAddress << Aircraft::kAddressQualifierBitShift) &
+                    Aircraft::kAddressQualifierMask);
+    WriteAircraftJSONUATAircraftStr(buf, ac);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "hex"), "~778899");
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "type"), "adsr_other");
+}
+
+// One ICAO address can have several dictionary entries: the aircraft's own 1090ES (Mode S) or UAT ADS-B, and ground
+// station rebroadcasts (DF18, UAT TIS-B/ADS-R). Only one of them is reported per address, so a client keyed by hex
+// doesn't flip between a stale direct position and a live TIS-B one.
+class PreferredReportForAddress : public ::testing::Test {
+   protected:
+    static constexpr uint32_t kICAO = 0xA41090;
+    static constexpr uint32_t kNowMs = 1000000;
+
+    ModeSAircraft* AddModeS(bool position_valid, uint32_t position_age_ms, bool non_transponder = false) {
+        ModeSAircraft* ac = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(kICAO));
+        ac->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid, position_valid);
+        ac->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIsNonTransponder, non_transponder);
+        ac->last_position_update_ms = kNowMs - position_age_ms;
+        return ac;
+    }
+    UATAircraft* AddUAT(UATAircraft::AddressQualifier aq, bool position_valid, uint32_t position_age_ms) {
+        UATAircraft* ac = dictionary.InsertAircraft<UATAircraft>(
+            UATAircraft(kICAO | (static_cast<uint32_t>(aq) << Aircraft::kAddressQualifierBitShift)));
+        ac->WriteBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid, position_valid);
+        ac->last_position_update_ms = kNowMs - position_age_ms;
+        return ac;
+    }
+    bool Preferred(uint32_t uid) { return dictionary.IsPreferredReportForAddress(uid, kNowMs); }
+
+    AircraftDictionary dictionary;
+};
+
+TEST_F(PreferredReportForAddress, DirectADSBBeatsFreshTISB) {
+    ModeSAircraft* mode_s = AddModeS(true, 1000);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 500);
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, FreshTISBBeatsStaleDirectPosition) {
+    // Field case (a41090): the 1090ES entry kept a position frozen for minutes (other Mode S replies kept the entry
+    // alive), while UAT TIS-B tracked the aircraft 6 nm away.
+    ModeSAircraft* mode_s = AddModeS(true, AircraftDictionary::kPreferredReportPositionFreshMs + 1);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 4000);
+    EXPECT_FALSE(Preferred(mode_s->GetUID()));
+    EXPECT_TRUE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, TISBBeatsDirectWithoutPosition) {
+    ModeSAircraft* mode_s = AddModeS(false, 0);  // Only DF4/DF5/DF11 so far.
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 4000);
+    EXPECT_FALSE(Preferred(mode_s->GetUID()));
+    EXPECT_TRUE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, DirectWinsWhenNothingIsFresh) {
+    ModeSAircraft* mode_s = AddModeS(true, 60000);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 30000);
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, UATDirectBeatsDF18Rebroadcast) {
+    ModeSAircraft* df18 = AddModeS(true, 500, true);
+    UATAircraft* uat = AddUAT(UATAircraft::kADSBTargetWithICAO24BitAddress, true, 900);
+    EXPECT_FALSE(Preferred(df18->GetUID()));
+    EXPECT_TRUE(Preferred(uat->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, LoneAndNonICAOEntriesAreAlwaysReported) {
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, false, 0);
+    EXPECT_TRUE(Preferred(tisb->GetUID()));  // Only entry for its address.
+    UATAircraft* track_file = AddUAT(UATAircraft::kTISBTargetWithTrackFileIdentifier, true, 0);
+    ModeSAircraft* mode_s = AddModeS(true, 0);
+    EXPECT_TRUE(Preferred(track_file->GetUID()));  // Track file IDs aren't ICAO addresses.
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(tisb->GetUID()));
+}

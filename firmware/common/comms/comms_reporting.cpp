@@ -768,6 +768,9 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
         if (itr == aircraft_dictionary.dict.end()) {
             continue;  // Aircraft pruned mid-round; skip without losing remaining entries.
         }
+        if (!aircraft_dictionary.IsPreferredReportForAddress(uid, get_time_since_boot_ms())) {
+            continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
+        }
 
         msg_len = 0;
         if (ModeSAircraft* mode_s_aircraft = get_if<ModeSAircraft>(&(itr->second)); mode_s_aircraft) {
@@ -817,6 +820,9 @@ bool CommsManager::ReportAircraftJSON(ReportSink* sinks, uint16_t num_sinks) {
         auto itr = aircraft_dictionary.dict.find(uid);
         if (itr == aircraft_dictionary.dict.end()) {
             continue;  // Aircraft pruned mid-round; skip without losing remaining entries.
+        }
+        if (!aircraft_dictionary.IsPreferredReportForAddress(uid, get_time_since_boot_ms())) {
+            continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
         }
 
         char message[kAircraftJSONMessageStrMaxLen];

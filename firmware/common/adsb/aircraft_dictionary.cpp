@@ -173,6 +173,7 @@ bool ModeSAircraft::DecodePosition(bool is_airborne, uint32_t ref_lat_awb32, uin
     latitude_deg = wrapped_latitude_deg;
     longitude_deg = WrapCPRDecodeLongitude(result.lon_deg);
     last_track_update_timestamp_ms = most_recent_received_timestamp_ms;  // Update last track update timestamp.
+    last_position_update_ms = get_time_since_boot_ms();
 
     return true;
 }
@@ -1148,6 +1149,7 @@ bool UATAircraft::DecodePosition(const DecodedUATADSBPacket::UATStateVector& sta
     latitude_deg = awb2lat(lat_awb32_);
     longitude_deg = awb2lon(lon_awb32_);
     last_track_update_timestamp_ms = last_message_timestamp_ms;  // Update last track update timestamp.
+    last_position_update_ms = last_message_timestamp_ms;         // Local time for UAT.
     return true;
 }
 
@@ -1555,6 +1557,81 @@ bool AircraftDictionary::ContainsAircraft(uint32_t uid) const {
         return true;
     }
     return false;
+}
+
+AircraftDictionary::AddressSourceRank AircraftDictionary::GetAddressSourceRank(const AircraftEntry& entry,
+                                                                               uint32_t& icao_address) {
+    if (const ModeSAircraft* ac = std::get_if<ModeSAircraft>(&entry)) {
+        icao_address = ac->icao_address & 0xFFFFFF;
+        return ac->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsNonTransponder) ? kAddressSourceRankRebroadcast
+                                                                                 : kAddressSourceRankDirect;
+    }
+    if (const UATAircraft* ac = std::get_if<UATAircraft>(&entry)) {
+        icao_address = ac->icao_address & 0xFFFFFF;
+        switch (ac->GetAddressQualifier()) {
+            case UATAircraft::kADSBTargetWithICAO24BitAddress:
+                return kAddressSourceRankDirect;
+            case UATAircraft::kTISBTargetWithICAO24BitAddress:
+                return kAddressSourceRankTISB;
+            default:
+                return kAddressSourceRankUnique;
+        }
+    }
+    return kAddressSourceRankUnique;
+}
+
+bool AircraftDictionary::IsPreferredReportForAddress(uint32_t uid, uint32_t timestamp_ms) const {
+    auto itr = dict.find(uid);
+    if (itr == dict.end()) {
+        return false;
+    }
+    uint32_t icao_address = 0;
+    if (GetAddressSourceRank(itr->second, icao_address) == kAddressSourceRankUnique) {
+        return true;
+    }
+
+    // Every entry that can carry this ICAO address. The UAT address qualifier is part of the UID.
+    const uint32_t candidate_uids[] = {
+        Aircraft::ICAOToUID(icao_address, Aircraft::kAircraftTypeModeS),
+        Aircraft::ICAOToUID(icao_address | (UATAircraft::kADSBTargetWithICAO24BitAddress
+                                            << Aircraft::kAddressQualifierBitShift),
+                            Aircraft::kAircraftTypeUAT),
+        Aircraft::ICAOToUID(icao_address | (UATAircraft::kTISBTargetWithICAO24BitAddress
+                                            << Aircraft::kAddressQualifierBitShift),
+                            Aircraft::kAircraftTypeUAT),
+    };
+    uint32_t best_uid = uid;
+    bool best_fresh = false;
+    int8_t best_rank = INT8_MAX;
+    uint32_t best_position_age_ms = UINT32_MAX;
+    for (uint32_t candidate_uid : candidate_uids) {
+        auto candidate = dict.find(candidate_uid);
+        if (candidate == dict.end()) {
+            continue;
+        }
+        uint32_t candidate_icao = 0;
+        int8_t rank = GetAddressSourceRank(candidate->second, candidate_icao);
+        uint32_t position_age_ms = UINT32_MAX;  // No valid position.
+        if (const ModeSAircraft* ac = std::get_if<ModeSAircraft>(&candidate->second);
+            ac && ac->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid)) {
+            position_age_ms = timestamp_ms - ac->last_position_update_ms;
+        } else if (const UATAircraft* ac = std::get_if<UATAircraft>(&candidate->second);
+                   ac && ac->HasBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid)) {
+            position_age_ms = timestamp_ms - ac->last_position_update_ms;
+        }
+        bool fresh = position_age_ms <= kPreferredReportPositionFreshMs;
+        // Fresh beats stale, then the better source, then the newer position.
+        bool better = (fresh != best_fresh) ? fresh
+                      : (rank != best_rank) ? rank < best_rank
+                                            : position_age_ms < best_position_age_ms;
+        if (better) {
+            best_uid = candidate_uid;
+            best_fresh = fresh;
+            best_rank = rank;
+            best_position_age_ms = position_age_ms;
+        }
+    }
+    return best_uid == uid;
 }
 
 bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {

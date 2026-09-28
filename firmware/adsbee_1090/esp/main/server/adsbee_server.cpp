@@ -363,8 +363,12 @@ bool ADSBeeServer::ReportGDL90() {
     int16_t aircraft_index = -1;  // Just used for error reporting.
     uint8_t aircraft_msg_buf[CommsManager::NetworkMessage::kMaxLenBytes];
     uint16_t aircraft_msg_buf_len = 0;
+    uint32_t timestamp_ms = get_time_since_boot_ms();
     for (auto& itr : aircraft_dictionary.dict) {
         aircraft_index++;
+        if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) {
+            continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
+        }
 
         if (ModeSAircraft* mode_s_aircraft = get_if<ModeSAircraft>(&(itr.second)); mode_s_aircraft) {
             if (!mode_s_aircraft->HasBitFlag(ModeSAircraft::kBitFlagPositionValid) ||
@@ -894,7 +898,11 @@ bool ADSBeeServer::TCPServerInit() {
 
 void ADSBeeServer::SendAircraftJSONMessages() {
     char json_buf[kAircraftJSONMessageStrMaxLen];
+    uint32_t timestamp_ms = get_time_since_boot_ms();
     for (auto& itr : aircraft_dictionary.dict) {
+        if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) {
+            continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
+        }
         int16_t len = -1;
         if (ModeSAircraft* ac = get_if<ModeSAircraft>(&itr.second); ac) {
             len = WriteAircraftJSONModeSAircraftStr(json_buf, *ac);

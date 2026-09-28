@@ -208,7 +208,8 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
 
     // Non-ICAO addresses get a '~' prefix per readsb convention.
     bool is_non_icao = (aq == UATAircraft::kADSBTargetWithSelfAssignedTemporaryAddress ||
-                        aq == UATAircraft::kTISBTargetWithTrackFileIdentifier);
+                        aq == UATAircraft::kTISBTargetWithTrackFileIdentifier ||
+                        aq == UATAircraft::kADSRTargetWithNonICAOAddress);
 
     // hex (always)
     n += snprintf(buf + n, max - n,
@@ -234,6 +235,9 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
             break;
         case UATAircraft::kTISBTargetWithTrackFileIdentifier:
             type_str = "tisb_trackfile";
+            break;
+        case UATAircraft::kADSRTargetWithNonICAOAddress:
+            type_str = "adsr_other";  // Was reported as a direct "adsb_icao" target.
             break;
         case UATAircraft::kSurfaceVehicle:
         case UATAircraft::kFixedADSBBeacon:
