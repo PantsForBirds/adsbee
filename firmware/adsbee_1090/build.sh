@@ -233,7 +233,7 @@ at_query() {
 }
 
 # Best-effort USB product string for a CDC node; prints nothing if it can't be determined.
-# Used only to leave an ADSBee 1421 programmer jig alone -- probing one would pulse the attached
+# Used only to leave an ADSBee 1421 Programmer alone: probing one would pulse the attached
 # m1421's reset line. Any platform where this comes up empty just falls through to probing.
 usb_product_for_node() {
     local port="$1"

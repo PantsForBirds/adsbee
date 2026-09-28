@@ -98,7 +98,7 @@ def test_select_by_model_and_tag(bench, capsys):
 
 
 def test_ad_hoc_serial_without_bench(bench, capsys):
-    # The 1421 jig is identifiable by its product string; an "ADSBee 1090" could be any RP2040 variant, so it
+    # The ADSBee 1421 Programmer is identifiable by its product string; an "ADSBee 1090" could be any RP2040 variant, so it
     # needs --model.
     rc, out, _ = run(capsys, "at", "-d", "J1421", "AT+UPTIME?")
     assert rc == 0 and "UPTIME=42" in out
