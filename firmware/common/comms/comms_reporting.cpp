@@ -829,9 +829,9 @@ bool CommsManager::ReportAircraftJSON(ReportSink* sinks, uint16_t num_sinks) {
         int message_len_bytes = -1;
 
         if (ModeSAircraft* mode_s_aircraft = get_if<ModeSAircraft>(&(itr->second)); mode_s_aircraft) {
-            message_len_bytes = WriteAircraftJSONModeSAircraftStr(message, *mode_s_aircraft);
+            message_len_bytes = WriteAircraftJSONModeSAircraftStr(message, *mode_s_aircraft, get_time_since_boot_ms());
         } else if (UATAircraft* uat_aircraft = get_if<UATAircraft>(&(itr->second)); uat_aircraft) {
-            message_len_bytes = WriteAircraftJSONUATAircraftStr(message, *uat_aircraft);
+            message_len_bytes = WriteAircraftJSONUATAircraftStr(message, *uat_aircraft, get_time_since_boot_ms());
         } else if (RemoteIDAircraft* remote_id_aircraft = get_if<RemoteIDAircraft>(&(itr->second)); remote_id_aircraft) {
             message_len_bytes = WriteAircraftJSONRemoteIDAircraftStr(message, *remote_id_aircraft);
         } else {

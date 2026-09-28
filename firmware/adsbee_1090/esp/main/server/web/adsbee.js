@@ -1227,37 +1227,61 @@ const RID_UA_TYPE_STRINGS = [
     'Ground Obstacle', 'Other'
 ];
 
+// Traffic sources. One aircraft can be reported by several at once (its own 1090 or UAT ADS-B, and a ground station's
+// ADS-R or TIS-B rebroadcast of it), so the store keys targets by (hex, source) and the map draws each as its own
+// labelled target instead of one target that jumps between their positions.
+const TRAFFIC_SOURCES = {
+    adsb_1090: { label: '1090 ADS-B', stroke: 'rgba(0,0,0,0.5)', dash: '' },
+    adsb_uat: { label: 'UAT ADS-B', stroke: '#0057b8', dash: '' },
+    adsr: { label: 'ADS-R', stroke: '#e07000', dash: '4,2' },
+    tisb: { label: 'TIS-B', stroke: '#7b2fbe', dash: '2,2' },
+    rid: { label: 'Remote ID', stroke: '#c026d3', dash: '' },
+};
+// A position older than this (seconds, from "seen_pos") is drawn faded: the target is still heard, but its position
+// is being held rather than updated.
+const kStalePositionS = 15;
+
+function acSource(ac) {
+    const type = ac.type ?? '';
+    if (type === 'remote_id') return 'rid';
+    if (type.startsWith('tisb')) return 'tisb';
+    if (type.startsWith('adsr')) return 'adsr';
+    return ac.link === 'uat' ? 'adsb_uat' : 'adsb_1090';  // Firmware without "link" only sent 1090 as direct ADS-B.
+}
+
 class AircraftStore {
     constructor() {
-        this.aircraft = new Map();  // hex → latest merged data
-        this.trails = new Map();  // hex → [{lat, lon, alt}]
-        this.trailRev = new Map();  // hex → bump count, so the map can skip redrawing unchanged trails
-        this.lastSeen = new Map();  // hex → Date.now() timestamp
+        this.aircraft = new Map();  // key (hex|source) → latest merged data
+        this.trails = new Map();  // key → [{lat, lon, alt}]
+        this.trailRev = new Map();  // key → bump count, so the map can skip redrawing unchanged trails
+        this.lastSeen = new Map();  // key → Date.now() timestamp
     }
 
     ingest(ac) {
         if (!ac.hex) return;
-        const prev = this.aircraft.get(ac.hex) || {};
-        this.aircraft.set(ac.hex, { ...prev, ...ac });
-        this.lastSeen.set(ac.hex, Date.now());
+        const src = acSource(ac);
+        const key = `${ac.hex}|${src}`;
+        const prev = this.aircraft.get(key) || {};
+        this.aircraft.set(key, { ...prev, ...ac, key, src, srcLabel: TRAFFIC_SOURCES[src].label });
+        this.lastSeen.set(key, Date.now());
         if (ac.lat != null && ac.lon != null) {
-            const t = this.trails.get(ac.hex) || [];
+            const t = this.trails.get(key) || [];
             t.push({ lat: ac.lat, lon: ac.lon, alt: ac.alt_baro ?? null });
             if (t.length > kMaxTrailPoints) t.shift();
-            this.trails.set(ac.hex, t);
-            this.trailRev.set(ac.hex, (this.trailRev.get(ac.hex) ?? 0) + 1);
+            this.trails.set(key, t);
+            this.trailRev.set(key, (this.trailRev.get(key) ?? 0) + 1);
         }
     }
 
     // Remove aircraft not heard from in the last 5 seconds.
     sweep() {
         const cutoff = Date.now() - 5000;
-        for (const hex of this.aircraft.keys()) {
-            if ((this.lastSeen.get(hex) ?? 0) < cutoff) {
-                this.aircraft.delete(hex);
-                this.trails.delete(hex);
-                this.trailRev.delete(hex);
-                this.lastSeen.delete(hex);
+        for (const key of this.aircraft.keys()) {
+            if ((this.lastSeen.get(key) ?? 0) < cutoff) {
+                this.aircraft.delete(key);
+                this.trails.delete(key);
+                this.trailRev.delete(key);
+                this.lastSeen.delete(key);
             }
         }
     }
@@ -1348,6 +1372,26 @@ class LiveMap {
             attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
             maxZoom: 18,
         }).addTo(this.map);
+        this._addSourceLegend();
+    }
+
+    _addSourceLegend() {
+        const legend = L.control({ position: 'bottomleft' });
+        legend.onAdd = () => {
+            const div = L.DomUtil.create('div', 'map-source-legend');
+            div.style.cssText = 'background:rgba(255,255,255,0.9);color:#222;padding:4px 8px;border-radius:4px;' +
+                'font:12px sans-serif;line-height:18px';
+            const swatch = (s, opacity = 1) =>
+                `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:middle;margin-right:4px">` +
+                `<polygon points="7,1 12,13 7,10 2,13" fill="#9aa0a6" opacity="${opacity}" stroke="${s.stroke}" ` +
+                `stroke-width="${s === TRAFFIC_SOURCES.adsb_1090 ? 1 : 2}" stroke-dasharray="${s.dash ? '2,1' : ''}"/></svg>`;
+            div.innerHTML = Object.entries(TRAFFIC_SOURCES)
+                .filter(([k]) => k !== 'rid')
+                .map(([, s]) => `<div>${swatch(s)}${s.label}</div>`).join('') +
+                `<div>${swatch(TRAFFIC_SOURCES.adsb_1090, 0.35)}Position held &gt;${kStalePositionS} s</div>`;
+            return div;
+        };
+        legend.addTo(this.map);
     }
 
     invalidate() {
@@ -1385,7 +1429,7 @@ class LiveMap {
         }
     }
 
-    _makeIcon(color, track, isGround, isSelected, isDrone, gs) {
+    _makeIcon(color, track, isGround, isSelected, isDrone, gs, src = 'adsb_1090', isStale = false) {
         if (isDrone) {
             // Remote ID drones get a distinct quadcopter marker (four rotors) in a fixed accent color so they stand out
             // from ADS-B / UAT aircraft. Not rotated (Remote ID track is often unavailable or noisy at low speed), and
@@ -1408,6 +1452,9 @@ class LiveMap {
         // limited to the icon box + aircraft shape so hitboxes don't balloon.
         const ring = isSelected ? '<circle cx="96" cy="96" r="15" fill="none" stroke="white" stroke-width="2" opacity="0.7"/>' : '';
         const fill = isGround ? '#888888' : color;
+        const source = TRAFFIC_SOURCES[src] ?? TRAFFIC_SOURCES.adsb_1090;
+        const strokeWidth = src === 'adsb_1090' ? 1.2 : 2.4;  // Heavier outline marks the other sources.
+        const opacity = isStale ? 0.35 : 1;
         const rot = (track != null) ? track : 0;
         const lenPx = (this.showVectors && gs > 0)
             ? Math.min(kVectorMaxPx, Math.max(kVectorMinPx, gs * kVectorPxPerKt)) : 0;
@@ -1418,7 +1465,8 @@ class LiveMap {
             ring +
             `<g transform="rotate(${rot},96,96)">` +
             vec +
-            `<polygon points="96,82 103,107 96,102 89,107" style="pointer-events:auto" fill="${fill}" stroke="rgba(0,0,0,0.5)" stroke-width="1.2"/>` +
+            `<polygon points="96,82 103,107 96,102 89,107" style="pointer-events:auto" fill="${fill}" opacity="${opacity}" ` +
+            `stroke="${source.stroke}" stroke-width="${strokeWidth}" stroke-dasharray="${source.dash}"/>` +
             `</g></svg>`;
         return L.divIcon({ html: svg, className: '', iconSize: [32, 32], iconAnchor: [16, 16] });
     }
@@ -1462,23 +1510,24 @@ class LiveMap {
 
         for (const ac of this.store.all()) {
             if (ac.lat == null || ac.lon == null) continue;
-            live.add(ac.hex);
+            live.add(ac.key);
             const isDrone = ac.type === 'remote_id';
             const color = acAltColor(ac.alt_baro ?? ac.alt_geom);
             const isGround = !!ac.on_ground;
-            const isSel = ac.hex === this.selectedHex;
-            const icon = this._makeIcon(color, acDirection(ac), isGround, isSel, isDrone, ac.gs);
+            const isSel = ac.key === this.selectedHex;
+            const isStale = ac.seen_pos != null && ac.seen_pos > kStalePositionS;
+            const icon = this._makeIcon(color, acDirection(ac), isGround, isSel, isDrone, ac.gs, ac.src, isStale);
 
-            if (this.markers.has(ac.hex)) {
-                const m = this.markers.get(ac.hex);
+            if (this.markers.has(ac.key)) {
+                const m = this.markers.get(ac.key);
                 m.setLatLng([ac.lat, ac.lon]);
                 m.setIcon(icon);
             } else {
-                const hex = ac.hex;
+                const key = ac.key;
                 const m = L.marker([ac.lat, ac.lon], { icon })
                     .addTo(this.map)
-                    .on('click', () => this.selectAircraft(hex));
-                this.markers.set(hex, m);
+                    .on('click', () => this.selectAircraft(key));
+                this.markers.set(key, m);
             }
         }
 
@@ -1566,10 +1615,13 @@ class LiveMap {
         const title = document.getElementById('sidebar-title');
         const fields = document.getElementById('sidebar-fields');
         if (!panel) return;
-        if (title) title.textContent = (ac.flight || '').trim() || ac.hex;
+        if (title) {
+            title.textContent = ((ac.flight || '').trim() || ac.hex) + (ac.src && ac.src !== 'adsb_1090' ? ` · ${ac.srcLabel}` : '');
+        }
 
         const defs = [
             ['hex', 'ICAO', v => v],
+            ['srcLabel', 'Source', v => v],
             ['flight', 'Callsign', v => v.trim() || null],
             ['squawk', 'Squawk', v => v],
             ['type', 'Type', v => v],
@@ -1585,6 +1637,7 @@ class LiveMap {
             ['geom_rate', 'Geom rate', v => v.toLocaleString() + ' fpm'],
             ['lat', 'Latitude', v => v.toFixed(5)],
             ['lon', 'Longitude', v => v.toFixed(5)],
+            ['seen_pos', 'Position age', v => v.toFixed(1) + ' s'],
             ['rssi', 'RSSI', v => v.toFixed(1) + ' dBm'],
             ['messages', 'Messages', v => v.toLocaleString()],
             ['nic', 'NIC', v => String(v)],
@@ -1692,13 +1745,13 @@ class AircraftTable {
         const acs = this._sorted();
 
         const rows = new Map();
-        for (const row of this.tbody.querySelectorAll('tr[data-hex]')) rows.set(row.dataset.hex, row);
+        for (const row of this.tbody.querySelectorAll('tr[data-key]')) rows.set(row.dataset.key, row);
 
         const seen = new Set();
         for (const ac of acs) {
-            seen.add(ac.hex);
+            seen.add(ac.key);
             const cs = (ac.flight || '').trim();
-            const type = ac.type ?? '';
+            const source = ac.srcLabel ?? '';
             const sqwk = ac.squawk ?? '';
             const alt = ac.alt_baro != null ? ac.alt_baro.toLocaleString() : '';
             const gs = ac.gs != null ? Math.round(ac.gs) : '';
@@ -1708,40 +1761,40 @@ class AircraftTable {
             const rssi = ac.rssi != null ? ac.rssi.toFixed(1) : '';
             const color = acAltColor(ac.alt_baro);
 
-            if (rows.has(ac.hex)) {
-                const r = rows.get(ac.hex);
+            if (rows.has(ac.key)) {
+                const r = rows.get(ac.key);
                 const c = r.querySelectorAll('td');
                 c[0].style.color = color; c[0].textContent = ac.hex;
-                c[1].textContent = cs; c[2].textContent = type;
+                c[1].textContent = cs; c[2].textContent = source;
                 c[3].textContent = sqwk; c[4].textContent = alt;
                 c[5].textContent = gs; c[6].textContent = hdg;
                 c[7].textContent = lat; c[8].textContent = lon;
                 c[9].textContent = rssi;
-                r.classList.toggle('trail-active', this.selectedHex === ac.hex);
+                r.classList.toggle('trail-active', this.selectedHex === ac.key);
             } else {
                 const r = document.createElement('tr');
-                r.dataset.hex = ac.hex;
+                r.dataset.key = ac.key;
                 r.innerHTML = `<td style="color:${color};font-family:monospace">${ac.hex}</td>` +
-                    `<td>${cs}</td><td>${type}</td><td>${sqwk}</td><td>${alt}</td><td>${gs}</td>` +
+                    `<td>${cs}</td><td>${source}</td><td>${sqwk}</td><td>${alt}</td><td>${gs}</td>` +
                     `<td>${hdg}</td><td>${lat}</td><td>${lon}</td><td>${rssi}</td>`;
                 r.addEventListener('click', () => {
-                    if (this.onSelect) this.onSelect(ac.hex);
+                    if (this.onSelect) this.onSelect(ac.key);
                 });
                 this.tbody.appendChild(r);
             }
         }
 
         // Remove rows for aircraft no longer in store
-        for (const [hex, row] of rows) {
-            if (!seen.has(hex)) {
+        for (const [key, row] of rows) {
+            if (!seen.has(key)) {
                 row.remove();
-                if (this.selectedHex === hex) this.selectedHex = null;
+                if (this.selectedHex === key) this.selectedHex = null;
             }
         }
 
         // Re-order DOM rows to match sort (avoids flicker vs. delete+recreate)
         for (const ac of acs) {
-            const row = this.tbody.querySelector(`tr[data-hex="${ac.hex}"]`);
+            const row = this.tbody.querySelector(`tr[data-key="${ac.key}"]`);
             if (row) this.tbody.appendChild(row);
         }
     }
@@ -1749,8 +1802,8 @@ class AircraftTable {
     setSelected(hex) {
         this.selectedHex = hex;
         if (!this.tbody) return;
-        for (const row of this.tbody.querySelectorAll('tr[data-hex]')) {
-            row.classList.toggle('trail-active', row.dataset.hex === hex);
+        for (const row of this.tbody.querySelectorAll('tr[data-key]')) {
+            row.classList.toggle('trail-active', row.dataset.key === hex);
         }
     }
 }

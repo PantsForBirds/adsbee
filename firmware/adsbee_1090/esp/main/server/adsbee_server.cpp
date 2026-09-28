@@ -904,15 +904,15 @@ void ADSBeeServer::SendAircraftJSONMessages() {
     char json_buf[kAircraftJSONMessageStrMaxLen];
     uint16_t batch_len = 0;
     uint32_t timestamp_ms = get_time_since_boot_ms();
+    // Unlike the AIRCRAFT_JSON feed and GDL90, the Live Map gets every entry, including direct ADS-B and TIS-B/ADS-R
+    // reports of the same ICAO address: it shows them as separate targets labelled by "type" and "link", and uses
+    // "seen_pos" to mark a held position.
     for (auto& itr : aircraft_dictionary.dict) {
-        if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) {
-            continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
-        }
         int16_t len = -1;
         if (ModeSAircraft* ac = get_if<ModeSAircraft>(&itr.second); ac) {
-            len = WriteAircraftJSONModeSAircraftStr(json_buf, *ac);
+            len = WriteAircraftJSONModeSAircraftStr(json_buf, *ac, timestamp_ms);
         } else if (UATAircraft* ac = get_if<UATAircraft>(&itr.second); ac) {
-            len = WriteAircraftJSONUATAircraftStr(json_buf, *ac);
+            len = WriteAircraftJSONUATAircraftStr(json_buf, *ac, timestamp_ms);
         } else if (RemoteIDAircraft* ac = get_if<RemoteIDAircraft>(&itr.second); ac) {
             len = WriteAircraftJSONRemoteIDAircraftStr(json_buf, *ac);
         }

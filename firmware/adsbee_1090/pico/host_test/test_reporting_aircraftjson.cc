@@ -514,3 +514,30 @@ TEST_F(PreferredReportForAddress, LoneAndNonICAOEntriesAreAlwaysReported) {
     EXPECT_TRUE(Preferred(mode_s->GetUID()));
     EXPECT_FALSE(Preferred(tisb->GetUID()));
 }
+
+// "link" tells a map which link a report came from (both links report direct targets as "adsb_icao"), and "seen_pos"
+// how old the position is, so a held position can be told from a live one.
+TEST(AircraftJSON, LinkAndSeenPos) {
+    char buf[kAircraftJSONMessageStrMaxLen];
+    ModeSAircraft mode_s(0xA41090);
+    mode_s.WriteBitFlag(ModeSAircraft::kBitFlagPositionValid, true);
+    mode_s.last_position_update_ms = 100000;
+    ASSERT_GT(WriteAircraftJSONModeSAircraftStr(buf, mode_s, 283456), 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "link"), "1090");
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "183.4");
+
+    ASSERT_GT(WriteAircraftJSONModeSAircraftStr(buf, mode_s), 0);  // No timestamp: no seen_pos.
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "");
+
+    UATAircraft uat(0xA41090 | (UATAircraft::kTISBTargetWithICAO24BitAddress << Aircraft::kAddressQualifierBitShift));
+    uat.WriteBitFlag(UATAircraft::kBitFlagPositionValid, true);
+    uat.last_position_update_ms = 280000;
+    ASSERT_GT(WriteAircraftJSONUATAircraftStr(buf, uat, 283456), 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "type"), "tisb_icao");
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "link"), "uat");
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "3.4");
+
+    uat.WriteBitFlag(UATAircraft::kBitFlagPositionValid, false);  // No position: no seen_pos.
+    ASSERT_GT(WriteAircraftJSONUATAircraftStr(buf, uat, 283456), 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "");
+}
