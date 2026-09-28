@@ -4,6 +4,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Returns the JSON value (as a string) for the given key in a single-line JSON object, or an empty
 // string if the key is not present.  Handles string values ("key":"val") and numeric values
@@ -540,4 +541,55 @@ TEST(AircraftJSON, LinkAndSeenPos) {
     uat.WriteBitFlag(UATAircraft::kBitFlagPositionValid, false);  // No position: no seen_pos.
     ASSERT_GT(WriteAircraftJSONUATAircraftStr(buf, uat, 283456), 0);
     EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "");
+}
+
+// The Live Map (/aircraft) gets one record per ICAO address, the preferred source, in whole-object JSON arrays.
+TEST_F(PreferredReportForAddress, LiveMapArraysHaveOneRecordPerAddress) {
+    AddModeS(true, 1000);                                              // a41090 direct 1090ES: preferred.
+    AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 500);  // a41090 TIS-B: suppressed.
+    UATAircraft* other = dictionary.InsertAircraft<UATAircraft>(
+        UATAircraft(0xA00001 | (UATAircraft::kTISBTargetWithICAO24BitAddress << Aircraft::kAddressQualifierBitShift)));
+    other->WriteBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid, true);  // TIS-B only: reported as TIS-B.
+    other->last_position_update_ms = kNowMs - 20000;
+
+    std::vector<std::string> arrays;
+    char buf[4000];  // WebSocketServer::kWebSocketMessageMaxLen on the ESP32.
+    WriteAircraftJSONLiveMapArrays(dictionary, kNowMs, buf, sizeof(buf),
+                                   [&](const char* b, uint16_t len) { arrays.emplace_back(b, len); });
+    ASSERT_EQ(arrays.size(), 1u);
+    const std::string& a = arrays[0];
+    EXPECT_EQ(a.front(), '[');
+    EXPECT_EQ(a.back(), ']');
+    auto count = [&](std::string_view needle) {
+        size_t n = 0;
+        for (size_t pos = a.find(needle); pos != std::string::npos; pos = a.find(needle, pos + 1)) n++;
+        return n;
+    };
+    EXPECT_EQ(count("\"hex\":\"a41090\""), 1u);
+    EXPECT_EQ(count("\"hex\":\"a00001\""), 1u);
+    EXPECT_EQ(count("\"type\":\"adsb_icao\",\"link\":\"1090\""), 1u);  // a41090 from its own ADS-B.
+    EXPECT_EQ(count("\"type\":\"tisb_icao\",\"link\":\"uat\""), 1u);   // a00001 from TIS-B.
+    EXPECT_EQ(count("\"seen_pos\":20.0"), 1u);
+}
+
+// Arrays split between whole objects and never exceed the buffer.
+TEST_F(PreferredReportForAddress, LiveMapArraysSplitAtObjectBoundaries) {
+    for (uint32_t i = 0; i < 40; i++) {
+        ModeSAircraft* ac = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xB00000 + i));
+        ac->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid, true);
+        ac->last_position_update_ms = kNowMs;
+    }
+    std::vector<std::string> arrays;
+    char buf[1000];
+    WriteAircraftJSONLiveMapArrays(dictionary, kNowMs, buf, sizeof(buf),
+                                   [&](const char* b, uint16_t len) { arrays.emplace_back(b, len); });
+    EXPECT_GT(arrays.size(), 1u);
+    size_t records = 0;
+    for (const std::string& a : arrays) {
+        EXPECT_LE(a.size(), sizeof(buf));
+        EXPECT_EQ(a.front(), '[');
+        EXPECT_EQ(a.back(), ']');
+        for (size_t pos = a.find("\"hex\""); pos != std::string::npos; pos = a.find("\"hex\"", pos + 1)) records++;
+    }
+    EXPECT_EQ(records, 40u);
 }

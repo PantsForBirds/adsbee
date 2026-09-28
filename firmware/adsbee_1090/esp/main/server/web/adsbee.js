@@ -1227,9 +1227,9 @@ const RID_UA_TYPE_STRINGS = [
     'Ground Obstacle', 'Other'
 ];
 
-// Traffic sources. One aircraft can be reported by several at once (its own 1090 or UAT ADS-B, and a ground station's
-// ADS-R or TIS-B rebroadcast of it), so the store keys targets by (hex, source) and the map draws each as its own
-// labelled target instead of one target that jumps between their positions.
+// Traffic sources. The firmware sends one record per ICAO address, from the preferred source (the aircraft's own 1090
+// or UAT ADS-B, else a ground station's ADS-R or TIS-B rebroadcast of it); the map labels and outlines each target by
+// that source so a rebroadcast can be told from direct ADS-B.
 const TRAFFIC_SOURCES = {
     adsb_1090: { label: '1090 ADS-B', stroke: 'rgba(0,0,0,0.5)', dash: '' },
     adsb_uat: { label: 'UAT ADS-B', stroke: '#0057b8', dash: '' },
@@ -1251,7 +1251,7 @@ function acSource(ac) {
 
 class AircraftStore {
     constructor() {
-        this.aircraft = new Map();  // key (hex|source) → latest merged data
+        this.aircraft = new Map();  // key (hex) → latest merged data
         this.trails = new Map();  // key → [{lat, lon, alt}]
         this.trailRev = new Map();  // key → bump count, so the map can skip redrawing unchanged trails
         this.lastSeen = new Map();  // key → Date.now() timestamp
@@ -1260,8 +1260,9 @@ class AircraftStore {
     ingest(ac) {
         if (!ac.hex) return;
         const src = acSource(ac);
-        const key = `${ac.hex}|${src}`;
-        const prev = this.aircraft.get(key) || {};
+        const key = ac.hex;
+        let prev = this.aircraft.get(key) || {};
+        if (prev.src && prev.src !== src) prev = {};  // Don't mix fields from two sources; the trail carries over.
         this.aircraft.set(key, { ...prev, ...ac, key, src, srcLabel: TRAFFIC_SOURCES[src].label });
         this.lastSeen.set(key, Date.now());
         if (ac.lat != null && ac.lon != null) {

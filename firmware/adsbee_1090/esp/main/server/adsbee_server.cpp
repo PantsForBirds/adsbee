@@ -901,37 +901,6 @@ void ADSBeeServer::SendAircraftJSONMessages() {
     // each) cost ~100 TCP segments per second per client at a busy site; on the W5500 Ethernet board the network tasks
     // doing that outrank the SPI receive task, which then missed RP2040 handshakes until the RP2040 reset the board.
     char batch_buf[WebSocketServer::kWebSocketMessageMaxLen];
-    char json_buf[kAircraftJSONMessageStrMaxLen];
-    uint16_t batch_len = 0;
-    uint32_t timestamp_ms = get_time_since_boot_ms();
-    // Unlike the AIRCRAFT_JSON feed and GDL90, the Live Map gets every entry, including direct ADS-B and TIS-B/ADS-R
-    // reports of the same ICAO address: it shows them as separate targets labelled by "type" and "link", and uses
-    // "seen_pos" to mark a held position.
-    for (auto& itr : aircraft_dictionary.dict) {
-        int16_t len = -1;
-        if (ModeSAircraft* ac = get_if<ModeSAircraft>(&itr.second); ac) {
-            len = WriteAircraftJSONModeSAircraftStr(json_buf, *ac, timestamp_ms);
-        } else if (UATAircraft* ac = get_if<UATAircraft>(&itr.second); ac) {
-            len = WriteAircraftJSONUATAircraftStr(json_buf, *ac, timestamp_ms);
-        } else if (RemoteIDAircraft* ac = get_if<RemoteIDAircraft>(&itr.second); ac) {
-            len = WriteAircraftJSONRemoteIDAircraftStr(json_buf, *ac);
-        }
-        if (len <= 0) {
-            continue;
-        }
-        // "[" or "," before the object, "]" after the batch.
-        if (batch_len > 0 && batch_len + 1 + len + 1 > sizeof(batch_buf)) {
-            batch_buf[batch_len++] = ']';
-            network_aircraft.BroadcastMessage(batch_buf, batch_len);
-            batch_len = 0;
-        }
-        char separator = batch_len == 0 ? '[' : ',';
-        batch_buf[batch_len++] = separator;
-        memcpy(batch_buf + batch_len, json_buf, len);
-        batch_len += len;
-    }
-    if (batch_len > 0) {
-        batch_buf[batch_len++] = ']';
-        network_aircraft.BroadcastMessage(batch_buf, batch_len);
-    }
+    WriteAircraftJSONLiveMapArrays(aircraft_dictionary, get_time_since_boot_ms(), batch_buf, sizeof(batch_buf),
+                                   [this](const char* buf, uint16_t len) { network_aircraft.BroadcastMessage(buf, len); });
 }
