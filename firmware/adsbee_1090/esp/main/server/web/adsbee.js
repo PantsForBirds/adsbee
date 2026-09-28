@@ -717,200 +717,6 @@ class ADSBeeAT {
             }
         }
     }
-
-    /**
-     * Send raw bytes to the ADSBee device.
-     * @param {Uint8Array} data The data to send.
-     * @param {boolean} printResponse Whether to print the response to the console.
-     * @return A promise that resolves with the decoded_message response lines.
-     */
-    async sendBytes(data, printResponse = false, waitForOkOrError = false) {
-        const RESPONSE_TO_WAIT_FOR = 'OK';
-        const RESPONSE_TIMEOUT_MS = 3000;
-        if (this.ws.readyState !== WebSocket.OPEN) {
-            throw new Error(`Response timeout: WebSocket not open (readyState=${this.ws.readyState})`);
-        }
-        this.ws.send(data);
-        return await this.receiveResponse(printResponse, waitForOkOrError, RESPONSE_TO_WAIT_FOR, RESPONSE_TIMEOUT_MS);
-    }
-
-    /**
-     * Silence the console by silencing logs and turning off any output protocols. Call this before sending data
-     * for firmware updates.
-     */
-    async silenceConsole() {
-        await this.sendCmd(AT_PLUS + "LOG_LEVEL=ERRORS\r\n", 0, true, true);
-        await this.sendCmd(AT_PLUS + "PROTOCOL_OUT=CONSOLE,NONE\r\n", 0, true, true);
-    }
-
-    /**
-     * Get the flash partition that can currently be read from / written to (e.g. the flash partition that is
-     * not currently being executed from).
-     * @return The current OTA flash partition.
-     */
-    async otaGetFlashPartition() {
-        const decodedResponse = await this.sendCmd(AT_PLUS + "OTA=GET_PARTITION\r\n", 0, true, true);
-
-        for (const line of decodedResponse) {
-            const match = line.match(/Partition: (\d+)/);
-            if (match) {
-                return parseInt(match[1]);
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Write bytes to the current OTA flash partition.
-     * @param {number} offset The offset in bytes to write to.
-     * @param {Uint8Array} data The data to write.
-     */
-    async otaWriteBytes(offset, data) {
-        const crc32 = this.calculateCRC32(data);
-        const cmdResponse = await this.sendCmd(`${AT_PLUS}OTA=WRITE,${offset.toString(16)},${data.length},${crc32.toString(16)}\r\n`, 0, true, true, "READY");
-        for (const line of cmdResponse) {
-            if (line.includes('ERROR')) {
-                // Flush remaining lines then throw the error.
-                await this.flushInputBuffer(ADSBeeAT.ERROR_BUFFER_FLUSH_INTERVAL_MS);
-                throw new Error(`Command failed with error: ${line}`);
-            }
-        }
-        const dataResponse = await this.sendBytes(data, true, true);
-        for (const line of dataResponse) {
-            if (line.includes('ERROR')) {
-                // Flush remaining lines then throw the error.
-                await this.flushInputBuffer(ADSBeeAT.ERROR_BUFFER_FLUSH_INTERVAL_MS);
-                throw new Error(`Data transfer failed with error: ${line}`);
-            }
-        }
-    }
-
-    /**
-     * Erase bytes from the current OTA flash partition.
-     * @param {number} offsetBytes The offset in bytes to erase from.
-     * @param {number} lenBytes The length in bytes to erase.
-     */
-    async otaErase(offsetBytes = NaN, lenBytes = NaN) {
-        const ERASE_TIMEOUT_MS = 20000; // Allow 20 seconds for flash erase to complete.
-        if (!isNaN(offsetBytes) && !isNaN(lenBytes)) {
-            await this.sendCmd(`${AT_PLUS}OTA=ERASE,${offsetBytes.toString(16)},${lenBytes}\r\n`, 0, true, true, "OK", ERASE_TIMEOUT_MS);
-        } else {
-            // Allow 20 seconds for flash erase to complete.
-            await this.sendCmd(AT_PLUS + "OTA=ERASE\r\n", 0, true, true, "OK", ERASE_TIMEOUT_MS);
-        }
-    }
-
-    /**
-     * Write a file to the current OTA flash partition.
-     * @param {File} file The file to write.
-     */
-    async otaWriteFile(file) {
-        const HEADER_SIZE_BYTES = 5 * 4;
-        const APP_OFFSET_BYTES = 4 * 1024;
-        // Each chunk is received on the ESP32 as one WebSocket frame, which callocs a contiguous buffer of the chunk
-        // size. With Bluetooth Remote ID enabled the ESP32-S3's internal heap is tight and fragmented (largest free
-        // block can be ~10 KB even with ~25 KB free), so a large chunk fails to allocate and aborts the OTA. Keep this
-        // small AND a multiple of the 4096-Byte flash sector size (chunk offsets must stay sector-aligned for the
-        // retry-erase path below). One sector (4096) allocates reliably under fragmentation; it was previously 3 sectors
-        // (12288), which no longer fits.
-        const WRITE_CHUNK_BYTES = 0x1000;
-        const MAX_ATTEMPTS_PER_CHUNK = 3;
-
-        const partition = await this.otaGetFlashPartition();
-
-        if (partition === null) {
-            throw new Error("Failed to get OTA partition from ADSBee.");
-        }
-
-        const fileData = await this.readFile(file);
-        const dataView = new DataView(fileData.buffer);
-
-        const numPartitions = dataView.getUint32(0, true);
-        if (partition > numPartitions) {
-            throw new Error(`Partition ${partition} is out of range. Only ${numPartitions} partitions available.`);
-        }
-
-        const offset = dataView.getUint32(4 + 4 * partition, true);
-        const contents = fileData.slice(offset);
-        const headerContents = contents.slice(0, HEADER_SIZE_BYTES);
-        const appLenBytes = dataView.getUint32(offset + 8, true);
-
-        await this.otaErase(0, appLenBytes + HEADER_SIZE_BYTES);
-
-        // Write the header
-        await this.otaWriteBytes(0, headerContents);
-
-        // Write the application in chunks
-        for (let i = HEADER_SIZE_BYTES; i < HEADER_SIZE_BYTES + appLenBytes; i += WRITE_CHUNK_BYTES) {
-            const offsetBytes = (i - HEADER_SIZE_BYTES) + APP_OFFSET_BYTES;
-            let success = false;
-            let attempts = 0;
-            while (!success && attempts < MAX_ATTEMPTS_PER_CHUNK) {
-                try {
-                    if (attempts > 0) {
-                        // We are here on a retry, so erase the chunk first.
-                        await this.otaErase(offsetBytes, WRITE_CHUNK_BYTES);
-                    }
-                    const chunk = contents.slice(i, Math.min(i + WRITE_CHUNK_BYTES, HEADER_SIZE_BYTES + appLenBytes));
-                    await this.otaWriteBytes(offsetBytes, chunk);
-                    success = true;
-                } catch (error) {
-                    console.error(error);
-                    console.error(`Failed to write chunk at offset ${offsetBytes}. Retrying (${attempts + 1}/${MAX_ATTEMPTS_PER_CHUNK})... `);
-                    attempts++; // Wait to erase until the next loop so that we can re-use the try-catch and don't erase before final failure if the first few retry attempts also fail.
-                }
-            }
-        }
-
-        // Verify and boot the new partition
-        await this.sendCmd(AT_PLUS + "OTA=VERIFY\r\n", 0, true, true);
-    }
-
-    /**
-     * Boot the current OTA flash partition.
-     */
-    async otaBoot() {
-        await this.sendCmd(AT_PLUS + "OTA=BOOT\r\n", 0, true);
-    }
-
-    /**
-     * Read a file as an ArrayBuffer.
-     * @param {File} file The file to read.
-     * @return {Promise<Uint8Array>} A promise that resolves with the file data as an ArrayBuffer.
-     */
-    async readFile(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(new Uint8Array(reader.result));
-            reader.onerror = reject;
-            reader.readAsArrayBuffer(file);
-        });
-    }
-
-    /**
-     * Calculate the CRC32 checksum of a Uint8Array.
-     * @param {Uint8Array} data The data to calculate the CRC32 checksum for.
-     * @return {number} The CRC32 checksum.
-     */
-    calculateCRC32(data) {
-        let crc = 0xFFFFFFFF;
-        for (let i = 0; i < data.length; i++) {
-            crc = (crc >>> 8) ^ ADSBeeAT.crcTable[(crc ^ data[i]) & 0xFF];
-        }
-        return (crc ^ 0xFFFFFFFF) >>> 0;
-    }
-
-    static crcTable = (() => {
-        const table = new Uint32Array(256);
-        for (let i = 0; i < 256; i++) {
-            let c = i;
-            for (let j = 0; j < 8; j++) {
-                c = ((c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1));
-            }
-            table[i] = c;
-        }
-        return table;
-    })();
 }
 
 class FirmwareUploader {
@@ -976,91 +782,77 @@ class FirmwareUploader {
     updateProgress(percent) {
         document.getElementById('firmware-modal-fill').style.width = `${percent}%`;
         document.getElementById('firmware-modal-text').textContent = `${percent}%`;
-        if (percent === 0) {
-            this.setModalStatus('Erasing flash...');
-        } else if (percent < 100) {
-            this.setModalStatus('Writing firmware...');
-        } else {
-            this.setModalStatus('Verifying & rebooting...');
-        }
     }
 
-    showSuccess() {
+    showSuccess(message) {
         this.uploadButton.innerHTML = 'Upload Complete';
-        this.setModalStatus('Upload complete! Device is rebooting.');
-        setTimeout(() => {
-            this.uploadButton.innerHTML = 'Upload Firmware';
-            this.hideModal();
-        }, 5000);
+        this.setModalStatus(message);
     }
 
     showError(message) {
         this.uploadButton.innerHTML = 'Upload Failed';
-        this.setModalStatus(`Upload failed: ${message}`);
-        setTimeout(() => {
-            this.uploadButton.innerHTML = 'Upload Firmware';
-            this.hideModal();
-        }, 5000);
+        this.setModalStatus(message);
+        const close = document.getElementById('firmware-modal-close');
+        if (close) close.style.display = '';
+    }
+
+    /** After the reboot, waits for the page to be served again (new firmware), then reloads it. */
+    async waitForReboot() {
+        const start = Date.now();
+        await new Promise((r) => setTimeout(r, 20000));
+        while (Date.now() - start < 300000) {
+            try {
+                const resp = await fetch('/', { cache: 'no-store' });
+                if (resp.ok) {
+                    this.showSuccess('Update complete. The ADSBee is back online; reloading the page...');
+                    setTimeout(() => location.reload(), 3000);
+                    return;
+                }
+            } catch (e) { /* still rebooting */ }
+            const s = Math.round((Date.now() - start) / 1000);
+            this.setModalStatus(`Update complete. The ADSBee is rebooting and updating its network and sub-GHz ` +
+                                `coprocessors (about 1 minute)... ${s} s`);
+            await new Promise((r) => setTimeout(r, 3000));
+        }
+        this.showError('Update complete, but the ADSBee has not come back after 5 minutes. Check its power and network.');
     }
 
     async uploadFirmware(file) {
-        let originalOtaWriteBytes = NaN;
-        let adsbee = null;
-        const origConsoleLog = console.log;
+        this.setUploadingState(true);
+        this.updateProgress(0);
+        this.showModal();
+        const close = document.getElementById('firmware-modal-close');
+        if (close) close.style.display = 'none';
+        // Pause the page's own websockets so the device's httpd isn't busy with them during the update.
+        consoleWebSocket.pause();
+        metricsWebSocket.pause();
+        let ok = false;
         try {
-            this.setUploadingState(true);
-            this.updateProgress(0);
-            this.showModal();
-            console.log = (...args) => {
-                origConsoleLog.apply(console, args);
-                this.appendToModalLog(args.join(' '));
-            };
-
-            adsbee = new ADSBeeAT(this.adsbeeUrl);
-            await adsbee.connect();
-
-            const totalSize = file.size / 2; // Two firmware images in file, we're only flashing one.
-            let uploadedSize = 0;
-
-            // Override otaWriteBytes to track progress
-            originalOtaWriteBytes = adsbee.otaWriteBytes.bind(adsbee);
-            adsbee.otaWriteBytes = async (offset, data) => {
-                await originalOtaWriteBytes(offset, data);
-                uploadedSize += data.length;
-                const progress = Math.min(Math.round((uploadedSize / totalSize) * 100), 100);
-                this.updateProgress(progress);
-            };
-
-            await adsbee.flushInputBuffer();
-            await adsbee.silenceConsole();
-            await adsbee.flushInputBuffer();
-
-            // Receiver already gets disabled during data chunk transfers, but this simplifies it a bit.
-            await adsbee.sendCmd(AT_PLUS + 'RX_ENABLE=0\r\n', 0, true, true);
-
-            // Pause other WebSocket clients to prevent httpd async queue contention during OTA.
-            consoleWebSocket.pause();
-            metricsWebSocket.pause();
-
-            await adsbee.otaWriteFile(file);
-            await adsbee.otaBoot();
-
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const updater = new AdsbeeOta.OtaUpdater({
+                makeTransport: () => AdsbeeOta.webSocketTransport(`ws://${this.adsbeeUrl}/console`),
+                log: (text) => { console.log(text); this.appendToModalLog(text); },
+                onProgress: (p) => {
+                    if (p.percent !== null && p.percent !== undefined) this.updateProgress(p.percent);
+                    if (p.message) this.setModalStatus(p.message);
+                },
+            });
+            const res = await updater.run(bytes);
+            ok = true;
             this.updateProgress(100);
-            this.showSuccess();
-
+            this.appendToModalLog(`Upload finished with ${res.retries} retried writes.`);
+            this.showSuccess('Update complete. The ADSBee is rebooting...');
         } catch (error) {
             console.error('Firmware upload failed:', error);
             this.showError(error.message || 'Failed to upload firmware. Please try again.');
         } finally {
-            console.log = origConsoleLog;
             this.setUploadingState(false);
-            if (adsbee && !isNaN(originalOtaWriteBytes)) {
-                adsbee.otaWriteBytes = originalOtaWriteBytes;
+            if (!ok) {
+                consoleWebSocket.resume();
+                metricsWebSocket.resume();
             }
-            if (adsbee) await adsbee.disconnect();
-            consoleWebSocket.resume();
-            metricsWebSocket.resume();
         }
+        if (ok) await this.waitForReboot();
     }
 }
 

@@ -6,6 +6,7 @@
     <title>ADSBee</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/png" href="favicon.png">
+    <script src="ota_updater.js"></script>
     <script src="adsbee.js"></script>
     <script src="settings.js"></script>
 </head>
@@ -180,6 +181,8 @@
             </div>
             <div id="firmware-modal-log"></div>
             <p class="firmware-modal-note">Interface is paused during the update. Please do not close this page.</p>
+            <button id="firmware-modal-close" class="tools-button" style="display:none;"
+                    onclick="document.getElementById('firmware-modal').style.display='none'">Close</button>
         </div>
     </div>
 

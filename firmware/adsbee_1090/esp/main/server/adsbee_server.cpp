@@ -47,6 +47,8 @@ extern const uint8_t adsbee_js_start[] asm("_binary_adsbee_js_start");
 extern const uint8_t adsbee_js_end[] asm("_binary_adsbee_js_end");
 extern const uint8_t settings_js_start[] asm("_binary_settings_js_start");
 extern const uint8_t settings_js_end[] asm("_binary_settings_js_end");
+extern const uint8_t ota_updater_js_start[] asm("_binary_ota_updater_js_start");
+extern const uint8_t ota_updater_js_end[] asm("_binary_ota_updater_js_end");
 extern const uint8_t favicon_png_start[] asm("_binary_favicon_png_start");
 extern const uint8_t favicon_png_end[] asm("_binary_favicon_png_end");
 
@@ -562,6 +564,12 @@ static esp_err_t settings_js_handler(httpd_req_t* req) {
     return ESP_OK;
 }
 
+static esp_err_t ota_updater_js_handler(httpd_req_t* req) {
+    httpd_resp_set_type(req, "application/javascript");
+    httpd_resp_send(req, (const char*)ota_updater_js_start, ota_updater_js_end - ota_updater_js_start);
+    return ESP_OK;
+}
+
 static void json_escape(char* out, size_t out_size, const char* in) {
     size_t o = 0;
     for (size_t i = 0; in[i] && o + 2 < out_size; i++) {
@@ -829,6 +837,16 @@ bool ADSBeeServer::TCPServerInit() {
                                .handle_ws_control_frames = false,
                                .supported_subprotocol = nullptr};
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_js));
+
+    // Firmware update (OTA) JavaScript URI handler
+    httpd_uri_t ota_updater_js = {.uri = "/ota_updater.js",
+                                  .method = HTTP_GET,
+                                  .handler = ota_updater_js_handler,
+                                  .user_ctx = NULL,
+                                  .is_websocket = false,
+                                  .handle_ws_control_frames = false,
+                                  .supported_subprotocol = nullptr};
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_updater_js));
 
     // Favicon URI handler
     httpd_uri_t favicon = {.uri = "/favicon.png",
