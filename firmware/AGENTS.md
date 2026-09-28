@@ -136,7 +136,10 @@ static constexpr uint32_t kSettingsVersion = N;
 3. If firmware version is unchanged, RP2040 skips reflashing the coprocessors — symptom: old behavior persists after flashing new `combined.uf2`
 
 ### Automated enforcement
-These rules are checked automatically by `scripts/check_version_sync.sh` (covers both products):
+These rules are checked automatically by `scripts/check_version_sync.sh` (covers both products).
+Markdown-only changes (`*.md`: READMEs, AGENTS.md) are exempt and need no bump; any other file under
+the watched paths, including `CMakeLists.txt`, scripts, and assets, still does. The CI
+`version_sync_check` job runs the check and its tests (`scripts/test_check_version_sync.sh`).
 - **`build.sh`** (both products') runs the check locally before every build, but only **warns** —
   a failed check never blocks a local build.
 - **Local git hook** — the enforcing gate; catches it before you even commit. A native `pre-commit` hook (no external tooling) is installed by the dev setup script:

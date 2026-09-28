@@ -110,7 +110,8 @@ paired with an adsbee_1421 firmware version bump — enforced by
 [`../scripts/check_version_sync.sh`](../scripts/check_version_sync.sh), which `build.sh` runs
 before every build (as a warning only — it never blocks the build) and which the repo pre-commit
 hook runs on every commit (where it does block). Note that a
-`firmware/common/` change requires bumping **both** products' versions.
+`firmware/common/` change requires bumping **both** products' versions. Markdown-only
+changes (`*.md`) are exempt.
 
 ## Flashing
 
