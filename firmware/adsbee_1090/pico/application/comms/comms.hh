@@ -74,7 +74,11 @@ class CommsManager {
      * parser).
      * @retval True if update succeeded, false otherwise.
      */
-    bool UpdateNetworkConsole();
+    /**
+     * Sends queued console output to the ESP32 (network console). Output is batched: unless force is set, nothing is
+     * sent within kNetworkConsoleMinReportingIntervalMs of the previous send, until the queue is 3/4 full.
+     */
+    bool UpdateNetworkConsole(bool force = false);
 
     CPP_AT_CALLBACK(ATBaudRateCallback);
     CPP_AT_CALLBACK(ATBiasTeeEnableCallback);

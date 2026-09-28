@@ -64,6 +64,9 @@ int32_t CommsManager::ATReadConsole(char* buf, uint16_t max_len, uint32_t timeou
                 got_char = true;
             } else {
                 esp32.Update();
+                // Console output printed while waiting (e.g. by the caller just before) would otherwise stay queued
+                // until the wait ends.
+                UpdateNetworkConsole();
             }
         }
 
@@ -976,6 +979,10 @@ CPP_AT_CALLBACK(CommsManager::ATOTACallback) {
                     at_console_guard_.BeginBinaryPayload(len_bytes);
                     // Send OK to indicate that we're ready to receive data.
                     CPP_AT_PRINTF("READY\r\n");
+                    // The sender waits for READY before sending the payload, so send it now. Console output is batched
+                    // (see UpdateNetworkConsole()): READY printed right after the previous command's OK stayed queued,
+                    // and on an otherwise quiet console the payload read below then timed out.
+                    UpdateNetworkConsole(true);
 
                     uint32_t old_esp32_heartbeat_ms = esp32.update_interval_ms;
                     esp32.update_interval_ms = kOTAHeartbeatMs;  // Faster heartbeat during OTA.
