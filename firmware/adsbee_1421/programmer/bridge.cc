@@ -35,8 +35,8 @@ extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* cod
         case HostBaudAction::kIgnore:
             return;
         case HostBaudAction::kRebootToBootsel:
-            // Checked in every jig state, including while it flashes the module: an interrupted flash is redone by the
-            // CRC check on the next boot. Does not return, so the magic baud never reaches host_baud or the UART.
+            // Checked in every Programmer state, including while it flashes the module: an interrupted flash is redone
+            // by the CRC check on the next boot. Does not return, so the magic baud never reaches host_baud or the UART.
             reset_usb_boot(0, 0);
             return;
         case HostBaudAction::kApply:
@@ -87,7 +87,7 @@ BridgeExit BridgeRun() {
             // baud (factory default 1 M). If the host's line coding differs from the rate the
             // console was last negotiated to, hand back to the caller to re-negotiate. A host
             // whose rate matches is assumed in sync; a device saved at some other rate is
-            // recovered by the host probing (line-coding changes retune the jig UART live) or
+            // recovered by the host probing (line-coding changes retune the Programmer's UART live) or
             // by the BOOTSEL recheck.
             if (sync_low_at_reset && host_baud != 0 && host_baud != expected_console_baud) {
                 bridge_active = false;

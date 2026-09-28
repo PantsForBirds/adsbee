@@ -228,7 +228,7 @@ static void TestRtsAssertEndsHold() {
 static void TestLinesBeforePassThrough() {
     printf("lines set before pass-through are not acted on\n");
     ModemLines lines;
-    lines.Track(true, false);  // Port opened and RTS dropped while the jig was still flashing.
+    lines.Track(true, false);  // Port opened and RTS dropped while the Programmer was still flashing.
     lines.Start();
     EXPECT(!lines.SyncHigh(0));  // SYNC stays low until the host changes a line.
     lines.OnLineState(true, false);

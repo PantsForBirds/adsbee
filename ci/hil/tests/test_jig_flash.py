@@ -67,7 +67,7 @@ def test_open_at_magic_baud_uses_the_1090_magic_baud(monkeypatch):
             seen.append((port, baud))
 
         def close(self):
-            raise serial.SerialException("device disconnected")  # The jig drops off the bus.
+            raise serial.SerialException("device disconnected")  # The Programmer drops off the bus.
 
     monkeypatch.setattr(serial, "Serial", FakeSerial)
     receivers.open_at_magic_baud("/dev/ttyACM9")

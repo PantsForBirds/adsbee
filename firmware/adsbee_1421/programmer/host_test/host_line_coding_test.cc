@@ -1,5 +1,5 @@
-// Host tests for ClassifyHostBaud(): which host line-coding bauds reboot the jig into BOOTSEL, which are forwarded to
-// the target UART, and that the magic baud is the ADSBee 1090's.
+// Host tests for ClassifyHostBaud(): which host line-coding bauds reboot the ADSBee 1421 Programmer into BOOTSEL,
+// which are forwarded to the target UART, and that the magic baud is the ADSBee 1090's.
 #include <stdint.h>
 #include <stdio.h>
 
@@ -32,9 +32,9 @@ static void TestNotABaud() {
     EXPECT(ClassifyHostBaud(0) == HostBaudAction::kIgnore);
 }
 
-// pico-sdk's default magic baud; pymavlink and friends open ports at it. It must not reboot the jig any more.
+// pico-sdk's default magic baud; pymavlink and friends open ports at it. It must not reboot the Programmer.
 static void Test1200IsForwarded() {
-    printf("1200 baud is forwarded, not a reboot\n");
+    printf("1200 baud is forwarded to the module\n");
     EXPECT(ClassifyHostBaud(1200) == HostBaudAction::kApply);
 }
 

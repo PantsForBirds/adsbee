@@ -27,10 +27,10 @@ UF2_MAGIC = (0x0A324655, 0x9E5D5157)
 UF2_FAMILY_RP2040 = 0xE48BFF56
 UF2_FLAG_FAMILY = 0x2000
 BOOT_USB_UF2_CMD = "AT+BOOT_USB_UF2=1DEADBEE"
-# Opening the 1421 programmer jig's port at this baud reboots it into BOOTSEL: the ADSBee 1090's
+# Opening the ADSBee 1421 Programmer's port at this baud reboots it into BOOTSEL: the ADSBee 1090's
 # PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE (kRebootToBootselBaud in firmware/adsbee_1421/programmer).
 JIG_REBOOT_TO_BOOTSEL_BAUD = 0xDEADBEE
-JIG_BOOTSEL_WAIT_S = 5.0  # The jig re-enumerates as RPI-RP2 within about 0.5 s.
+JIG_BOOTSEL_WAIT_S = 5.0  # The Programmer re-enumerates as RPI-RP2 within about 0.5 s.
 
 
 def open_at_magic_baud(port: str) -> None:
@@ -344,31 +344,31 @@ class Adsbee1090U(Receiver):
 
 
 class Adsbee1421(Receiver):
-    """ADSBee 1421 (TI CC1314R10 + Semtech LR2021) behind an "ADSBee 1421 Programmer" jig.
+    """ADSBee 1421 (TI CC1314R10 + Semtech LR2021) behind an ADSBee 1421 Programmer.
 
-    The module has no USB. The USB device (and ``usb_serial``) is the jig's RP2040
+    The module has no USB. The USB device (and ``usb_serial``) is the Programmer's RP2040
     (firmware/adsbee_1421/programmer), a USB<->UART bridge whose modem-control lines drive the
     module: RTS asserted -> SYNC low (awake), RTS deasserted -> SYNC high (host-controlled sleep /
     ROM bootloader backdoor armed), DTR assert edge -> reset pulse. Hence:
 
     * HUPCL is cleared so DTR/RTS stay asserted after close (else every close sleeps the module).
-    * The jig copies the host's line coding to the UART, so the host must open at the console's
+    * The Programmer copies the host's line coding to the UART, so the host must open at the console's
       live baud: 1 000 000 at factory default, else one of the firmware's whitelisted rates.
-      Never send AT+BAUD_RATE=CONSOLE,... through the jig.
+      Never send AT+BAUD_RATE=CONSOLE,... through the Programmer.
     * The AT parser rejects a bare "AT"; AT+UPTIME? is the probe.
 
     Module firmware (.hex) goes through the CC13x4 ROM serial bootloader using an external flasher
     command from the bench file (``[flashers.adsbee_1421] command``), since the flasher is not
     part of this repository. It must erase only the sectors the image covers: a full bank erase
-    also wipes the settings and device-info (OTA keys) sectors. The jig reflashes the module with
-    its own baked image at every power-up if they differ, so a .hex flashed this way lasts until
-    the jig next re-enumerates. Jig images (.uf2) are copied after opening the jig's port at
-    JIG_REBOOT_TO_BOOTSEL_BAUD, which reboots it into BOOTSEL; jig images older than that reboot
-    need a human to hold BOOT while replugging.
+    also wipes the settings and device-info (OTA keys) sectors. The Programmer reflashes the module
+    with its own baked image at every power-up if they differ, so a .hex flashed this way lasts
+    until the Programmer next re-enumerates. Programmer images (.uf2) are copied after opening the
+    Programmer's port at JIG_REBOOT_TO_BOOTSEL_BAUD, which reboots it into BOOTSEL; Programmer
+    images older than that reboot need a human to hold BOOT while replugging.
     """
 
     model = "adsbee_1421"
-    description = "ADSBee 1421 via the programmer jig (UART console bridged over USB CDC)"
+    description = "ADSBee 1421 via the ADSBee 1421 Programmer (UART console bridged over USB CDC)"
     console_baud = 1_000_000
     console_bauds = [1_000_000, 921_600, 460_800, 230_400, 115_200]
     keep_lines = True
@@ -383,7 +383,7 @@ class Adsbee1421(Receiver):
                 c = AtConsole(port, baud, keep_lines=True).open()
                 ok = False
                 try:
-                    # The first open after the jig enumerated (or after a tool closed the port with
+                    # The first open after the Programmer enumerated (or after a tool closed the port with
                     # HUPCL set) resets the module; give it a few tries to boot.
                     for _ in range(3 if i == 0 else 1):
                         c.write(b"\r\n")
@@ -405,7 +405,8 @@ class Adsbee1421(Receiver):
                     c.close()
                 return
             raise AtError(f"{self.id}: console did not answer at any of {self.console_bauds} baud"
-                          f"{f' ({last_err})' if last_err else ''}. Tap BOOTSEL on the jig or replug it.")
+                          f"{f' ({last_err})' if last_err else ''}. "
+                          "Tap BOOTSEL on the ADSBee 1421 Programmer or replug it.")
 
     def _baud_order(self) -> List[int]:
         return [self.console_baud] + [b for b in self.console_bauds if b != self.console_baud]
@@ -413,7 +414,8 @@ class Adsbee1421(Receiver):
     def check_command(self, cmd: str, allow_tx: bool = False) -> None:
         super().check_command(cmd, allow_tx)
         if re.match(r"^\s*AT\+BAUD_RATE\s*=\s*CONSOLE", cmd, re.IGNORECASE):
-            raise HilError(f"{self.id}: changing the console baud through the jig desyncs the bridge")
+            raise HilError(f"{self.id}: changing the console baud through the ADSBee 1421 Programmer "
+                           "desyncs the bridge")
 
     def rx_counters(self) -> Dict[str, int]:
         return parse_counters(self.at("AT+RX_STATS?"))
@@ -430,7 +432,7 @@ class Adsbee1421(Receiver):
         if image.endswith(".uf2"):
             return self._flash_jig(image, human_timeout)
         if not image.endswith(".hex"):
-            raise HilError("1421 images are .hex (module firmware) or .uf2 (programmer jig image)")
+            raise HilError("1421 images are .hex (module firmware) or .uf2 (ADSBee 1421 Programmer image)")
         template = self.bench.flasher_command(self.model, self.cfg)
         if not template:
             raise HilError(
@@ -456,22 +458,22 @@ class Adsbee1421(Receiver):
         with self.lock("flash-jig"):
             port_path = self.port_path()
             if not port_path:
-                raise HilError(f"{self.id}: jig not on USB and no usb_port in the bench file")
+                raise HilError(f"{self.id}: ADSBee 1421 Programmer not on USB and no usb_port in the bench file")
             d = usb.find_by_port(port_path)
             if d and not d.is_bootsel and d.console:
-                print(f"[{self.id}] opening {d.console} at {JIG_REBOOT_TO_BOOTSEL_BAUD} baud to reboot the jig "
-                      f"into BOOTSEL (USB port {port_path})", flush=True)
+                print(f"[{self.id}] opening {d.console} at {JIG_REBOOT_TO_BOOTSEL_BAUD} baud to reboot the "
+                      f"ADSBee 1421 Programmer into BOOTSEL (USB port {port_path})", flush=True)
                 open_at_magic_baud(d.console)
                 usb.wait_for(lambda: (x := usb.find_by_port(port_path)) and x.is_bootsel, JIG_BOOTSEL_WAIT_S, 0.2)
                 d = usb.find_by_port(port_path)
             if not (d and d.is_bootsel):
-                print(f"[{self.id}] HUMAN NEEDED: the jig did not reboot to BOOTSEL (its image predates the "
-                      f"magic-baud reboot). Hold BOOT on the jig's RP2040 while replugging its USB (port "
-                      f"{port_path}). Waiting {human_timeout:.0f} s ...", flush=True)
+                print(f"[{self.id}] HUMAN NEEDED: the ADSBee 1421 Programmer did not reboot to BOOTSEL (its image "
+                      f"predates the magic-baud reboot). Hold BOOT on the Programmer's RP2040 while replugging its "
+                      f"USB (port {port_path}). Waiting {human_timeout:.0f} s ...", flush=True)
             self._copy_to_bootsel(image, port_path, human_timeout)
-            # The jig then CRC-checks the module against its baked image and reflashes it (~1 min).
+            # The Programmer then CRC-checks the module against its baked image and reflashes it (~1 min).
             if not usb.wait_for(lambda: self.state() == "app", 60, 1.0):
-                raise HilError(f"{self.id}: jig did not come back in application mode")
+                raise HilError(f"{self.id}: ADSBee 1421 Programmer did not come back in application mode")
             time.sleep(5)
             return parse_key_values(self.at_retry("AT+DEVICE_INFO?", 120))
 

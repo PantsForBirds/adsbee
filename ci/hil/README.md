@@ -35,7 +35,7 @@ adsbee-hil at -d 1421-a "AT+RX_STATS?"
 adsbee-hil flash -m adsbee_1421 adsbee_1421-0.3.11-rc1.hex   # every 1421 on the bench, in parallel
 ```
 
-Example `discover` output from a bench with a 1090U and a 1421 jig:
+Example `discover` output from a bench with a 1090U and an ADSBee 1421 Programmer:
 
 ```
 1-1.3      2e8a:000a app     serial=E000000000000001 id=1090u   model=adsbee_1090u  'Pants for Birds ADSBee 1090'
@@ -115,10 +115,10 @@ The RP2040 then updates the ESP32 and CC1312 from the images embedded in `combin
 which needs a repository checkout and `websockets`. The full CI flash → OTA → partition-flip test
 is still `ci/test_usb_and_ota_flash/test_ota.py`, which now accepts `--serial`.
 
-### `adsbee_1421`, behind the ADSBee 1421 Programmer jig
+### `adsbee_1421`, behind the ADSBee 1421 Programmer
 
 The m1421 module (CC1314R10 + LR2021) has no USB port of its own. The USB device, and the
-`usb_serial` in the bench file, belong to the programmer jig (`firmware/adsbee_1421/programmer`),
+`usb_serial` in the bench file, belong to the ADSBee 1421 Programmer (`firmware/adsbee_1421/programmer`),
 a USB↔UART bridge whose modem-control lines drive the module:
 
 - **RTS asserted → SYNC low (awake). RTS deasserted → SYNC high:** the application sleeps, and
@@ -126,14 +126,14 @@ a USB↔UART bridge whose modem-control lines drive the module:
   clears HUPCL so DTR and RTS stay asserted after it closes the port. A tool that closes the port
   with HUPCL set (plain pyserial, miniterm, screen) puts the module to sleep until the next open.
   That next open resets it, which is harmless.
-- **The baud rate matters:** the jig copies the host's line coding onto the UART. The driver opens
+- **The baud rate matters:** the Programmer copies the host's line coding onto the UART. The driver opens
   at 1 000 000 baud (the factory default) and falls back to the firmware's whitelist (921600,
   460800, 230400, 115200). It refuses `AT+BAUD_RATE=CONSOLE,...`, which would desync the bridge.
 - **There is no bare `AT`:** the parser rejects it. The driver probes with `AT+UPTIME?`.
 - **`AT+RX_CW` runs until it gets a key.** The driver stops it after `-T`, so the next command
   isn't swallowed. `AT+TX_CW` transmits and is refused unless `--allow-tx` is given.
 - **Flashing module firmware (`.hex`):** the driver uses the CC13x4 ROM serial bootloader
-  through the jig, but runs an **external flasher** configured in the bench file, because that
+  through the Programmer, but runs an **external flasher** configured in the bench file, because that
   flasher isn't part of this repository:
 
   ```toml
@@ -143,20 +143,21 @@ a USB↔UART bridge whose modem-control lines drive the module:
 
   You can also set it per receiver (`flasher_command`) or with
   `$ADSBEE_HIL_FLASHER_ADSBEE_1421`, a shell-quoted string. The placeholders are `{image}`,
-  `{port}` (the jig's console), `{baud}` (1000000, so the jig stays transparent after the
+  `{port}` (the Programmer's console), `{baud}` (1000000, so the Programmer stays transparent after the
   flash) and `{verbose}`. **The flasher must erase only the sectors the image covers.** A full
   bank erase also wipes the settings sector and the device-info / OTA-key sector. After the
   flasher exits, the driver reopens the console (which wakes and resets the module) and
   prints `AT+DEVICE_INFO?`.
-- **Reflashes don't stick until the image is baked into the jig.** At every power-up, the jig
-  CRC-checks the module against the image baked into its own firmware and reflashes the module
-  if they differ. A `.hex` flashed as above therefore lasts until the jig next re-enumerates.
-- **Jig images (`.uf2`)**: `flash programmer.uf2` opens the jig's port at 233495534 baud
-  (`0xDEADBEE`, the same magic baud as the ADSBee 1090), which reboots the jig into BOOTSEL. It
-  then copies the image to the RPI-RP2 drive on that USB port, waits for the jig to reflash the
-  module, and prints `AT+DEVICE_INFO?`. A jig image older than the magic-baud reboot doesn't
-  react; the command then prints `HUMAN NEEDED` and waits (5 min by default) for someone to hold
-  BOOT on the jig while replugging it.
+- **Reflashes don't stick until the image is baked into the Programmer.** At every power-up, the
+  Programmer CRC-checks the module against the image baked into its own firmware and reflashes
+  the module if they differ. A `.hex` flashed as above therefore lasts until the Programmer next
+  re-enumerates.
+- **Programmer images (`.uf2`)**: `flash programmer.uf2` opens the Programmer's port at
+  233495534 baud (`0xDEADBEE`, the same magic baud as the ADSBee 1090), which reboots the
+  Programmer into BOOTSEL. It then copies the image to the RPI-RP2 drive on that USB port, waits
+  for the Programmer to reflash the module, and prints `AT+DEVICE_INFO?`. A Programmer image
+  older than the magic-baud reboot doesn't react; the command then prints `HUMAN NEEDED` and
+  waits (5 min by default) for someone to hold BOOT on the Programmer while replugging it.
 
 ### Adding a model
 
@@ -182,7 +183,7 @@ adsbee_future = "my_package.drivers:AdsbeeFuture"
   or let them share boards and rely on the locks.
 - **USB layout:** pin `usb_port` for each board. The tool then reports a board that moved
   ports instead of quietly using it, and can find a board's BOOTSEL drive while its app serial
-  is off the bus. Keep jigs and receivers on powered hubs. `discover` shows the port paths.
+  is off the bus. Keep ADSBee 1421 Programmers and receivers on powered hubs. `discover` shows the port paths.
 - **Timing:** a 1421 `.hex` flash takes about 15 s. Flashes of different boards run
   concurrently.
 

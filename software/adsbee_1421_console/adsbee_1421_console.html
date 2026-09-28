@@ -2101,9 +2101,9 @@
         const LAST_BAUD_KEY = 'adsbee1421LastBaud';
 
         // How long to keep probing one rate before trying the next. Opening or reopening
-        // the port asserts DTR, which is wired (directly, or via the programmer jig's
-        // adapter emulation) to RESET_N — so the device is typically rebooting when the
-        // first probe goes out (~0.8 s app boot), and behind the programmer jig the jig
+        // the port asserts DTR, which is wired (directly, or via the ADSBee 1421 Programmer's
+        // adapter emulation) to RESET_N, so the device is typically rebooting when the
+        // first probe goes out (~0.8 s app boot). Behind the Programmer, the Programmer
         // itself then spends ~1–1.5 s re-negotiating the device to the host's rate
         // before pass-through resumes. Each attempt is ~250 ms of quiet + 200 ms pause,
         // so 6 attempts ≈ 2.7 s per rate; the device only pays this at rates it is NOT
@@ -3445,7 +3445,7 @@ function makeRxEnableEntry() {
                 if (atQueue.tryConsume(line)) return;
                 const t = line.trim();
                 // Late answers to the page's own hidden AT+BAUD_RATE? probes: a bridge
-                // (the programmer jig) may hold probes while it re-negotiates the device
+                // (the ADSBee 1421 Programmer) may hold probes while it re-negotiates the device
                 // and deliver them in a burst afterwards, after the probe job that sent
                 // them has given up. Only a user-typed (visible) AT+BAUD_RATE? gets to
                 // print this line.
@@ -5070,7 +5070,7 @@ function makeRxEnableEntry() {
 
             // Recovery for a device whose saved settings stop the console coming up: erase the four
             // Settings sectors and let the firmware rewrite defaults on the next boot (its magic/CRC
-            // check fails against blank flash). Mirrors EraseSettingsRegion() in the programmer jig.
+            // check fails against blank flash). Mirrors EraseSettingsRegion() in the ADSBee 1421 Programmer.
             //
             // Deliberately never automatic and never part of a flash: it discards the user's settings,
             // which is why a normal flash preserves this region. Device Info / OTA keys are untouched.
@@ -5274,12 +5274,13 @@ function makeRxEnableEntry() {
             // to `attempts` rounds (the device may still be booting after the DTR reset
             // that opening the port causes, or a bridge may still be bringing it up).
             //
-            // Any legible reply proves the link works, and the device's answer — not
-            // the rate this page opened the port at — is the truth about the console
-            // rate: behind a USB bridge (the programmer jig) the host's baud is virtual
-            // and the jig retunes the device on its own. When the two differ, a second
-            // consecutive legible reply is required so a single stale line buffered
-            // from an earlier rate can't be mistaken for a live link.
+            // Any legible reply proves the link works, and the rate the device reports
+            // is the console rate, whatever rate this page opened the port at. Behind a
+            // USB bridge (the ADSBee 1421 Programmer) the host's baud is virtual and the
+            // Programmer retunes the device on its own. When the device's rate and the
+            // port's rate differ, a second consecutive legible reply is required, so a
+            // single stale line buffered from an earlier rate can't be mistaken for a
+            // live link.
             //
             // Returns the device's rate, or null.
             async probe(attempts = PROBE_ATTEMPTS_PER_RATE) {

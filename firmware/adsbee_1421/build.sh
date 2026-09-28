@@ -15,12 +15,13 @@ usage() {
     cat <<'EOF'
 Usage: ./build.sh [-d] [clean] [app|build_and_flash|flash]
   app         ti (default, CC1314R10 application via ti-lpf2)
-              programmer (RP2040-Zero flash/passthrough jig via pico-docker;
+              programmer (ADSBee 1421 Programmer, RP2040-Zero, via pico-docker;
                           requires ti to be built first)
   build_and_flash
-              build ti + programmer, then reflash an attached ADSBee m1421 via its
-              programmer jig: prompts you to put the jig in bootloader mode, copies
-              the fresh uf2 onto the RPI-RP2 drive, and watches the jig's console
+              build ti + programmer, then reflash an attached ADSBee m1421 via the
+              ADSBee 1421 Programmer: prompts you to put the Programmer in bootloader
+              mode, copies the fresh uf2 onto the RPI-RP2 drive, and watches the
+              Programmer's console
               while it automatically flashes the m1421.
   flash       same, but using the programmer uf2 that is already built -- no build
               steps run at all. Warns first if that uf2 is older than the source tree,
@@ -134,7 +135,7 @@ build_app() {
     done
 }
 
-# Path to the jig image the flash commands push, and to the CC1314 hex baked into it at CMake
+# Path to the Programmer image the flash commands push, and to the CC1314 hex baked into it at CMake
 # configure time (see programmer/README.md) -- a rebuilt ti with a stale programmer would flash old
 # m1421 firmware even though both files exist.
 programmer_uf2_path() { echo "programmer/build/${CONFIG}/adsbee_1421_programmer.uf2"; }
@@ -150,21 +151,21 @@ flash_m1421() {
     fi
 
     echo ""
-    echo "=== Reflash an attached ADSBee m1421 via its programmer jig ==="
-    echo "Put the ADSBee 1421 programmer (RP2040-Zero) into its UF2 bootloader:"
+    echo "=== Reflash an attached ADSBee m1421 via the ADSBee 1421 Programmer ==="
+    echo "Put the ADSBee 1421 Programmer (RP2040-Zero) into its UF2 bootloader:"
     echo "  hold BOOT while plugging it in, or hold BOOT and tap its RESET button."
-    echo "  A running jig reboots into it when its port is opened at 233495534 baud (0xDEADBEE), e.g."
+    echo "  A running Programmer reboots into it when its port is opened at 233495534 baud (0xDEADBEE), e.g."
     echo "  python3 -c \"import serial; serial.Serial('/dev/ttyACM0', 0xDEADBEE).close()\""
     echo "Waiting up to 120 s for the RPI-RP2 drive to appear (Ctrl-C to abort) ..."
 
     local drive="" i
     if ! drive="$(wait_for_rpi_drive 120)"; then
-        echo "ERROR: RPI-RP2 drive never appeared. Is the jig in bootloader mode?" >&2
+        echo "ERROR: RPI-RP2 drive never appeared. Is the Programmer in bootloader mode?" >&2
         exit 1
     fi
 
-    # Snapshot serial nodes NOW: the jig is in the bootloader, so its CDC node is absent. Whatever
-    # node appears after the copy is the rebooted jig -- this works whether the jig was freshly
+    # Snapshot serial nodes NOW: the Programmer is in the bootloader, so its CDC node is absent. Whatever
+    # node appears after the copy is the rebooted Programmer -- this works whether the Programmer was freshly
     # plugged in or was already attached before entering the bootloader.
     local nodes_before
     nodes_before="$(list_serial_nodes)"
@@ -175,9 +176,9 @@ flash_m1421() {
         exit 1
     fi
     echo "uf2 accepted; programmer rebooting."
-    echo "The jig now checks the attached m1421 and flashes it automatically if the firmware differs."
+    echo "The Programmer now checks the attached m1421 and flashes it automatically if the firmware differs."
 
-    # Best-effort monitor: find the jig's CDC port (the node that newly appeared vs the snapshot)
+    # Best-effort monitor: find the Programmer's CDC port (the node that newly appeared vs the snapshot)
     # and watch the flash transcript. Read-only: DTR edges in pass-through mode pulse the target's
     # reset line, so never write or toggle the line after opening.
     local port="" nodes_after node
@@ -191,16 +192,16 @@ flash_m1421() {
     done
     if [ -z "$port" ]; then
         echo ""
-        echo "Could not identify the jig's serial port; monitor skipped."
-        echo "Watch the jig's LED instead: cyan = CRC check, magenta blink = flashing the m1421,"
+        echo "Could not identify the Programmer's serial port; monitor skipped."
+        echo "Watch the Programmer's LED: cyan = CRC check, magenta blink = flashing the m1421,"
         echo "blue blink = verifying, green = done (pass-through), red = error."
         echo "Or open its CDC port ('ADSBee 1421 Programmer') with any terminal at 1000000 baud."
         return 0
     fi
 
     echo "Monitoring ${port} (up to 180 s) ..."
-    # 1000000 baud matches the jig's console/pass-through rate, so the line-coding event our open
-    # generates is harmless even if the jig has already reached pass-through.
+    # 1000000 baud matches the Programmer's console/pass-through rate, so the line-coding event our open
+    # generates is harmless even if the Programmer has already reached pass-through.
     stty -f "$port" 1000000 raw -echo 2>/dev/null || stty -F "$port" 1000000 raw -echo 2>/dev/null || true
 
     local result="" line deadline
@@ -223,17 +224,17 @@ flash_m1421() {
     echo ""
     case "$result" in
         ok)
-            echo "=== m1421 flash complete; jig is in pass-through (green LED). ==="
+            echo "=== m1421 flash complete; the Programmer is in pass-through (green LED). ==="
             ;;
         current)
             echo "=== m1421 firmware already up to date. ==="
             ;;
         fail)
-            echo "ERROR: the jig reported a flash failure (red LED). Check the m1421 connection." >&2
+            echo "ERROR: the Programmer reported a flash failure (red LED). Check the m1421 connection." >&2
             exit 1
             ;;
         *)
-            echo "Monitor timed out without a definitive result. Check the jig's LED:" >&2
+            echo "Monitor timed out without a definitive result. Check the Programmer's LED:" >&2
             echo "  magenta blink = still flashing, green = done, red = error, yellow blink = no m1421 found." >&2
             exit 1
             ;;
@@ -253,7 +254,7 @@ if ! "$(pwd)/../scripts/check_version_sync.sh" HEAD WORKTREE; then
 fi
 
 if [ "$DO_BUILD_AND_FLASH" -eq 1 ]; then
-    # Fresh CC1314 firmware, then a programmer image with it baked in, then flash the jig.
+    # Fresh CC1314 firmware, then a programmer image with it baked in, then flash the Programmer.
     build_app ti
     build_app programmer
     flash_m1421
@@ -261,17 +262,17 @@ if [ "$DO_BUILD_AND_FLASH" -eq 1 ]; then
 fi
 
 if [ "$DO_FLASH" -eq 1 ]; then
-    # Flash-only: no container builds at all. Two things can make the jig image stale -- edited
+    # Flash-only: no container builds at all. Two things can make the Programmer image stale -- edited
     # sources, or a ti hex rebuilt after the programmer baked its copy in -- so check both.
     warn_if_artifact_stale "$(programmer_uf2_path)" "./build.sh build_and_flash" \
         ../common ../modules ti programmer
     # Both artifacts live under build/, which warn_if_artifact_stale deliberately skips, so compare
-    # them directly: a ti hex newer than the jig image means the baked-in copy is out of date.
+    # them directly: a ti hex newer than the Programmer image means the baked-in copy is out of date.
     if [ -f "$(ti_hex_path)" ] && [ -f "$(programmer_uf2_path)" ] &&
        [ "$(ti_hex_path)" -nt "$(programmer_uf2_path)" ]; then
         echo ""
         echo "WARNING: $(ti_hex_path) is newer than $(programmer_uf2_path)."
-        echo "         The jig image bakes in the ti hex at configure time, so this would flash the"
+        echo "         The Programmer image bakes in the ti hex at configure time, so this would flash the"
         echo "         OLDER m1421 firmware. Run './build.sh build_and_flash' to rebuild both."
         echo ""
     fi

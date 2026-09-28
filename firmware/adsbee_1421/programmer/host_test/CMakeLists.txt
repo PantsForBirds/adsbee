@@ -1,4 +1,4 @@
-# Host unit tests for the jig's SDK-independent logic. Standalone (not part of the pico build):
+# Host unit tests for the ADSBee 1421 Programmer's SDK-independent logic. Standalone (not part of the pico build):
 #   cmake -S firmware/adsbee_1421/programmer/host_test -B /tmp/jig_host_test
 #   cmake --build /tmp/jig_host_test && ctest --test-dir /tmp/jig_host_test --output-on-failure
 cmake_minimum_required(VERSION 3.13)
@@ -14,7 +14,7 @@ target_include_directories(modem_lines_test PRIVATE ..)
 target_compile_options(modem_lines_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME modem_lines_test COMMAND modem_lines_test)
 
-# The jig's reboot-to-BOOTSEL baud must match the ADSBee 1090's PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE.
+# The Programmer's reboot-to-BOOTSEL baud must match the ADSBee 1090's PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE.
 set(ADSBEE_1090_PICO_CMAKE "${CMAKE_CURRENT_LIST_DIR}/../../../adsbee_1090/pico/CMakeLists.txt")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ADSBEE_1090_PICO_CMAKE}")
 file(READ "${ADSBEE_1090_PICO_CMAKE}" ADSBEE_1090_PICO_CMAKE_TEXT)

@@ -1,10 +1,10 @@
-# ADSBee 1421 Programmer + Pass-Through Jig
+# ADSBee 1421 Programmer
 
 A Waveshare RP2040-Zero application that keeps an attached ADSBee m1421 (TI CC1314R10) flashed
-with the firmware image baked into the jig, then acts as a transparent USB serial adapter to the
+with the firmware image baked into the Programmer, then acts as a transparent USB serial adapter to the
 module's console (normally at the factory-default 1,000,000 baud).
 
-At power-up the jig:
+At power-up the Programmer:
 
 1. Enters the CC1314's factory ROM UART bootloader (SYNC backdoor held high through a reset
    pulse — same mechanism as `software/adsbee_1421_flasher/`).
@@ -14,16 +14,16 @@ At power-up the jig:
    programmed and CRC-verified. The Settings (`0x000FC000`) and Device Info / OTA key
    (`0x000FE000`) sectors at the top of the bank are never touched, so both survive a reflash
    (Settings still reset themselves if the firmware's settings version changed). Matching devices
-   are left untouched. `hex_to_c.py` refuses to bake, and the jig refuses to flash, an image that
+   are left untouched. `hex_to_c.py` refuses to bake, and the Programmer refuses to flash, an image that
    reaches into those reserved sectors.
 3. Resets the module into the application, finds the console by sweeping the firmware's baud
-   whitelist ({1000000, 921600, 460800, 230400, 115200}, factory-default-first — the app boots
+   whitelist ({1000000, 921600, 460800, 230400, 115200}, factory-default-first; the app boots
    at its saved console baud, persisted via `AT+SETTINGS=SAVE`), drives its live rate to 1 M if
    it answered elsewhere, and becomes a USB-CDC ↔ UART pass-through.
 
-The ROM bootloader leg always runs at 1 M (the ROM auto-bauds to it; ceiling ~1.2 M). The jig
-only moves the console's *live* rate — it never issues `AT+SETTINGS=SAVE`, so the module's
-persisted baud setting is untouched. If no module responds, the jig retries forever (attach a
+The ROM bootloader leg always runs at 1 M (the ROM auto-bauds to it; ceiling ~1.2 M). The
+Programmer only moves the console's *live* rate. It never issues `AT+SETTINGS=SAVE`, so the
+module's persisted baud setting is untouched. If no module responds, the Programmer retries forever (attach a
 module any time) and reports a diagnosis on the CDC port every few seconds.
 
 ## Wiring
@@ -51,16 +51,16 @@ cd firmware/adsbee_1421
 ```
 
 With `-d` (`./build.sh -d ti`, `./build.sh -d programmer`, or `./build.sh -d build_and_flash`) both are
-built in Debug and the jig bakes in `ti/build/Debug/adsbee_1421.hex`. Only Debug images contain the RF test
+built in Debug and the Programmer bakes in `ti/build/Debug/adsbee_1421.hex`. Only Debug images contain the RF test
 command `AT+TX_CW`; see [firmware/README.md](../../README.md#debug-builds-and-rf-test-commands).
 
 Artifact: `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` —
-hold BOOT on the RP2040-Zero while plugging it in (or, on a jig already running a build with the
+hold BOOT on the RP2040-Zero while plugging it in (or, on a Programmer already running a build with the
 magic-baud reboot, open its port at 233495534 baud, see below) and drag the file onto the `RPI-RP2` drive.
 Or run `./build.sh build_and_flash`, which builds both apps, prompts for bootloader mode, copies
-the uf2, and watches the jig's console while it reflashes the attached m1421. `./build.sh flash`
+the uf2, and watches the Programmer's console while it reflashes the attached m1421. `./build.sh flash`
 does the same without building, using the uf2 already on disk; because the ti hex is baked in at
-configure time, it warns if that hex is newer than the jig image.
+configure time, it warns if that hex is newer than the Programmer image.
 A version-stamped copy (`adsbee_1421_programmer-fw<version>.uf2`, named after the **baked**
 firmware version parsed from `object_dictionary.cpp`) is produced alongside it for release/CI.
 To bake a different image, pass `-DADSBEE_1421_HEX=<path>` to CMake.
@@ -72,15 +72,16 @@ To bake a different image, pass `-DADSBEE_1421_HEX=<path>` to CMake.
   console (sweep + move to 1 M). This is also the recovery path after in-band desyncs (see
   limitations).
 - **BOOTSEL held for 3 s (at any time)**: arm a **settings erase**. The LED blinks white, and at
-  the next bootloader entry the jig erases the four Settings sectors
+  the next bootloader entry the Programmer erases the four Settings sectors
   (`0x000FC000`–`0x000FDFFF`); the device then boots with factory defaults. Device Info
   (`0x000FE000`, part code and OTA keys) is never touched.
 
-  This is the escape hatch for a device whose saved settings stop the console coming up. Because
-  it is armed from the wait loops — not just from pass-through — it works while the jig is stuck
-  reporting `Device console not responding at any whitelisted baud rate`, which is exactly when
-  `AT+SETTINGS=RESET` and `AT+BOOT_UART_BOOTLOADER` are unavailable (both need a console that
-  already answers). It is never triggered automatically: it discards the user's settings.
+  This is the escape hatch for a device whose saved settings stop the console coming up. It can
+  be armed from the wait loops as well as from pass-through, so it works while the Programmer is
+  stuck reporting `Device console not responding at any whitelisted baud rate`. In that state
+  `AT+SETTINGS=RESET` and `AT+BOOT_UART_BOOTLOADER` are unavailable, because both need a console
+  that already answers. It is never triggered automatically, because it discards the user's
+  settings.
 
 ## LED legend (WS2812)
 
@@ -106,29 +107,29 @@ physical pin low):
   backdoor armed) while DTR is asserted. Opening the port asserts both, so deasserting RTS on an
   open port puts the module to sleep.
 - **DTR assert edge → 50 ms reset pulse**, with SYNC set from RTS at the edge and held for 250 ms
-  after the pulse so the boot ROM samples it. Edge-triggered rather than level-held so terminals
-  that keep DTR asserted don't hold the device in reset.
+  after the pulse so the boot ROM samples it. The reset is edge-triggered, so a terminal that
+  keeps DTR asserted doesn't hold the device in reset.
 - **With DTR deasserted, SYNC is low** (outside that post-reset hold), so **closing the port
   leaves the module awake**: the OS drops DTR and RTS together on close (Linux and macOS with the
   default HUPCL), which used to read as RTS deasserted and put the module to sleep until the next
   open. Once in the ROM bootloader the module no longer looks at SYNC, and a host still gets back
   in with RTS deasserted and another DTR edge.
 - **Host baud changes are applied to the UART directly**, so tools that manage their own baud
-  (the web console, the python flasher's bootloader phase) work through the jig unmodified.
-- **Except 233495534 baud (`0xDEADBEE`)**, which reboots the jig's RP2040 into its USB bootloader
-  (`RPI-RP2`) to update the jig without pressing BOOT, e.g.
+  (the web console, a host-side bootloader client) work through the Programmer unmodified.
+- **Except 233495534 baud (`0xDEADBEE`)**, which reboots the Programmer's RP2040 into its USB bootloader
+  (`RPI-RP2`) so the Programmer can be updated without pressing BOOT, e.g.
   `python3 -c "import serial; serial.Serial('/dev/ttyACM0', 0xDEADBEE).close()"`. It is the same
   magic baud as the ADSBee 1090 (`PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE` in
-  `firmware/adsbee_1090/pico/CMakeLists.txt`; the jig's copy is `kRebootToBootselBaud` in
+  `firmware/adsbee_1090/pico/CMakeLists.txt`; the Programmer's copy is `kRebootToBootselBaud` in
   `host_line_coding.hh`, and the host test checks they match). That baud is never forwarded to the
   module. 1200 baud is an ordinary rate here, as on the 1090, because tools such as pymavlink open
-  ports at 1200. Jig images from before the magic baud need BOOT held while plugging in once (the
-  0.3.11-rc3 jig image from 83e8f60e/4a0bc13e reboots on 1200 instead).
+  ports at 1200. Programmer images from before the magic baud need BOOT held while plugging in
+  once (the 0.3.11-rc3 Programmer image from 83e8f60e/4a0bc13e reboots on 1200).
 - After a host-driven reset with SYNC low the device console reboots at its *saved* baud
   (factory default 1 M). If the host's line coding matches the rate the console was last
-  negotiated to, the jig stays transparent; otherwise it automatically re-negotiates (sweep +
+  negotiated to, the Programmer stays transparent; otherwise it automatically re-negotiates (sweep +
   `AT+BAUD_RATE`) to the host's rate. A module saved at some other rate is also recoverable by
-  the host probing the whitelist itself (line-coding changes retune the jig UART live) or by
+  the host probing the whitelist itself (line-coding changes retune the Programmer's UART live) or by
   the BOOTSEL recheck.
 
 Both `software/adsbee_1421_flasher/` (default flags) and the web console's built-in flasher can
@@ -137,8 +138,8 @@ transparent and never injects traffic.
 
 ## Troubleshooting (yellow blink / no green)
 
-Open the jig's CDC port (any terminal, any baud except the magic reboot baud above — e.g. `python3 -m serial.tools.miniterm`) to
-see per-attempt diagnostics. The jig re-prints its last diagnosis every ~5 s while waiting.
+Open the Programmer's CDC port (any terminal, any baud, e.g. `python3 -m serial.tools.miniterm`) to
+see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~5 s while waiting.
 
 | Message | Meaning |
 |---------|---------|
@@ -146,10 +147,10 @@ see per-attempt diagnostics. The jig re-prints its last diagnosis every ~5 s whi
 | `... failed (timed out ...); no late bytes` | Silence from the module: reset, UART, or SYNC not reaching it. |
 | `... failed (unexpected byte ...)` / `late bytes: ...` | The module answered with garbage: baud/framing issue on the link. |
 | `App console responds at <baud> ... SBL entry fails` | Reset + UART wiring are good. Check SYNC (GP27 → module pin 28) and that the module firmware has the CCFG backdoor enabled. |
-| `No response ... RESET_N(GP26)=LOW (stuck in reset ...)` | Something is holding reset low with the jig's driver released — wiring short or drive conflict on ~SRST. |
+| `No response ... RESET_N(GP26)=LOW (stuck in reset ...)` | Something is holding reset low with the Programmer's driver released: a wiring short or a drive conflict on ~SRST. |
 | `No response ... UART RX(GP29)=LOW (module TX not driving ...)` | Module unpowered, held in reset, or SUTX wiring wrong (RX should idle high when the module runs). |
 | `No response ... RESET_N=high, UART RX=high (link plausible)` | Lines look electrically sane; suspect TX leg (GP28 → SURX) or module-side UART config. |
-| `Device console not responding at any whitelisted baud rate` | SBL/flash worked but the app's AT console never answered `AT+DEVICE_INFO?` at any of the five whitelisted rates within ~6 s of boot. If it repeats on every boot with a CRC-verified image, the saved settings are the likely cause — hold BOOTSEL for 3 s to erase them (see [Buttons](#buttons)). |
+| `Device console not responding at any whitelisted baud rate` | SBL/flash worked but the app's AT console never answered `AT+DEVICE_INFO?` at any of the five whitelisted rates within ~6 s of boot. If it repeats on every boot with a CRC-verified image, the saved settings are the likely cause: hold BOOTSEL for 3 s to erase them (see [Buttons](#buttons)). |
 | `Settings erase ARMED` / `Settings erased; ...` | A BOOTSEL long press was registered, and the Settings sectors were erased at the next bootloader entry. The device now boots with factory defaults. |
 
 Modules running pre-backdoor firmware can't be entered via SYNC at all: flash them once via
@@ -158,9 +159,12 @@ app and drops into the ROM bootloader; the jig will then flash it on the next ch
 
 ## Limitations
 
-- Sending `AT+BAUD_RATE=CONSOLE,...` through the bridge desyncs the link (the jig doesn't
+- Sending `AT+BAUD_RATE=CONSOLE,...` through the bridge desyncs the link (the Programmer doesn't
   parse bridged traffic), and `AT+REBOOT` desyncs it when the device's saved baud differs from
   the current link rate. Recovery: press BOOTSEL once, change the host line coding to what the
-  device is actually running, or power-cycle the jig.
+  device is actually running, or power-cycle the Programmer.
 - Status text (flash progress, negotiation results) appears on the same CDC port before
   pass-through starts; anything typed during those phases is ignored.
+- Opening the CDC port at 233495534 baud reboots the Programmer into its USB bootloader (see
+  [Pass-through behavior](#pass-through-behavior)). Every other baud works for reading its
+  diagnostics.
