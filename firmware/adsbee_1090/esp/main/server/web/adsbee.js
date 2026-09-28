@@ -1272,8 +1272,8 @@ class AircraftStore {
     all() { return [...this.aircraft.values()]; }
 }
 
-// ─── RadarMap ─────────────────────────────────────────────────────────────────
-class RadarMap {
+// ─── LiveMap ─────────────────────────────────────────────────────────────────
+class LiveMap {
     constructor(containerId, store) {
         this.containerId = containerId;
         this.store = store;

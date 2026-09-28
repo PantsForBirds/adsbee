@@ -16,7 +16,7 @@
         <div class="tab-bar-tabs">
             <span class="tab-logo">ADSBee</span>
             <button class="tab-btn active" data-tab="console" onclick="switchTab('console')">Console</button>
-            <button class="tab-btn" data-tab="map" onclick="switchTab('map')">Map</button>
+            <button class="tab-btn" data-tab="map" onclick="switchTab('map')">Live Map</button>
             <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
         <div class="tab-bar-controls">
@@ -83,7 +83,7 @@
         </div>
     </div>
 
-    <!-- Map tab -->
+    <!-- Live Map tab -->
     <div id="tab-map" class="tab-content">
         <div id="map-left">
             <div id="map-container">
@@ -463,13 +463,13 @@
         });
 
         /**
-         * Tab management and radar.
+         * Tab management and live map.
          */
 
         let consoleWebSocket = null;
         let metricsWebSocket = null;
         let aircraftWebSocket = null;
-        let radarMap = null;
+        let liveMap = null;
         let aircraftStore = null;
         let acTable = null;
         let aircraftUpdateTimer = null;
@@ -495,7 +495,7 @@
                 settingsTab.leave();
                 consoleWebSocket.pause();
                 metricsWebSocket.resume();
-                initRadar().catch(e => console.error('Radar init error:', e));
+                initLiveMap().catch(e => console.error('Live Map init error:', e));
             } else if (name === 'settings') {
                 // The terminal's console socket is paused so the settings AT traffic
                 // (broadcast to every /console client) never reaches the visible terminal.
@@ -530,24 +530,24 @@
             }
         }
 
-        async function initRadar() {
+        async function initLiveMap() {
             if (!aircraftStore) aircraftStore = new AircraftStore();
 
-            if (!radarMap) {
-                radarMap = new RadarMap('map', aircraftStore);
-                radarMap.onSelectionChanged = (hex) => {
+            if (!liveMap) {
+                liveMap = new LiveMap('map', aircraftStore);
+                liveMap.onSelectionChanged = (hex) => {
                     if (acTable) acTable.setSelected(hex);
                 };
-                await radarMap.init();
-                initMapOptions(radarMap);
-                if (latestGNSSStatus) radarMap.setReceiverStatus(latestGNSSStatus);
+                await liveMap.init();
+                initMapOptions(liveMap);
+                if (latestGNSSStatus) liveMap.setReceiverStatus(latestGNSSStatus);
             } else {
-                radarMap.invalidate();
+                liveMap.invalidate();
             }
 
             if (!acTable) {
                 acTable = new AircraftTable('aircraft-tbody', aircraftStore, (hex) => {
-                    if (radarMap) radarMap.selectAircraft(hex);
+                    if (liveMap) liveMap.selectAircraft(hex);
                 });
             }
 
@@ -559,14 +559,14 @@
             }
             aircraftWebSocket.onDisconnect = () => {
                 aircraftStore.clearAll();
-                if (radarMap) radarMap.update();
+                if (liveMap) liveMap.update();
                 if (acTable) acTable.update();
             };
 
             if (!aircraftUpdateTimer) {
                 aircraftUpdateTimer = setInterval(() => {
                     aircraftStore.sweep();
-                    radarMap.update();
+                    liveMap.update();
                     acTable.update();
                 }, 1000);
             }
@@ -577,7 +577,7 @@
         metricsWebSocket = new MetricsWebSocket(WS_CONFIG.metrics_ws_url);
         metricsWebSocket.onGNSSStatus = (status) => {
             latestGNSSStatus = status;
-            if (radarMap) radarMap.setReceiverStatus(status);
+            if (liveMap) liveMap.setReceiverStatus(status);
         };
         focusTerminal();
 
@@ -593,7 +593,7 @@
                 const newTbl = Math.max(60,  startTbl - dy);
                 mapEl.style.cssText = `flex:none;height:${newMap}px`;
                 tblEl.style.height  = `${newTbl}px`;
-                if (radarMap) radarMap.invalidate();
+                if (liveMap) liveMap.invalidate();
             }
             function onUp() {
                 document.removeEventListener('mousemove', onMove);
@@ -624,7 +624,7 @@
             new FirmwareUploader(HOST_URI);
             new SettingsManager(HOST_URI);
             document.getElementById('sidebar-close').addEventListener('click', () => {
-                if (radarMap) radarMap.deselect();
+                if (liveMap) liveMap.deselect();
             });
             initResizeHandle();
         });

@@ -1505,7 +1505,7 @@ body {
     display: block;
 }
 
-/* ─── Map tab ───────────────────────────────────────── */
+/* ─── Live Map tab ───────────────────────────────────────── */
 #tab-map {
     overflow: hidden;
 }
@@ -2008,7 +2008,7 @@ body.dark-mode #map .leaflet-tile-pane {
             <span class="tab-logo">ADSBee 1090</span>
             <button class="tab-btn active" data-tab="console"
                 onclick="tabController.switchTo('console')">Console</button>
-            <button class="tab-btn" data-tab="map" onclick="tabController.switchTo('map')">Map</button>
+            <button class="tab-btn" data-tab="map" onclick="tabController.switchTo('map')">Live Map</button>
             <button class="tab-btn" data-tab="settings"
                 onclick="tabController.switchTo('settings')">Settings</button>
         </div>
@@ -2090,7 +2090,7 @@ body.dark-mode #map .leaflet-tile-pane {
         </div>
     </div>
 
-    <!-- Map tab -->
+    <!-- Live Map tab -->
     <div id="tab-map" class="tab-content">
         <div id="map-left">
             <div id="map-container">
@@ -3641,7 +3641,7 @@ function makeRxEnableEntry() {
                     enabled: true, fix_valid: fixValid,
                     latitude_deg: lat, longitude_deg: lon, utc_time: args[7],
                 };
-                if (radarMap) radarMap.setReceiverStatus(latestGNSSStatus);
+                if (liveMap) liveMap.setReceiverStatus(latestGNSSStatus);
             },
 
             // ── Feeds (configuration only; throughput is network-only) ──
@@ -4987,8 +4987,8 @@ class AircraftStore {
     all() { return [...this.aircraft.values()]; }
 }
 
-// ─── RadarMap ─────────────────────────────────────────────────────────────────
-class RadarMap {
+// ─── LiveMap ─────────────────────────────────────────────────────────────────
+class LiveMap {
     constructor(containerId, store) {
         this.containerId = containerId;
         this.store = store;
@@ -5532,32 +5532,32 @@ class AircraftTable {
             pushLine(line) { if (this.onMessage) this.onMessage(line + '\n'); }
         }
 
-        // ─── Map tab ─────────────────────────────────────────────────────────────
+        // ─── Live Map tab ─────────────────────────────────────────────────────────────
 
-        let radarMap = null;
+        let liveMap = null;
         let acTable = null;
         let sweepTimer = null;
 
         function initMapTab() {
-            if (!radarMap) {
-                radarMap = new RadarMap('map', aircraftStore);
-                radarMap.onSelectionChanged = (hex) => { if (acTable) acTable.setSelected(hex); };
-                radarMap.init().then(() => {
-                    initMapOptions(radarMap);
-                    if (latestGNSSStatus) radarMap.setReceiverStatus(latestGNSSStatus);
-                }).catch(e => console.error('Radar init error:', e));
+            if (!liveMap) {
+                liveMap = new LiveMap('map', aircraftStore);
+                liveMap.onSelectionChanged = (hex) => { if (acTable) acTable.setSelected(hex); };
+                liveMap.init().then(() => {
+                    initMapOptions(liveMap);
+                    if (latestGNSSStatus) liveMap.setReceiverStatus(latestGNSSStatus);
+                }).catch(e => console.error('Live Map init error:', e));
             } else {
-                radarMap.invalidate();
+                liveMap.invalidate();
             }
             if (!acTable) {
                 acTable = new AircraftTable('aircraft-tbody', aircraftStore, (hex) => {
-                    if (radarMap) radarMap.selectAircraft(hex);
+                    if (liveMap) liveMap.selectAircraft(hex);
                 });
             }
             if (!sweepTimer) {
                 sweepTimer = setInterval(() => {
                     aircraftStore.sweep();
-                    if (radarMap) radarMap.update();
+                    if (liveMap) liveMap.update();
                     if (acTable) acTable.update();
                 }, 1000);
             }
@@ -5602,7 +5602,7 @@ class AircraftTable {
                 const newTbl = Math.max(60, startTbl - dy);
                 mapEl.style.cssText = `flex:none;height:${newMap}px`;
                 tblEl.style.height = `${newTbl}px`;
-                if (radarMap) radarMap.invalidate();
+                if (liveMap) liveMap.invalidate();
             }
             function onUp() {
                 document.removeEventListener('mousemove', onMove);
@@ -6290,7 +6290,7 @@ class Settings1090Transport {
                 metricsWebSocket = new MetricsWebSocket(WS_CONFIG.metrics_ws_url);
                 metricsWebSocket.onGNSSStatus = (status) => {
                     latestGNSSStatus = status;
-                    if (radarMap) radarMap.setReceiverStatus(status);
+                    if (liveMap) liveMap.setReceiverStatus(status);
                 };
                 this.networkSettingsTransport = new Settings1090Transport(WS_CONFIG.console_ws_url);
                 // The console socket has no public open/close hooks, so the dot is
@@ -6344,7 +6344,7 @@ class Settings1090Transport {
                 settingsTab.leave();
                 stopMapTimers();
                 aircraftStore.clearAll();
-                if (radarMap) radarMap.update();
+                if (liveMap) liveMap.update();
                 if (acTable) acTable.update();
                 this.state = 'disconnected';
                 this._lockControls(false);
@@ -6362,14 +6362,14 @@ class Settings1090Transport {
                 appendToTerminal('\x1b[31mSerial port lost.\x1b[0m\n');
             },
 
-            // Lazily opens (or resumes) the /aircraft socket for the Map tab.
+            // Lazily opens (or resumes) the /aircraft socket for the Live Map tab.
             startAircraftSocket() {
                 if (aircraftWebSocket) { aircraftWebSocket.resume(); return; }
                 aircraftWebSocket = new AircraftWebSocket(WS_CONFIG.aircraft_ws_url);
                 aircraftWebSocket.onMessage = (ac) => aircraftStore.ingest(ac);
                 aircraftWebSocket.onDisconnect = () => {
                     aircraftStore.clearAll();
-                    if (radarMap) radarMap.update();
+                    if (liveMap) liveMap.update();
                     if (acTable) acTable.update();
                 };
             },
@@ -6455,7 +6455,7 @@ class Settings1090Transport {
             new FirmwareUploader();
             new SettingsManager();
             document.getElementById('sidebar-close').addEventListener('click', () => {
-                if (radarMap) radarMap.deselect();
+                if (liveMap) liveMap.deselect();
             });
             initResizeHandle();
             appendToTerminal('ADSBee 1090 Console\n');

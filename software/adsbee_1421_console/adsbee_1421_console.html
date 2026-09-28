@@ -1489,7 +1489,7 @@
             display: block;
         }
 
-        /* ─── Map tab ─────────────────────────────────────────── */
+        /* ─── Live Map tab ─────────────────────────────────────────── */
         #tab-map {
             overflow: hidden;
         }
@@ -1907,7 +1907,7 @@
             <span class="tab-logo">ADSBee 1421</span>
             <button class="tab-btn active" data-tab="console"
                 onclick="tabController.switchTo('console')">Console</button>
-            <button class="tab-btn" data-tab="map" onclick="tabController.switchTo('map')">Map</button>
+            <button class="tab-btn" data-tab="map" onclick="tabController.switchTo('map')">Live Map</button>
             <button class="tab-btn" data-tab="settings"
                 onclick="tabController.switchTo('settings')">Settings</button>
         </div>
@@ -1966,7 +1966,7 @@
         </div>
     </div>
 
-    <!-- Map tab -->
+    <!-- Live Map tab -->
     <div id="tab-map" class="tab-content">
         <div id="map-left">
             <div id="map-container">
@@ -3674,9 +3674,9 @@ function makeRxEnableEntry() {
             all() { return [...this.aircraft.values()]; }
         }
 
-        // ─── RadarMap ────────────────────────────────────────────────────────────
+        // ─── LiveMap ────────────────────────────────────────────────────────────
 
-        class RadarMap {
+        class LiveMap {
             constructor(containerId, store) {
                 this.containerId = containerId;
                 this.store = store;
@@ -4093,30 +4093,30 @@ function makeRxEnableEntry() {
             }
         }
 
-        // ─── Map tab wiring ──────────────────────────────────────────────────────
+        // ─── Live Map tab wiring ──────────────────────────────────────────────────────
 
-        let radarMap = null;
+        let liveMap = null;
         let acTable = null;
         let sweepTimer = null;
 
         function initMapTab() {
-            if (!radarMap) {
-                radarMap = new RadarMap('map', aircraftStore);
-                radarMap.onSelectionChanged = (hex) => { if (acTable) acTable.setSelected(hex); };
-                radarMap.init();
-                initMapOptions(radarMap);
+            if (!liveMap) {
+                liveMap = new LiveMap('map', aircraftStore);
+                liveMap.onSelectionChanged = (hex) => { if (acTable) acTable.setSelected(hex); };
+                liveMap.init();
+                initMapOptions(liveMap);
             } else {
-                radarMap.invalidate();
+                liveMap.invalidate();
             }
             if (!acTable) {
                 acTable = new AircraftTable('aircraft-tbody', aircraftStore, (hex) => {
-                    if (radarMap) radarMap.selectAircraft(hex);
+                    if (liveMap) liveMap.selectAircraft(hex);
                 });
             }
             if (!sweepTimer) {
                 sweepTimer = setInterval(() => {
                     aircraftStore.sweep();
-                    if (radarMap) radarMap.update();
+                    if (liveMap) liveMap.update();
                     if (acTable) acTable.update();
                 }, 1000);
             }
@@ -4161,7 +4161,7 @@ function makeRxEnableEntry() {
                 const newTbl = Math.max(60, startTbl - dy);
                 mapEl.style.cssText = `flex:none;height:${newMap}px`;
                 tblEl.style.height = `${newTbl}px`;
-                if (radarMap) radarMap.invalidate();
+                if (liveMap) liveMap.invalidate();
             }
             function onUp() {
                 document.removeEventListener('mousemove', onMove);
@@ -5482,7 +5482,7 @@ function makeRxEnableEntry() {
             connectionUI.init();
             flashController.init();
             document.getElementById('sidebar-close').addEventListener('click', () => {
-                if (radarMap) radarMap.deselect();
+                if (liveMap) liveMap.deselect();
             });
             initResizeHandle();
             appendToTerminal('ADSBee 1421 Web Console\n');

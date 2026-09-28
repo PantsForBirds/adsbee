@@ -34,9 +34,9 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
     button — or by typing `AT+UPTIME?` yourself.
   - Device info (`AT+DEVICE_INFO?`) is queried once per connect.
   - All protocol output (CSBee, raw aircraft JSON, etc.) prints in the terminal.
-    Aircraft JSON is hidden from the terminal only while the Map tab itself is
+    Aircraft JSON is hidden from the terminal only while the Live Map tab itself is
     driving the stream; JSON lines always feed the map's aircraft store either way.
-- **Map tab** — Leaflet map + sortable aircraft table + detail sidebar. Entering the
+- **Live Map tab** — Leaflet map + sortable aircraft table + detail sidebar. Entering the
   tab saves the current `AT+LOG_LEVEL` / `AT+PROTOCOL_OUT` settings, then sets
   `AT+LOG_LEVEL=SILENT` and `AT+PROTOCOL_OUT=CONSOLE,AIRCRAFT_JSON` and renders the
   newline-delimited aircraft JSON stream. Switching back to the Console tab restores
@@ -53,7 +53,7 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
     clamped) — zooming the map never changes its on-screen size.
   - These changes are RAM-only (`AT+SETTINGS=SAVE` is never issued), so a device
     power cycle always returns to the persisted configuration — including if the
-    page is closed while on the Map tab (a best-effort restore is attempted on
+    page is closed while on the Live Map tab (a best-effort restore is attempted on
     close, but cannot be guaranteed).
 - **Settings tab** — a schema-driven form for every read/write settings AT command
   (receivers, gain/preamble/boost, sub-GHz mode, output protocol, MAVLink IDs,
@@ -65,7 +65,7 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
   firmware that predates it. All settings traffic runs through the hidden AT queue, so the terminal
   stays clean. A console baud change is followed automatically (the port is
   reopened at the new rate before `AT+SETTINGS=SAVE` is sent, so the new rate
-  persists). Entering the tab from the Map tab first restores the persisted
+  persists). Entering the tab from the Live Map tab first restores the persisted
   `PROTOCOL_OUT`/`LOG_LEVEL` so the form shows saved values, not the map stream's
   overrides.
   - The form renderer, dirty tracking, and save/refresh logic (`SettingsEngine`) are
