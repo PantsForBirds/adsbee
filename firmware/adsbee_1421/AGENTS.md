@@ -14,8 +14,9 @@ tools) is covered in [`README.md`](README.md#reflashing-over-uart-the-sync-bootl
 Applications in this directory:
 
 - [`ti/`](ti/) — the CC1314R10 application itself.
-- [`programmer/`](programmer/) — an RP2040-Zero flash/passthrough jig that bakes the `ti`
-  Release hex into its own image (built in the `pico-docker` container).
+- [`programmer/`](programmer/) — the ADSBee 1421 Programmer, an RP2040-Zero flasher and
+  pass-through that bakes the `ti` Release hex into its own image (built in the `pico-docker`
+  container).
 
 Shared C++ code comes from [`../common/`](../common/) and [`../modules/`](../modules/) (cppAT),
 referenced via the `ADSBEE_COMMON_DIR` / `ADSBEE_MODULES_DIR` CMake variables whose defaults
@@ -36,9 +37,9 @@ From this `firmware/adsbee_1421/` directory (or via the dispatcher:
 ```bash
 ./build.sh               # build the CC1314 app (ti) in Release
 ./build.sh -d            # build ti in Debug (includes the RF test command AT+TX_CW; Release omits it)
-./build.sh programmer    # build the RP2040 flashing jig (requires ti built first)
-./build.sh build_and_flash  # build ti + programmer, then reflash an attached m1421 via the jig
-                         # (prompts to put the jig in BOOT mode, copies the uf2, monitors)
+./build.sh programmer    # build the ADSBee 1421 Programmer (requires ti built first)
+./build.sh build_and_flash  # build ti + programmer, then reflash an attached m1421 via the Programmer
+                         # (prompts to put the Programmer in BOOT mode, copies the uf2, monitors)
 ./build.sh flash         # same, but no build steps: flashes the programmer uf2 already on disk
                          # (warns if it is older than the sources or than the baked-in ti hex)
 ./build.sh clean ti      # remove ti/build

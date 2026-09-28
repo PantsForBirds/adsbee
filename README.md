@@ -104,7 +104,7 @@ The CC1314R10 runs a NoRTOS super-loop: it polls the LR2021 over SPI for 1090 MH
 
 | Path | Contents |
 |---|---|
-| [`firmware/`](firmware/) | All firmware. [`adsbee_1090/`](firmware/adsbee_1090/) (RP2040 `pico/`, `esp/`, CC1312 `ti/`), [`adsbee_1421/`](firmware/adsbee_1421/) (CC1314 `ti/`, RP2040-Zero `programmer/` jig), [`common/`](firmware/common/) (shared decoders, aircraft dictionary, comms, settings), `modules/` (submodules: cppAT, googletest, …), [`scripts/`](firmware/scripts/) (dev tooling), [`build.sh`](firmware/build.sh) dispatcher. |
+| [`firmware/`](firmware/) | All firmware. [`adsbee_1090/`](firmware/adsbee_1090/) (RP2040 `pico/`, `esp/`, CC1312 `ti/`), [`adsbee_1421/`](firmware/adsbee_1421/) (CC1314 `ti/`, RP2040-Zero `programmer/`, the ADSBee 1421 Programmer), [`common/`](firmware/common/) (shared decoders, aircraft dictionary, comms, settings), `modules/` (submodules: cppAT, googletest, …), [`scripts/`](firmware/scripts/) (dev tooling), [`build.sh`](firmware/build.sh) dispatcher. |
 | [`software/`](software/) | Host software: [`adsbee_1421_console/`](software/adsbee_1421_console/) (single-file Web Serial console + UART flasher for the 1421), `adsbee/` (Python package), `serial_logger/`, and `tar1090/` / `ultrafeeder/` / `ultra2/` feeder compose files. |
 | [`ci/`](ci/) | Hardware-in-the-loop USB/UF2 + OTA flash test run by the self-hosted CI runner. |
 | [`kicad/`](kicad/) | Hardware design files (ADSBee 1090, 1090U, frontend prototypes, panels). |

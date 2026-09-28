@@ -6,7 +6,7 @@ This repo hosts firmware for two products, sharing the code in `firmware/common/
 `firmware/modules/`:
 
 - **`adsbee_1090/`** — ADSBee 1090 (RP2040 + ESP32-S3 + CC1312). Documented in this file.
-- **`adsbee_1421/`** — ADSBee m1421 (CC1314R10 + LR2021), plus its RP2040 flashing jig. See
+- **`adsbee_1421/`** — ADSBee m1421 (CC1314R10 + LR2021), plus the ADSBee 1421 Programmer (RP2040) that flashes it. See
   [`adsbee_1421/AGENTS.md`](adsbee_1421/AGENTS.md).
 
 Build either through the dispatcher at `firmware/build.sh`:
