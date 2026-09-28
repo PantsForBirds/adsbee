@@ -180,7 +180,7 @@ external MCU (see [SYNC low-power sleep](AGENTS.md#sync-low-power-sleep)). As a 
   so the module sleeps until something drives SYNC low again. To keep the lines as they are after
   closing, clear HUPCL (`stty -F /dev/ttyUSB0 -hupcl`) and leave RTS asserted. The ADSBee 1421
   Programmer reads DTR deasserted as the port being closed and holds SYNC low, so a module behind
-  it stays awake. Programmer images from 0.3.11-rc2 and earlier behave like a plain adapter here.
+  it stays awake. Programmer images from 0.3.11-rc3 and earlier behave like a plain adapter here.
 
 ### Prerequisites
 
@@ -204,7 +204,7 @@ external MCU (see [SYNC low-power sleep](AGENTS.md#sync-low-power-sleep)). As a 
 | Nothing at all answers | Reset or UART wiring (TX/RX swapped, no common ground), module unpowered, or (plain adapter) DTR still asserted so the module is held in reset. Behind the Programmer, check that its LED is green: it ignores RTS/DTR until pass-through. |
 | Garbage bytes where `0x00 0xCC` should be | Baud rate above the ROM's ~1.2 M ceiling or beyond what the adapter can do. Retry at 115200. |
 | The new firmware doesn't run after flashing; the module keeps showing up in the bootloader | SYNC is still high. Assert RTS (SYNC low) and reset again. |
-| The module goes quiet after a script or terminal closes the port | Plain adapter, or a Programmer image from 0.3.11-rc2 or earlier: HUPCL deasserted RTS, so SYNC is high and the module is asleep. Assert RTS again, or clear HUPCL (see [SYNC and sleep](#sync-and-sleep)). |
+| The module goes quiet after a script or terminal closes the port | Plain adapter, or a Programmer image from 0.3.11-rc3 or earlier: HUPCL deasserted RTS, so SYNC is high and the module is asleep. Assert RTS again, or clear HUPCL (see [SYNC and sleep](#sync-and-sleep)). |
 | The module turns up in the bootloader after a long sleep | The watchdog fired while SYNC was high. Disable it for long sleeps (`AT+WATCHDOG=0`). |
 | An image flashed through the Programmer was replaced by a different version | The Programmer reflashed its baked image on a recheck (see [The ADSBee 1421 Programmer does this for you](#the-adsbee-1421-programmer-does-this-for-you)). |
 
