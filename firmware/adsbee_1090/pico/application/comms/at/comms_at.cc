@@ -971,8 +971,8 @@ CPP_AT_CALLBACK(CommsManager::ATOTACallback) {
                     }
                     uint8_t buf[len_bytes];
 
-                    // From READY on, the next len_bytes console bytes are payload, never AT commands: the guard keeps
-                    // any nested UpdateAT() off the input and discards whatever part of the payload arrives late.
+                    // From READY on, the next len_bytes console bytes are payload. The guard keeps any nested
+                    // UpdateAT() off the input and discards whatever part of the payload arrives late.
                     at_console_guard_.BeginBinaryPayload(len_bytes);
                     // Send OK to indicate that we're ready to receive data.
                     CPP_AT_PRINTF("READY\r\n");

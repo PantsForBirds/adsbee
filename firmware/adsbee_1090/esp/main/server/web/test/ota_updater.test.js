@@ -204,7 +204,7 @@ test('first writes after the erase time out: the warm-up absorbs them', async ()
     assert.ok(dev.booted);
 });
 
-test('a late payload whose echo contains "OK" is retried, not taken as success', async () => {
+test('a late payload whose echo contains "OK" counts as a failed write and is retried', async () => {
     const { file, parts } = makeOta(4 * SECTOR);
     // Writes 1-2 warm-up, 3 header, 4 final chunk, 5 = first chunk: make it (and its first retry) late.
     const dev = new FakeAdsbee({ latePayloadWrites: new Set([5, 6]) });
