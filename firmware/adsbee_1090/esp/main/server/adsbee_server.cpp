@@ -897,7 +897,12 @@ bool ADSBeeServer::TCPServerInit() {
 }
 
 void ADSBeeServer::SendAircraftJSONMessages() {
+    // Batch aircraft into JSON arrays of up to one websocket message each. One frame per aircraft (two socket writes
+    // each) cost ~100 TCP segments per second per client at a busy site; on the W5500 Ethernet board the network tasks
+    // doing that outrank the SPI receive task, which then missed RP2040 handshakes until the RP2040 reset the board.
+    char batch_buf[WebSocketServer::kWebSocketMessageMaxLen];
     char json_buf[kAircraftJSONMessageStrMaxLen];
+    uint16_t batch_len = 0;
     uint32_t timestamp_ms = get_time_since_boot_ms();
     for (auto& itr : aircraft_dictionary.dict) {
         if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) {
@@ -911,8 +916,22 @@ void ADSBeeServer::SendAircraftJSONMessages() {
         } else if (RemoteIDAircraft* ac = get_if<RemoteIDAircraft>(&itr.second); ac) {
             len = WriteAircraftJSONRemoteIDAircraftStr(json_buf, *ac);
         }
-        if (len > 0) {
-            network_aircraft.BroadcastMessage(json_buf, len);
+        if (len <= 0) {
+            continue;
         }
+        // "[" or "," before the object, "]" after the batch.
+        if (batch_len > 0 && batch_len + 1 + len + 1 > sizeof(batch_buf)) {
+            batch_buf[batch_len++] = ']';
+            network_aircraft.BroadcastMessage(batch_buf, batch_len);
+            batch_len = 0;
+        }
+        char separator = batch_len == 0 ? '[' : ',';
+        batch_buf[batch_len++] = separator;
+        memcpy(batch_buf + batch_len, json_buf, len);
+        batch_len += len;
+    }
+    if (batch_len > 0) {
+        batch_buf[batch_len++] = ']';
+        network_aircraft.BroadcastMessage(batch_buf, batch_len);
     }
 }

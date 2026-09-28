@@ -4910,7 +4910,12 @@ class AircraftWebSocket {
         this.ws.onopen = () => console.log('[AircraftWS] connected');
         this.ws.onmessage = (ev) => {
             if (!this.onMessage) return;
-            try { this.onMessage(JSON.parse(ev.data)); } catch (_) { }
+            // Firmware batches aircraft into JSON arrays; older firmware sent one object per message.
+            let data;
+            try { data = JSON.parse(ev.data); } catch (_) { return; }
+            for (const ac of (Array.isArray(data) ? data : [data])) {
+                try { this.onMessage(ac); } catch (_) { }
+            }
         };
         this.ws.onclose = () => {
             clearInterval(this.pingInterval);
