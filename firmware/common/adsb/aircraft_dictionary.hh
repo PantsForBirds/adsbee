@@ -100,8 +100,8 @@ class Aircraft {
     // Values from other protocols will need to be translated.
 
     uint32_t last_message_timestamp_ms = 0;
-    // Local time (get_time_since_boot_ms()) of the last accepted position. Unlike the protocol-specific
-    // last_track_update_timestamp_ms (packet MLAT time for Mode S), this can be compared across aircraft types.
+    // Local time (get_time_since_boot_ms()) of the last accepted position, comparable across aircraft types. The
+    // protocol-specific last_track_update_timestamp_ms holds packet MLAT time for Mode S.
     uint32_t last_position_update_ms = 0;
 
     float latitude_deg = 0.0f;
@@ -239,9 +239,9 @@ class ModeSAircraft : public Aircraft {
     /**
      * Returns the maximum time delta between CPR packets that will be accepted for decoding.
      * @param[in] received_timestamp_ms MLAT timestamp of the newest CPR packet, in ms. Track age is measured against
-     * this rather than the local clock because last_track_update_timestamp_ms holds packet (MLAT) time, which is the
-     * RP2040's clock. On the ESP32, get_time_since_boot_ms() counts from the ESP32's own boot, so comparing the two made
-     * every track look stale and pinned the interval at kDefaultCPRIntervalMs.
+     * this timestamp, because last_track_update_timestamp_ms holds packet (MLAT) time, which is the RP2040's clock. On
+     * the ESP32, get_time_since_boot_ms() counts from the ESP32's own boot, so comparing it with packet time made every
+     * track look stale and pinned the interval at kDefaultCPRIntervalMs.
      * @retval Maximum allowed time delta between CPR packets.
      */
     uint32_t GetMaxAllowedCPRIntervalMs(uint32_t received_timestamp_ms) const {

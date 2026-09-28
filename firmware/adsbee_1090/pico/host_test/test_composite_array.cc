@@ -659,7 +659,7 @@ TEST(CompositeArray, FullArrayOfUATUplinksNeedsMatchingQueueDepth) {
 }
 
 // When one destination queue is full, the other packet types in the same array must still be enqueued, and the drops
-// are counted instead of being logged one line per array.
+// are counted for a periodic summary log line.
 TEST(CompositeArray, FullQueueOnlyDropsItsOwnPacketType) {
     uint8_t buffer[CompositeArray::RawPackets::kMaxLenBytes] = {0};
     PFBQueue<RawModeSPacket> mode_s_tx =

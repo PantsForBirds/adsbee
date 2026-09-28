@@ -30,7 +30,7 @@ class ADSBeeServer {
     static const uint32_t kRawPacketProcessingIntervalMs = 200;
     static const uint32_t kGDL90ReportingIntervalMs = 1000;
     static const uint32_t kAircraftJSONReportingIntervalMs = 1000;
-    // RP2040 metrics older than this are dropped from the metrics message instead of being repeated.
+    // RP2040 metrics older than this are stale and are dropped from the metrics message.
     static const uint32_t kRP2040MetricsStaleTimeoutMs = 3000;
 
     static const uint16_t kNetworkConsoleQueueLen = 10;

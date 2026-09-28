@@ -8,8 +8,8 @@
  * text such as "AT+BOOT_USB_UF2=1DEADBEE" in the image being sent would then reboot the receiver into its USB
  * bootloader. So "AT+" must never be stored contiguously in flash; linker_scripts/ota_at_scan.py checks every .ota.
  *
- * AT_PLUS stores kATPlusMarker instead of '+'. Console text output (CommsManager::iface_vprintf on the RP2040) prints
- * it as '+'. Binary outputs (BEAST uses 0x1A as its escape byte) are not touched.
+ * AT_PLUS is "AT" followed by kATPlusMarker (0x1A). Console text output (CommsManager::iface_vprintf on the RP2040)
+ * prints the marker as '+'. Binary outputs (BEAST uses 0x1A as its escape byte) are not touched.
  */
 #define AT_PLUS "AT\x1a"
 static constexpr char kATPlusMarker = '\x1a';

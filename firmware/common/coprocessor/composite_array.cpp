@@ -212,7 +212,7 @@ bool CompositeArray::UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_l
         return true;  // All packets successfully enqueued.
     }
 
-    // Log one summary per interval instead of one line per dropped array.
+    // Count drops and log one summary line per interval.
     static QueueFullDrops drops_since_last_log;
     static uint32_t last_log_timestamp_ms = 0;
     static bool logged_once = false;

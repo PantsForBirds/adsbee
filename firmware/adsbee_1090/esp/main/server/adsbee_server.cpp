@@ -671,8 +671,8 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
     // ESP32 can't see number of attempted demodulations or raw packets, so steal that from RP2040 metrics
     // dictionary.
     AircraftDictionary::Metrics combined_metrics = aircraft_dictionary.metrics;
-    // The RP2040 sends its metrics every second. If they stop arriving (e.g. the SPI link is down), report zeros
-    // instead of repeating the last snapshot as if it were current.
+    // The RP2040 sends its metrics every second. If they stop arriving (e.g. the SPI link is down), report zeros: the
+    // last snapshot is no longer current.
     if (get_time_since_boot_ms() - adsbee_server.last_rp2040_metrics_timestamp_ms_ > kRP2040MetricsStaleTimeoutMs) {
         adsbee_server.rp2040_aircraft_dictionary_metrics = AircraftDictionary::Metrics();
     }

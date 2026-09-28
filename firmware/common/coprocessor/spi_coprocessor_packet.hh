@@ -157,9 +157,10 @@ class SPICoprocessorPacket {
          * without stack-allocating a temporary. Called by the from-buffer constructor; may also be called directly.
          */
         void ConstructFromBuffer(uint8_t *buf_in, uint16_t buf_in_len_bytes) {
-            // A read request is exactly kBufLenBytes long. Anything else is a torn or misaligned frame: copying it in
-            // full would write past the end of this packet (the slave reuses a static instance), and returning early
-            // would leave the previous request's contents in place to pass IsValid() again. Invalidate instead.
+            // A read request is exactly kBufLenBytes long. Anything else is a torn or misaligned frame, and the packet
+            // is invalidated. Copying the frame in full would write past the end of this packet (the slave reuses a
+            // static instance), and returning early would leave the previous request's contents in place to pass
+            // IsValid() again.
             if (buf_in_len_bytes != kBufLenBytes) {
                 CONSOLE_ERROR("SPICoprocessor::SCReadRequestPacket",
                               "Attempted to create a packet from a buffer of the wrong size. Received %d Bytes, but "

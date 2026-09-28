@@ -404,7 +404,7 @@ TEST(AircraftJSON, SquawkLeadingZeros) {
     EXPECT_EQ(GetJSONValue(buf, "squawk"), "7700");
 }
 
-// "messages" follows readsb: a running total for the aircraft, not the count from the last 1 s metrics interval.
+// "messages" follows readsb: it is a running total for the aircraft that keeps counting across 1 s metrics intervals.
 TEST(AircraftJSON, MessagesIsCumulativeAcrossMetricsIntervals) {
     char buf[kAircraftJSONMessageStrMaxLen];
 

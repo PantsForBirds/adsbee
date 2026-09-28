@@ -5,14 +5,14 @@
 #include "hal.hh"
 
 /**
- * Tracks whether the SPI link to a coprocessor is up, so that a dead link fails fast instead of costing every caller
- * the full retry budget.
+ * Tracks whether the SPI link to a coprocessor is up, so that calls on a dead link fail fast and don't each spend the
+ * full retry budget.
  *
  * Each failed SPI transaction attempt waits up to ~100 ms for a handshake, and a transaction retries 3 times. When the
  * ESP32 stops servicing SPI, the RP2040 main loop issues a dozen or more transactions per pass (raw packet flushes,
  * console writes, status reads, plus a console write for every error message those failures print), so one pass takes
  * several seconds. The RP2040 watchdog (~8.4 s) then fires before main() gets to its 5 s "cycle the ESP32 enable pin"
- * check, and the whole board reboots instead of just the ESP32.
+ * check, and the whole board reboots when only the ESP32 needed cycling.
  *
  * Once a transaction has used all of its retries the link is marked down. While it is down, transactions get no
  * attempts except for a single-attempt probe every kProbeIntervalMs, and any success marks the link up again.

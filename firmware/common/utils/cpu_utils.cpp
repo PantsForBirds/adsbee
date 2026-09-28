@@ -96,8 +96,8 @@ void CPUMonitor::Update() {
     uint32_t full_usage_expected_ticks =
         MAX(delta_time_ms * full_usage_ticks_per_update_interval_ / config_.update_interval_ms,
             1);  // No division by zero.
-    // A loop slower than the full usage rate is saturated. Clamp instead of letting the unsigned subtraction wrap,
-    // which reported a saturated core as 0%.
+    // A loop slower than the full usage rate is saturated. Clamp the excess at 0: an unsigned subtraction that wraps
+    // reported a saturated core as 0%.
     uint64_t excess_ticks = ticks_since_last_update > full_usage_expected_ticks
                                 ? ticks_since_last_update - full_usage_expected_ticks
                                 : 0;

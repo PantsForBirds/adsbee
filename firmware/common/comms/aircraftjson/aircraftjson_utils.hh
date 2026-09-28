@@ -169,7 +169,7 @@ inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft
     n = n < max ? n : max;
 
     // rssi and message count (always present)
-    // "messages" is the total since the aircraft was first seen (readsb semantics), not the last metrics interval.
+    // "messages" is the total since the aircraft was first seen (readsb semantics).
     n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%lu", aircraft.last_message_signal_strength_dbm,
                   (unsigned long)aircraft.num_frames_received);
     n = n < max ? n : max;

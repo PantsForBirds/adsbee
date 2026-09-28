@@ -22,8 +22,8 @@
  *      consume anything (PayloadInProgress()), so a nested UpdateAT() leaves the payload to ATReadConsole().
  *   2. After a payload read that ended short, the missing bytes are discarded when they arrive, until the count is met
  *      or the console has been idle for kDiscardIdleTimeoutMs (in case the sender gave up).
- *   3. A completed line that contains NUL or ASCII control characters other than \t, \r, \n is binary, not an AT
- *      command, and is dropped without being parsed or echoed.
+ *   3. A completed line that contains NUL or ASCII control characters other than \t, \r, \n is treated as binary
+ *      data and is dropped without being parsed or echoed.
  */
 class ATConsoleGuard {
    public:

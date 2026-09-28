@@ -247,8 +247,8 @@ bool SPICoprocessor::LogMessage(SettingsManager::LogLevel log_level, const char*
     // Allocating a LogMessage buffer on the stack can cause overflows in some limited resource event handlers.
     static ObjectDictionary::LogMessage log_message;
 #ifdef ON_ESP32
-    // Tasks on both cores log through here, and they share the static scratch message above. Drop a message rather
-    // than block the caller (which may be the SPI receive task) if another task is mid-format.
+    // Tasks on both cores log through here, and they share the static scratch message above. If another task is
+    // mid-format, the message is dropped so the caller (which may be the SPI receive task) never blocks.
     static SemaphoreHandle_t log_message_mutex = xSemaphoreCreateMutex();
     if (!log_message_mutex || xSemaphoreTake(log_message_mutex, pdMS_TO_TICKS(kLogMessageMutexTimeoutMs)) != pdTRUE) {
         return false;

@@ -54,8 +54,8 @@ idf_component_register(
         "remote_id"
         "server"
         "target_test"
-    # EMBED_FILES, not EMBED_TXTFILES: the web files are served with their exact length, and EMBED_TXTFILES appends a
-    # NUL terminator that would otherwise be sent to the browser.
+    # EMBED_FILES keeps the web files at their exact length, which is what the server sends. EMBED_TXTFILES would append
+    # a NUL terminator that then reached the browser.
     EMBED_FILES
         "server/web/index.html"
         "server/web/style.css"

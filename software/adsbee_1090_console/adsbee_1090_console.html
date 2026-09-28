@@ -4953,7 +4953,7 @@ const TRAFFIC_SOURCES = {
     rid: { label: 'Remote ID', stroke: '#c026d3', dash: '' },
 };
 // A position older than this (seconds, from "seen_pos") is drawn faded: the target is still heard, but its position
-// is being held rather than updated.
+// is a held value that has stopped updating.
 const kStalePositionS = 15;
 
 function acSource(ac) {
