@@ -5382,10 +5382,12 @@ function makeRxEnableEntry() {
             // that opening the port causes, or a bridge may still be bringing it up).
             //
             // Any legible reply proves the link works, and the rate the device reports
-            // is the console rate. Behind a USB bridge (the ADSBee 1421 Programmer) the
-            // host's baud is virtual and the Programmer retunes the device on its own. When the two differ, a second
-            // consecutive legible reply is required so a single stale line buffered
-            // from an earlier rate can't be mistaken for a live link.
+            // is the console rate, whatever rate this page opened the port at. Behind a
+            // USB bridge (the ADSBee 1421 Programmer) the host's baud is virtual and the
+            // Programmer retunes the device on its own. When the device's rate and the
+            // port's rate differ, a second consecutive legible reply is required, so a
+            // single stale line buffered from an earlier rate can't be mistaken for a
+            // live link.
             //
             // Returns the device's rate, or null.
             async probe(attempts = PROBE_ATTEMPTS_PER_RATE) {

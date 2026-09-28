@@ -131,7 +131,7 @@ tap, or failed console negotiation).
 
 ## Troubleshooting (yellow blink / no green)
 
-Open the jig's CDC port (any terminal, any baud — e.g. `python3 -m serial.tools.miniterm`) to
+Open the Programmer's CDC port (any terminal, any baud, e.g. `python3 -m serial.tools.miniterm`) to
 see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~5 s while waiting.
 
 | Message | Meaning |
