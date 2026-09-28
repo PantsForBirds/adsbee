@@ -8,11 +8,15 @@ the **`ti-lpf2`** Docker container defined in [`compose.yml`](compose.yml) — t
 carries the ARM GCC toolchain and the TI SimpleLink Low Power F2 SDK. There is no need (and no
 supported path) to install the toolchain on the host.
 
+Flashing without a debugger (the SYNC bootloader backdoor, the ADSBee 1421 Programmer and host
+tools) is covered in [`README.md`](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
+
 Applications in this directory:
 
 - [`ti/`](ti/) — the CC1314R10 application itself.
-- [`programmer/`](programmer/) — an RP2040-Zero flash/passthrough jig that bakes the `ti`
-  Release hex into its own image (built in the `pico-docker` container).
+- [`programmer/`](programmer/) — the ADSBee 1421 Programmer, an RP2040-Zero flasher and
+  pass-through that bakes the `ti` Release hex into its own image (built in the `pico-docker`
+  container).
 
 Shared C++ code comes from [`../common/`](../common/) and [`../modules/`](../modules/) (cppAT),
 referenced via the `ADSBEE_COMMON_DIR` / `ADSBEE_MODULES_DIR` CMake variables whose defaults
@@ -33,9 +37,9 @@ From this `firmware/adsbee_1421/` directory (or via the dispatcher:
 ```bash
 ./build.sh               # build the CC1314 app (ti) in Release
 ./build.sh -d            # build ti in Debug (includes the RF test command AT+TX_CW; Release omits it)
-./build.sh programmer    # build the RP2040 flashing jig (requires ti built first)
-./build.sh build_and_flash  # build ti + programmer, then reflash an attached m1421 via the jig
-                         # (prompts to put the jig in BOOT mode, copies the uf2, monitors)
+./build.sh programmer    # build the ADSBee 1421 Programmer (requires ti built first)
+./build.sh build_and_flash  # build ti + programmer, then reflash an attached m1421 via the Programmer
+                         # (prompts to put the Programmer in BOOT mode, copies the uf2, monitors)
 ./build.sh flash         # same, but no build steps: flashes the programmer uf2 already on disk
                          # (warns if it is older than the sources or than the baked-in ti hex)
 ./build.sh clean ti      # remove ti/build
@@ -106,8 +110,9 @@ adsbee_1090's. Any change under `firmware/adsbee_1421/` or the shared `firmware/
 paired with an adsbee_1421 firmware version bump — enforced by
 [`../scripts/check_version_sync.sh`](../scripts/check_version_sync.sh), which `build.sh` runs
 before every build (as a warning only — it never blocks the build) and which the repo pre-commit
-hook runs on every commit (where it does block). Note that a
-`firmware/common/` change requires bumping **both** products' versions.
+hook runs on every commit (where it does block). A
+`firmware/common/` change requires bumping **both** products' versions. Markdown-only
+changes (`*.md`) are exempt.
 
 ## Flashing
 
@@ -121,9 +126,11 @@ Flash a CC1314R10 over JTAG with a Segger J-Link (see
 
 Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link tools.
 
-> The firmware also supports entering the CC1314 ROM UART bootloader for serial reflashing —
-> see the `AT+BOOT_UART_BOOTLOADER` command, the [`programmer/`](programmer/) jig, and the
-> [`software/adsbee_1421_flasher`](../../software/adsbee_1421_flasher/) host tool.
+> The module can also be reflashed over its console UART through the CC1314 ROM serial
+> bootloader, with no debugger: hold SYNC high through a reset (the CCFG bootloader backdoor),
+> or use `AT+BOOT_UART_BOOTLOADER=1DEADBEE` as a fallback. The ADSBee 1421 Programmer
+> ([`programmer/`](programmer/)) does this automatically, and any host tool that drives
+> RTS → SYNC and DTR → RESET_N can do it through the Programmer. See [Reflashing over UART: the SYNC bootloader backdoor](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
 ## SYNC low-power sleep
 
@@ -136,6 +143,11 @@ LR2021 down, **tri-states the shared LR2021 bus** (`LR2021::TristateInterface()`
 SYNC as a falling-edge wake source, enters STANDBY via `PowerCC26XX_standbyPolicy()`, and on wake
 restores the bus (`RestoreInterface()`) and re-runs `ApplyReceiverConfig()` to re-initialize the
 LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` restart the console and UAT RX.
+
+> **SYNC is also the bootloader backdoor pin:** the boot ROM samples it at every reset, and SYNC
+> high at reset (including a watchdog reset during a long sleep) starts the ROM serial bootloader,
+> so this firmware doesn't run. Drive SYNC low before resetting the module; see
+> [SYNC and sleep](README.md#sync-and-sleep).
 
 > **LR2021 bus handoff:** during sleep the CC1314 releases every LR2021 interface pin it normally
 > drives (`LR_CS`, `LR_RESET`, `COPRO_SPI_SCLK`, `COPRO_SPI_PICO`) to high-impedance inputs (with

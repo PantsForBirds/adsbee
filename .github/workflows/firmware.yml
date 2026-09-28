@@ -380,3 +380,5 @@ jobs:
           fi
         fi
         firmware/scripts/check_version_sync.sh "$old" HEAD
+    - name: Test the version sync check
+      run: bash firmware/scripts/test_check_version_sync.sh

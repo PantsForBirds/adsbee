@@ -4,7 +4,7 @@ This directory hosts firmware for two products, which share the code in `firmwar
 `firmware/modules/`:
 
 - **`adsbee_1090/`** — ADSBee 1090 (RP2040 + ESP32-S3 + CC1312)
-- **`adsbee_1421/`** — ADSBee m1421 (CC1314R10 + LR2021) and its RP2040 flashing jig
+- **`adsbee_1421/`** — ADSBee m1421 (CC1314R10 + LR2021) and the ADSBee 1421 Programmer (RP2040-Zero) that flashes it
 
 Build either through the dispatcher:
 
@@ -120,13 +120,13 @@ bash firmware/build.sh adsbee_1421 [options] [target]
 | Target | Description |
 |--------|-------------|
 | `ti` (default) | CC1314R10 application |
-| `programmer` | RP2040-Zero flash/passthrough jig (requires `ti` built first — it bakes in the hex) |
-| `build_and_flash` | Build `ti` + `programmer`, then reflash an attached m1421 through the jig |
-| `flash` | Reflash using the jig uf2 already on disk; runs no build steps, warns if it or its baked-in hex is stale |
+| `programmer` | ADSBee 1421 Programmer, an RP2040-Zero flasher and pass-through (requires `ti` built first, because it bakes in the hex) |
+| `build_and_flash` | Build `ti` + `programmer`, then reflash an attached m1421 through the Programmer |
+| `flash` | Reflash using the Programmer uf2 already on disk; runs no build steps, warns if it or its baked-in hex is stale |
 | `clean [target]` | Delete the target's build directory |
 
 The `-d` flag selects a Debug build, as for adsbee_1090. `./build.sh -d build_and_flash` builds the Debug
-CC1314 image and bakes it into the programmer jig, so the m1421 is flashed with the Debug image.
+CC1314 image and bakes it into the ADSBee 1421 Programmer, so the m1421 is flashed with the Debug image.
 
 ### Debug builds and RF test commands
 
@@ -157,8 +157,9 @@ load. Don't connect an antenna: the LR2021 bands cover licensed and aviation spe
 | CC1314 (Release) | `firmware/adsbee_1421/ti/build/Release/adsbee_1421.hex` (+ `.elf`, `.map`, version-stamped copies) |
 | Programmer | `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` (+ `.elf`, version-stamped `-fw<version>` copies) |
 
-See [adsbee_1421/AGENTS.md](adsbee_1421/AGENTS.md) for flashing, debugging, and the SYNC
-low-power sleep contract.
+See [adsbee_1421/AGENTS.md](adsbee_1421/AGENTS.md) for JTAG flashing, debugging, and the SYNC
+low-power sleep contract, and [adsbee_1421/README.md](adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor)
+for reflashing over UART through the SYNC bootloader backdoor (no debugger needed).
 
 ---
 

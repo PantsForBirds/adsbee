@@ -2,12 +2,12 @@
 
 #include <stdint.h>
 
-// Transparent USB-CDC <-> UART pass-through emulating a TTL USB-UART adapter wired the way the
-// existing host tools expect (see software/adsbee_1421_flasher/README.md):
+// Transparent USB-CDC <-> UART pass-through emulating a TTL USB-UART adapter wired the way host
+// tools expect (see "Reflashing over UART" in firmware/adsbee_1421/README.md):
 //
 //   host RTS bit asserted  -> SYNC pin LOW   (asserting a modem-control line drives the physical
 //   host RTS bit deasserted-> SYNC pin HIGH   pin low on FTDI-style adapters; the web console and
-//   host DTR bit asserted  -> RESET_N pulse   python flasher are written against that polarity)
+//   host DTR bit asserted  -> RESET_N pulse   host scripts are written against that polarity)
 //
 // DTR is edge-triggered (a 50 ms reset pulse on assert), so terminals that keep DTR asserted for
 // the whole session do not hold the device in reset. RTS deasserted only drives SYNC high while
