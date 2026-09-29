@@ -18,7 +18,9 @@ bash firmware/build.sh adsbee_1421 [args...]   # forwards to adsbee_1421/build.s
 
 Each product has its own firmware/settings versions; the version-management rules below apply
 **per product**, and a `firmware/common/` change concerns **both** products' versions
-(enforced by `scripts/check_version_sync.sh`). CI builds a product only when its own files,
+(enforced by `scripts/check_version_sync.sh`). The one exception is
+`firmware/common/coprocessor/object_dictionary.cpp`, which holds adsbee_1090's version constants
+and isn't built into adsbee_1421, so a 1090-only version bump needs no 1421 bump. CI builds a product only when its own files,
 `firmware/common/`, or `firmware/modules/` changed.
 
 ## Project Summary
@@ -131,7 +133,7 @@ static constexpr uint32_t kSettingsVersion = N;
 ```
 
 ### Rules
-1. **Any change to ESP32 or CC1312 code, or to shared `common/` code** → the firmware version must be one that is **not yet released** (RC for dev builds, patch for releases). If the version on the branch is already the next unreleased RC, keep it; if it matches a release tag, move it to the next unreleased RC. A `common/` change applies this to adsbee_1421's version too.
+1. **Any change to ESP32 or CC1312 code, or to shared `common/` code** → the firmware version must be one that is **not yet released** (RC for dev builds, patch for releases). If the version on the branch is already the next unreleased RC, keep it; if it matches a release tag, move it to the next unreleased RC. A `common/` change applies this to adsbee_1421's version too, except a change to `common/coprocessor/object_dictionary.cpp` (the 1090 version constants), which adsbee_1421 doesn't build.
 2. **Any change to the `Settings` struct** → increment `kSettingsVersion`, with the firmware version following rule 1; commit both together
 3. If firmware version is unchanged, RP2040 skips reflashing the coprocessors — symptom: old behavior persists after flashing new `combined.uf2`. While developing under an unchanged unreleased version, force a reflash or bump the RC locally to test.
 4. Never go below the latest release: versions compare by major, minor, patch, then RC, and every RC sorts below its stable release (`0.9.1-rc9` < `0.9.1` < `0.9.2-rc1`).
@@ -147,6 +149,9 @@ version matches a release tag (naming the tag and the next free RC) or is lower 
 release; an unreleased version passes even when it equals the base branch's. The tags come from
 the local repository, so run `git fetch --tags`; with no tags for a product, the check warns and
 falls back to requiring a version different from the base.
+Watched paths: adsbee_1090 watches `adsbee_1090/esp/`, `adsbee_1090/ti/` and `common/`;
+adsbee_1421 watches `adsbee_1421/` and `common/` except `common/coprocessor/object_dictionary.cpp`
+(adsbee_1090's version constants, not compiled into any adsbee_1421 build).
 Markdown-only changes (`*.md`: READMEs, AGENTS.md) are exempt and need no bump; any other file under
 the watched paths, including `CMakeLists.txt`, scripts, and assets, still does. The CI
 `version_sync_check` job runs the check and its tests (`scripts/test_check_version_sync.sh`).

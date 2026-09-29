@@ -11,8 +11,11 @@
 #                ESP32/CC1312 coprocessor code and shared common/ code.
 #   adsbee_1421: versions live in firmware/adsbee_1421/ti (settings/settings.hh,
 #                object_dictionary/object_dictionary.cpp); watched paths are the whole product
-#                directory and shared common/ code.
-# Note: a firmware/common change therefore concerns BOTH products.
+#                directory and shared common/ code, except
+#                firmware/common/coprocessor/object_dictionary.cpp. That file holds the 1090's
+#                version constants and isn't compiled into any 1421 build (the 1421 has its own
+#                object_dictionary.cpp), so a 1090-only version bump doesn't require a 1421 bump.
+# Note: any other firmware/common change therefore concerns BOTH products.
 #
 # The firmware version is written the way release tags are named: <product>-M.m.p-rcN for a
 # release candidate and <product>-M.m.p for a stable release (kFirmwareVersionReleaseCandidate
@@ -192,6 +195,8 @@ new_source_in_tag() {
 # Check one product: if its watched paths or settings version changed, its new firmware version
 # must be unreleased and not lower than its highest release.
 # Usage: check_product <name> <settings-file> <version-file> <watched-path>...
+#   A watched path may be a git exclude pathspec (":(exclude)<path>") to leave out one file
+#   inside another watched path.
 check_product() {
     local product="$1" settings_file="$2" firmware_version_file="$3"
     shift 3
@@ -314,7 +319,8 @@ check_product adsbee_1421 \
     "firmware/adsbee_1421/ti/settings/settings.hh" \
     "firmware/adsbee_1421/ti/object_dictionary/object_dictionary.cpp" \
     "firmware/adsbee_1421" \
-    "firmware/common"
+    "firmware/common" \
+    ":(exclude)firmware/common/coprocessor/object_dictionary.cpp"
 
 if [ "$failures" -ne 0 ]; then
     echo "=== Version sync check FAILED for $failures product(s) (see above) ==="
