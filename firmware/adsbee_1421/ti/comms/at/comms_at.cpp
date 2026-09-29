@@ -1239,7 +1239,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "R1090_PREAMBLE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S_PREAMBLE DF17 MODE_S_SW_CRC]>\r\n\tSet the 1090MHz Mode S "
+     .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S_PREAMBLE DF17 MODE_S_SW_CRC MODE_S_STRONG]>\r\n\tSet the 1090MHz Mode S "
                     "receiver preamble mode.\r\n\t"
                     "AT+R1090_PREAMBLE?\r\n\tQuery the current preamble mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATR1090PreambleCallback, comms_manager)},

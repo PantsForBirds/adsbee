@@ -223,15 +223,15 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     }
     // DF17 mode keys on the DF data bits and captures the message remainder mid-byte, so it runs
     // with the hardware CRC OFF (software validates). MODE_S_PREAMBLE uses the 3-byte hardware CRC
-    // (11-byte payload + appended parity). MODE_S_SW_CRC uses the standard preamble detector but
-    // runs CRC-off with the parity bytes captured as payload, so software validates -- the FIFO
-    // packet is 14 bytes of raw air bits either way (GetOokRxPacketLenBytes).
+    // (11-byte payload + appended parity). MODE_S_SW_CRC and MODE_S_STRONG run CRC-off with the
+    // parity bytes captured as payload, so software validates -- the FIFO packet is 14 bytes of raw
+    // air bits either way (GetOokRxPacketLenBytes).
     uint16_t payload_len_bytes;
     OokCrc crc_mode;
     if (df17_mode) {
         payload_len_bytes = kOokDF17PacketRxLenBytes;
         crc_mode = kOokCrcOff;
-    } else if (preamble_mode == SettingsManager::kR1090PreambleModeModeSSwCrc) {
+    } else if (IsOokSwCrcPreambleMode(preamble_mode)) {
         payload_len_bytes = kOokADSBPacketRxLenBytes + kOokADSBPacketCrcLenBytes;
         crc_mode = kOokCrcOff;
     } else {
@@ -283,8 +283,14 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
             return false;
         }
     } else {
-        if (!SetOokDetector(0b1010000101,                        // Preamble pattern
-                            15,                                  // Pattern length: 16 chips (field N-1)
+        // MODE_S_STRONG detects on preamble chips 6-15 (see lr2021_ook_adsb.hh); the other modes use
+        // the whole preamble. Both patterns end at chip 15, so the capture starts at message bit 0.
+        const bool strong_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong;
+        const uint16_t pattern = strong_mode ? LR2021OokAdsb::kStrongPattern : LR2021OokAdsb::kModeSPattern;
+        const uint8_t pattern_len_chips =
+            strong_mode ? LR2021OokAdsb::kStrongPatternLenChips : LR2021OokAdsb::kModeSPatternLenChips;
+        if (!SetOokDetector(pattern,                             // Preamble pattern (LSB-first chips)
+                            pattern_len_chips - 1,               // Pattern length (field is N-1)
                             0,                                   // No pattern repetition
                             false,                               // Sync word is not raw
                             OokSfdKind::kOokSfdKindFallingEdge,  // Start frame delimiter on falling edge
@@ -308,7 +314,8 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     // latency.
     static_assert(GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeS) == kOokFifoPacketLenBytes &&
                       GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeDF17) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSSwCrc) == kOokFifoPacketLenBytes,
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSSwCrc) == kOokFifoPacketLenBytes &&
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes,
                   "IRQ drain threshold math assumes 14-byte FIFO packets in every preamble mode.");
     uint8_t rx_fifo_flags = kFifoIrqFlagFifoHigh | kFifoIrqFlagFifoOverflow;
     uint8_t tx_fifo_flags = 0x0;
@@ -332,6 +339,27 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
 
     if (!SetAgcGainManual(agc_gain)) {  // 0 = auto, 1..15 manual (13 = max).
         CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetAgcGainManual.");
+        return false;
+    }
+    // The standard preamble detector needs the whole preamble, and an AGC gain change during the
+    // preamble blanks its first three pulses (lr2021_ook_adsb.hh). With the AGC on, raise the level
+    // at which it starts cutting the gain so that packets up to -45 dBm arrive with the gain
+    // unchanged. DF17 and MODE_S_STRONG detect after the blanked chips and keep the chip default.
+    // Manual gain (agc_gain != 0) leaves the AGC off, so the register doesn't matter there.
+    const bool standard_preamble_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeS ||
+                                        preamble_mode == SettingsManager::kR1090PreambleModeModeSSwCrc;
+    if (agc_gain == 0 && standard_preamble_mode &&
+        !WriteRegMemMask32(LR2021OokAdsb::kAgcConfigRegAddr, LR2021OokAdsb::kAgcTriggerMask,
+                           LR2021OokAdsb::AgcTriggerRegValue(LR2021OokAdsb::kAgcTriggerStandardPreamble))) {
+        CONSOLE_ERROR("LR2021::SetOokADSB", "Error while setting the AGC trigger.");
+        return false;
+    }
+    // MODE_S_STRONG only looks for strong signals, so it raises the OOK detection threshold, which
+    // keeps its short pattern from triggering on noise (lr2021_ook_adsb.hh).
+    if (preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong &&
+        !WriteRegMemMask32(LR2021OokAdsb::kOokDetectRegAddr, LR2021OokAdsb::kOokDetectThresholdMask,
+                           LR2021OokAdsb::OokDetectThresholdRegValue(LR2021OokAdsb::kOokDetectThresholdStrong))) {
+        CONSOLE_ERROR("LR2021::SetOokADSB", "Error while setting the OOK detection threshold.");
         return false;
     }
 

@@ -25,6 +25,7 @@ const char SettingsManager::kR1090PreambleModeStrs[SettingsManager::kNumR1090Pre
                                                       "MODE_S_PREAMBLE",  // Trigger on the standard Mode S preamble.
                                                       "DF17",  // Trigger on 2nd preamble half + DF17 header.
                                                       "MODE_S_SW_CRC",  // Standard preamble, hardware CRC off.
+                                                      "MODE_S_STRONG",  // Preamble chips 6-15, hardware CRC off.
 };
 
 const char SettingsManager::RxPosition::kPositionSourceStrs[SettingsManager::RxPosition::kNumPositionSources]

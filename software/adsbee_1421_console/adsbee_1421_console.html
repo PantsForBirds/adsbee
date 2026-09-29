@@ -4351,9 +4351,12 @@ function makeRxEnableEntry() {
             },
             {
                 cmd: 'R1090_PREAMBLE', label: '1090 MHz Preamble Detector', group: 'Radio',
+                help: 'MODE_S_SW_CRC (default) decodes every downlink format up to about -45 dBm. '
+                    + 'MODE_S_STRONG decodes signals from about -50 dBm up and suits a receiver next to '
+                    + 'a transmitter. DF17 receives DF17 frames only.',
                 fields: [{
                     id: 'mode', label: 'Mode', type: 'enum',
-                    options: ['MODE_S_PREAMBLE', 'DF17', 'MODE_S_SW_CRC'],
+                    options: ['MODE_S_PREAMBLE', 'DF17', 'MODE_S_SW_CRC', 'MODE_S_STRONG'],
                 }],
             },
             {

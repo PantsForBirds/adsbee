@@ -73,12 +73,15 @@ class SettingsManager {
     };
     static const char kSubGHzModeStrs[kNumSubGHzRadioModes][kSubGHzModeStrMaxLen];
 
-    // Sync mode for the 1090MHz Mode S receiver (how the LR2021 triggers reception).
+    // Sync mode for the 1090MHz Mode S receiver (how the LR2021 triggers reception). Values are
+    // flash-persisted: append new modes, don't renumber.
     enum R1090PreambleMode : uint8_t {
         kR1090PreambleModeModeS = 0,  // Trigger on the standard Mode S preamble; hardware CRC filter on.
-        kR1090PreambleModeDF17,       // Trigger on 2nd preamble half + DF17 header bits (better dynamic range).
+        kR1090PreambleModeDF17,       // Trigger on 2nd preamble half + DF17 header bits (DF17 frames only).
         kR1090PreambleModeModeSSwCrc,  // Standard Mode S preamble with the hardware CRC off; software validates,
                                        // so failed-CRC frames stay available for error correction.
+        kR1090PreambleModeModeSStrong,  // Preamble chips 6-15 only, software CRC: for strong signals (-50 dBm
+                                        // and up), where the LR2021 AGC blanks the start of the preamble.
         kNumR1090PreambleModes
     };
     static constexpr uint16_t kR1090PreambleModeStrMaxLen = 30;
@@ -144,7 +147,7 @@ class SettingsManager {
         // ADSBee settings
         bool r1090_rx_enabled = true;
         uint32_t watchdog_timeout_sec = kDefaultWatchdogTimeoutSec;
-        R1090PreambleMode r1090_preamble_mode = R1090PreambleMode::kR1090PreambleModeDF17;
+        R1090PreambleMode r1090_preamble_mode = R1090PreambleMode::kR1090PreambleModeModeSSwCrc;
         uint8_t r1090_gain = 0;      // 0 = auto AGC, 1..15 manual (13 = max). Default: auto.
         uint8_t r1090_rx_boost = 0;  // LF RX path boost, 0 (off) .. 7 (max).
         // AT+LR_ENABLE: false = LR2021 held in reset with the CC1314-side bus pins parked hi-Z

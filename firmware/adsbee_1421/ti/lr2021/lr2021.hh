@@ -35,7 +35,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "settings.hh"  // For SettingsManager::R1090PreambleMode.
+#include "lr2021_ook_adsb.hh"  // Mode S detector patterns and AGC settings.
+#include "settings.hh"         // For SettingsManager::R1090PreambleMode.
 
 class LR2021 {
    public:
@@ -78,9 +79,17 @@ class LR2021 {
         return preamble_mode == SettingsManager::kR1090PreambleModeDF17;
     }
 
+    // True for the preamble modes whose captures start at message bit 0 and are validated in software
+    // (hardware CRC off, the 3 parity bytes captured as payload).
+    static constexpr bool IsOokSwCrcPreambleMode(SettingsManager::R1090PreambleMode preamble_mode) {
+        return preamble_mode == SettingsManager::kR1090PreambleModeModeSSwCrc ||
+               preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong;
+    }
+
     // Total FIFO bytes per received packet for the given preamble mode. Mode S preamble mode appends
-    // a 3-byte hardware CRC (11 + 3); MODE_S_SW_CRC captures the parity bytes as payload (14); DF17
-    // mode runs CRC-off so its payload bytes are the whole packet (14). All modes come out to 14.
+    // a 3-byte hardware CRC (11 + 3); MODE_S_SW_CRC and MODE_S_STRONG capture the parity bytes as
+    // payload (14); DF17 mode runs CRC-off so its payload bytes are the whole packet (14). All modes
+    // come out to 14.
     static constexpr uint16_t GetOokRxPacketLenBytes(SettingsManager::R1090PreambleMode preamble_mode) {
         return IsOokDF17PreambleMode(preamble_mode) ? kOokDF17PacketRxLenBytes
                                                     : (kOokADSBPacketRxLenBytes + kOokADSBPacketCrcLenBytes);
