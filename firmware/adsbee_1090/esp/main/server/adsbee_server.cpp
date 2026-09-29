@@ -1,5 +1,7 @@
 #include "adsbee_server.hh"
 
+#include <new>
+
 #include "esp_heap_caps.h"
 #include "lwip/sockets.h"
 
@@ -36,6 +38,27 @@ static const int kTCPServerSockOptKeepAliveIntervalSec = 5;
 static const int kTCPServerSockOptMaxFailedKeepAliveCount = 3;
 // Number of seconds to wait before giving up on selecting a TCP socket.
 static const int kTCPServerSockSelectTimeoutSec = 1;
+
+/**
+ * Prints the settings received from the RP2040 with the WiFi passwords masked. SettingsManager::Print() shows the AP
+ * password in clear (it also answers AT+SETTINGS? on the RP2040), and on the ESP32 its output goes to the console
+ * log, which reaches the RP2040 console and the web UI's /console websocket. Prints a heap copy so the live settings
+ * are never modified.
+ */
+static void PrintSettingsWithoutSecrets() {
+    SettingsManager* copy = new (std::nothrow) SettingsManager(settings_manager);
+    if (copy == nullptr) {
+        CONSOLE_ERROR("ADSBeeServer::Init", "Not enough memory to print the settings.");
+        return;
+    }
+    SettingsManager::Settings::CoreNetworkSettings& cns = copy->settings.core_network_settings;
+    // Same mask for every non-empty password so its length isn't revealed either; an empty password stays empty.
+    static const char kMaskedPassword[] = "********";
+    if (cns.wifi_ap_password[0] != '\0') strcpy(cns.wifi_ap_password, kMaskedPassword);
+    if (cns.wifi_sta_password[0] != '\0') strcpy(cns.wifi_sta_password, kMaskedPassword);
+    copy->Print();
+    delete copy;
+}
 /* end obsolete */
 
 // Embedded files from the web folder.
@@ -129,7 +152,7 @@ bool ADSBeeServer::Init() {
                       (unsigned long)kSettingsVersion);
     }
     vSemaphoreDelete(settings_read_semaphore);
-    settings_manager.Print();
+    PrintSettingsWithoutSecrets();
     settings_manager.Apply();
     HeapDiagnostics::Mark("settings");
 
