@@ -4,7 +4,6 @@ const test = require('node:test');
 const assert = require('node:assert');
 const ota = require('../ota_updater.js');
 
-const AT = 'AT+';
 const SECTOR = 4096;
 
 // Fast timeouts so failure paths finish quickly.
@@ -211,7 +210,7 @@ test('a late payload whose echo contains "OK" counts as a failed write and is re
     assertFlashed(dev, parts[1]);
     assert.ok(dev.verified && dev.booted);
     // Each retry erases its sector first.
-    assert.ok(dev.commands.filter((c) => c === `${AT}OTA=ERASE,1000,4096`).length >= 2);
+    assert.ok(dev.commands.filter((c) => c === 'AT+OTA=ERASE,1000,4096').length >= 2);
 });
 
 test('header write failures are retried', async () => {
