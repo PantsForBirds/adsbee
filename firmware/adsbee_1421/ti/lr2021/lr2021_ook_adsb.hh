@@ -64,9 +64,11 @@ static constexpr uint32_t kAgcTriggerShift = 16;
 // Chip default: the AGC acts from about -53 dBm. The gain change blanks the start of the preamble, so
 // the standard detector misses every packet from -50 dBm up.
 static constexpr uint8_t kAgcTriggerDefault = 0x10;
-// Raised trigger for the standard preamble detector: packets up to -45 dBm arrive with the gain
+// Raised trigger for MODE_S (standard preamble detector): packets up to -45 dBm arrive with the gain
 // unchanged and keep their whole preamble. From about -43 dBm up the receiver compresses at full gain
-// and decoding falls off; a much higher trigger (0xF8) measured the same.
+// and decoding falls off. Triggers 0x60, 0x7F, 0xA0 and 0xFF measured the same as 0x40 from -90 to
+// 0 dBm (the same ceiling and sensitivity); 0x20 dropped to 16 % at -45 dBm. MODE_S_STRONG needs the chip
+// default: with 0x40 or more it decodes at most 11 % of the packets, because it relies on the blanking.
 static constexpr uint8_t kAgcTriggerStandardPreamble = 0x40;
 
 constexpr uint32_t AgcTriggerRegValue(uint8_t trigger) {
