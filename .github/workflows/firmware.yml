@@ -366,15 +366,18 @@ jobs:
         retention-days: 1
 
   version_sync_check:
-    # Fail the PR if the Settings struct version changed without a firmware version bump.
+    # Fail if a product's firmware (or its Settings struct version) changed while its firmware
+    # version is already released or lower than its latest release, per the release tags.
     # See firmware/scripts/check_version_sync.sh.
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        # Full history so we can diff against the base branch / previous commit.
+        # Full history so we can diff against the base branch / previous commit, and the
+        # release tags so the check can tell which versions are released.
         fetch-depth: 0
+        fetch-tags: true
     - name: Check Settings/firmware version sync
       run: |
         if [ -n "${{ github.event.pull_request.base.sha }}" ]; then

@@ -106,13 +106,16 @@ the **baked firmware** (the programmer has no version of its own), matching the 
 ([`ti/object_dictionary/object_dictionary.cpp`](ti/object_dictionary/object_dictionary.cpp),
 `kFirmwareVersion*`) and settings version
 ([`ti/settings/settings.hh`](ti/settings/settings.hh), `kSettingsVersion`), independent of
-adsbee_1090's. Any change under `firmware/adsbee_1421/` or the shared `firmware/common/` must be
-paired with an adsbee_1421 firmware version bump — enforced by
+adsbee_1090's. Any change under `firmware/adsbee_1421/` or the shared `firmware/common/` must ship
+under an adsbee_1421 firmware version that is not yet released (no `adsbee_1421-<version>` tag)
+and not lower than the latest release; if the branch is already on the next unreleased RC, keep
+it. This is enforced by
 [`../scripts/check_version_sync.sh`](../scripts/check_version_sync.sh), which `build.sh` runs
 before every build (as a warning only — it never blocks the build) and which the repo pre-commit
 hook runs on every commit (where it does block). A
-`firmware/common/` change requires bumping **both** products' versions. Markdown-only
-changes (`*.md`) are exempt.
+`firmware/common/` change applies the rule to **both** products' versions. Markdown-only
+changes (`*.md`) are exempt. See [`../AGENTS.md`](../AGENTS.md#automated-enforcement) for the
+tag naming and how versions compare.
 
 ## Flashing
 
