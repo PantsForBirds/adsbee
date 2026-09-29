@@ -66,7 +66,7 @@ static constexpr uint32_t kAgcTriggerShift = 16;
 static constexpr uint8_t kAgcTriggerDefault = 0x10;
 // Raised trigger for the standard preamble detector: packets up to -45 dBm arrive with the gain
 // unchanged and keep their whole preamble. From about -43 dBm up the receiver compresses at full gain
-// and decoding falls off; raising the trigger further (0x48, 0x50) measured the same.
+// and decoding falls off; a much higher trigger (0xF8) measured the same.
 static constexpr uint8_t kAgcTriggerStandardPreamble = 0x40;
 
 constexpr uint32_t AgcTriggerRegValue(uint8_t trigger) {
