@@ -147,7 +147,7 @@ class SettingsManager {
         // ADSBee settings
         bool r1090_rx_enabled = true;
         uint32_t watchdog_timeout_sec = kDefaultWatchdogTimeoutSec;
-        R1090PreambleMode r1090_preamble_mode = R1090PreambleMode::kR1090PreambleModeModeSSwCrc;
+        R1090PreambleMode r1090_preamble_mode = R1090PreambleMode::kR1090PreambleModeDF17;
         uint8_t r1090_gain = 0;      // 0 = auto AGC, 1..15 manual (13 = max). Default: auto.
         uint8_t r1090_rx_boost = 0;  // LF RX path boost, 0 (off) .. 7 (max).
         // AT+LR_ENABLE: false = LR2021 held in reset with the CC1314-side bus pins parked hi-Z
