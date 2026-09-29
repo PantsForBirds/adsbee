@@ -1299,7 +1299,7 @@ class AircraftDictionary {
                     return ptr;
                 }
                 // Free-list exhausted — InsertAircraft's capacity guard should have prevented
-                // this. Fall through to the monotonic region so behaviour remains defined.
+                // this. Fall through to the monotonic region so behavior remains defined.
             }
             // Large allocation (bucket array) or pool overflow: served from the monotonic
             // region. null_memory_resource() upstream ensures clean termination on overflow.

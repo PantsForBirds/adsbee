@@ -236,7 +236,7 @@ jobs:
         # USB serial number of the 1090U under test (repository variable). With several RP2040
         # boards on the bench, /dev/ttyACM0 and "the first RPI-RP2 drive" are ambiguous; the
         # serial selects the console and the BOOTSEL drive (by USB port) unambiguously and locks
-        # the board for the run (ci/hil). Unset: the old /dev/ttyACM0 behaviour.
+        # the board for the run (ci/hil). Unset: the old /dev/ttyACM0 behavior.
         HIL_1090U_SERIAL: ${{ vars.HIL_1090U_SERIAL }}
       run: |
         # Derive the expected firmware version from source so the post-OTA

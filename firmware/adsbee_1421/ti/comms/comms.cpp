@@ -26,7 +26,7 @@ CommsManager::CommsManager(CommsManagerConfig config)
 
 void CommsManager::uart_write_callback(UART2_Handle handle, void* buf, size_t count, void* userArg,
                                        int_fast16_t status) {
-    // HWI context. Retire the bytes the driver actually consumed (count can be short if the write was cancelled),
+    // HWI context. Retire the bytes the driver actually consumed (count can be short if the write was canceled),
     // then chain the next contiguous ring segment straight from here so the wire never idles between segments. The
     // UART2CC26X2 driver clears its writeInUse flag before invoking this callback, so a nested UART2_write is accepted.
     CommsManager* self = static_cast<CommsManager*>(userArg);
@@ -116,7 +116,7 @@ bool CommsManager::SetBaudRate(uint32_t baud) {
     // before the line reconfigures.
     DrainConsoleTx();
 
-    // The driver requires an unfinished asynchronous write to be cancelled before UART2_close().
+    // The driver requires an unfinished asynchronous write to be canceled before UART2_close().
     if (uart_tx_in_progress_) {
         UART2_writeCancel(uart_handle_);
     }

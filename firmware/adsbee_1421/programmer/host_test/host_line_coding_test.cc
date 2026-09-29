@@ -46,7 +46,7 @@ static void TestConsoleAndCommonRatesAreForwarded() {
     for (uint32_t baud : rates) EXPECT(ClassifyHostBaud(baud) == HostBaudAction::kApply);
 }
 
-static void TestNeighboursAreForwarded() {
+static void TestNeighborsAreForwarded() {
     printf("only the exact magic baud reboots\n");
     EXPECT(ClassifyHostBaud(kRebootToBootselBaud - 1) == HostBaudAction::kApply);
     EXPECT(ClassifyHostBaud(kRebootToBootselBaud + 1) == HostBaudAction::kApply);
@@ -58,7 +58,7 @@ int main() {
     TestNotABaud();
     Test1200IsForwarded();
     TestConsoleAndCommonRatesAreForwarded();
-    TestNeighboursAreForwarded();
+    TestNeighborsAreForwarded();
     if (failures) {
         printf("%d failure(s)\n", failures);
         return 1;

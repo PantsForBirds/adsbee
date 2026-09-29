@@ -410,7 +410,7 @@ flash_1090() {
         # Note that CONSOLE_INFO lines never reach the console at the default log level
         # (kWarnings), so only unconditional prints and CONSOLE_ERROR lines are matched; the
         # authoritative check is the AT+DEVICE_INFO? query below. Log macros wrap the message
-        # text in ANSI colour, so only message substrings are matched, never "tag: message" spans.
+        # text in ANSI color, so only message substrings are matched, never "tag: message" spans.
         local fifo cat_pid line deadline quiet=0
         fifo="$(mktemp -u)"
         mkfifo "$fifo"

@@ -925,7 +925,7 @@ class SettingsManager {
     }
 }
 
-// ─── Altitude colour (tar1090 continuous HSL gradient) ───────────────────────
+// ─── Altitude color (tar1090 continuous HSL gradient) ────────────────────────
 function acAltColor(altFt) {
     if (altFt == null) return '#888888';
     const hue = 30 + (Math.max(0, Math.min(altFt, 40000)) / 40000) * 255;
@@ -946,7 +946,7 @@ const kVectorPxPerKt = 0.128;
 const kVectorMinPx = 8;
 const kVectorMaxPx = 80;
 
-// Trails coalesce consecutive same-colour points into a single polyline, but the
+// Trails coalesce consecutive same-color points into a single polyline, but the
 // altitude gradient above is continuous, so adjacent points almost never match
 // exactly. Quantizing to 500 ft bins first (about 3 hue degrees — imperceptible)
 // is what lets level flight collapse to one polyline instead of hundreds.
@@ -1375,7 +1375,7 @@ class LiveMap {
     // Rebuilding a trail is the expensive part of a tick, so this does two things
     // to stay affordable once every aircraft has one: it skips outright when
     // nothing about the trail changed, and it merges consecutive points of the
-    // same (quantized) altitude colour into one multi-point polyline instead of
+    // same (quantized) altitude color into one multi-point polyline instead of
     // emitting one polyline per segment.
     _drawTrail(hex) {
         if (!this._ready) return;

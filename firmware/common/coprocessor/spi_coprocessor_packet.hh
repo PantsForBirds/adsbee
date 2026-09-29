@@ -269,7 +269,7 @@ class SPICoprocessorPacket {
 
     /**
      * Minimal ACK/NACK response packet. Wire format: CMD | ACK_BYTE | CRC.
-     * Use this instead of SCResponsePacket when sending or receiving an acknowledgement — it is only as
+     * Use this instead of SCResponsePacket when sending or receiving an acknowledgment — it is only as
      * large as the wire format requires and has no data buffer that could be accidentally overwritten.
      */
     struct __attribute__((__packed__)) SCAckPacket : public SCPacket {

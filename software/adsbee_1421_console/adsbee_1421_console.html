@@ -1368,7 +1368,7 @@
             color: #e4e4e7;
         }
 
-        /* The page-wide disabled style is a light grey that reads as the brightest
+        /* The page-wide disabled style is a light gray that reads as the brightest
            thing on this dark modal, which is backwards: a locked Flash button must
            look less prominent than the Check button the user is meant to press. */
         .fw-modal-buttons .tools-button:disabled {
@@ -2158,7 +2158,7 @@
             return (crc ^ 0xFFFFFFFF) >>> 0;
         }
 
-        // ─── Altitude colour (tar1090 continuous HSL gradient) ───────────────────
+        // ─── Altitude color (tar1090 continuous HSL gradient) ────────────────────
         function acAltColor(altFt) {
             if (altFt == null) return '#888888';
             const hue = 30 + (Math.max(0, Math.min(altFt, 40000)) / 40000) * 255;
@@ -2179,7 +2179,7 @@
         const kVectorMinPx = 8;
         const kVectorMaxPx = 80;
 
-        // Trails coalesce consecutive same-colour points into a single polyline, but the
+        // Trails coalesce consecutive same-color points into a single polyline, but the
         // altitude gradient above is continuous, so adjacent points almost never match
         // exactly. Quantizing to 500 ft bins first (about 3 hue degrees — imperceptible)
         // is what lets level flight collapse to one polyline instead of hundreds.
@@ -3888,7 +3888,7 @@ function makeRxEnableEntry() {
             // Rebuilding a trail is the expensive part of a tick, so this does two things
             // to stay affordable once every aircraft has one: it skips outright when
             // nothing about the trail changed, and it merges consecutive points of the
-            // same (quantized) altitude colour into one multi-point polyline instead of
+            // same (quantized) altitude color into one multi-point polyline instead of
             // emitting one polyline per segment.
             _drawTrail(hex) {
                 if (!this._ready) return;
@@ -5338,7 +5338,7 @@ function makeRxEnableEntry() {
                     // so the sweep's first probe needs no reopen.
                     await serial.connect(port, this._sweepOrder()[0]);
                 } catch (e) {
-                    if (e.name !== 'NotFoundError') {   // NotFoundError = user cancelled the picker
+                    if (e.name !== 'NotFoundError') {   // NotFoundError = user canceled the picker
                         appendToTerminal(`\x1b[31mFailed to open serial port: ${e.message}\x1b[0m\n`);
                         this.rememberedPort = null;   // stale grant — prompt next time
                     }

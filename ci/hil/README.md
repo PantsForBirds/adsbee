@@ -161,7 +161,7 @@ a USB↔UART bridge whose modem-control lines drive the module:
 
 ### Adding a model
 
-Subclass `adsbee_hil.Receiver`. Set `model`, the console behaviour (`console_baud`,
+Subclass `adsbee_hil.Receiver`. Set `model`, the console behavior (`console_baud`,
 `keep_lines`, or override `console()`) and `version_key`, and implement `flash()` and, if the
 model has them, `rx_counters()`. Built-in models are listed in `receivers.BUILTIN_MODELS`.
 Out-of-tree drivers register through an entry point:
@@ -250,6 +250,6 @@ received packets as a failure without a transmitter.
 
 The `hardware_test` job in `.github/workflows/firmware.yml` runs `test_ota.py --serial
 $HIL_1090U_SERIAL` when the repository variable `HIL_1090U_SERIAL` is set. With the variable
-unset, it keeps the old `-p /dev/ttyACM0` behaviour. `test_ota.py` locks the board for the run
+unset, it keeps the old `-p /dev/ttyACM0` behavior. `test_ota.py` locks the board for the run
 through this package, so `adsbee-hil` users on the same host wait for CI instead of interrupting
 it.
