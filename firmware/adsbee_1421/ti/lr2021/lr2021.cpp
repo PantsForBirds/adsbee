@@ -291,8 +291,7 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     // latency.
     static_assert(GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeS) == kOokFifoPacketLenBytes &&
                       GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeDF17) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSWeak) == kOokFifoPacketLenBytes,
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes,
                   "IRQ drain threshold math assumes 14-byte FIFO packets in every preamble mode.");
     uint8_t rx_fifo_flags = kFifoIrqFlagFifoHigh | kFifoIrqFlagFifoOverflow;
     uint8_t tx_fifo_flags = 0x0;
@@ -321,9 +320,9 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     // The standard preamble detector needs the whole preamble, and an AGC gain change during the
     // preamble blanks its first three pulses (lr2021_ook_adsb.hh). With the AGC on, MODE_S raises the
     // level at which it starts cutting the gain so that packets up to -45 dBm arrive with the gain
-    // unchanged. MODE_S_WEAK keeps the chip default (the AGC acts from about -53 dBm). DF17 and
-    // MODE_S_STRONG detect after the blanked chips and keep the chip default too. Manual gain
-    // (agc_gain != 0) leaves the AGC off, so the register doesn't matter there.
+    // unchanged. DF17 and MODE_S_STRONG detect after the blanked chips and keep the chip default (the
+    // AGC acts from about -53 dBm). Manual gain (agc_gain != 0) leaves the AGC off, so the register
+    // doesn't matter there.
     if (agc_gain == 0 && preamble_mode == SettingsManager::kR1090PreambleModeModeS &&
         !WriteRegMemMask32(LR2021OokAdsb::kAgcConfigRegAddr, LR2021OokAdsb::kAgcTriggerMask,
                            LR2021OokAdsb::AgcTriggerRegValue(LR2021OokAdsb::kAgcTriggerStandardPreamble))) {

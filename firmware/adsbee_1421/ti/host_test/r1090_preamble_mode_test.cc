@@ -41,7 +41,7 @@ static void TestPersistedValuesAreStable() {
     static_assert(SM::kR1090PreambleModeDF17 == 1, "1 is DF17.");
     static_assert(SM::kR1090PreambleModeModeS == 2, "2 was MODE_S_SW_CRC, now MODE_S.");
     static_assert(SM::kR1090PreambleModeModeSStrong == 3, "3 is MODE_S_STRONG.");
-    static_assert(SM::kR1090PreambleModeModeSWeak == 4, "4 is MODE_S_WEAK.");
+    static_assert(SM::kR1090PreambleModeRemovedModeSWeak == 4, "4 was MODE_S_WEAK.");
     EXPECT(SM::kNumR1090PreambleModes == 5);
 }
 
@@ -52,7 +52,9 @@ static void TestStoredValuesLoadAsDocumented() {
     EXPECT(SM::R1090PreambleModeFromStored(2) == SM::kR1090PreambleModeModeS);  // MODE_S_SW_CRC
     // Current modes load as themselves.
     EXPECT(SM::R1090PreambleModeFromStored(3) == SM::kR1090PreambleModeModeSStrong);
-    EXPECT(SM::R1090PreambleModeFromStored(4) == SM::kR1090PreambleModeModeSWeak);
+    // Removed MODE_S_WEAK (0.3.11-rc4 development builds) loads as the factory default.
+    EXPECT(SM::R1090PreambleModeFromStored(4) == SM::kR1090PreambleModeDF17);
+    EXPECT(strcmp(LoadedName(4), "DF17") == 0);
     // Unknown values (settings from newer firmware) load as the factory default.
     for (unsigned v = SM::kNumR1090PreambleModes; v <= 0xFF; v++) {
         EXPECT(SM::R1090PreambleModeFromStored(static_cast<uint8_t>(v)) == SM::Settings().r1090_preamble_mode);
@@ -63,6 +65,7 @@ static void TestStoredValuesLoadAsDocumented() {
     // No stored value loads as the placeholder of a removed mode.
     for (unsigned v = 0; v <= 0xFF; v++) {
         EXPECT(SM::R1090PreambleModeFromStored(static_cast<uint8_t>(v)) != SM::kR1090PreambleModeRemovedModeSPreamble);
+        EXPECT(SM::R1090PreambleModeFromStored(static_cast<uint8_t>(v)) != SM::kR1090PreambleModeRemovedModeSWeak);
         EXPECT(LoadedName(static_cast<uint8_t>(v))[0] != '\0');
     }
 }
@@ -72,10 +75,10 @@ static void TestFactoryDefaultIsDF17() { EXPECT(SM::Settings().r1090_preamble_mo
 static void TestOnlyCurrentNamesAreSelectable() {
     EXPECT(ModeForName("MODE_S") == SM::kR1090PreambleModeModeS);
     EXPECT(ModeForName("MODE_S_STRONG") == SM::kR1090PreambleModeModeSStrong);
-    EXPECT(ModeForName("MODE_S_WEAK") == SM::kR1090PreambleModeModeSWeak);
     EXPECT(ModeForName("DF17") == SM::kR1090PreambleModeDF17);
     EXPECT(ModeForName("MODE_S_SW_CRC") == -1);
     EXPECT(ModeForName("MODE_S_PREAMBLE") == -1);
+    EXPECT(ModeForName("MODE_S_WEAK") == -1);
     EXPECT(ModeForName("") == -1);
 }
 

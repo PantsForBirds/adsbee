@@ -78,12 +78,13 @@ class SettingsManager {
     //
     // Stored values and the modes they load as (R1090PreambleModeFromStored):
     //   0 = MODE_S_PREAMBLE (up to 0.3.11-rc3, removed): loads as MODE_S. It used the standard preamble
-    //       with the hardware CRC selected, but the LR2021 CRC filter was never enabled (0xF30844), so it
-    //       received like MODE_S_WEAK.
+    //       with the hardware CRC selected, but the LR2021 CRC filter was never enabled (0xF30844).
     //   1 = DF17: unchanged.
     //   2 = MODE_S_SW_CRC (up to 0.3.11-rc3): loads as MODE_S, the same detector with the raised AGC
     //       trigger.
-    //   3 = MODE_S_STRONG, 4 = MODE_S_WEAK: new in 0.3.11-rc4.
+    //   3 = MODE_S_STRONG: new in 0.3.11-rc4.
+    //   4 = MODE_S_WEAK (0.3.11-rc4 development builds only, removed; the standard preamble with the
+    //       chip-default AGC trigger): loads as the factory default, DF17.
     //   Any other value (settings from newer firmware): loads as the factory default, DF17.
     enum R1090PreambleMode : uint8_t {
         kR1090PreambleModeRemovedModeSPreamble = 0,  // Placeholder for the removed MODE_S_PREAMBLE.
@@ -92,8 +93,7 @@ class SettingsManager {
                                       // weak signals up to about -45 dBm.
         kR1090PreambleModeModeSStrong = 3,  // Preamble chips 6-15, raised OOK threshold: strong signals (about
                                             // -50 dBm and up), where the LR2021 AGC blanks the preamble start.
-        kR1090PreambleModeModeSWeak = 4,    // Standard preamble, chip-default AGC trigger: every downlink
-                                            // format up to about -55 dBm.
+        kR1090PreambleModeRemovedModeSWeak = 4,  // Placeholder for the removed MODE_S_WEAK.
         kNumR1090PreambleModes
     };
     // Mode to run for a stored (flash or AT) value, following the table above.
@@ -101,7 +101,7 @@ class SettingsManager {
         if (stored == kR1090PreambleModeRemovedModeSPreamble) {
             return kR1090PreambleModeModeS;
         }
-        if (stored >= kNumR1090PreambleModes) {
+        if (stored == kR1090PreambleModeRemovedModeSWeak || stored >= kNumR1090PreambleModes) {
             return kR1090PreambleModeDF17;
         }
         return static_cast<R1090PreambleMode>(stored);

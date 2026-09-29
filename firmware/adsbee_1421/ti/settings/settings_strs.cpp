@@ -26,7 +26,7 @@ const char SettingsManager::kR1090PreambleModeStrs[SettingsManager::kNumR1090Pre
                                                       "DF17",    // Preamble chips 8-15 + DF17 header bits.
                                                       "MODE_S",  // Standard preamble, raised AGC trigger.
                                                       "MODE_S_STRONG",  // Preamble chips 6-15, raised OOK threshold.
-                                                      "MODE_S_WEAK",    // Standard preamble, chip-default AGC trigger.
+                                                      "",  // Removed MODE_S_WEAK; loads as DF17.
 };
 
 const char SettingsManager::RxPosition::kPositionSourceStrs[SettingsManager::RxPosition::kNumPositionSources]
