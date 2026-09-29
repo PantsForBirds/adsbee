@@ -233,7 +233,7 @@ bool CommsManager::WiFiInit() {
         if (wifi_ap_message_queue_ == nullptr) {
             wifi_ap_message_queue_ = xQueueCreate(kWiFiMessageQueueLen, sizeof(NetworkMessage));
         }
-        xTaskCreate(wifi_access_point_task, "wifi_ap_task", 2 * 4096, &wifi_ap_task_handle, kWiFiAPTaskPriority, NULL);
+        xTaskCreate(wifi_access_point_task, "wifi_ap_task", kWiFiAPTaskStackSizeBytes, &wifi_ap_task_handle, kWiFiAPTaskPriority, NULL);
     }
     if (wifi_sta_enabled) {
         char redacted_password[SettingsManager::Settings::kWiFiPasswordMaxLen];

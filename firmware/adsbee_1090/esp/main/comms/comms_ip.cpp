@@ -156,8 +156,8 @@ bool CommsManager::IPInit() {
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &ip_event_handler, NULL));
     ip_event_handler_was_initialized_ = true;
 
-    // IP WAN task stack size reduced since raw_packets_buf is now allocated on heap instead of stack.
-    xTaskCreate(ip_wan_task, "ip_wan_task", 2 * 4096, &ip_wan_task_handle, kIPWANTaskPriority, NULL);
+    // raw_packets_buf is allocated on the heap instead of the stack, which keeps this task's stack small.
+    xTaskCreate(ip_wan_task, "ip_wan_task", kIPWANTaskStackSizeBytes, &ip_wan_task_handle, kIPWANTaskPriority, NULL);
 
     // Initialize mDNS service.
     esp_err_t err = mdns_init();
