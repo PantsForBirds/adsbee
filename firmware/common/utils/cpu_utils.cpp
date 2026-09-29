@@ -59,14 +59,18 @@ void CPUMonitor::ReadCPUUsage(uint8_t& core_0_usage_percent, uint8_t& core_1_usa
             }
         }
 
-        // 2. Calculate the utilization for each core.
-
-        if (ulTotalRunTime > 0) {
-            // Utilization = 100 - (Idle Time / Total Core Time) * 100
-            core_0_usage_percent = static_cast<uint8_t>(100 - (100 * idle_runtime_core0 / ulTotalRunTime));
-
-            core_1_usage_percent = static_cast<uint8_t>(100 - (100 * idle_runtime_core1 / ulTotalRunTime));
-        }
+        // 2. Calculate the utilization for each core over the interval since the last call. The counters are
+        // cumulative since boot and 32 bits wide (they wrap every ~71 minutes at 1 MHz), so work with unsigned deltas.
+        // Using the cumulative values directly overflowed 100 * idle after ~43 s of idle time and pinned the reported
+        // usage at 99-100%.
+        uint32_t total_delta = ulTotalRunTime - last_total_run_time_;
+        core_0_usage_percent =
+            UsagePercentFromIdleDelta(idle_runtime_core0 - last_idle_run_time_core_0_, total_delta);
+        core_1_usage_percent =
+            UsagePercentFromIdleDelta(idle_runtime_core1 - last_idle_run_time_core_1_, total_delta);
+        last_total_run_time_ = ulTotalRunTime;
+        last_idle_run_time_core_0_ = idle_runtime_core0;
+        last_idle_run_time_core_1_ = idle_runtime_core1;
     }
 
     // Free the dynamically allocated array
@@ -92,10 +96,12 @@ void CPUMonitor::Update() {
     uint32_t full_usage_expected_ticks =
         MAX(delta_time_ms * full_usage_ticks_per_update_interval_ / config_.update_interval_ms,
             1);  // No division by zero.
-    cpu_usage_percent_ =
-        100 - MIN((ticks_since_last_update - full_usage_expected_ticks) * 100 / idle_expected_ticks, 100);
-    // cpu_usage_percent_ = 100 - MIN(ticks_since_last_update * 100 / idle_expected_ticks, 100);  // Avoid
-    // underflow.
+    // A loop slower than the full usage rate is saturated. Clamp the excess at 0: an unsigned subtraction that wraps
+    // reported a saturated core as 0%.
+    uint64_t excess_ticks = ticks_since_last_update > full_usage_expected_ticks
+                                ? ticks_since_last_update - full_usage_expected_ticks
+                                : 0;
+    cpu_usage_percent_ = 100 - MIN(excess_ticks * 100 / idle_expected_ticks, 100);
 
     // Reset the counters.
     ticks_since_last_update_ = 0;

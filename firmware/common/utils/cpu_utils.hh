@@ -44,7 +44,26 @@ class CPUMonitor {
 
     static void Init();
 
+    /**
+     * Converts the idle time and total time elapsed over one measurement interval into a CPU usage percentage.
+     * Both arguments are deltas of free-running counters (e.g. FreeRTOS run time stats), so the caller must subtract
+     * the previous sample with unsigned arithmetic to stay wrap-safe.
+     * @param[in] idle_delta Time spent in the idle task during the interval.
+     * @param[in] total_delta Total time elapsed during the interval, in the same units.
+     * @retval CPU usage percentage (0-100%). 0 if no time has elapsed.
+     */
+    static uint8_t UsagePercentFromIdleDelta(uint32_t idle_delta, uint32_t total_delta) {
+        if (total_delta == 0) {
+            return 0;
+        }
+        uint64_t idle_percent = static_cast<uint64_t>(idle_delta) * 100 / total_delta;
+        return static_cast<uint8_t>(100 - (idle_percent > 100 ? 100 : idle_percent));
+    }
+
 #ifdef ON_ESP32
+    /**
+     * Reads the CPU usage of each core since the previous call, from FreeRTOS run time stats.
+     */
     void ReadCPUUsage(uint8_t &core_0_usage_percent, uint8_t &core_1_usage_percent);
 #else
     /**
@@ -86,6 +105,11 @@ class CPUMonitor {
     uint8_t cpu_usage_percent_ = 0;
 
 #ifdef ON_ESP32
+    // Run time stats counters at the previous ReadCPUUsage() call.
+    uint32_t last_total_run_time_ = 0;
+    uint32_t last_idle_run_time_core_0_ = 0;
+    uint32_t last_idle_run_time_core_1_ = 0;
+
     static temperature_sensor_handle_t temp_sensor_handle_;
     static bool temp_sensor_initialized_;
 #endif

@@ -12,9 +12,10 @@ busy_processes = ["bin/Runner.Worker"]
 
 # External tools that aren't part of this repository.
 [flashers.adsbee_1421]
-# CC13x4 ROM serial-bootloader flasher for the ADSBee 1421 module, run with the programmer jig's
-# console port. Placeholders: {image} {port} {baud} {verbose}. It MUST erase only the sectors the
-# image covers: a bank erase also wipes the module's settings and device-info (OTA key) sectors.
+# CC13x4 ROM serial-bootloader flasher for the ADSBee 1421 module, run with the ADSBee 1421
+# Programmer's console port. Placeholders: {image} {port} {baud} {verbose}. It MUST erase only the
+# sectors the image covers: a bank erase also wipes the module's settings and device-info (OTA key)
+# sectors.
 # Can also be set with $ADSBEE_HIL_FLASHER_ADSBEE_1421 (a shell-quoted string).
 command = ["/path/to/venv/bin/python", "/path/to/cc13x4_flasher.py", "{image}",
            "-p", "{port}", "-b", "{baud}", "--erase", "sector", "{verbose}"]
@@ -30,7 +31,7 @@ tags = ["ci"]
 [[receivers]]
 id = "1421-a"
 model = "adsbee_1421"
-usb_serial = "E000000000000002"   # the programmer jig's USB serial
+usb_serial = "E000000000000002"   # the ADSBee 1421 Programmer's USB serial
 usb_port = "1-1.4"
 
 # Transmitters. `receivers` lists which receivers each one reaches (default: all).

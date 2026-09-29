@@ -157,14 +157,23 @@ class SPICoprocessorPacket {
          * without stack-allocating a temporary. Called by the from-buffer constructor; may also be called directly.
          */
         void ConstructFromBuffer(uint8_t *buf_in, uint16_t buf_in_len_bytes) {
-            if (buf_in_len_bytes < kBufLenBytes) {
-                CONSOLE_ERROR(
-                    "SPICoprocessor::SCReadRequestPacket",
-                    "Attempted to create a packet from a buffer that was too small. Received %d Bytes, but needed %d!",
-                    buf_in_len_bytes, kBufLenBytes);
+            // A read request is exactly kBufLenBytes long. Anything else is a torn or misaligned frame, and the packet
+            // is invalidated. Copying the frame in full would write past the end of this packet (the slave reuses a
+            // static instance), and returning early would leave the previous request's contents in place to pass
+            // IsValid() again.
+            if (buf_in_len_bytes != kBufLenBytes) {
+                CONSOLE_ERROR("SPICoprocessor::SCReadRequestPacket",
+                              "Attempted to create a packet from a buffer of the wrong size. Received %d Bytes, but "
+                              "needed exactly %d!",
+                              buf_in_len_bytes, kBufLenBytes);
+                cmd = SCCommand::kCmdInvalid;
+                addr = ObjectDictionary::kAddrInvalid;
+                offset = 0;
+                len = 0;
+                crc = ~CalculateCRC16(GetBuf(), kBufLenBytes - kCRCLenBytes);  // Guaranteed not to match.
                 return;
             }
-            memcpy(GetBuf(), buf_in, buf_in_len_bytes);
+            memcpy(GetBuf(), buf_in, kBufLenBytes);
         }
 
         inline uint16_t GetCRC() override { return crc; }
@@ -260,7 +269,7 @@ class SPICoprocessorPacket {
 
     /**
      * Minimal ACK/NACK response packet. Wire format: CMD | ACK_BYTE | CRC.
-     * Use this instead of SCResponsePacket when sending or receiving an acknowledgement — it is only as
+     * Use this instead of SCResponsePacket when sending or receiving an acknowledgment — it is only as
      * large as the wire format requires and has no data buffer that could be accidentally overwritten.
      */
     struct __attribute__((__packed__)) SCAckPacket : public SCPacket {

@@ -91,9 +91,12 @@ module into the application.
 Once the Programmer's LED is green (pass-through), it also passes the modem-control lines of its USB
 serial port through to the module, emulating a TTL USB-UART adapter wired as above:
 
-- **RTS asserted → SYNC low; RTS deasserted → SYNC high.** Level, applied immediately.
-- **DTR assert edge → 50 ms RESET_N pulse.** Edge-triggered, so a terminal that holds DTR
-  asserted doesn't hold the module in reset. Deasserting DTR does nothing.
+- **RTS asserted → SYNC low; RTS deasserted → SYNC high while DTR is asserted.** Level,
+  applied immediately. With DTR deasserted SYNC is low, so closing the port, which drops both
+  lines, leaves the module awake.
+- **DTR assert edge → 50 ms RESET_N pulse**, with SYNC taken from RTS at the edge and held for
+  250 ms after the pulse so the ROM samples it. The reset is edge-triggered, so a terminal that
+  holds DTR asserted doesn't hold the module in reset.
 - The host's baud rate is applied to the Programmer's UART, so a host tool can run the
   bootloader protocol through the Programmer at whatever rate it likes.
 
@@ -120,7 +123,7 @@ s = serial.Serial()
 s.port = "/dev/ttyACM0"  # the Programmer's USB serial port, or your adapter
 s.baudrate = 1000000     # the ROM auto-bauds; use 115200 if your adapter can't do 1 M
 s.timeout = 1
-s.rts = False            # deasserted: SYNC high, backdoor armed
+s.rts = False            # deasserted: backdoor armed for the next reset
 s.dtr = False
 s.open()
 time.sleep(0.1)
@@ -172,11 +175,12 @@ external MCU (see [SYNC low-power sleep](AGENTS.md#sync-low-power-sleep)). As a 
 - Any reset while SYNC is high enters the bootloader, including a watchdog reset. If the module
   sleeps for longer than the watchdog timeout (10 s by default) and the watchdog fires, the
   module wakes up in the bootloader. For long sleeps, disable the watchdog with `AT+WATCHDOG=0`.
-- Closing the port can put the module to sleep. On Linux, closing a serial port with HUPCL set
-  (the default) deasserts RTS and DTR. RTS deasserted is SYNC high, so the module sleeps until
-  something drives SYNC low again. Behind the ADSBee 1421 Programmer, the next open asserts DTR
-  and resets the module, which is harmless. To keep the lines as they are after closing, clear HUPCL
-  (`stty -F /dev/ttyACM0 -hupcl`) and leave RTS asserted.
+- On a plain adapter, closing the port can put the module to sleep. On Linux and macOS, closing
+  a serial port with HUPCL set (the default) deasserts RTS and DTR. RTS deasserted is SYNC high,
+  so the module sleeps until something drives SYNC low again. To keep the lines as they are after
+  closing, clear HUPCL (`stty -F /dev/ttyUSB0 -hupcl`) and leave RTS asserted. The ADSBee 1421
+  Programmer reads DTR deasserted as the port being closed and holds SYNC low, so a module behind
+  it stays awake. Programmer images from 0.3.11-rc2 and earlier behave like a plain adapter here.
 
 ### Prerequisites
 
@@ -200,7 +204,7 @@ external MCU (see [SYNC low-power sleep](AGENTS.md#sync-low-power-sleep)). As a 
 | Nothing at all answers | Reset or UART wiring (TX/RX swapped, no common ground), module unpowered, or (plain adapter) DTR still asserted so the module is held in reset. Behind the Programmer, check that its LED is green: it ignores RTS/DTR until pass-through. |
 | Garbage bytes where `0x00 0xCC` should be | Baud rate above the ROM's ~1.2 M ceiling or beyond what the adapter can do. Retry at 115200. |
 | The new firmware doesn't run after flashing; the module keeps showing up in the bootloader | SYNC is still high. Assert RTS (SYNC low) and reset again. |
-| The module goes quiet after a script or terminal closes the port | HUPCL deasserted RTS, so SYNC is high and the module is asleep. Assert RTS again, or clear HUPCL (see [SYNC and sleep](#sync-and-sleep)). |
+| The module goes quiet after a script or terminal closes the port | Plain adapter, or a Programmer image from 0.3.11-rc2 or earlier: HUPCL deasserted RTS, so SYNC is high and the module is asleep. Assert RTS again, or clear HUPCL (see [SYNC and sleep](#sync-and-sleep)). |
 | The module turns up in the bootloader after a long sleep | The watchdog fired while SYNC was high. Disable it for long sleeps (`AT+WATCHDOG=0`). |
 | An image flashed through the Programmer was replaced by a different version | The Programmer reflashed its baked image on a recheck (see [The ADSBee 1421 Programmer does this for you](#the-adsbee-1421-programmer-does-this-for-you)). |
 

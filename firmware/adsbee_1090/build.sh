@@ -233,7 +233,7 @@ at_query() {
 }
 
 # Best-effort USB product string for a CDC node; prints nothing if it can't be determined.
-# Used only to leave an ADSBee 1421 programmer jig alone -- probing one would pulse the attached
+# Used only to leave an ADSBee 1421 Programmer alone: probing one would pulse the attached
 # m1421's reset line. Any platform where this comes up empty just falls through to probing.
 usb_product_for_node() {
     local port="$1"
@@ -410,7 +410,7 @@ flash_1090() {
         # Note that CONSOLE_INFO lines never reach the console at the default log level
         # (kWarnings), so only unconditional prints and CONSOLE_ERROR lines are matched; the
         # authoritative check is the AT+DEVICE_INFO? query below. Log macros wrap the message
-        # text in ANSI colour, so only message substrings are matched, never "tag: message" spans.
+        # text in ANSI color, so only message substrings are matched, never "tag: message" spans.
         local fifo cat_pid line deadline quiet=0
         fifo="$(mktemp -u)"
         mkfifo "$fifo"

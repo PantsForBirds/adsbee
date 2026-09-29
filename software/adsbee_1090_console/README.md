@@ -51,16 +51,16 @@ receiver marker live), `AT+UPTIME?` (10 s), `AT+FEED?` (15 s, configuration
 only), and `AT+DEVICE_INFO?` once per connect. The polls run through a hidden
 AT queue, so the terminal stays clean.
 
-## Map tab over serial
+## Live Map tab over serial
 
-Entering the Map tab saves the current `AT+LOG_LEVEL` / `AT+PROTOCOL_OUT`
+Entering the Live Map tab saves the current `AT+LOG_LEVEL` / `AT+PROTOCOL_OUT`
 settings, then sets `AT+LOG_LEVEL=SILENT` and
 `AT+PROTOCOL_OUT=CONSOLE,AIRCRAFT_JSON` and renders the newline-delimited
 aircraft JSON stream. Switching back restores the saved settings. These
 changes are RAM-only (`AT+SETTINGS=SAVE` is never issued), so a device power
 cycle always returns to the persisted configuration — including if the page is
-closed while on the Map tab (a best-effort restore is attempted on close, but
-cannot be guaranteed). In network mode the Map tab simply uses the `/aircraft`
+closed while on the Live Map tab (a best-effort restore is attempted on close, but
+cannot be guaranteed). In network mode the Live Map tab simply uses the `/aircraft`
 WebSocket, exactly like the device-hosted page.
 
 ## Firmware upload

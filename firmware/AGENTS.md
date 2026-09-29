@@ -17,7 +17,7 @@ bash firmware/build.sh adsbee_1421 [args...]   # forwards to adsbee_1421/build.s
 ```
 
 Each product has its own firmware/settings versions; the version-management rules below apply
-**per product**, and a `firmware/common/` change requires a version bump in **both** products
+**per product**, and a `firmware/common/` change concerns **both** products' versions
 (enforced by `scripts/check_version_sync.sh`). CI builds a product only when its own files,
 `firmware/common/`, or `firmware/modules/` changed.
 
@@ -131,12 +131,22 @@ static constexpr uint32_t kSettingsVersion = N;
 ```
 
 ### Rules
-1. **Any change to ESP32 or CC1312 code, or to shared `common/` code** → increment firmware version (RC for dev builds, patch for releases). A `common/` change also requires an adsbee_1421 version bump.
-2. **Any change to the `Settings` struct** → increment `kSettingsVersion` AND firmware version; commit both together
-3. If firmware version is unchanged, RP2040 skips reflashing the coprocessors — symptom: old behavior persists after flashing new `combined.uf2`
+1. **Any change to ESP32 or CC1312 code, or to shared `common/` code** → the firmware version must be one that is **not yet released** (RC for dev builds, patch for releases). If the version on the branch is already the next unreleased RC, keep it; if it matches a release tag, move it to the next unreleased RC. A `common/` change applies this to adsbee_1421's version too.
+2. **Any change to the `Settings` struct** → increment `kSettingsVersion`, with the firmware version following rule 1; commit both together
+3. If firmware version is unchanged, RP2040 skips reflashing the coprocessors — symptom: old behavior persists after flashing new `combined.uf2`. While developing under an unchanged unreleased version, force a reflash or bump the RC locally to test.
+4. Never go below the latest release: versions compare by major, minor, patch, then RC, and every RC sorts below its stable release (`0.9.1-rc9` < `0.9.1` < `0.9.2-rc1`).
+
+Release tags are named `<product>-M.m.p-rcN` for release candidates and `<product>-M.m.p` for
+stable releases (`kFirmwareVersionReleaseCandidate = 0`), e.g. `adsbee_1090-0.9.1-rc3`,
+`adsbee_1421-0.3.10`.
 
 ### Automated enforcement
 These rules are checked automatically by `scripts/check_version_sync.sh` (covers both products).
+When a product's watched paths or `kSettingsVersion` changed, it fails if the new firmware
+version matches a release tag (naming the tag and the next free RC) or is lower than the latest
+release; an unreleased version passes even when it equals the base branch's. The tags come from
+the local repository, so run `git fetch --tags`; with no tags for a product, the check warns and
+falls back to requiring a version different from the base.
 Markdown-only changes (`*.md`: READMEs, AGENTS.md) are exempt and need no bump; any other file under
 the watched paths, including `CMakeLists.txt`, scripts, and assets, still does. The CI
 `version_sync_check` job runs the check and its tests (`scripts/test_check_version_sync.sh`).

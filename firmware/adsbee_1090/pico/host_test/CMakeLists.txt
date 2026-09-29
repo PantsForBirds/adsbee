@@ -40,6 +40,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_buffer_utils.cc
         # test_adsbee.cc
         test_composite_array.cc
+        test_cpu_utils.cc
         test_crc.cc
         test_data_structures.cc
         test_decode_utils.cc
@@ -58,6 +59,9 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_reporting_raw.cc
         test_settings.cc
         test_spi_coprocessor.cc
+        test_spi_link_gate.cc
+        test_at_console_guard.cc
+        test_log_message.cc
         test_squitter_packets.cc
         test_transponder_packet.cc
         test_unit_conversions.cc

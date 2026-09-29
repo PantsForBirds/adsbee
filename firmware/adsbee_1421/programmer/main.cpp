@@ -1,6 +1,6 @@
-// ADSBee 1421 programmer + pass-through jig for the Waveshare RP2040-Zero.
+// ADSBee 1421 Programmer (flasher and pass-through) for the Waveshare RP2040-Zero.
 //
-// At power-up the jig enters the CC1314's ROM UART bootloader (SYNC backdoor + reset pulse) and
+// At power-up the Programmer enters the CC1314's ROM UART bootloader (SYNC backdoor + reset pulse) and
 // compares the on-chip flash against the baked-in adsbee_1421 image using the bootloader's CRC32
 // command; on any mismatch (or a blank device) it reflashes and verifies. Once the device is
 // confirmed up to date it resets it into the app, finds the console by sweeping the whitelisted
@@ -10,7 +10,7 @@
 //
 // Hold BOOTSEL at power-up to force a reflash; tap BOOTSEL during pass-through to rerun the
 // check (also the recovery for in-band AT+REBOOT / AT+BAUD_RATE desyncs). Hold BOOTSEL for 3 s --
-// at any point, including while the jig is stuck reporting a dead console -- to arm a settings
+// at any point, including while the Programmer is stuck reporting a dead console -- to arm a settings
 // erase, which runs at the next bootloader entry and factory-resets the device. Wiring in board.hh.
 
 #include <stdio.h>
@@ -53,7 +53,7 @@ static void ArmSettingsErase() {
 
 // sleep_ms that keeps USB enumeration and the LED alive. Also polls the BOOTSEL gesture, so the
 // settings erase can be armed from the bootloader-entry retry loop and the console-negotiation
-// failure wait -- the two places the jig sits when a device is bricked.
+// failure wait -- the two places the Programmer sits when a device is bricked.
 static void IdleMs(uint32_t ms) {
     absolute_time_t deadline = delayed_by_ms(get_absolute_time(), ms);
     absolute_time_t next_bootsel_poll = get_absolute_time();
@@ -130,7 +130,7 @@ static void DiagnoseEntryFailure() {
 // sweeping the whitelisted rates (it boots at its saved console baud; factory default 1 M).
 // `target_baud` is kConsoleBaud normally, or the host's rate when the bridge is reconciling to
 // a host that expects another rate after a host-driven reset. Only the live rate is moved; the
-// jig never issues AT+SETTINGS=SAVE, so the device's persisted baud is untouched.
+// Programmer never issues AT+SETTINGS=SAVE, so the device's persisted baud is untouched.
 static bool NegotiateConsole(uint32_t target_baud, bool print_version) {
     StatusSet(Status::kNegotiating);
     IdleMs(kBootWaitMs);

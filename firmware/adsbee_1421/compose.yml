@@ -14,7 +14,7 @@ services:
       - ../modules:/firmware/modules
     command: tail -f /dev/null
 
-  # RP2040 toolchain for the adsbee_1421_programmer flashing jig.
+  # RP2040 toolchain for the ADSBee 1421 Programmer (adsbee_1421_programmer).
   pico-docker:
     image: coolnamesalltaken/pico-docker:latest
     network_mode: host

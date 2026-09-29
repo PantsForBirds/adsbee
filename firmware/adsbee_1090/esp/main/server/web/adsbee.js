@@ -713,200 +713,6 @@ class ADSBeeAT {
             }
         }
     }
-
-    /**
-     * Send raw bytes to the ADSBee device.
-     * @param {Uint8Array} data The data to send.
-     * @param {boolean} printResponse Whether to print the response to the console.
-     * @return A promise that resolves with the decoded_message response lines.
-     */
-    async sendBytes(data, printResponse = false, waitForOkOrError = false) {
-        const RESPONSE_TO_WAIT_FOR = 'OK';
-        const RESPONSE_TIMEOUT_MS = 3000;
-        if (this.ws.readyState !== WebSocket.OPEN) {
-            throw new Error(`Response timeout: WebSocket not open (readyState=${this.ws.readyState})`);
-        }
-        this.ws.send(data);
-        return await this.receiveResponse(printResponse, waitForOkOrError, RESPONSE_TO_WAIT_FOR, RESPONSE_TIMEOUT_MS);
-    }
-
-    /**
-     * Silence the console by silencing logs and turning off any output protocols. Call this before sending data
-     * for firmware updates.
-     */
-    async silenceConsole() {
-        await this.sendCmd("AT+LOG_LEVEL=ERRORS\r\n", 0, true, true);
-        await this.sendCmd("AT+PROTOCOL_OUT=CONSOLE,NONE\r\n", 0, true, true);
-    }
-
-    /**
-     * Get the flash partition that can currently be read from / written to (e.g. the flash partition that is
-     * not currently being executed from).
-     * @return The current OTA flash partition.
-     */
-    async otaGetFlashPartition() {
-        const decodedResponse = await this.sendCmd("AT+OTA=GET_PARTITION\r\n", 0, true, true);
-
-        for (const line of decodedResponse) {
-            const match = line.match(/Partition: (\d+)/);
-            if (match) {
-                return parseInt(match[1]);
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Write bytes to the current OTA flash partition.
-     * @param {number} offset The offset in bytes to write to.
-     * @param {Uint8Array} data The data to write.
-     */
-    async otaWriteBytes(offset, data) {
-        const crc32 = this.calculateCRC32(data);
-        const cmdResponse = await this.sendCmd(`AT+OTA=WRITE,${offset.toString(16)},${data.length},${crc32.toString(16)}\r\n`, 0, true, true, "READY");
-        for (const line of cmdResponse) {
-            if (line.includes('ERROR')) {
-                // Flush remaining lines then throw the error.
-                await this.flushInputBuffer(ADSBeeAT.ERROR_BUFFER_FLUSH_INTERVAL_MS);
-                throw new Error(`Command failed with error: ${line}`);
-            }
-        }
-        const dataResponse = await this.sendBytes(data, true, true);
-        for (const line of dataResponse) {
-            if (line.includes('ERROR')) {
-                // Flush remaining lines then throw the error.
-                await this.flushInputBuffer(ADSBeeAT.ERROR_BUFFER_FLUSH_INTERVAL_MS);
-                throw new Error(`Data transfer failed with error: ${line}`);
-            }
-        }
-    }
-
-    /**
-     * Erase bytes from the current OTA flash partition.
-     * @param {number} offsetBytes The offset in bytes to erase from.
-     * @param {number} lenBytes The length in bytes to erase.
-     */
-    async otaErase(offsetBytes = NaN, lenBytes = NaN) {
-        const ERASE_TIMEOUT_MS = 20000; // Allow 20 seconds for flash erase to complete.
-        if (!isNaN(offsetBytes) && !isNaN(lenBytes)) {
-            await this.sendCmd(`AT+OTA=ERASE,${offsetBytes.toString(16)},${lenBytes}\r\n`, 0, true, true, "OK", ERASE_TIMEOUT_MS);
-        } else {
-            // Allow 20 seconds for flash erase to complete.
-            await this.sendCmd("AT+OTA=ERASE\r\n", 0, true, true, "OK", ERASE_TIMEOUT_MS);
-        }
-    }
-
-    /**
-     * Write a file to the current OTA flash partition.
-     * @param {File} file The file to write.
-     */
-    async otaWriteFile(file) {
-        const HEADER_SIZE_BYTES = 5 * 4;
-        const APP_OFFSET_BYTES = 4 * 1024;
-        // Each chunk is received on the ESP32 as one WebSocket frame, which callocs a contiguous buffer of the chunk
-        // size. With Bluetooth Remote ID enabled the ESP32-S3's internal heap is tight and fragmented (largest free
-        // block can be ~10 KB even with ~25 KB free), so a large chunk fails to allocate and aborts the OTA. Keep this
-        // small AND a multiple of the 4096-Byte flash sector size (chunk offsets must stay sector-aligned for the
-        // retry-erase path below). One sector (4096) allocates reliably under fragmentation; it was previously 3 sectors
-        // (12288), which no longer fits.
-        const WRITE_CHUNK_BYTES = 0x1000;
-        const MAX_ATTEMPTS_PER_CHUNK = 3;
-
-        const partition = await this.otaGetFlashPartition();
-
-        if (partition === null) {
-            throw new Error("Failed to get OTA partition from ADSBee.");
-        }
-
-        const fileData = await this.readFile(file);
-        const dataView = new DataView(fileData.buffer);
-
-        const numPartitions = dataView.getUint32(0, true);
-        if (partition > numPartitions) {
-            throw new Error(`Partition ${partition} is out of range. Only ${numPartitions} partitions available.`);
-        }
-
-        const offset = dataView.getUint32(4 + 4 * partition, true);
-        const contents = fileData.slice(offset);
-        const headerContents = contents.slice(0, HEADER_SIZE_BYTES);
-        const appLenBytes = dataView.getUint32(offset + 8, true);
-
-        await this.otaErase(0, appLenBytes + HEADER_SIZE_BYTES);
-
-        // Write the header
-        await this.otaWriteBytes(0, headerContents);
-
-        // Write the application in chunks
-        for (let i = HEADER_SIZE_BYTES; i < HEADER_SIZE_BYTES + appLenBytes; i += WRITE_CHUNK_BYTES) {
-            const offsetBytes = (i - HEADER_SIZE_BYTES) + APP_OFFSET_BYTES;
-            let success = false;
-            let attempts = 0;
-            while (!success && attempts < MAX_ATTEMPTS_PER_CHUNK) {
-                try {
-                    if (attempts > 0) {
-                        // We are here on a retry, so erase the chunk first.
-                        await this.otaErase(offsetBytes, WRITE_CHUNK_BYTES);
-                    }
-                    const chunk = contents.slice(i, Math.min(i + WRITE_CHUNK_BYTES, HEADER_SIZE_BYTES + appLenBytes));
-                    await this.otaWriteBytes(offsetBytes, chunk);
-                    success = true;
-                } catch (error) {
-                    console.error(error);
-                    console.error(`Failed to write chunk at offset ${offsetBytes}. Retrying (${attempts + 1}/${MAX_ATTEMPTS_PER_CHUNK})... `);
-                    attempts++; // Wait to erase until the next loop so that we can re-use the try-catch and don't erase before final failure if the first few retry attempts also fail.
-                }
-            }
-        }
-
-        // Verify and boot the new partition
-        await this.sendCmd("AT+OTA=VERIFY\r\n", 0, true, true);
-    }
-
-    /**
-     * Boot the current OTA flash partition.
-     */
-    async otaBoot() {
-        await this.sendCmd("AT+OTA=BOOT\r\n", 0, true);
-    }
-
-    /**
-     * Read a file as an ArrayBuffer.
-     * @param {File} file The file to read.
-     * @return {Promise<Uint8Array>} A promise that resolves with the file data as an ArrayBuffer.
-     */
-    async readFile(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(new Uint8Array(reader.result));
-            reader.onerror = reject;
-            reader.readAsArrayBuffer(file);
-        });
-    }
-
-    /**
-     * Calculate the CRC32 checksum of a Uint8Array.
-     * @param {Uint8Array} data The data to calculate the CRC32 checksum for.
-     * @return {number} The CRC32 checksum.
-     */
-    calculateCRC32(data) {
-        let crc = 0xFFFFFFFF;
-        for (let i = 0; i < data.length; i++) {
-            crc = (crc >>> 8) ^ ADSBeeAT.crcTable[(crc ^ data[i]) & 0xFF];
-        }
-        return (crc ^ 0xFFFFFFFF) >>> 0;
-    }
-
-    static crcTable = (() => {
-        const table = new Uint32Array(256);
-        for (let i = 0; i < 256; i++) {
-            let c = i;
-            for (let j = 0; j < 8; j++) {
-                c = ((c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1));
-            }
-            table[i] = c;
-        }
-        return table;
-    })();
 }
 
 class FirmwareUploader {
@@ -942,6 +748,7 @@ class FirmwareUploader {
     }
 
     showModal() {
+        this.setModalTitle('Firmware Update In Progress');
         const log = document.getElementById('firmware-modal-log');
         if (log) log.innerHTML = '';
         document.getElementById('firmware-modal').style.display = 'flex';
@@ -972,91 +779,87 @@ class FirmwareUploader {
     updateProgress(percent) {
         document.getElementById('firmware-modal-fill').style.width = `${percent}%`;
         document.getElementById('firmware-modal-text').textContent = `${percent}%`;
-        if (percent === 0) {
-            this.setModalStatus('Erasing flash...');
-        } else if (percent < 100) {
-            this.setModalStatus('Writing firmware...');
-        } else {
-            this.setModalStatus('Verifying & rebooting...');
-        }
     }
 
-    showSuccess() {
+    setModalTitle(text) {
+        const title = document.querySelector('#firmware-modal-box h2');
+        if (title) title.textContent = text;
+    }
+
+    showSuccess(message) {
         this.uploadButton.innerHTML = 'Upload Complete';
-        this.setModalStatus('Upload complete! Device is rebooting.');
-        setTimeout(() => {
-            this.uploadButton.innerHTML = 'Upload Firmware';
-            this.hideModal();
-        }, 5000);
+        this.setModalTitle('Firmware Update Complete');
+        this.setModalStatus(message);
     }
 
     showError(message) {
         this.uploadButton.innerHTML = 'Upload Failed';
-        this.setModalStatus(`Upload failed: ${message}`);
-        setTimeout(() => {
-            this.uploadButton.innerHTML = 'Upload Firmware';
-            this.hideModal();
-        }, 5000);
+        this.setModalTitle('Firmware Update Failed');
+        this.setModalStatus(message);
+        const close = document.getElementById('firmware-modal-close');
+        if (close) close.style.display = '';
+    }
+
+    /** After the reboot, waits for the page to be served again (new firmware), then reloads it. */
+    async waitForReboot() {
+        const start = Date.now();
+        await new Promise((r) => setTimeout(r, 20000));
+        while (Date.now() - start < 300000) {
+            try {
+                const resp = await fetch('/', { cache: 'no-store' });
+                if (resp.ok) {
+                    this.showSuccess('Update complete. The ADSBee is back online; reloading the page...');
+                    setTimeout(() => location.reload(), 3000);
+                    return;
+                }
+            } catch (e) { /* still rebooting */ }
+            const s = Math.round((Date.now() - start) / 1000);
+            this.setModalStatus(`Update complete. The ADSBee is rebooting and updating its network and sub-GHz ` +
+                                `coprocessors (about 1 minute)... ${s} s`);
+            await new Promise((r) => setTimeout(r, 3000));
+        }
+        this.showError('Update complete, but the ADSBee has not come back after 5 minutes. Check its power and network.');
     }
 
     async uploadFirmware(file) {
-        let originalOtaWriteBytes = NaN;
-        let adsbee = null;
-        const origConsoleLog = console.log;
+        this.setUploadingState(true);
+        this.updateProgress(0);
+        this.showModal();
+        const close = document.getElementById('firmware-modal-close');
+        if (close) close.style.display = 'none';
+        // Pause the page's own websockets so the device's httpd isn't busy with them during the update.
+        consoleWebSocket.pause();
+        metricsWebSocket.pause();
+        let ok = false;
         try {
-            this.setUploadingState(true);
-            this.updateProgress(0);
-            this.showModal();
-            console.log = (...args) => {
-                origConsoleLog.apply(console, args);
-                this.appendToModalLog(args.join(' '));
-            };
-
-            adsbee = new ADSBeeAT(this.adsbeeUrl);
-            await adsbee.connect();
-
-            const totalSize = file.size / 2; // Two firmware images in file, we're only flashing one.
-            let uploadedSize = 0;
-
-            // Override otaWriteBytes to track progress
-            originalOtaWriteBytes = adsbee.otaWriteBytes.bind(adsbee);
-            adsbee.otaWriteBytes = async (offset, data) => {
-                await originalOtaWriteBytes(offset, data);
-                uploadedSize += data.length;
-                const progress = Math.min(Math.round((uploadedSize / totalSize) * 100), 100);
-                this.updateProgress(progress);
-            };
-
-            await adsbee.flushInputBuffer();
-            await adsbee.silenceConsole();
-            await adsbee.flushInputBuffer();
-
-            // Receiver already gets disabled during data chunk transfers, but this simplifies it a bit.
-            await adsbee.sendCmd('AT+RX_ENABLE=0\r\n', 0, true, true);
-
-            // Pause other WebSocket clients to prevent httpd async queue contention during OTA.
-            consoleWebSocket.pause();
-            metricsWebSocket.pause();
-
-            await adsbee.otaWriteFile(file);
-            await adsbee.otaBoot();
-
+            // Opening the updater's /console connection right after closing the page's own is reset by the ESP32;
+            // give it a moment to release the old session.
+            await new Promise((r) => setTimeout(r, 1500));
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const updater = new AdsbeeOta.OtaUpdater({
+                makeTransport: () => AdsbeeOta.webSocketTransport(`ws://${this.adsbeeUrl}/console`),
+                log: (text) => { console.log(text); this.appendToModalLog(text); },
+                onProgress: (p) => {
+                    if (p.percent !== null && p.percent !== undefined) this.updateProgress(p.percent);
+                    if (p.message) this.setModalStatus(p.message);
+                },
+            });
+            const res = await updater.run(bytes);
+            ok = true;
             this.updateProgress(100);
-            this.showSuccess();
-
+            this.appendToModalLog(`Upload finished with ${res.retries} retried writes.`);
+            this.showSuccess('Update complete. The ADSBee is rebooting...');
         } catch (error) {
             console.error('Firmware upload failed:', error);
             this.showError(error.message || 'Failed to upload firmware. Please try again.');
         } finally {
-            console.log = origConsoleLog;
             this.setUploadingState(false);
-            if (adsbee && !isNaN(originalOtaWriteBytes)) {
-                adsbee.otaWriteBytes = originalOtaWriteBytes;
+            if (!ok) {
+                consoleWebSocket.resume();
+                metricsWebSocket.resume();
             }
-            if (adsbee) await adsbee.disconnect();
-            consoleWebSocket.resume();
-            metricsWebSocket.resume();
         }
+        if (ok) await this.waitForReboot();
     }
 }
 
@@ -1122,7 +925,7 @@ class SettingsManager {
     }
 }
 
-// ─── Altitude colour (tar1090 continuous HSL gradient) ───────────────────────
+// ─── Altitude color (tar1090 continuous HSL gradient) ────────────────────────
 function acAltColor(altFt) {
     if (altFt == null) return '#888888';
     const hue = 30 + (Math.max(0, Math.min(altFt, 40000)) / 40000) * 255;
@@ -1143,7 +946,7 @@ const kVectorPxPerKt = 0.128;
 const kVectorMinPx = 8;
 const kVectorMaxPx = 80;
 
-// Trails coalesce consecutive same-colour points into a single polyline, but the
+// Trails coalesce consecutive same-color points into a single polyline, but the
 // altitude gradient above is continuous, so adjacent points almost never match
 // exactly. Quantizing to 500 ft bins first (about 3 hue degrees — imperceptible)
 // is what lets level flight collapse to one polyline instead of hundreds.
@@ -1195,7 +998,12 @@ class AircraftWebSocket {
         this.ws.onopen = () => console.log('[AircraftWS] connected');
         this.ws.onmessage = (ev) => {
             if (!this.onMessage) return;
-            try { this.onMessage(JSON.parse(ev.data)); } catch (_) { }
+            // Firmware batches aircraft into JSON arrays; older firmware sent one object per message.
+            let data;
+            try { data = JSON.parse(ev.data); } catch (_) { return; }
+            for (const ac of (Array.isArray(data) ? data : [data])) {
+                try { this.onMessage(ac); } catch (_) { }
+            }
         };
         this.ws.onclose = () => {
             clearInterval(this.pingInterval);
@@ -1222,37 +1030,62 @@ const RID_UA_TYPE_STRINGS = [
     'Ground Obstacle', 'Other'
 ];
 
+// Traffic sources. The firmware sends one record per ICAO address, from the preferred source (the aircraft's own 1090
+// or UAT ADS-B, else a ground station's ADS-R or TIS-B rebroadcast of it); the map labels and outlines each target by
+// that source so a rebroadcast can be told from direct ADS-B.
+const TRAFFIC_SOURCES = {
+    adsb_1090: { label: '1090 ADS-B', stroke: 'rgba(0,0,0,0.5)', dash: '' },
+    adsb_uat: { label: 'UAT ADS-B', stroke: '#0057b8', dash: '' },
+    adsr: { label: 'ADS-R', stroke: '#e07000', dash: '4,2' },
+    tisb: { label: 'TIS-B', stroke: '#7b2fbe', dash: '2,2' },
+    rid: { label: 'Remote ID', stroke: '#c026d3', dash: '' },
+};
+// A position older than this (seconds, from "seen_pos") is drawn faded: the target is still heard, but its position
+// is being held rather than updated.
+const kStalePositionS = 15;
+
+function acSource(ac) {
+    const type = ac.type ?? '';
+    if (type === 'remote_id') return 'rid';
+    if (type.startsWith('tisb')) return 'tisb';
+    if (type.startsWith('adsr')) return 'adsr';
+    return ac.link === 'uat' ? 'adsb_uat' : 'adsb_1090';  // Firmware without "link" only sent 1090 as direct ADS-B.
+}
+
 class AircraftStore {
     constructor() {
-        this.aircraft = new Map();  // hex → latest merged data
-        this.trails = new Map();  // hex → [{lat, lon, alt}]
-        this.trailRev = new Map();  // hex → bump count, so the map can skip redrawing unchanged trails
-        this.lastSeen = new Map();  // hex → Date.now() timestamp
+        this.aircraft = new Map();  // key (hex) → latest merged data
+        this.trails = new Map();  // key → [{lat, lon, alt}]
+        this.trailRev = new Map();  // key → bump count, so the map can skip redrawing unchanged trails
+        this.lastSeen = new Map();  // key → Date.now() timestamp
     }
 
     ingest(ac) {
         if (!ac.hex) return;
-        const prev = this.aircraft.get(ac.hex) || {};
-        this.aircraft.set(ac.hex, { ...prev, ...ac });
-        this.lastSeen.set(ac.hex, Date.now());
+        const src = acSource(ac);
+        const key = ac.hex;
+        let prev = this.aircraft.get(key) || {};
+        if (prev.src && prev.src !== src) prev = {};  // Don't mix fields from two sources; the trail carries over.
+        this.aircraft.set(key, { ...prev, ...ac, key, src, srcLabel: TRAFFIC_SOURCES[src].label });
+        this.lastSeen.set(key, Date.now());
         if (ac.lat != null && ac.lon != null) {
-            const t = this.trails.get(ac.hex) || [];
+            const t = this.trails.get(key) || [];
             t.push({ lat: ac.lat, lon: ac.lon, alt: ac.alt_baro ?? null });
             if (t.length > kMaxTrailPoints) t.shift();
-            this.trails.set(ac.hex, t);
-            this.trailRev.set(ac.hex, (this.trailRev.get(ac.hex) ?? 0) + 1);
+            this.trails.set(key, t);
+            this.trailRev.set(key, (this.trailRev.get(key) ?? 0) + 1);
         }
     }
 
     // Remove aircraft not heard from in the last 5 seconds.
     sweep() {
         const cutoff = Date.now() - 5000;
-        for (const hex of this.aircraft.keys()) {
-            if ((this.lastSeen.get(hex) ?? 0) < cutoff) {
-                this.aircraft.delete(hex);
-                this.trails.delete(hex);
-                this.trailRev.delete(hex);
-                this.lastSeen.delete(hex);
+        for (const key of this.aircraft.keys()) {
+            if ((this.lastSeen.get(key) ?? 0) < cutoff) {
+                this.aircraft.delete(key);
+                this.trails.delete(key);
+                this.trailRev.delete(key);
+                this.lastSeen.delete(key);
             }
         }
     }
@@ -1267,8 +1100,8 @@ class AircraftStore {
     all() { return [...this.aircraft.values()]; }
 }
 
-// ─── RadarMap ─────────────────────────────────────────────────────────────────
-class RadarMap {
+// ─── LiveMap ─────────────────────────────────────────────────────────────────
+class LiveMap {
     constructor(containerId, store) {
         this.containerId = containerId;
         this.store = store;
@@ -1343,6 +1176,26 @@ class RadarMap {
             attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
             maxZoom: 18,
         }).addTo(this.map);
+        this._addSourceLegend();
+    }
+
+    _addSourceLegend() {
+        const legend = L.control({ position: 'bottomleft' });
+        legend.onAdd = () => {
+            const div = L.DomUtil.create('div', 'map-source-legend');
+            div.style.cssText = 'background:rgba(255,255,255,0.9);color:#222;padding:4px 8px;border-radius:4px;' +
+                'font:12px sans-serif;line-height:18px';
+            const swatch = (s, opacity = 1) =>
+                `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:middle;margin-right:4px">` +
+                `<polygon points="7,1 12,13 7,10 2,13" fill="#9aa0a6" opacity="${opacity}" stroke="${s.stroke}" ` +
+                `stroke-width="${s === TRAFFIC_SOURCES.adsb_1090 ? 1 : 2}" stroke-dasharray="${s.dash ? '2,1' : ''}"/></svg>`;
+            div.innerHTML = Object.entries(TRAFFIC_SOURCES)
+                .filter(([k]) => k !== 'rid')
+                .map(([, s]) => `<div>${swatch(s)}${s.label}</div>`).join('') +
+                `<div>${swatch(TRAFFIC_SOURCES.adsb_1090, 0.35)}Position held &gt;${kStalePositionS} s</div>`;
+            return div;
+        };
+        legend.addTo(this.map);
     }
 
     invalidate() {
@@ -1380,7 +1233,7 @@ class RadarMap {
         }
     }
 
-    _makeIcon(color, track, isGround, isSelected, isDrone, gs) {
+    _makeIcon(color, track, isGround, isSelected, isDrone, gs, src = 'adsb_1090', isStale = false) {
         if (isDrone) {
             // Remote ID drones get a distinct quadcopter marker (four rotors) in a fixed accent color so they stand out
             // from ADS-B / UAT aircraft. Not rotated (Remote ID track is often unavailable or noisy at low speed), and
@@ -1403,6 +1256,9 @@ class RadarMap {
         // limited to the icon box + aircraft shape so hitboxes don't balloon.
         const ring = isSelected ? '<circle cx="96" cy="96" r="15" fill="none" stroke="white" stroke-width="2" opacity="0.7"/>' : '';
         const fill = isGround ? '#888888' : color;
+        const source = TRAFFIC_SOURCES[src] ?? TRAFFIC_SOURCES.adsb_1090;
+        const strokeWidth = src === 'adsb_1090' ? 1.2 : 2.4;  // Heavier outline marks the other sources.
+        const opacity = isStale ? 0.35 : 1;
         const rot = (track != null) ? track : 0;
         const lenPx = (this.showVectors && gs > 0)
             ? Math.min(kVectorMaxPx, Math.max(kVectorMinPx, gs * kVectorPxPerKt)) : 0;
@@ -1413,7 +1269,8 @@ class RadarMap {
             ring +
             `<g transform="rotate(${rot},96,96)">` +
             vec +
-            `<polygon points="96,82 103,107 96,102 89,107" style="pointer-events:auto" fill="${fill}" stroke="rgba(0,0,0,0.5)" stroke-width="1.2"/>` +
+            `<polygon points="96,82 103,107 96,102 89,107" style="pointer-events:auto" fill="${fill}" opacity="${opacity}" ` +
+            `stroke="${source.stroke}" stroke-width="${strokeWidth}" stroke-dasharray="${source.dash}"/>` +
             `</g></svg>`;
         return L.divIcon({ html: svg, className: '', iconSize: [32, 32], iconAnchor: [16, 16] });
     }
@@ -1457,23 +1314,24 @@ class RadarMap {
 
         for (const ac of this.store.all()) {
             if (ac.lat == null || ac.lon == null) continue;
-            live.add(ac.hex);
+            live.add(ac.key);
             const isDrone = ac.type === 'remote_id';
             const color = acAltColor(ac.alt_baro ?? ac.alt_geom);
             const isGround = !!ac.on_ground;
-            const isSel = ac.hex === this.selectedHex;
-            const icon = this._makeIcon(color, acDirection(ac), isGround, isSel, isDrone, ac.gs);
+            const isSel = ac.key === this.selectedHex;
+            const isStale = ac.seen_pos != null && ac.seen_pos > kStalePositionS;
+            const icon = this._makeIcon(color, acDirection(ac), isGround, isSel, isDrone, ac.gs, ac.src, isStale);
 
-            if (this.markers.has(ac.hex)) {
-                const m = this.markers.get(ac.hex);
+            if (this.markers.has(ac.key)) {
+                const m = this.markers.get(ac.key);
                 m.setLatLng([ac.lat, ac.lon]);
                 m.setIcon(icon);
             } else {
-                const hex = ac.hex;
+                const key = ac.key;
                 const m = L.marker([ac.lat, ac.lon], { icon })
                     .addTo(this.map)
-                    .on('click', () => this.selectAircraft(hex));
-                this.markers.set(hex, m);
+                    .on('click', () => this.selectAircraft(key));
+                this.markers.set(key, m);
             }
         }
 
@@ -1517,7 +1375,7 @@ class RadarMap {
     // Rebuilding a trail is the expensive part of a tick, so this does two things
     // to stay affordable once every aircraft has one: it skips outright when
     // nothing about the trail changed, and it merges consecutive points of the
-    // same (quantized) altitude colour into one multi-point polyline instead of
+    // same (quantized) altitude color into one multi-point polyline instead of
     // emitting one polyline per segment.
     _drawTrail(hex) {
         if (!this._ready) return;
@@ -1561,10 +1419,13 @@ class RadarMap {
         const title = document.getElementById('sidebar-title');
         const fields = document.getElementById('sidebar-fields');
         if (!panel) return;
-        if (title) title.textContent = (ac.flight || '').trim() || ac.hex;
+        if (title) {
+            title.textContent = ((ac.flight || '').trim() || ac.hex) + (ac.src && ac.src !== 'adsb_1090' ? ` · ${ac.srcLabel}` : '');
+        }
 
         const defs = [
             ['hex', 'ICAO', v => v],
+            ['srcLabel', 'Source', v => v],
             ['flight', 'Callsign', v => v.trim() || null],
             ['squawk', 'Squawk', v => v],
             ['type', 'Type', v => v],
@@ -1580,6 +1441,7 @@ class RadarMap {
             ['geom_rate', 'Geom rate', v => v.toLocaleString() + ' fpm'],
             ['lat', 'Latitude', v => v.toFixed(5)],
             ['lon', 'Longitude', v => v.toFixed(5)],
+            ['seen_pos', 'Position age', v => v.toFixed(1) + ' s'],
             ['rssi', 'RSSI', v => v.toFixed(1) + ' dBm'],
             ['messages', 'Messages', v => v.toLocaleString()],
             ['nic', 'NIC', v => String(v)],
@@ -1687,13 +1549,13 @@ class AircraftTable {
         const acs = this._sorted();
 
         const rows = new Map();
-        for (const row of this.tbody.querySelectorAll('tr[data-hex]')) rows.set(row.dataset.hex, row);
+        for (const row of this.tbody.querySelectorAll('tr[data-key]')) rows.set(row.dataset.key, row);
 
         const seen = new Set();
         for (const ac of acs) {
-            seen.add(ac.hex);
+            seen.add(ac.key);
             const cs = (ac.flight || '').trim();
-            const type = ac.type ?? '';
+            const source = ac.srcLabel ?? '';
             const sqwk = ac.squawk ?? '';
             const alt = ac.alt_baro != null ? ac.alt_baro.toLocaleString() : '';
             const gs = ac.gs != null ? Math.round(ac.gs) : '';
@@ -1703,40 +1565,40 @@ class AircraftTable {
             const rssi = ac.rssi != null ? ac.rssi.toFixed(1) : '';
             const color = acAltColor(ac.alt_baro);
 
-            if (rows.has(ac.hex)) {
-                const r = rows.get(ac.hex);
+            if (rows.has(ac.key)) {
+                const r = rows.get(ac.key);
                 const c = r.querySelectorAll('td');
                 c[0].style.color = color; c[0].textContent = ac.hex;
-                c[1].textContent = cs; c[2].textContent = type;
+                c[1].textContent = cs; c[2].textContent = source;
                 c[3].textContent = sqwk; c[4].textContent = alt;
                 c[5].textContent = gs; c[6].textContent = hdg;
                 c[7].textContent = lat; c[8].textContent = lon;
                 c[9].textContent = rssi;
-                r.classList.toggle('trail-active', this.selectedHex === ac.hex);
+                r.classList.toggle('trail-active', this.selectedHex === ac.key);
             } else {
                 const r = document.createElement('tr');
-                r.dataset.hex = ac.hex;
+                r.dataset.key = ac.key;
                 r.innerHTML = `<td style="color:${color};font-family:monospace">${ac.hex}</td>` +
-                    `<td>${cs}</td><td>${type}</td><td>${sqwk}</td><td>${alt}</td><td>${gs}</td>` +
+                    `<td>${cs}</td><td>${source}</td><td>${sqwk}</td><td>${alt}</td><td>${gs}</td>` +
                     `<td>${hdg}</td><td>${lat}</td><td>${lon}</td><td>${rssi}</td>`;
                 r.addEventListener('click', () => {
-                    if (this.onSelect) this.onSelect(ac.hex);
+                    if (this.onSelect) this.onSelect(ac.key);
                 });
                 this.tbody.appendChild(r);
             }
         }
 
         // Remove rows for aircraft no longer in store
-        for (const [hex, row] of rows) {
-            if (!seen.has(hex)) {
+        for (const [key, row] of rows) {
+            if (!seen.has(key)) {
                 row.remove();
-                if (this.selectedHex === hex) this.selectedHex = null;
+                if (this.selectedHex === key) this.selectedHex = null;
             }
         }
 
         // Re-order DOM rows to match sort (avoids flicker vs. delete+recreate)
         for (const ac of acs) {
-            const row = this.tbody.querySelector(`tr[data-hex="${ac.hex}"]`);
+            const row = this.tbody.querySelector(`tr[data-key="${ac.key}"]`);
             if (row) this.tbody.appendChild(row);
         }
     }
@@ -1744,8 +1606,8 @@ class AircraftTable {
     setSelected(hex) {
         this.selectedHex = hex;
         if (!this.tbody) return;
-        for (const row of this.tbody.querySelectorAll('tr[data-hex]')) {
-            row.classList.toggle('trail-active', row.dataset.hex === hex);
+        for (const row of this.tbody.querySelectorAll('tr[data-key]')) {
+            row.classList.toggle('trail-active', row.dataset.key === hex);
         }
     }
 }

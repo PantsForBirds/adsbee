@@ -3,6 +3,7 @@
 #include <cstring>  // For memcpy.
 
 #include "comms.hh"
+#include "hal.hh"  // For get_time_since_boot_ms().
 #include "spi_coprocessor_packet.hh"
 
 // Lock the composite array to fit within a single SPI transaction's data capacity. The RawPackets buffer is the largest
@@ -144,6 +145,8 @@ bool CompositeArray::UnpackRawPacketsBuffer(CompositeArray::RawPackets& packets,
     return true;
 }
 
+CompositeArray::QueueFullDrops CompositeArray::queue_full_drops;
+
 bool CompositeArray::UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_len_bytes,
                                                     PFBQueue<RawModeSPacket>* mode_s_queue,
                                                     PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
@@ -179,42 +182,60 @@ bool CompositeArray::UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_l
         return false;  // No Remote ID queue provided but header claims packets.
     }
 
+    // Enqueue each packet type on its own, so one full queue doesn't also drop the other packet types in the array.
+    QueueFullDrops drops;
     for (uint16_t i = 0; i < packets.header->num_mode_s_packets; i++) {
         if (!mode_s_queue->Enqueue(packets.mode_s_packets[i])) {
-            CONSOLE_ERROR("CompositeArray::UnpackRawPacketsBuffer", "Mode S queue full, cannot enqueue packet %d / %d.",
-                          i, packets.header->num_mode_s_packets);
-            return false;  // Queue full, cannot enqueue packet.
+            drops.mode_s = packets.header->num_mode_s_packets - i;
+            break;
         }
     }
-
     for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
         if (!uat_adsb_queue->Enqueue(packets.uat_adsb_packets[i])) {
-            CONSOLE_ERROR("CompositeArray::UnpackRawPacketsBuffer",
-                          "UAT ADS-B queue full, cannot enqueue packet %d / %d.", i,
-                          packets.header->num_uat_adsb_packets);
-            return false;  // Queue full, cannot enqueue packet.
+            drops.uat_adsb = packets.header->num_uat_adsb_packets - i;
+            break;
         }
     }
-
     for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
         if (!uat_uplink_queue->Enqueue(packets.uat_uplink_packets[i])) {
-            CONSOLE_ERROR("CompositeArray::UnpackRawPacketsBuffer",
-                          "UAT Uplink queue full, cannot enqueue packet %d / %d.", i,
-                          packets.header->num_uat_uplink_packets);
-            return false;  // Queue full, cannot enqueue packet.
+            drops.uat_uplink = packets.header->num_uat_uplink_packets - i;
+            break;
         }
     }
-
     for (uint16_t i = 0; i < packets.header->num_remote_id_packets; i++) {
         if (!remote_id_queue->Enqueue(packets.remote_id_packets[i])) {
-            CONSOLE_ERROR("CompositeArray::UnpackRawPacketsBuffer",
-                          "Remote ID queue full, cannot enqueue packet %d / %d.", i,
-                          packets.header->num_remote_id_packets);
-            return false;  // Queue full, cannot enqueue packet.
+            drops.remote_id = packets.header->num_remote_id_packets - i;
+            break;
         }
     }
+    if (drops.Total() == 0) {
+        return true;  // All packets successfully enqueued.
+    }
 
-    return true;  // All packets successfully enqueued.
+    // Count drops and log one summary line per interval.
+    static QueueFullDrops drops_since_last_log;
+    static uint32_t last_log_timestamp_ms = 0;
+    static bool logged_once = false;
+    queue_full_drops.mode_s += drops.mode_s;
+    queue_full_drops.uat_adsb += drops.uat_adsb;
+    queue_full_drops.uat_uplink += drops.uat_uplink;
+    queue_full_drops.remote_id += drops.remote_id;
+    drops_since_last_log.mode_s += drops.mode_s;
+    drops_since_last_log.uat_adsb += drops.uat_adsb;
+    drops_since_last_log.uat_uplink += drops.uat_uplink;
+    drops_since_last_log.remote_id += drops.remote_id;
+    uint32_t timestamp_ms = get_time_since_boot_ms();
+    if (!logged_once || timestamp_ms - last_log_timestamp_ms >= kQueueFullLogIntervalMs) {
+        CONSOLE_ERROR("CompositeArray::UnpackRawPacketsBufferToQueues",
+                      "Queue full, dropped %lu Mode S, %lu UAT ADS-B, %lu UAT uplink, %lu Remote ID packets in the last "
+                      "%lu ms.",
+                      drops_since_last_log.mode_s, drops_since_last_log.uat_adsb, drops_since_last_log.uat_uplink,
+                      drops_since_last_log.remote_id, logged_once ? timestamp_ms - last_log_timestamp_ms : 0);
+        drops_since_last_log = QueueFullDrops();
+        last_log_timestamp_ms = timestamp_ms;
+        logged_once = true;
+    }
+    return false;
 }
 
 bool CompositeArray::MergeRawPacketsBuffers(uint8_t* dst_buf, const uint8_t* src_buf) {

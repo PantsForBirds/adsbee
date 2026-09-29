@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 23)
 
 # Waveshare RP2040-Zero. Its only LED is an addressable WS2812 on GP16 (PICO_DEFAULT_WS2812_PIN);
 # there is no plain PICO_DEFAULT_LED_PIN, hence the PIO driver below. Overridable from the command
-# line for anyone building this jig on a different RP2040 board.
+# line for anyone building the ADSBee 1421 Programmer on a different RP2040 board.
 set(PICO_BOARD waveshare_rp2040_zero CACHE STRING "Board type")
 
 # PICO_SDK_PATH comes from the environment inside the pico-docker container (/usr/local/pico-sdk).
@@ -50,6 +50,7 @@ add_executable(adsbee_1421_programmer
     flasher.cc
     at_client.cc
     bridge.cc
+    modem_lines.cc
     status.cc
     bootsel.cc
     usb_descriptors.c

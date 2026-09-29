@@ -100,6 +100,9 @@ class Aircraft {
     // Values from other protocols will need to be translated.
 
     uint32_t last_message_timestamp_ms = 0;
+    // Local time (get_time_since_boot_ms()) of the last accepted position, comparable across aircraft types. The
+    // protocol-specific last_track_update_timestamp_ms holds packet MLAT time for Mode S.
+    uint32_t last_position_update_ms = 0;
 
     float latitude_deg = 0.0f;
     float longitude_deg = 0.0f;
@@ -235,11 +238,18 @@ class ModeSAircraft : public Aircraft {
 
     /**
      * Returns the maximum time delta between CPR packets that will be accepted for decoding.
+     * @param[in] received_timestamp_ms MLAT timestamp of the newest CPR packet, in ms. Track age is measured against
+     * this timestamp, because last_track_update_timestamp_ms holds packet (MLAT) time, which is the RP2040's clock. On
+     * the ESP32, get_time_since_boot_ms() counts from the ESP32's own boot, so comparing it with packet time made every
+     * track look stale and pinned the interval at kDefaultCPRIntervalMs.
      * @retval Maximum allowed time delta between CPR packets.
      */
-    uint32_t GetMaxAllowedCPRIntervalMs() const {
+    uint32_t GetMaxAllowedCPRIntervalMs(uint32_t received_timestamp_ms) const {
+        uint32_t track_age_ms = received_timestamp_ms > last_track_update_timestamp_ms
+                                    ? received_timestamp_ms - last_track_update_timestamp_ms
+                                    : 0;  // Packets can arrive slightly out of order.
         if (speed_source == ADSBTypes::kSpeedSourceNotSet || speed_source == ADSBTypes::kSpeedSourceNotAvailable ||
-            get_time_since_boot_ms() - last_track_update_timestamp_ms > kMaxTrackUpdateIntervalMs) {
+            track_age_ms > kMaxTrackUpdateIntervalMs) {
             return kDefaultCPRIntervalMs;
         }
         // Scale time delta threshold based on the velocity of the aircraft relative to 500kts, but clamp the result to
@@ -262,6 +272,7 @@ class ModeSAircraft : public Aircraft {
     inline void IncrementNumFramesReceived(bool is_extended_squitter = false) {
         is_extended_squitter ? metrics_counter_.valid_extended_squitter_frames++
                              : metrics_counter_.valid_squitter_frames++;
+        num_frames_received++;
     }
 
     /**
@@ -331,6 +342,7 @@ class ModeSAircraft : public Aircraft {
     int16_t last_message_signal_quality_db = 0;    // Ratio of RSSI to noise floor during message receipt.
     uint32_t last_track_update_timestamp_ms = 0;   // Timestamp of the last time that the position was updated.
     Metrics metrics;
+    uint32_t num_frames_received = 0;  // Valid frames received since the aircraft was added, never reset.
 
     uint16_t transponder_capability = 0;
     uint32_t icao_address = 0;
@@ -427,6 +439,11 @@ class ModeSAircraft : public Aircraft {
         0;  // received_timestamp_ms for the last packet that was fed to the filter.
     uint32_t lat_awb32_ = 0;
     uint32_t lon_awb32_ = 0;
+    // Received timestamps of the even and odd packets that produced the pending, unconfirmed jump candidate in
+    // lat_awb32_ / lon_awb32_ (0 if none). A jump is only confirmed by a packet pair that shares neither packet, so a
+    // single corrupted CPR packet can't confirm itself when it is decoded against two consecutive complementary packets.
+    uint32_t candidate_even_received_timestamp_ms_ = 0;
+    uint32_t candidate_odd_received_timestamp_ms_ = 0;
 #endif
 
     Metrics metrics_counter_;
@@ -448,7 +465,8 @@ class UATAircraft : public Aircraft {
         kTISBTargetWithICAO24BitAddress = 2,
         kTISBTargetWithTrackFileIdentifier = 3,
         kSurfaceVehicle = 4,
-        kFixedADSBBeacon = 5
+        kFixedADSBBeacon = 5,
+        kADSRTargetWithNonICAOAddress = 6  // DO-282B; dump978's ADSR_OTHER.
     };
 
     enum BitFlag : uint32_t {
@@ -542,7 +560,10 @@ class UATAircraft : public Aircraft {
     /**
      * Increments the number of valid frames received.
      */
-    inline void IncrementNumFramesReceived() { metrics_counter_.valid_frames++; }
+    inline void IncrementNumFramesReceived() {
+        metrics_counter_.valid_frames++;
+        num_frames_received++;
+    }
 
     /**
      * Resets just the flag bits that show that something updated within the last reporting interval.
@@ -607,6 +628,7 @@ class UATAircraft : public Aircraft {
     int16_t last_message_signal_quality_bits = 0;  // Number of bits corrected with FEC during last message reception.
     uint32_t last_track_update_timestamp_ms = 0;   // Timestamp of the last time that the position was updated.
     Metrics metrics;
+    uint32_t num_frames_received = 0;  // Valid frames received since the aircraft was added, never reset.
 
     uint16_t transponder_capability = 0;
     uint32_t icao_address = 0;
@@ -1149,6 +1171,40 @@ class AircraftDictionary {
      */
     bool ContainsAircraft(uint32_t uid) const;
 
+    // Several dictionary entries can describe the same 24-bit ICAO address: the aircraft's own 1090ES (Mode S entry),
+    // its own UAT ADS-B (UAT entry, address qualifier 0), and ground station rebroadcasts of it (DF18 on 1090, which
+    // marks the Mode S entry non-transponder, or UAT TIS-B/ADS-R with address qualifier 2). Outputs that are keyed by
+    // address (aircraft JSON, GDL90 traffic) report only one of them, so that clients don't flip between positions.
+    // DO-260B/DO-282B intent (and readsb's source ranking): a receiver uses the aircraft's own ADS-B, and a rebroadcast
+    // only while nothing better is being received. So: the best-ranked entry with a position updated in the last
+    // kPreferredReportPositionFreshMs wins; if none has a fresh position, the newest position wins (then the best
+    // rank), so the report never falls back to an older position than the one it could show. 15 s covers the TIS-B
+    // update interval (one radar scan, 4.8-12 s).
+    static constexpr uint32_t kPreferredReportPositionFreshMs = 15e3;
+    enum AddressSourceRank : int8_t {
+        kAddressSourceRankDirect = 0,       // 1090ES DF17 / Mode S replies, or UAT ADS-B with an ICAO address.
+        kAddressSourceRankRebroadcast = 1,  // DF18 (ADS-R / TIS-B / non-transponder on 1090).
+        kAddressSourceRankTISB = 2,         // UAT TIS-B or ADS-R with an ICAO address (address qualifier 2).
+        kAddressSourceRankUnique = -1       // Not an ICAO-addressed entry (Remote ID, track files, self-assigned).
+    };
+
+    /**
+     * Returns the source rank of a dictionary entry for de-duplicating reports of the same ICAO address.
+     * @param[in] entry Dictionary entry.
+     * @param[out] icao_address 24-bit ICAO address of the entry (only set if the rank isn't kAddressSourceRankUnique).
+     * @retval AddressSourceRank of the entry.
+     */
+    static AddressSourceRank GetAddressSourceRank(const AircraftEntry& entry, uint32_t& icao_address);
+
+    /**
+     * Returns whether the entry with the given UID is the one to report for its ICAO address (see
+     * kPreferredReportPositionFreshMs). Entries that aren't ICAO-addressed are always reported.
+     * @param[in] uid UID of the entry.
+     * @param[in] timestamp_ms Current local time, in ms.
+     * @retval True if the entry should be reported, false if another entry for the same address is preferred.
+     */
+    bool IsPreferredReportForAddress(uint32_t uid, uint32_t timestamp_ms) const;
+
     /**
      * Used to enable or disable the CPR position filter.
      * @param[in] enabled True to enable the filter, false to disable it.
@@ -1243,7 +1299,7 @@ class AircraftDictionary {
                     return ptr;
                 }
                 // Free-list exhausted — InsertAircraft's capacity guard should have prevented
-                // this. Fall through to the monotonic region so behaviour remains defined.
+                // this. Fall through to the monotonic region so behavior remains defined.
             }
             // Large allocation (bucket array) or pool overflow: served from the monotonic
             // region. null_memory_resource() upstream ensures clean termination on overflow.

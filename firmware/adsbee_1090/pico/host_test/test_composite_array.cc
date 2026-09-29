@@ -622,3 +622,84 @@ TEST(CompositeArray, RawPacketsHeaderIsValid) {
                         1 * sizeof(RawUATADSBPacket) + 1 * sizeof(RawUATUplinkPacket);
     EXPECT_TRUE(packets.IsValid());
 }
+
+// A composite array of kMaxLenBytes (what the RP2040 sends to the ESP32) can carry several UAT uplink packets. A
+// receiving queue shallower than that drops the tail of the array, which is what the ESP32 did with a depth of 2.
+TEST(CompositeArray, FullArrayOfUATUplinksNeedsMatchingQueueDepth) {
+    constexpr uint16_t kUplinksPerArray =
+        (CompositeArray::RawPackets::kMaxLenBytes - sizeof(CompositeArray::RawPackets::Header)) /
+        sizeof(RawUATUplinkPacket);
+    ASSERT_GE(kUplinksPerArray, 3);  // Needs more than the ESP32's old queue depth of 2 to be meaningful.
+
+    uint8_t buffer[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    PFBQueue<RawUATUplinkPacket> tx_queue =
+        PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = 10, .buffer = nullptr, .overwrite_when_full = false});
+    RawUATUplinkPacket uplink;
+    for (uint16_t i = 0; i < 10; i++) {
+        uplink.encoded_message[0] = i;
+        ASSERT_TRUE(tx_queue.Enqueue(uplink));
+    }
+    CompositeArray::RawPackets packets =
+        CompositeArray::PackRawPacketsBuffer(buffer, sizeof(buffer), nullptr, nullptr, &tx_queue);
+    ASSERT_TRUE(packets.IsValid());
+    EXPECT_EQ(packets.header->num_uat_uplink_packets, kUplinksPerArray);
+
+    PFBQueue<RawUATUplinkPacket> short_queue = PFBQueue<RawUATUplinkPacket>(
+        {.buf_len_num_elements = kUplinksPerArray - 1, .buffer = nullptr, .overwrite_when_full = false});
+    EXPECT_FALSE(
+        CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, nullptr, nullptr, &short_queue));
+
+    PFBQueue<RawUATUplinkPacket> rx_queue = PFBQueue<RawUATUplinkPacket>(
+        {.buf_len_num_elements = kUplinksPerArray, .buffer = nullptr, .overwrite_when_full = false});
+    EXPECT_TRUE(CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, nullptr, nullptr, &rx_queue));
+    for (uint16_t i = 0; i < kUplinksPerArray; i++) {
+        ASSERT_TRUE(rx_queue.Dequeue(uplink));
+        EXPECT_EQ(uplink.encoded_message[0], i);
+    }
+}
+
+// When one destination queue is full, the other packet types in the same array must still be enqueued, and the drops
+// are counted for a periodic summary log line.
+TEST(CompositeArray, FullQueueOnlyDropsItsOwnPacketType) {
+    uint8_t buffer[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    PFBQueue<RawModeSPacket> mode_s_tx =
+        PFBQueue<RawModeSPacket>({.buf_len_num_elements = 5, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATADSBPacket> uat_adsb_tx =
+        PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 3, .buffer = nullptr, .overwrite_when_full = false});
+    RawModeSPacket mode_s_packet;
+    RawUATADSBPacket uat_adsb_packet;
+    for (uint16_t i = 0; i < 5; i++) ASSERT_TRUE(mode_s_tx.Enqueue(mode_s_packet));
+    for (uint16_t i = 0; i < 3; i++) {
+        uat_adsb_packet.buffer[0] = i;
+        ASSERT_TRUE(uat_adsb_tx.Enqueue(uat_adsb_packet));
+    }
+    CompositeArray::RawPackets packets =
+        CompositeArray::PackRawPacketsBuffer(buffer, sizeof(buffer), &mode_s_tx, &uat_adsb_tx, nullptr);
+    ASSERT_TRUE(packets.IsValid());
+    ASSERT_EQ(packets.header->num_mode_s_packets, 5);
+    ASSERT_EQ(packets.header->num_uat_adsb_packets, 3);
+
+    // Mode S queue with room for 2 of the 5 packets.
+    PFBQueue<RawModeSPacket> mode_s_rx =
+        PFBQueue<RawModeSPacket>({.buf_len_num_elements = 2, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATADSBPacket> uat_adsb_rx =
+        PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 10, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATUplinkPacket> uat_uplink_rx =
+        PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = 10, .buffer = nullptr, .overwrite_when_full = false});
+    CompositeArray::QueueFullDrops drops_before = CompositeArray::queue_full_drops;
+    EXPECT_FALSE(CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, &mode_s_rx, &uat_adsb_rx,
+                                                                &uat_uplink_rx));
+    EXPECT_EQ(mode_s_rx.Length(), 2);
+    ASSERT_EQ(uat_adsb_rx.Length(), 3);  // Previously all 3 were dropped along with the Mode S overflow.
+    for (uint16_t i = 0; i < 3; i++) {
+        ASSERT_TRUE(uat_adsb_rx.Dequeue(uat_adsb_packet));
+        EXPECT_EQ(uat_adsb_packet.buffer[0], i);
+    }
+    EXPECT_EQ(CompositeArray::queue_full_drops.mode_s - drops_before.mode_s, 3u);
+    EXPECT_EQ(CompositeArray::queue_full_drops.uat_adsb - drops_before.uat_adsb, 0u);
+
+    // A second overflow within the log interval is still counted.
+    EXPECT_FALSE(CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, &mode_s_rx, &uat_adsb_rx,
+                                                                &uat_uplink_rx));
+    EXPECT_EQ(CompositeArray::queue_full_drops.mode_s - drops_before.mode_s, 8u);
+}

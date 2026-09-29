@@ -28,9 +28,11 @@ static inline bool EmitterCategoryToStr(char* buf, size_t buf_len, ADSBTypes::Em
  * Serializes a ModeSAircraft to a single-line readsb-compatible JSON object.
  * @param[out] buf Character array of at least kAircraftJSONMessageStrMaxLen bytes.
  * @param[in] aircraft Aircraft to serialize.
+ * @param[in] timestamp_ms Current local time (get_time_since_boot_ms()). If nonzero, "seen_pos" (seconds since the
+ * last position update, readsb semantics) is included.
  * @retval Number of characters written (excluding the NUL terminator), or negative on error.
  */
-inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft& aircraft) {
+inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft& aircraft, uint32_t timestamp_ms = 0) {
     int16_t n = 0;
     const int16_t max = kAircraftJSONMessageStrMaxLen;
 
@@ -51,7 +53,7 @@ inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft
     } else if (aircraft.HasBitFlag(ModeSAircraft::kBitFlagIsClassB2GroundVehicle)) {
         type_str = "adsb_icao_nt";
     }
-    n += snprintf(buf + n, max - n, ",\"type\":\"%s\"", type_str);
+    n += snprintf(buf + n, max - n, ",\"type\":\"%s\",\"link\":\"1090\"", type_str);
     n = n < max ? n : max;
 
     // flight (only if set — default is "?")
@@ -167,8 +169,9 @@ inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft
     n = n < max ? n : max;
 
     // rssi and message count (always present)
-    n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%u", aircraft.last_message_signal_strength_dbm,
-                  (unsigned)(aircraft.metrics.valid_squitter_frames + aircraft.metrics.valid_extended_squitter_frames));
+    // "messages" is the total since the aircraft was first seen (readsb semantics).
+    n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%lu", aircraft.last_message_signal_strength_dbm,
+                  (unsigned long)aircraft.num_frames_received);
     n = n < max ? n : max;
 
     // alert / spi (only when set)
@@ -186,6 +189,14 @@ inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft
         n = n < max ? n : max;
     }
 
+    // seen_pos: seconds since the last position update, so clients can tell a live position from a held one.
+    if (timestamp_ms != 0 && aircraft.HasBitFlag(ModeSAircraft::kBitFlagPositionValid)) {
+        uint32_t seen_pos_ds = (timestamp_ms - aircraft.last_position_update_ms) / 100;
+        n += snprintf(buf + n, max - n, ",\"seen_pos\":%lu.%lu", (unsigned long)(seen_pos_ds / 10),
+                      (unsigned long)(seen_pos_ds % 10));
+        n = n < max ? n : max;
+    }
+
     n += snprintf(buf + n, max - n, "}\n");
 
     if (n >= max) return -1;  // Buffer overrun.
@@ -196,9 +207,11 @@ inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft
  * Serializes a UATAircraft to a single-line readsb-compatible JSON object.
  * @param[out] buf Character array of at least kAircraftJSONMessageStrMaxLen bytes.
  * @param[in] aircraft Aircraft to serialize.
+ * @param[in] timestamp_ms Current local time (get_time_since_boot_ms()). If nonzero, "seen_pos" (seconds since the
+ * last position update, readsb semantics) is included.
  * @retval Number of characters written (excluding the NUL terminator), or negative on error.
  */
-inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& aircraft) {
+inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& aircraft, uint32_t timestamp_ms = 0) {
     int16_t n = 0;
     const int16_t max = kAircraftJSONMessageStrMaxLen;
 
@@ -207,7 +220,8 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
 
     // Non-ICAO addresses get a '~' prefix per readsb convention.
     bool is_non_icao = (aq == UATAircraft::kADSBTargetWithSelfAssignedTemporaryAddress ||
-                        aq == UATAircraft::kTISBTargetWithTrackFileIdentifier);
+                        aq == UATAircraft::kTISBTargetWithTrackFileIdentifier ||
+                        aq == UATAircraft::kADSRTargetWithNonICAOAddress);
 
     // hex (always)
     n += snprintf(buf + n, max - n,
@@ -234,13 +248,16 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
         case UATAircraft::kTISBTargetWithTrackFileIdentifier:
             type_str = "tisb_trackfile";
             break;
+        case UATAircraft::kADSRTargetWithNonICAOAddress:
+            type_str = "adsr_other";  // Was reported as a direct "adsb_icao" target.
+            break;
         case UATAircraft::kSurfaceVehicle:
         case UATAircraft::kFixedADSBBeacon:
         default:
             type_str = "adsb_icao";
             break;
     }
-    n += snprintf(buf + n, max - n, ",\"type\":\"%s\"", type_str);
+    n += snprintf(buf + n, max - n, ",\"type\":\"%s\",\"link\":\"uat\"", type_str);
     n = n < max ? n : max;
 
     // flight
@@ -362,8 +379,8 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
     }
 
     // rssi and message count (always present)
-    n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%u", aircraft.last_message_signal_strength_dbm,
-                  (unsigned)aircraft.metrics.valid_frames);
+    n += snprintf(buf + n, max - n, ",\"rssi\":%d,\"messages\":%lu", aircraft.last_message_signal_strength_dbm,
+                  (unsigned long)aircraft.num_frames_received);
     n = n < max ? n : max;
 
     // emergency (only if not none)
@@ -377,6 +394,14 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
 
     if (!aircraft.HasBitFlag(UATAircraft::kBitFlagIsAirborne) || aq == UATAircraft::kSurfaceVehicle) {
         n += snprintf(buf + n, max - n, ",\"on_ground\":1");
+        n = n < max ? n : max;
+    }
+
+    // seen_pos: seconds since the last position update, so clients can tell a live position from a held one.
+    if (timestamp_ms != 0 && aircraft.HasBitFlag(UATAircraft::kBitFlagPositionValid)) {
+        uint32_t seen_pos_ds = (timestamp_ms - aircraft.last_position_update_ms) / 100;
+        n += snprintf(buf + n, max - n, ",\"seen_pos\":%lu.%lu", (unsigned long)(seen_pos_ds / 10),
+                      (unsigned long)(seen_pos_ds % 10));
         n = n < max ? n : max;
     }
 
@@ -492,4 +517,53 @@ inline int16_t WriteAircraftJSONRemoteIDAircraftStr(char buf[], const RemoteIDAi
 
     if (n >= max) return -1;  // Buffer overrun.
     return n;
+}
+
+/**
+ * Serializes the aircraft for the Live Map (the ESP32 /aircraft websocket) as JSON arrays of whole aircraft objects
+ * and passes each array to emit(const char* buf, uint16_t len). Like the AIRCRAFT_JSON feed and GDL90, only the
+ * preferred entry per ICAO address (AircraftDictionary::IsPreferredReportForAddress()) is sent, so the map shows one
+ * target per aircraft; its "type" and "link" tell the map whether that target is the aircraft's own ADS-B or a
+ * TIS-B/ADS-R rebroadcast.
+ * @param[in] dictionary Aircraft dictionary to serialize.
+ * @param[in] timestamp_ms Current local time (get_time_since_boot_ms()), for preference and "seen_pos".
+ * @param[in] buf Scratch buffer for one array; each emitted array fits in buf_len bytes.
+ * @param[in] buf_len Length of buf. Must hold at least one aircraft object plus the brackets.
+ * @param[in] emit Called once per array.
+ */
+template <typename EmitFn>
+inline void WriteAircraftJSONLiveMapArrays(const AircraftDictionary& dictionary, uint32_t timestamp_ms, char buf[],
+                                           uint16_t buf_len, EmitFn emit) {
+    char json_buf[kAircraftJSONMessageStrMaxLen];
+    uint16_t len_used = 0;
+    for (const auto& itr : dictionary.dict) {
+        if (!dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) {
+            continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
+        }
+        int16_t len = -1;
+        if (const ModeSAircraft* ac = std::get_if<ModeSAircraft>(&itr.second); ac) {
+            len = WriteAircraftJSONModeSAircraftStr(json_buf, *ac, timestamp_ms);
+        } else if (const UATAircraft* ac = std::get_if<UATAircraft>(&itr.second); ac) {
+            len = WriteAircraftJSONUATAircraftStr(json_buf, *ac, timestamp_ms);
+        } else if (const RemoteIDAircraft* ac = std::get_if<RemoteIDAircraft>(&itr.second); ac) {
+            len = WriteAircraftJSONRemoteIDAircraftStr(json_buf, *ac);
+        }
+        if (len <= 0 || len + 2 > buf_len) {
+            continue;
+        }
+        // "[" or "," before the object, "]" after the array.
+        if (len_used > 0 && len_used + 1 + len + 1 > buf_len) {
+            buf[len_used++] = ']';
+            emit(buf, len_used);
+            len_used = 0;
+        }
+        char separator = len_used == 0 ? '[' : ',';
+        buf[len_used++] = separator;
+        memcpy(buf + len_used, json_buf, len);
+        len_used += len;
+    }
+    if (len_used > 0) {
+        buf[len_used++] = ']';
+        emit(buf, len_used);
+    }
 }

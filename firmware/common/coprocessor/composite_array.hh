@@ -117,6 +117,18 @@ class CompositeArray {
      */
     static bool UnpackRawPacketsBuffer(CompositeArray::RawPackets& packets, uint8_t* buf, uint16_t buf_len_bytes);
 
+    // Packets dropped by UnpackRawPacketsBufferToQueues() because the destination queue was full, per packet type.
+    struct QueueFullDrops {
+        uint32_t mode_s = 0;
+        uint32_t uat_adsb = 0;
+        uint32_t uat_uplink = 0;
+        uint32_t remote_id = 0;
+
+        uint32_t Total() const { return mode_s + uat_adsb + uat_uplink + remote_id; }
+    };
+    static QueueFullDrops queue_full_drops;  // Since boot.
+    static constexpr uint32_t kQueueFullLogIntervalMs = 5000;
+
     /**
      * Unpacks a buffer containing a CompositeArray (RawPackets::Header) followed by arrays of raw packets of each kind,
      * and enqueues the packets into the provided queues. Any queues that are passed as a nullptr are skipped. Returns
@@ -130,6 +142,11 @@ class CompositeArray {
      * @param[out] remote_id_queue Pointer to a PFBQueue of RawRemoteIDPacket to enqueue packets into, or nullptr to
      * skip.
      * @retval True if all packets were successfully enqueued, false otherwise.
+     *
+     * A full queue drops only the packets that don't fit; the other packet types in the array are still enqueued.
+     * Drops are counted in queue_full_drops and logged as one summary at most every kQueueFullLogIntervalMs. On the
+     * ESP32 this runs on the SPI receive task, and a log line per dropped array (several per second when the consumer
+     * falls behind) went back to the RP2040 over the same SPI link and on to the /console clients.
      */
     static bool UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_len_bytes,
                                                PFBQueue<RawModeSPacket>* mode_s_queue,

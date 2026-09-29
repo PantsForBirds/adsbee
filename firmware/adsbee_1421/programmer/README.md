@@ -58,7 +58,8 @@ built in Debug and the Programmer bakes in `ti/build/Debug/adsbee_1421.hex`. Onl
 command `AT+TX_CW`; see [firmware/README.md](../../README.md#debug-builds-and-rf-test-commands).
 
 Artifact: `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` —
-hold BOOT on the RP2040-Zero while plugging it in and drag the file onto the `RPI-RP2` drive.
+hold BOOT on the RP2040-Zero while plugging it in (or, on a Programmer already running a build with the
+magic-baud reboot, open its port at 233495534 baud, see below) and drag the file onto the `RPI-RP2` drive.
 Or run `./build.sh build_and_flash`, which builds both apps, prompts for bootloader mode, copies
 the uf2, and watches the Programmer's console while it reflashes the attached m1421. `./build.sh flash`
 does the same without building, using the uf2 already on disk; because the ti hex is baked in at
@@ -109,11 +110,27 @@ and reflash it through the Programmer with no button presses (see the
 in pass-through (green LED):
 
 - **RTS asserted → SYNC low** (device awake); **RTS deasserted → SYNC high** (device asleep /
-  backdoor armed). Most terminals assert RTS on open.
-- **DTR assert edge → 50 ms reset pulse.** Edge-triggered rather than level-held so terminals
-  that keep DTR asserted don't hold the device in reset.
+  backdoor armed) while DTR is asserted. Opening the port asserts both, so deasserting RTS on an
+  open port puts the module to sleep.
+- **DTR assert edge → 50 ms reset pulse**, with SYNC set from RTS at the edge and held for 250 ms
+  after the pulse so the boot ROM samples it. The reset is edge-triggered, so a terminal that
+  keeps DTR asserted doesn't hold the device in reset.
+- **With DTR deasserted, SYNC is low** (outside that post-reset hold), so **closing the port
+  leaves the module awake**: the OS drops DTR and RTS together on close (Linux and macOS with the
+  default HUPCL), which used to read as RTS deasserted and put the module to sleep until the next
+  open. Once in the ROM bootloader the module no longer looks at SYNC, and a host still gets back
+  in with RTS deasserted and another DTR edge.
 - **Host baud changes are applied to the UART directly**, so tools that manage their own baud
   (the web console, a host-side bootloader client) work through the Programmer unmodified.
+- **Except 233495534 baud (`0xDEADBEE`)**, which reboots the Programmer's RP2040 into its USB bootloader
+  (`RPI-RP2`) so the Programmer can be updated without pressing BOOT, e.g.
+  `python3 -c "import serial; serial.Serial('/dev/ttyACM0', 0xDEADBEE).close()"`. It is the same
+  magic baud as the ADSBee 1090 (`PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE` in
+  `firmware/adsbee_1090/pico/CMakeLists.txt`; the Programmer's copy is `kRebootToBootselBaud` in
+  `host_line_coding.hh`, and the host test checks they match). That baud is never forwarded to the
+  module. 1200 baud is an ordinary rate here, as on the 1090, because tools such as pymavlink open
+  ports at 1200. Programmer images without the magic baud need BOOT held while plugging in
+  once to update.
 - After a host-driven reset with SYNC low the device console reboots at its *saved* baud
   (factory default 1 M). If the host's line coding matches the rate the console was last
   negotiated to, the Programmer stays transparent; otherwise it automatically re-negotiates (sweep +
@@ -160,3 +177,6 @@ flashes it on the next check. See [Prerequisites](../README.md#prerequisites).
   device is actually running, or power-cycle the Programmer.
 - Status text (flash progress, negotiation results) appears on the same CDC port before
   pass-through starts; anything typed during those phases is ignored.
+- Opening the CDC port at 233495534 baud reboots the Programmer into its USB bootloader (see
+  [Pass-through behavior](#pass-through-behavior)). Every other baud works for reading its
+  diagnostics.

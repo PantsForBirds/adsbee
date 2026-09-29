@@ -1,6 +1,6 @@
 # Derives the ADSBee 1421 firmware version from its single source of truth: the
 # kFirmwareVersion{Major,Minor,Patch,ReleaseCandidate} constants in ti/object_dictionary/
-# object_dictionary.cpp. Shared by the ti (CC1314 application) and programmer (RP2040 jig) builds so
+# object_dictionary.cpp. Shared by the ti (CC1314 application) and programmer (ADSBee 1421 Programmer, RP2040) builds so
 # the parse logic exists once in CMake. (The same regexes also live in programmer/scripts/
 # hex_to_c.py, which bakes kFirmwareVersionStr into the programmer image, and in
 # .github/workflows/firmware.yml -- keep the three in sync if the format ever changes.)

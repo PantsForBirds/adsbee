@@ -65,7 +65,7 @@ class SettingsEngine {
     // transport contract: sendCommand(cmd, {expect, terminator: 'ok'|'quiet', quietMs,
     // timeoutMs}) -> Promise<string[] of trimmed body lines>; rejects on a whole-line
     // 'ERROR ...' response or timeout.
-    // bulkQuery (optional): { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/ } — a
+    // bulkQuery (optional): { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/ }, a
     // one-round-trip read of every setting as a JSON object keyed by AT command name.
     // Entries the dump doesn't cover (or firmware without the command) fall back to
     // per-command queries automatically.

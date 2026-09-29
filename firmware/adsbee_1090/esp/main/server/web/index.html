@@ -6,6 +6,7 @@
     <title>ADSBee</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/png" href="favicon.png">
+    <script src="ota_updater.js"></script>
     <script src="adsbee.js"></script>
     <script src="settings.js"></script>
 </head>
@@ -16,7 +17,7 @@
         <div class="tab-bar-tabs">
             <span class="tab-logo">ADSBee</span>
             <button class="tab-btn active" data-tab="console" onclick="switchTab('console')">Console</button>
-            <button class="tab-btn" data-tab="map" onclick="switchTab('map')">Map</button>
+            <button class="tab-btn" data-tab="map" onclick="switchTab('map')">Live Map</button>
             <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
         <div class="tab-bar-controls">
@@ -83,7 +84,7 @@
         </div>
     </div>
 
-    <!-- Map tab -->
+    <!-- Live Map tab -->
     <div id="tab-map" class="tab-content">
         <div id="map-left">
             <div id="map-container">
@@ -102,7 +103,7 @@
                         <tr>
                             <th data-sort-key="hex">ICAO</th>
                             <th data-sort-key="flight">Callsign</th>
-                            <th data-sort-key="type">Type</th>
+                            <th data-sort-key="srcLabel">Source</th>
                             <th data-sort-key="squawk">Sqwk</th>
                             <th data-sort-key="alt_baro">Alt&nbsp;(ft)</th>
                             <th data-sort-key="gs">Spd&nbsp;(kt)</th>
@@ -180,6 +181,8 @@
             </div>
             <div id="firmware-modal-log"></div>
             <p class="firmware-modal-note">Interface is paused during the update. Please do not close this page.</p>
+            <button id="firmware-modal-close" class="tools-button" style="display:none;"
+                    onclick="document.getElementById('firmware-modal').style.display='none'">Close</button>
         </div>
     </div>
 
@@ -463,13 +466,13 @@
         });
 
         /**
-         * Tab management and radar.
+         * Tab management and live map.
          */
 
         let consoleWebSocket = null;
         let metricsWebSocket = null;
         let aircraftWebSocket = null;
-        let radarMap = null;
+        let liveMap = null;
         let aircraftStore = null;
         let acTable = null;
         let aircraftUpdateTimer = null;
@@ -495,7 +498,7 @@
                 settingsTab.leave();
                 consoleWebSocket.pause();
                 metricsWebSocket.resume();
-                initRadar().catch(e => console.error('Radar init error:', e));
+                initLiveMap().catch(e => console.error('Live Map init error:', e));
             } else if (name === 'settings') {
                 // The terminal's console socket is paused so the settings AT traffic
                 // (broadcast to every /console client) never reaches the visible terminal.
@@ -530,24 +533,24 @@
             }
         }
 
-        async function initRadar() {
+        async function initLiveMap() {
             if (!aircraftStore) aircraftStore = new AircraftStore();
 
-            if (!radarMap) {
-                radarMap = new RadarMap('map', aircraftStore);
-                radarMap.onSelectionChanged = (hex) => {
+            if (!liveMap) {
+                liveMap = new LiveMap('map', aircraftStore);
+                liveMap.onSelectionChanged = (hex) => {
                     if (acTable) acTable.setSelected(hex);
                 };
-                await radarMap.init();
-                initMapOptions(radarMap);
-                if (latestGNSSStatus) radarMap.setReceiverStatus(latestGNSSStatus);
+                await liveMap.init();
+                initMapOptions(liveMap);
+                if (latestGNSSStatus) liveMap.setReceiverStatus(latestGNSSStatus);
             } else {
-                radarMap.invalidate();
+                liveMap.invalidate();
             }
 
             if (!acTable) {
                 acTable = new AircraftTable('aircraft-tbody', aircraftStore, (hex) => {
-                    if (radarMap) radarMap.selectAircraft(hex);
+                    if (liveMap) liveMap.selectAircraft(hex);
                 });
             }
 
@@ -559,14 +562,14 @@
             }
             aircraftWebSocket.onDisconnect = () => {
                 aircraftStore.clearAll();
-                if (radarMap) radarMap.update();
+                if (liveMap) liveMap.update();
                 if (acTable) acTable.update();
             };
 
             if (!aircraftUpdateTimer) {
                 aircraftUpdateTimer = setInterval(() => {
                     aircraftStore.sweep();
-                    radarMap.update();
+                    liveMap.update();
                     acTable.update();
                 }, 1000);
             }
@@ -577,7 +580,7 @@
         metricsWebSocket = new MetricsWebSocket(WS_CONFIG.metrics_ws_url);
         metricsWebSocket.onGNSSStatus = (status) => {
             latestGNSSStatus = status;
-            if (radarMap) radarMap.setReceiverStatus(status);
+            if (liveMap) liveMap.setReceiverStatus(status);
         };
         focusTerminal();
 
@@ -593,7 +596,7 @@
                 const newTbl = Math.max(60,  startTbl - dy);
                 mapEl.style.cssText = `flex:none;height:${newMap}px`;
                 tblEl.style.height  = `${newTbl}px`;
-                if (radarMap) radarMap.invalidate();
+                if (liveMap) liveMap.invalidate();
             }
             function onUp() {
                 document.removeEventListener('mousemove', onMove);
@@ -624,7 +627,7 @@
             new FirmwareUploader(HOST_URI);
             new SettingsManager(HOST_URI);
             document.getElementById('sidebar-close').addEventListener('click', () => {
-                if (radarMap) radarMap.deselect();
+                if (liveMap) liveMap.deselect();
             });
             initResizeHandle();
         });

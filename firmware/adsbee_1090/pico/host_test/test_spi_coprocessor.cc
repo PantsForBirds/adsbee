@@ -195,3 +195,38 @@ TEST(SPICoprocessor, LogMessagesOffsetChunkedReassembly) {
         }
     }
 }
+// A read request is exactly kBufLenBytes. The ESP32 slave hands ConstructFromBuffer() whatever it received, so a torn
+// frame that happens to start with the read command used to be copied in full past the end of the (static) packet.
+TEST(SPICoprocessorPacket, SCReadRequestPacketRejectsWrongLengthWithoutOverflow) {
+    using SCReadRequestPacket = SPICoprocessorPacket::SCReadRequestPacket;
+    struct {
+        SCReadRequestPacket packet;
+        uint8_t guard[64];
+    } guarded;
+    memset(guarded.guard, 0xAA, sizeof(guarded.guard));
+
+    SCReadRequestPacket valid;
+    valid.cmd = ObjectDictionary::SCCommand::kCmdReadFromSlave;
+    valid.addr = ObjectDictionary::Address::kAddrDeviceStatus;
+    valid.len = 16;
+    valid.PopulateCRC();
+    uint8_t buf[48];
+    memset(buf, 0x55, sizeof(buf));
+    memcpy(buf, valid.GetBuf(), SCReadRequestPacket::kBufLenBytes);
+
+    guarded.packet.ConstructFromBuffer(buf, SCReadRequestPacket::kBufLenBytes);
+    EXPECT_TRUE(guarded.packet.IsValid());
+
+    // Too long: must not write past the packet, and must not be accepted.
+    guarded.packet.ConstructFromBuffer(buf, sizeof(buf));
+    for (uint16_t i = 0; i < sizeof(guarded.guard); i++) {
+        ASSERT_EQ(guarded.guard[i], 0xAA) << "overflow at guard byte " << i;
+    }
+    EXPECT_FALSE(guarded.packet.IsValid());
+
+    // Too short: must not keep validating with the previous request's contents.
+    guarded.packet.ConstructFromBuffer(buf, SCReadRequestPacket::kBufLenBytes);
+    ASSERT_TRUE(guarded.packet.IsValid());
+    guarded.packet.ConstructFromBuffer(buf, 3);
+    EXPECT_FALSE(guarded.packet.IsValid());
+}

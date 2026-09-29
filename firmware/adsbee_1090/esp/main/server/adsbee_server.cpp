@@ -46,6 +46,8 @@ extern const uint8_t adsbee_js_start[] asm("_binary_adsbee_js_start");
 extern const uint8_t adsbee_js_end[] asm("_binary_adsbee_js_end");
 extern const uint8_t settings_js_start[] asm("_binary_settings_js_start");
 extern const uint8_t settings_js_end[] asm("_binary_settings_js_end");
+extern const uint8_t ota_updater_js_start[] asm("_binary_ota_updater_js_start");
+extern const uint8_t ota_updater_js_end[] asm("_binary_ota_updater_js_end");
 extern const uint8_t favicon_png_start[] asm("_binary_favicon_png_start");
 extern const uint8_t favicon_png_end[] asm("_binary_favicon_png_end");
 
@@ -287,12 +289,22 @@ bool ADSBeeServer::Update() {
     }
 
     // Prune inactive WebSocket clients and other housekeeping.
+    // Broadcast RP2040 console output queued by the SPI receive task.
+    if (network_console_tx_buf_) {
+        char console_chunk[kNetworkConsoleTxChunkLenBytes];
+        size_t len;
+        while ((len = xStreamBufferReceive(network_console_tx_buf_, console_chunk, sizeof(console_chunk), 0)) > 0) {
+            network_console.BroadcastMessage(console_chunk, len);
+        }
+    }
     network_console.Update();
     network_metrics.Update();
     network_aircraft.Update();
 
     // Check to see whether the RP2040 sent over new metrics.
-    xQueueReceive(rp2040_aircraft_dictionary_metrics_queue, &rp2040_aircraft_dictionary_metrics, 0);
+    if (xQueueReceive(rp2040_aircraft_dictionary_metrics_queue, &rp2040_aircraft_dictionary_metrics, 0) == pdTRUE) {
+        last_rp2040_metrics_timestamp_ms_ = get_time_since_boot_ms();
+    }
 
     return ret;
 }
@@ -353,8 +365,12 @@ bool ADSBeeServer::ReportGDL90() {
     int16_t aircraft_index = -1;  // Just used for error reporting.
     uint8_t aircraft_msg_buf[CommsManager::NetworkMessage::kMaxLenBytes];
     uint16_t aircraft_msg_buf_len = 0;
+    uint32_t timestamp_ms = get_time_since_boot_ms();
     for (auto& itr : aircraft_dictionary.dict) {
         aircraft_index++;
+        if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) {
+            continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
+        }
 
         if (ModeSAircraft* mode_s_aircraft = get_if<ModeSAircraft>(&(itr.second)); mode_s_aircraft) {
             if (!mode_s_aircraft->HasBitFlag(ModeSAircraft::kBitFlagPositionValid) ||
@@ -536,14 +552,20 @@ static esp_err_t css_handler(httpd_req_t* req) {
 
 static esp_err_t adsbee_js_handler(httpd_req_t* req) {
     httpd_resp_set_type(req, "application/javascript");
-    httpd_resp_send(req, (const char*)adsbee_js_start, adsbee_js_end - adsbee_js_start - 1);
+    httpd_resp_send(req, (const char*)adsbee_js_start, adsbee_js_end - adsbee_js_start);
     return ESP_OK;
 }
 
 static esp_err_t settings_js_handler(httpd_req_t* req) {
     httpd_resp_set_type(req, "application/javascript");
     // EMBED_TXTFILES null-terminates the embedded file; don't send the terminator.
-    httpd_resp_send(req, (const char*)settings_js_start, settings_js_end - settings_js_start - 1);
+    httpd_resp_send(req, (const char*)settings_js_start, settings_js_end - settings_js_start);
+    return ESP_OK;
+}
+
+static esp_err_t ota_updater_js_handler(httpd_req_t* req) {
+    httpd_resp_set_type(req, "application/javascript");
+    httpd_resp_send(req, (const char*)ota_updater_js_start, ota_updater_js_end - ota_updater_js_start);
     return ESP_OK;
 }
 
@@ -656,6 +678,11 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
     // ESP32 can't see number of attempted demodulations or raw packets, so steal that from RP2040 metrics
     // dictionary.
     AircraftDictionary::Metrics combined_metrics = aircraft_dictionary.metrics;
+    // The RP2040 sends its metrics every second. If they stop arriving (e.g. the SPI link is down), report zeros: the
+    // last snapshot is no longer current.
+    if (get_time_since_boot_ms() - adsbee_server.last_rp2040_metrics_timestamp_ms_ > kRP2040MetricsStaleTimeoutMs) {
+        adsbee_server.rp2040_aircraft_dictionary_metrics = AircraftDictionary::Metrics();
+    }
     // Steal demods_1090.
     combined_metrics.demods_1090 = adsbee_server.rp2040_aircraft_dictionary_metrics.demods_1090;
     for (uint16_t i = 0; i < AircraftDictionary::kMaxNumSources; i++) {
@@ -810,6 +837,16 @@ bool ADSBeeServer::TCPServerInit() {
                                .supported_subprotocol = nullptr};
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &settings_js));
 
+    // Firmware update (OTA) JavaScript URI handler
+    httpd_uri_t ota_updater_js = {.uri = "/ota_updater.js",
+                                  .method = HTTP_GET,
+                                  .handler = ota_updater_js_handler,
+                                  .user_ctx = NULL,
+                                  .is_websocket = false,
+                                  .handle_ws_control_frames = false,
+                                  .supported_subprotocol = nullptr};
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_updater_js));
+
     // Favicon URI handler
     httpd_uri_t favicon = {.uri = "/favicon.png",
                            .method = HTTP_GET,
@@ -878,18 +915,10 @@ bool ADSBeeServer::TCPServerInit() {
 }
 
 void ADSBeeServer::SendAircraftJSONMessages() {
-    char json_buf[kAircraftJSONMessageStrMaxLen];
-    for (auto& itr : aircraft_dictionary.dict) {
-        int16_t len = -1;
-        if (ModeSAircraft* ac = get_if<ModeSAircraft>(&itr.second); ac) {
-            len = WriteAircraftJSONModeSAircraftStr(json_buf, *ac);
-        } else if (UATAircraft* ac = get_if<UATAircraft>(&itr.second); ac) {
-            len = WriteAircraftJSONUATAircraftStr(json_buf, *ac);
-        } else if (RemoteIDAircraft* ac = get_if<RemoteIDAircraft>(&itr.second); ac) {
-            len = WriteAircraftJSONRemoteIDAircraftStr(json_buf, *ac);
-        }
-        if (len > 0) {
-            network_aircraft.BroadcastMessage(json_buf, len);
-        }
-    }
+    // Batch aircraft into JSON arrays of up to one websocket message each. One frame per aircraft (two socket writes
+    // each) cost ~100 TCP segments per second per client at a busy site; on the W5500 Ethernet board the network tasks
+    // doing that outrank the SPI receive task, which then missed RP2040 handshakes until the RP2040 reset the board.
+    char batch_buf[WebSocketServer::kWebSocketMessageMaxLen];
+    WriteAircraftJSONLiveMapArrays(aircraft_dictionary, get_time_since_boot_ms(), batch_buf, sizeof(batch_buf),
+                                   [this](const char* buf, uint16_t len) { network_aircraft.BroadcastMessage(buf, len); });
 }

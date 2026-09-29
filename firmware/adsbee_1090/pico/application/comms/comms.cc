@@ -83,7 +83,7 @@ bool CommsManager::ForceFlushRawPackets() {
     return true;
 }
 
-bool CommsManager::UpdateNetworkConsole() {
+bool CommsManager::UpdateNetworkConsole(bool force) {
     static bool recursion_alert = false;
     if (recursion_alert) {
         return false;
@@ -91,7 +91,7 @@ bool CommsManager::UpdateNetworkConsole() {
     recursion_alert = true;
     if (esp32.IsEnabled()) {
         // Limit the max reporting rate.
-        if (esp32_console_tx_queue.Length() < kNetworkConsoleReportingIntervalOverrideNumChars &&
+        if (!force && esp32_console_tx_queue.Length() < kNetworkConsoleReportingIntervalOverrideNumChars &&
             (get_time_since_boot_ms() - last_esp32_console_tx_timestamp_ms_) < kNetworkConsoleMinReportingIntervalMs) {
             // If the queue is too long, or if enough time has passed since the last TX, send the characters.
             recursion_alert = false;
@@ -248,8 +248,8 @@ bool CommsManager::network_console_putc(char c) {
     }
     recursion_alert = true;
     if (!comms_manager.esp32_console_tx_queue.Enqueue(c)) {
-        // Try flushing the buffer before dumping it.
-        comms_manager.UpdateAT();
+        // Try flushing the buffer before dumping it. Don't call UpdateAT() here: this can run inside an AT callback
+        // (e.g. while AT+OTA=WRITE waits for its payload), and parsing console input then misreads binary data.
         comms_manager.UpdateNetworkConsole();
         if (comms_manager.esp32_console_tx_queue.Enqueue(c)) {
             recursion_alert = false;

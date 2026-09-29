@@ -30,7 +30,7 @@ class AtConsole:
     """One open AT console.
 
     ``keep_lines`` clears HUPCL so DTR/RTS stay asserted after close. Some fixtures wire the
-    modem-control lines to the target (the ADSBee 1421 programmer jig maps RTS to the module's
+    modem-control lines to the target (the ADSBee 1421 Programmer maps RTS to the module's
     SYNC pin and a DTR edge to a reset), and dropping them on close would reset or sleep it.
     """
 

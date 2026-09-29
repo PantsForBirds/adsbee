@@ -54,11 +54,14 @@ idf_component_register(
         "remote_id"
         "server"
         "target_test"
-    EMBED_TXTFILES
+    # EMBED_FILES keeps the web files at their exact length, which is what the server sends. EMBED_TXTFILES would append
+    # a NUL terminator that then reached the browser.
+    EMBED_FILES
         "server/web/index.html"
         "server/web/style.css"
         "server/web/adsbee.js"
         "server/web/settings.js"
+        "server/web/ota_updater.js"
         "server/web/favicon.png"
 )
 

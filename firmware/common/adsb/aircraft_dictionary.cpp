@@ -45,7 +45,8 @@ bool ModeSAircraft::CanDecodePosition() {
     }
     uint32_t cpr_interval_ms = MIN(last_odd_packet_.received_timestamp_ms - last_even_packet_.received_timestamp_ms,
                                    last_even_packet_.received_timestamp_ms - last_odd_packet_.received_timestamp_ms);
-    if (cpr_interval_ms > GetMaxAllowedCPRIntervalMs()) {
+    if (cpr_interval_ms > GetMaxAllowedCPRIntervalMs(
+                              MAX(last_odd_packet_.received_timestamp_ms, last_even_packet_.received_timestamp_ms))) {
         // Reject CPR packet pairings that are too far apart in time.
         WriteBitFlag(BitFlag::kBitFlagPositionValid,
                      false);  // keep last known good coordinates, but mark as invalid
@@ -107,6 +108,10 @@ bool ModeSAircraft::DecodePosition(bool is_airborne, uint32_t ref_lat_awb32, uin
 #endif                 // ADSB_VERBOSE_PACKET_WARNINGS
         return false;  // Aircraft crossed between latitude zones, can't decode from this packet pair.
     }
+    float wrapped_latitude_deg = WrapCPRDecodeLatitude(result.lat_deg);
+    if (wrapped_latitude_deg > 90.0f || wrapped_latitude_deg < -90.0f) {
+        return false;  // Not a latitude; a corrupted CPR packet got through CRC.
+    }
 
 #ifdef FILTER_CPR_POSITIONS
     if (filter_cpr_position) {
@@ -145,16 +150,30 @@ bool ModeSAircraft::DecodePosition(bool is_airborne, uint32_t ref_lat_awb32, uin
             CONSOLE_WARNING("ModeSAircraft::DecodePosition",
                             "Filtered CPR position update for ICAO 0x%lx, distance %lu m exceeds max %lu m.",
                             icao_address, distance_meters, max_distance_meters);
-#endif                     // ADSB_VERBOSE_PACKET_WARNINGS
+#endif  // ADSB_VERBOSE_PACKET_WARNINGS
+            // Remember which packets produced this candidate so that they can't be used to confirm it.
+            candidate_even_received_timestamp_ms_ = last_even_packet_.received_timestamp_ms;
+            candidate_odd_received_timestamp_ms_ = last_odd_packet_.received_timestamp_ms;
             return false;  // Filter out CPR positions that are too far from the last known position.
         }
+        if (candidate_even_received_timestamp_ms_ != 0 &&
+            (last_even_packet_.received_timestamp_ms == candidate_even_received_timestamp_ms_ ||
+             last_odd_packet_.received_timestamp_ms == candidate_odd_received_timestamp_ms_)) {
+            // Close to a pending jump candidate, but decoded with one of the packets that produced it. A corrupted
+            // packet decodes to nearly the same bogus position against each complementary packet, so this is no
+            // confirmation. Wait for a pair of entirely new packets.
+            return false;
+        }
+        candidate_even_received_timestamp_ms_ = 0;
+        candidate_odd_received_timestamp_ms_ = 0;
     }
 #endif
 
     WriteBitFlag(BitFlag::kBitFlagPositionValid, true);
-    latitude_deg = WrapCPRDecodeLatitude(result.lat_deg);
+    latitude_deg = wrapped_latitude_deg;
     longitude_deg = WrapCPRDecodeLongitude(result.lon_deg);
     last_track_update_timestamp_ms = most_recent_received_timestamp_ms;  // Update last track update timestamp.
+    last_position_update_ms = get_time_since_boot_ms();
 
     return true;
 }
@@ -1130,6 +1149,7 @@ bool UATAircraft::DecodePosition(const DecodedUATADSBPacket::UATStateVector& sta
     latitude_deg = awb2lat(lat_awb32_);
     longitude_deg = awb2lon(lon_awb32_);
     last_track_update_timestamp_ms = last_message_timestamp_ms;  // Update last track update timestamp.
+    last_position_update_ms = last_message_timestamp_ms;         // Local time for UAT.
     return true;
 }
 
@@ -1537,6 +1557,85 @@ bool AircraftDictionary::ContainsAircraft(uint32_t uid) const {
         return true;
     }
     return false;
+}
+
+AircraftDictionary::AddressSourceRank AircraftDictionary::GetAddressSourceRank(const AircraftEntry& entry,
+                                                                               uint32_t& icao_address) {
+    if (const ModeSAircraft* ac = std::get_if<ModeSAircraft>(&entry)) {
+        icao_address = ac->icao_address & 0xFFFFFF;
+        return ac->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsNonTransponder) ? kAddressSourceRankRebroadcast
+                                                                                 : kAddressSourceRankDirect;
+    }
+    if (const UATAircraft* ac = std::get_if<UATAircraft>(&entry)) {
+        icao_address = ac->icao_address & 0xFFFFFF;
+        switch (ac->GetAddressQualifier()) {
+            case UATAircraft::kADSBTargetWithICAO24BitAddress:
+                return kAddressSourceRankDirect;
+            case UATAircraft::kTISBTargetWithICAO24BitAddress:
+                return kAddressSourceRankTISB;
+            default:
+                return kAddressSourceRankUnique;
+        }
+    }
+    return kAddressSourceRankUnique;
+}
+
+bool AircraftDictionary::IsPreferredReportForAddress(uint32_t uid, uint32_t timestamp_ms) const {
+    auto itr = dict.find(uid);
+    if (itr == dict.end()) {
+        return false;
+    }
+    uint32_t icao_address = 0;
+    if (GetAddressSourceRank(itr->second, icao_address) == kAddressSourceRankUnique) {
+        return true;
+    }
+
+    // Every entry that can carry this ICAO address. The UAT address qualifier is part of the UID.
+    const uint32_t candidate_uids[] = {
+        Aircraft::ICAOToUID(icao_address, Aircraft::kAircraftTypeModeS),
+        Aircraft::ICAOToUID(icao_address | (UATAircraft::kADSBTargetWithICAO24BitAddress
+                                            << Aircraft::kAddressQualifierBitShift),
+                            Aircraft::kAircraftTypeUAT),
+        Aircraft::ICAOToUID(icao_address | (UATAircraft::kTISBTargetWithICAO24BitAddress
+                                            << Aircraft::kAddressQualifierBitShift),
+                            Aircraft::kAircraftTypeUAT),
+    };
+    uint32_t best_uid = uid;
+    bool best_fresh = false;
+    int8_t best_rank = INT8_MAX;
+    uint32_t best_position_age_ms = UINT32_MAX;
+    for (uint32_t candidate_uid : candidate_uids) {
+        auto candidate = dict.find(candidate_uid);
+        if (candidate == dict.end()) {
+            continue;
+        }
+        uint32_t candidate_icao = 0;
+        int8_t rank = GetAddressSourceRank(candidate->second, candidate_icao);
+        uint32_t position_age_ms = UINT32_MAX;  // No valid position.
+        if (const ModeSAircraft* ac = std::get_if<ModeSAircraft>(&candidate->second);
+            ac && ac->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid)) {
+            position_age_ms = timestamp_ms - ac->last_position_update_ms;
+        } else if (const UATAircraft* ac = std::get_if<UATAircraft>(&candidate->second);
+                   ac && ac->HasBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid)) {
+            position_age_ms = timestamp_ms - ac->last_position_update_ms;
+        }
+        bool fresh = position_age_ms <= kPreferredReportPositionFreshMs;
+        // Fresh beats stale. Among fresh entries the better source wins, then the newer position. Among stale ones
+        // the newer position wins, then the better source: a direct ADS-B entry whose position froze a minute ago
+        // (other Mode S replies keep the entry alive) must not win over a TIS-B position that just missed one update,
+        // or the target jumps back to the old position until the next TIS-B update.
+        bool better = (fresh != best_fresh) ? fresh
+                      : fresh ? ((rank != best_rank) ? rank < best_rank : position_age_ms < best_position_age_ms)
+                              : ((position_age_ms != best_position_age_ms) ? position_age_ms < best_position_age_ms
+                                                                           : rank < best_rank);
+        if (better) {
+            best_uid = candidate_uid;
+            best_fresh = fresh;
+            best_rank = rank;
+            best_position_age_ms = position_age_ms;
+        }
+    }
+    return best_uid == uid;
 }
 
 bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
@@ -2175,7 +2274,7 @@ bool ModeSAircraft::SetCPRLatLon(uint32_t n_lat_cpr, uint32_t n_lon_cpr, bool od
     uint32_t received_timestamp_delta_ms = received_timestamp_ms > complementary_packet.received_timestamp_ms
                                                ? received_timestamp_ms - complementary_packet.received_timestamp_ms
                                                : complementary_packet.received_timestamp_ms - received_timestamp_ms;
-    if (received_timestamp_delta_ms > GetMaxAllowedCPRIntervalMs()) {
+    if (received_timestamp_delta_ms > GetMaxAllowedCPRIntervalMs(received_timestamp_ms)) {
         // Clear out old packet to avoid an invalid decode from packets that are too far apart in time.
         ClearCPRPackets();
     }

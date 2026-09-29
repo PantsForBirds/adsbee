@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aircraft_dictionary_config.hh"
+#include "at_console_guard.hh"
 #include "composite_array.hh"
 #include "cpp_at.hh"
 #include "data_structures.hh"  // For PFBQueue.
@@ -73,7 +74,11 @@ class CommsManager {
      * parser).
      * @retval True if update succeeded, false otherwise.
      */
-    bool UpdateNetworkConsole();
+    /**
+     * Sends queued console output to the ESP32 (network console). Output is batched: unless force is set, nothing is
+     * sent within kNetworkConsoleMinReportingIntervalMs of the previous send, until the queue is 3/4 full.
+     */
+    bool UpdateNetworkConsole(bool force = false);
 
     CPP_AT_CALLBACK(ATBaudRateCallback);
     CPP_AT_CALLBACK(ATBiasTeeEnableCallback);
@@ -253,6 +258,10 @@ class CommsManager {
 
     // Console Settings
     CppAT at_parser_;
+    // Keeps binary AT+OTA=WRITE payloads away from the AT parser (see at_console_guard.hh).
+    ATConsoleGuard at_console_guard_;
+    ATLineAssembler<kATCommandBufMaxLen> stdio_at_line_ = ATLineAssembler<kATCommandBufMaxLen>(at_console_guard_);
+    ATLineAssembler<kATCommandBufMaxLen> network_at_line_ = ATLineAssembler<kATCommandBufMaxLen>(at_console_guard_);
 
     // Queues for incoming / outgoing network console characters.
     char esp32_console_rx_queue_buffer_[kNetworkConsoleBufMaxLen];

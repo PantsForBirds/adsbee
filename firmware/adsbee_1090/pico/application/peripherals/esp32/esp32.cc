@@ -62,7 +62,9 @@ bool ESP32::Update() {
         psram_total_kb = device_status.psram_total_kb;
         psram_free_kb = device_status.psram_free_kb;
     } else {
-        CONSOLE_ERROR("ESP32::Update", "Unable to read ESP32 status.");
+        if (!esp32.IsLinkDown()) {  // Don't repeat this every pass while the link is down.
+            CONSOLE_ERROR("ESP32::Update", "Unable to read ESP32 status.");
+        }
         return false;
     }
 

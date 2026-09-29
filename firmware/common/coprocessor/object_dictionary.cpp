@@ -24,7 +24,7 @@ const uint8_t ObjectDictionary::kFirmwareVersionMajor = 0;
 const uint8_t ObjectDictionary::kFirmwareVersionMinor = 9;
 const uint8_t ObjectDictionary::kFirmwareVersionPatch = 1;
 // NOTE: Indicate a final release with RC = 0.
-const uint8_t ObjectDictionary::kFirmwareVersionReleaseCandidate = 3;
+const uint8_t ObjectDictionary::kFirmwareVersionReleaseCandidate = 4;
 
 const uint32_t ObjectDictionary::kFirmwareVersion = (kFirmwareVersionMajor << 24) | (kFirmwareVersionMinor << 16) |
                                                     (kFirmwareVersionPatch << 8) | kFirmwareVersionReleaseCandidate;
@@ -147,7 +147,8 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
         case kAddrConsole: {
             // Don't print here to avoid print of print doom loop explosion.
             // CONSOLE_INFO("ObjectDictionary::SetBytes", "Forwarding %d byte message to network console.", buf_len);
-            adsbee_server.network_console.BroadcastMessage(reinterpret_cast<const char*>(buf), buf_len);
+            // Runs on the SPI receive task: queue it and let ADSBeeServer::Update() do the (blocking) broadcast.
+            adsbee_server.QueueNetworkConsoleMessage(buf, buf_len);
             break;
         }
 #ifdef CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH

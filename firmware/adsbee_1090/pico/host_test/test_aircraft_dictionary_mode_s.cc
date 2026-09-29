@@ -265,7 +265,7 @@ TEST(AircraftDictionary, ApplyAirbornePositionMessage) {
 TEST(ModeSAircraft, CalculateMaxAllowedCPRInterval) {
     ModeSAircraft aircraft;
     // CPR interval enforced at reference limit when aircraft is not initialized.
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kDefaultCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kDefaultCPRIntervalMs);
 
     // Setting velocity source to something other than kSpeedSourceNotAvailable or kSpeedSourceNotSet should
     // return CPR interval as a calculated function of aircraft velocity.
@@ -274,28 +274,51 @@ TEST(ModeSAircraft, CalculateMaxAllowedCPRInterval) {
     // Stale track enforces default CPR interval.
     set_time_since_boot_ms(100e3);
     aircraft.last_track_update_timestamp_ms = 100e3 - ModeSAircraft::kMaxTrackUpdateIntervalMs - 1;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kDefaultCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kDefaultCPRIntervalMs);
 
     // Set track to be fresh.
     aircraft.last_track_update_timestamp_ms = 100e3;
 
     // Stationary aircraft = maximum allowed CPR interval.
     aircraft.speed_kts = 0;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kMaxCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kMaxCPRIntervalMs);
 
     // DO-260C 2.2.10.3.1: X = MIN(20, 10000 / V) seconds.
     // Aircraft at or below 500kts = 20 seconds.
     aircraft.speed_kts = 250;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), 20000u);
     aircraft.speed_kts = 400;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), 20000u);
     aircraft.speed_kts = 500;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 20000u);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), 20000u);
 
     // Very fast aircraft = same equation, no minimum interval enforced.
     aircraft.speed_kts = 1000;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), 10000u);
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), 10000u);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+}
+
+// The ESP32 runs the same dictionary on packets timestamped by the RP2040's MLAT counter, while its own
+// get_time_since_boot_ms() counts from the ESP32's boot (a few seconds later, or hours later after an ESP32 reset).
+// Track freshness must be judged in packet time, or every track looks stale and fast-moving aircraft get the short
+// default CPR window.
+TEST(ModeSAircraft, CPRIntervalUsesPacketTimeNotLocalClock) {
+    ModeSAircraft aircraft;
+    aircraft.speed_source = ADSBTypes::kSpeedSourceGroundSpeed;
+    aircraft.speed_kts = 400;  // Fresh track: 20 s window; stale: 10 s default.
+    const uint32_t mlat_now_ms = 25000e3;           // RP2040 up for ~7 h.
+    aircraft.last_track_update_timestamp_ms = mlat_now_ms - 5e3;  // Fresh track in packet time.
+
+    set_time_since_boot_ms(35e3);  // ESP32 rebooted 35 s ago.
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(mlat_now_ms), 20000u);
+    set_time_since_boot_ms(mlat_now_ms - 3500);  // ESP32 booted 3.5 s after the RP2040.
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(mlat_now_ms), 20000u);
+
+    // Stale in packet time is still stale.
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(mlat_now_ms + ModeSAircraft::kMaxTrackUpdateIntervalMs),
+              ModeSAircraft::kDefaultCPRIntervalMs);
+    // A packet slightly older than the last track update is not treated as stale.
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(mlat_now_ms - 6e3), 20000u);
 }
 
 // This test case verifies that you can't ingest airborne position messages that are too far apart in time, which could
@@ -321,7 +344,7 @@ TEST(AircraftDictionary, TimeFilterAirbornePositionMessages) {
 
     // Case 1: Aircraft has no speed data. Default packet valid interval should be used.
     ASSERT_EQ(aircraft.speed_source, ADSBTypes::kSpeedSourceNotSet);
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kDefaultCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kDefaultCPRIntervalMs);
     // Ingest the odd position packet. This should be rejected since the timestamp is too far apart from the even
     // packet. Ingestion will succeed, and the packet will be retained, but the aircraft will still not have a valid
     // location.
@@ -337,16 +360,16 @@ TEST(AircraftDictionary, TimeFilterAirbornePositionMessages) {
     // Case 2: Aircraft has speed data and is traveling at 1000 knots.
     aircraft.speed_kts = 1000;
     aircraft.speed_source = ADSBTypes::kSpeedSourceGroundSpeed;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
 
     // Case 3: Aircraft is flying slowly but has a stale track.
     aircraft.speed_kts = 0;
     aircraft.speed_source = ADSBTypes::kSpeedSourceGroundSpeed;
     // Stationary aircraft should get the max interval.
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kMaxCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kMaxCPRIntervalMs);
     // Set the track update timestamp to be too old. This should enforce the default CPR interval.
     aircraft.last_track_update_timestamp_ms = get_time_since_boot_ms() - ModeSAircraft::kMaxTrackUpdateIntervalMs - 1;
-    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(), ModeSAircraft::kDefaultCPRIntervalMs);
+    EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kDefaultCPRIntervalMs);
 }
 
 TEST(AircraftDictionary, IngestAirbornePositionBaroAltitudeNonGillham) {
@@ -1770,4 +1793,44 @@ TEST(AircraftDictionary, OperationStatusSurfaceGPSAntennaOffset) {
     ASSERT_TRUE(tpacket.is_valid);
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
     EXPECT_EQ(aircraft_ptr->gnss_antenna_offset_right_of_reference_point_m, -4);
+}
+
+// Field case (GS3M running 0.9.0-rc19): one corrupted-but-CRC-valid airborne position packet produced a bogus position
+// (e.g. latitude -218.99 deg) for 2-4 s in the middle of a clean track. The filter rejected the first bogus decode but
+// stored it as its reference, then the same bad packet decoded against the next complementary packet landed right next
+// to it and "confirmed" the jump.
+TEST(AircraftDictionary, SingleCorruptCPRPacketCannotConfirmItself) {
+    const uint32_t kEvenLat = 93000, kEvenLon = 51372, kOddLat = 74158, kOddLon = 50194;  // ~52.26N, 3.92E
+    for (uint32_t corrupt_lat_delta : {3000u, 6000u, 12000u, 24000u}) {
+        SCOPED_TRACE(corrupt_lat_delta);
+        ModeSAircraft aircraft;
+        set_time_since_boot_ms(100e3);
+        uint32_t t = 100e3;
+        // Establish a track.
+        ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
+        ASSERT_TRUE(aircraft.SetCPRLatLon(kOddLat, kOddLon, true, t += 500));
+        ASSERT_TRUE(aircraft.DecodeAirbornePosition());
+        const float lat0 = aircraft.latitude_deg, lon0 = aircraft.longitude_deg;
+
+        // Corrupted odd packet, decoded against the current even packet and then against the next even packet.
+        ASSERT_TRUE(aircraft.SetCPRLatLon((kOddLat + corrupt_lat_delta) & 0x1FFFF, kOddLon, true, t += 500));
+        bool first = aircraft.DecodeAirbornePosition();
+        ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
+        bool second = aircraft.DecodeAirbornePosition();
+        EXPECT_NEAR(aircraft.latitude_deg, lat0, 0.05) << "first=" << first << " second=" << second;
+        EXPECT_NEAR(aircraft.longitude_deg, lon0, 0.05);
+        EXPECT_GE(aircraft.latitude_deg, -90.0f);
+        EXPECT_LE(aircraft.latitude_deg, 90.0f);
+
+        // Good packets resume; the track continues from the real position.
+        for (int i = 0; i < 4; i++) {
+            ASSERT_TRUE(aircraft.SetCPRLatLon(kOddLat, kOddLon, true, t += 500));
+            aircraft.DecodeAirbornePosition();
+            ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
+            aircraft.DecodeAirbornePosition();
+        }
+        EXPECT_NEAR(aircraft.latitude_deg, lat0, 0.05);
+        EXPECT_NEAR(aircraft.longitude_deg, lon0, 0.05);
+        EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid));
+    }
 }

@@ -4,6 +4,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Returns the JSON value (as a string) for the given key in a single-line JSON object, or an empty
 // string if the key is not present.  Handles string values ("key":"val") and numeric values
@@ -63,8 +64,7 @@ TEST(AircraftJSON, ModeSAircraftAllFields) {
     ac.system_design_assurance = static_cast<ADSBTypes::SystemDesignAssurance>(2);
     ac.adsb_version = 2;
     ac.last_message_signal_strength_dbm = -75;
-    ac.metrics.valid_squitter_frames = 5;
-    ac.metrics.valid_extended_squitter_frames = 10;
+    ac.num_frames_received = 15;
 
     // Set validity flags.
     ac.WriteBitFlag(ModeSAircraft::kBitFlagPositionValid, true);
@@ -101,7 +101,7 @@ TEST(AircraftJSON, ModeSAircraftAllFields) {
     EXPECT_EQ(GetJSONValue(json, "sda"), "2");
     EXPECT_EQ(GetJSONValue(json, "version"), "2");
     EXPECT_EQ(GetJSONValue(json, "rssi"), "-75");
-    EXPECT_EQ(GetJSONValue(json, "messages"), "15");  // 5 + 10
+    EXPECT_EQ(GetJSONValue(json, "messages"), "15");
 
     // alert and spi absent when flags not set.
     EXPECT_FALSE(HasJSONKey(json, "alert"));
@@ -237,7 +237,7 @@ TEST(AircraftJSON, UATAircraftAllFields) {
     ac.system_design_assurance = static_cast<ADSBTypes::SystemDesignAssurance>(1);
     ac.uat_version = 0;
     ac.last_message_signal_strength_dbm = -60;
-    ac.metrics.valid_frames = 7;
+    ac.num_frames_received = 7;
     ac.emergency_priority_status = UATAircraft::kEmergencyStatusMinimumFuel;
 
     ac.WriteBitFlag(UATAircraft::kBitFlagPositionValid, true);
@@ -402,4 +402,207 @@ TEST(AircraftJSON, SquawkLeadingZeros) {
     uat.squawk = 7700;  // Printed as decimal digits, not octal ("7024" before the squawk rework).
     WriteAircraftJSONUATAircraftStr(buf, uat);
     EXPECT_EQ(GetJSONValue(buf, "squawk"), "7700");
+}
+
+// "messages" follows readsb: it is a running total for the aircraft that keeps counting across 1 s metrics intervals.
+TEST(AircraftJSON, MessagesIsCumulativeAcrossMetricsIntervals) {
+    char buf[kAircraftJSONMessageStrMaxLen];
+
+    ModeSAircraft mode_s_ac(0xabcdef);
+    for (int i = 0; i < 3; i++) mode_s_ac.IncrementNumFramesReceived(false);
+    for (int i = 0; i < 4; i++) mode_s_ac.IncrementNumFramesReceived(true);
+    mode_s_ac.UpdateMetrics();
+    mode_s_ac.IncrementNumFramesReceived(true);
+    mode_s_ac.UpdateMetrics();  // Last interval only saw 1 frame.
+    int16_t len = WriteAircraftJSONModeSAircraftStr(buf, mode_s_ac);
+    ASSERT_GT(len, 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf, len), "messages"), "8");
+    mode_s_ac.UpdateMetrics();  // Nothing received in this interval.
+    len = WriteAircraftJSONModeSAircraftStr(buf, mode_s_ac);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf, len), "messages"), "8");
+
+    UATAircraft uat_ac(0x123456);
+    for (int i = 0; i < 5; i++) uat_ac.IncrementNumFramesReceived();
+    uat_ac.UpdateMetrics();
+    uat_ac.UpdateMetrics();
+    len = WriteAircraftJSONUATAircraftStr(buf, uat_ac);
+    ASSERT_GT(len, 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf, len), "messages"), "5");
+}
+
+// DO-282B address qualifier 6 is an ADS-R target with a non-ICAO address. It was reported as a direct "adsb_icao".
+TEST(AircraftJSON, UATAircraftADSRNonICAOAddress) {
+    char buf[kAircraftJSONMessageStrMaxLen];
+    UATAircraft ac;
+    ac.icao_address =
+        0x778899 | ((UATAircraft::kADSRTargetWithNonICAOAddress << Aircraft::kAddressQualifierBitShift) &
+                    Aircraft::kAddressQualifierMask);
+    WriteAircraftJSONUATAircraftStr(buf, ac);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "hex"), "~778899");
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "type"), "adsr_other");
+}
+
+// One ICAO address can have several dictionary entries: the aircraft's own 1090ES (Mode S) or UAT ADS-B, and ground
+// station rebroadcasts (DF18, UAT TIS-B/ADS-R). Only one of them is reported per address, so a client keyed by hex
+// doesn't flip between a stale direct position and a live TIS-B one.
+class PreferredReportForAddress : public ::testing::Test {
+   protected:
+    static constexpr uint32_t kICAO = 0xA41090;
+    static constexpr uint32_t kNowMs = 1000000;
+
+    ModeSAircraft* AddModeS(bool position_valid, uint32_t position_age_ms, bool non_transponder = false) {
+        ModeSAircraft* ac = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(kICAO));
+        ac->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid, position_valid);
+        ac->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIsNonTransponder, non_transponder);
+        ac->last_position_update_ms = kNowMs - position_age_ms;
+        return ac;
+    }
+    UATAircraft* AddUAT(UATAircraft::AddressQualifier aq, bool position_valid, uint32_t position_age_ms) {
+        UATAircraft* ac = dictionary.InsertAircraft<UATAircraft>(
+            UATAircraft(kICAO | (static_cast<uint32_t>(aq) << Aircraft::kAddressQualifierBitShift)));
+        ac->WriteBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid, position_valid);
+        ac->last_position_update_ms = kNowMs - position_age_ms;
+        return ac;
+    }
+    bool Preferred(uint32_t uid) { return dictionary.IsPreferredReportForAddress(uid, kNowMs); }
+
+    AircraftDictionary dictionary;
+};
+
+TEST_F(PreferredReportForAddress, DirectADSBBeatsFreshTISB) {
+    ModeSAircraft* mode_s = AddModeS(true, 1000);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 500);
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, FreshTISBBeatsStaleDirectPosition) {
+    // Field case (a41090): the 1090ES entry kept a position frozen for minutes (other Mode S replies kept the entry
+    // alive), while UAT TIS-B tracked the aircraft 6 nm away.
+    ModeSAircraft* mode_s = AddModeS(true, AircraftDictionary::kPreferredReportPositionFreshMs + 1);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 4000);
+    EXPECT_FALSE(Preferred(mode_s->GetUID()));
+    EXPECT_TRUE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, TISBBeatsDirectWithoutPosition) {
+    ModeSAircraft* mode_s = AddModeS(false, 0);  // Only DF4/DF5/DF11 so far.
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 4000);
+    EXPECT_FALSE(Preferred(mode_s->GetUID()));
+    EXPECT_TRUE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, NewestPositionWinsWhenNothingIsFresh) {
+    // Field case (a8cfae, 1090U): TIS-B missed an update, so neither position was fresh, and the direct 1090ES entry
+    // with a position frozen for 72 s won and the target jumped 3.5 nm back until the next TIS-B update.
+    ModeSAircraft* mode_s = AddModeS(true, 72000);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 16000);
+    EXPECT_FALSE(Preferred(mode_s->GetUID()));
+    EXPECT_TRUE(Preferred(tisb->GetUID()));
+
+    tisb->last_position_update_ms = kNowMs - 80000;  // Now the direct position is the newer one.
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, DirectWinsWhenNoEntryHasAPosition) {
+    ModeSAircraft* mode_s = AddModeS(false, 0);
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, false, 0);
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(tisb->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, UATDirectBeatsDF18Rebroadcast) {
+    ModeSAircraft* df18 = AddModeS(true, 500, true);
+    UATAircraft* uat = AddUAT(UATAircraft::kADSBTargetWithICAO24BitAddress, true, 900);
+    EXPECT_FALSE(Preferred(df18->GetUID()));
+    EXPECT_TRUE(Preferred(uat->GetUID()));
+}
+
+TEST_F(PreferredReportForAddress, LoneAndNonICAOEntriesAreAlwaysReported) {
+    UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, false, 0);
+    EXPECT_TRUE(Preferred(tisb->GetUID()));  // Only entry for its address.
+    UATAircraft* track_file = AddUAT(UATAircraft::kTISBTargetWithTrackFileIdentifier, true, 0);
+    ModeSAircraft* mode_s = AddModeS(true, 0);
+    EXPECT_TRUE(Preferred(track_file->GetUID()));  // Track file IDs aren't ICAO addresses.
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(tisb->GetUID()));
+}
+
+// "link" tells a map which link a report came from (both links report direct targets as "adsb_icao"), and "seen_pos"
+// how old the position is, so a held position can be told from a live one.
+TEST(AircraftJSON, LinkAndSeenPos) {
+    char buf[kAircraftJSONMessageStrMaxLen];
+    ModeSAircraft mode_s(0xA41090);
+    mode_s.WriteBitFlag(ModeSAircraft::kBitFlagPositionValid, true);
+    mode_s.last_position_update_ms = 100000;
+    ASSERT_GT(WriteAircraftJSONModeSAircraftStr(buf, mode_s, 283456), 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "link"), "1090");
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "183.4");
+
+    ASSERT_GT(WriteAircraftJSONModeSAircraftStr(buf, mode_s), 0);  // No timestamp: no seen_pos.
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "");
+
+    UATAircraft uat(0xA41090 | (UATAircraft::kTISBTargetWithICAO24BitAddress << Aircraft::kAddressQualifierBitShift));
+    uat.WriteBitFlag(UATAircraft::kBitFlagPositionValid, true);
+    uat.last_position_update_ms = 280000;
+    ASSERT_GT(WriteAircraftJSONUATAircraftStr(buf, uat, 283456), 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "type"), "tisb_icao");
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "link"), "uat");
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "3.4");
+
+    uat.WriteBitFlag(UATAircraft::kBitFlagPositionValid, false);  // No position: no seen_pos.
+    ASSERT_GT(WriteAircraftJSONUATAircraftStr(buf, uat, 283456), 0);
+    EXPECT_EQ(GetJSONValue(std::string_view(buf), "seen_pos"), "");
+}
+
+// The Live Map (/aircraft) gets one record per ICAO address, the preferred source, in whole-object JSON arrays.
+TEST_F(PreferredReportForAddress, LiveMapArraysHaveOneRecordPerAddress) {
+    AddModeS(true, 1000);                                              // a41090 direct 1090ES: preferred.
+    AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 500);  // a41090 TIS-B: suppressed.
+    UATAircraft* other = dictionary.InsertAircraft<UATAircraft>(
+        UATAircraft(0xA00001 | (UATAircraft::kTISBTargetWithICAO24BitAddress << Aircraft::kAddressQualifierBitShift)));
+    other->WriteBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid, true);  // TIS-B only: reported as TIS-B.
+    other->last_position_update_ms = kNowMs - 20000;
+
+    std::vector<std::string> arrays;
+    char buf[4000];  // WebSocketServer::kWebSocketMessageMaxLen on the ESP32.
+    WriteAircraftJSONLiveMapArrays(dictionary, kNowMs, buf, sizeof(buf),
+                                   [&](const char* b, uint16_t len) { arrays.emplace_back(b, len); });
+    ASSERT_EQ(arrays.size(), 1u);
+    const std::string& a = arrays[0];
+    EXPECT_EQ(a.front(), '[');
+    EXPECT_EQ(a.back(), ']');
+    auto count = [&](std::string_view needle) {
+        size_t n = 0;
+        for (size_t pos = a.find(needle); pos != std::string::npos; pos = a.find(needle, pos + 1)) n++;
+        return n;
+    };
+    EXPECT_EQ(count("\"hex\":\"a41090\""), 1u);
+    EXPECT_EQ(count("\"hex\":\"a00001\""), 1u);
+    EXPECT_EQ(count("\"type\":\"adsb_icao\",\"link\":\"1090\""), 1u);  // a41090 from its own ADS-B.
+    EXPECT_EQ(count("\"type\":\"tisb_icao\",\"link\":\"uat\""), 1u);   // a00001 from TIS-B.
+    EXPECT_EQ(count("\"seen_pos\":20.0"), 1u);
+}
+
+// Arrays split between whole objects and never exceed the buffer.
+TEST_F(PreferredReportForAddress, LiveMapArraysSplitAtObjectBoundaries) {
+    for (uint32_t i = 0; i < 40; i++) {
+        ModeSAircraft* ac = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xB00000 + i));
+        ac->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid, true);
+        ac->last_position_update_ms = kNowMs;
+    }
+    std::vector<std::string> arrays;
+    char buf[1000];
+    WriteAircraftJSONLiveMapArrays(dictionary, kNowMs, buf, sizeof(buf),
+                                   [&](const char* b, uint16_t len) { arrays.emplace_back(b, len); });
+    EXPECT_GT(arrays.size(), 1u);
+    size_t records = 0;
+    for (const std::string& a : arrays) {
+        EXPECT_LE(a.size(), sizeof(buf));
+        EXPECT_EQ(a.front(), '[');
+        EXPECT_EQ(a.back(), ']');
+        for (size_t pos = a.find("\"hex\""); pos != std::string::npos; pos = a.find("\"hex\"", pos + 1)) records++;
+    }
+    EXPECT_EQ(records, 40u);
 }

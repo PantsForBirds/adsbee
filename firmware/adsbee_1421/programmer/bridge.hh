@@ -9,9 +9,11 @@
 //   host RTS bit deasserted-> SYNC pin HIGH   pin low on FTDI-style adapters; the web console and
 //   host DTR bit asserted  -> RESET_N pulse   host scripts are written against that polarity)
 //
-// DTR is edge-triggered (a 50 ms reset pulse on assert) rather than level-held so terminals that
-// keep DTR asserted for the whole session do not hold the device in reset. Host line-coding baud
-// changes are applied to the UART directly.
+// DTR is edge-triggered (a 50 ms reset pulse on assert), so terminals that keep DTR asserted for
+// the whole session do not hold the device in reset. RTS deasserted only drives SYNC high while
+// DTR is asserted (port open) or around a DTR-edge reset, so closing the port, which drops both
+// lines, leaves the device awake (see modem_lines.hh). Host line-coding baud changes are applied
+// to the UART directly.
 
 enum class BridgeExit {
     kRecheck,          // BOOTSEL tapped: rerun the full CRC check / flash cycle.

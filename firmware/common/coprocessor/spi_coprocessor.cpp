@@ -2,6 +2,11 @@
 
 #include "buffer_utils.hh"
 
+#ifdef ON_ESP32
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#endif
+
 #ifdef ON_PICO
 #include "hal.hh"
 #elif defined(ON_coprocessor)
@@ -10,6 +15,9 @@
 #endif
 
 bool SPICoprocessor::Init() {
+#ifdef ON_COPRO_MASTER
+    link_gate_.Reset();
+#endif
     if (!config_.interface.Init()) {
         CONSOLE_ERROR("SPICoprocessor::Init", "Failed to initialize SPI coprocessor interface.");
         return false;  // Initialization failed.
@@ -50,7 +58,9 @@ bool SPICoprocessor::Update() {
     // Rely on the slave interface to query device status and process SCCommand requests, since behavior varies by
     // device.
     if (!config_.interface.Update()) {
-        CONSOLE_ERROR("SPICoprocessor::Update", "Failed to update SPI coprocessor interface.");
+        if (!link_gate_.IsDown()) {  // Don't repeat this every pass while the link is down.
+            CONSOLE_ERROR("SPICoprocessor::Update", "Failed to update SPI coprocessor interface.");
+        }
         return false;  // Update failed.
     }
 
@@ -236,18 +246,21 @@ bool SPICoprocessor::LogMessage(SettingsManager::LogLevel log_level, const char*
     // Make the scratch LogMessage static so that we don't need to allocate it all the time.
     // Allocating a LogMessage buffer on the stack can cause overflows in some limited resource event handlers.
     static ObjectDictionary::LogMessage log_message;
-    log_message.log_level = log_level;
-    log_message.num_chars = 0;
-    log_message.message[0] = '\0';  // Initialize to empty string.
-
-    if (strnlen(tag, ObjectDictionary::kLogMessageTagMaxNumChars) > 0) {
-        log_message.num_chars += snprintf(log_message.message, ObjectDictionary::kLogMessageMaxNumChars, "[%s] ", tag);
+#ifdef ON_ESP32
+    // Tasks on both cores log through here, and they share the static scratch message above. If another task is
+    // mid-format, the message is dropped so the caller (which may be the SPI receive task) never blocks.
+    static SemaphoreHandle_t log_message_mutex = xSemaphoreCreateMutex();
+    if (!log_message_mutex || xSemaphoreTake(log_message_mutex, pdMS_TO_TICKS(kLogMessageMutexTimeoutMs)) != pdTRUE) {
+        return false;
     }
-
-    log_message.num_chars += vsnprintf(log_message.message + log_message.num_chars,
-                                       ObjectDictionary::kLogMessageMaxNumChars - log_message.num_chars, format, args);
-
-    return object_dictionary.log_message_queue.Enqueue(log_message);
+#endif
+    log_message.log_level = log_level;
+    ObjectDictionary::FormatLogMessage(log_message, tag, format, args);
+    bool ret = object_dictionary.log_message_queue.Enqueue(log_message);
+#ifdef ON_ESP32
+    xSemaphoreGive(log_message_mutex);
+#endif
+    return ret;
 }
 #endif
 
@@ -329,6 +342,12 @@ bool SPICoprocessor::PartialWrite(ObjectDictionary::Address addr, uint8_t* objec
     if (spi_write_in_progress) {
         return false;
     }
+    // Fail fast while the link is down (see SPILinkGate), and don't flood the console while probing it.
+    const uint16_t max_attempts = link_gate_.AttemptsAllowed(kSPITransactionMaxNumRetries);
+    if (max_attempts == 0) {
+        return false;
+    }
+    const bool quiet = link_gate_.IsDown();
     spi_write_in_progress = true;
 
     write_packet.cmd = require_ack ? ObjectDictionary::SCCommand::kCmdWriteToSlaveRequireAck
@@ -344,7 +363,7 @@ bool SPICoprocessor::PartialWrite(ObjectDictionary::Address addr, uint8_t* objec
     char error_message[kErrorMessageMaxLen + 1] = "No error.";
     error_message[kErrorMessageMaxLen] = '\0';
     bool ret = true;
-    while (num_attempts < kSPITransactionMaxNumRetries) {
+    while (num_attempts < max_attempts) {
         // Don't end the transaction yet to allow recovery of packets from kErrorHandshakeHigh.
         int bytes_written = SPIWriteBlocking(write_packet.GetBuf(), write_packet.GetBufLenBytes(), true);
 
@@ -362,15 +381,16 @@ bool SPICoprocessor::PartialWrite(ObjectDictionary::Address addr, uint8_t* objec
         ret = true;
         break;
     PARTIAL_WRITE_FAILED:
-        CONSOLE_WARNING("SPICoprocessor::PartialWrite", "[%s] %s", config_.tag_str, error_message);
+        if (!quiet) CONSOLE_WARNING("SPICoprocessor::PartialWrite", "[%s] %s", config_.tag_str, error_message);
         num_attempts++;
         ret = false;
         continue;
     }
-    if (!ret) {
+    if (!ret && !quiet) {
         CONSOLE_ERROR("SPICoprocessor::PartialWrite", "[%s] Failed after %d tries: %s", config_.tag_str, num_attempts,
                       error_message);
     }
+    link_gate_.Report(ret);
     spi_write_in_progress = false;
     return ret;
 }
@@ -382,6 +402,12 @@ bool SPICoprocessor::PartialRead(ObjectDictionary::Address addr, uint8_t* object
     if (spi_read_in_progress) {
         return false;
     }
+    // Fail fast while the link is down (see SPILinkGate), and don't flood the console while probing it.
+    const uint16_t max_attempts = link_gate_.AttemptsAllowed(kSPITransactionMaxNumRetries);
+    if (max_attempts == 0) {
+        return false;
+    }
+    const bool quiet = link_gate_.IsDown();
     spi_read_in_progress = true;
 
     read_request_packet.cmd = ObjectDictionary::SCCommand::kCmdReadFromSlave;
@@ -400,7 +426,7 @@ bool SPICoprocessor::PartialRead(ObjectDictionary::Address addr, uint8_t* object
     error_message[kErrorMessageMaxLen] = '\0';
     bool ret = true;
     static SPICoprocessorPacket::SCResponsePacket response_packet;
-    while (num_attempts < kSPITransactionMaxNumRetries) {
+    while (num_attempts < max_attempts) {
         // On the master, reading from the slave is two transactions: The read request is sent, then we wait on the
         // handshake line to read the reply.
 
@@ -454,16 +480,17 @@ bool SPICoprocessor::PartialRead(ObjectDictionary::Address addr, uint8_t* object
         memcpy(object_buf + offset, response_packet.data, response_packet.data_len_bytes);
         break;
     PARTIAL_READ_FAILED:
-        CONSOLE_WARNING("SPICoprocessor::PartialRead", "[%s] %s", config_.tag_str, error_message);
+        if (!quiet) CONSOLE_WARNING("SPICoprocessor::PartialRead", "[%s] %s", config_.tag_str, error_message);
         num_attempts++;
         ret = false;
         continue;
     }
 
-    if (!ret) {
+    if (!ret && !quiet) {
         CONSOLE_ERROR("SPICoprocessor::PartialRead", "[%s] Failed after %d tries: %s", config_.tag_str, num_attempts,
                       error_message);
     }
+    link_gate_.Report(ret);
     spi_read_in_progress = false;
     return ret;
 }

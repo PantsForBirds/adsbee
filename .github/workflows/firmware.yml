@@ -61,6 +61,22 @@ jobs:
       working-directory: firmware/adsbee_1090/pico/build
       run: ctest --verbose
 
+  web_ui_test:
+    # Runs on the plain runner image: the pico-docker container used by host_build_and_test has no Node.js.
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.adsbee_1090 == 'true'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Run web UI firmware updater tests
+      working-directory: firmware/adsbee_1090/esp/main/server/web
+      run: node --test test/ota_updater.test.js
+
   esp_target_build:
     runs-on: ubuntu-latest
     needs: changes
@@ -220,7 +236,7 @@ jobs:
         # USB serial number of the 1090U under test (repository variable). With several RP2040
         # boards on the bench, /dev/ttyACM0 and "the first RPI-RP2 drive" are ambiguous; the
         # serial selects the console and the BOOTSEL drive (by USB port) unambiguously and locks
-        # the board for the run (ci/hil). Unset: the old /dev/ttyACM0 behaviour.
+        # the board for the run (ci/hil). Unset: the old /dev/ttyACM0 behavior.
         HIL_1090U_SERIAL: ${{ vars.HIL_1090U_SERIAL }}
       run: |
         # Derive the expected firmware version from source so the post-OTA
@@ -320,6 +336,12 @@ jobs:
       with:
         name: adsbee_1421-${{ needs.adsbee_1421_build.outputs.version }}.hex
         path: firmware/adsbee_1421/ti/build/Release
+    - name: Run host tests
+      working-directory: firmware/adsbee_1421/programmer
+      run: |
+        cmake -S host_test -B build/host_test
+        cmake --build build/host_test
+        cd build/host_test && ctest --output-on-failure
     - name: Create build directory
       working-directory: firmware/adsbee_1421/programmer
       run: mkdir -p build/Release
@@ -344,15 +366,18 @@ jobs:
         retention-days: 1
 
   version_sync_check:
-    # Fail the PR if the Settings struct version changed without a firmware version bump.
+    # Fail if a product's firmware (or its Settings struct version) changed while its firmware
+    # version is already released or lower than its latest release, per the release tags.
     # See firmware/scripts/check_version_sync.sh.
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        # Full history so we can diff against the base branch / previous commit.
+        # Full history so we can diff against the base branch / previous commit, and the
+        # release tags so the check can tell which versions are released.
         fetch-depth: 0
+        fetch-tags: true
     - name: Check Settings/firmware version sync
       run: |
         if [ -n "${{ github.event.pull_request.base.sha }}" ]; then

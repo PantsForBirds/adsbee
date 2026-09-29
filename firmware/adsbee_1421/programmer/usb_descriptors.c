@@ -1,5 +1,5 @@
 // USB descriptors: single CDC-ACM function. VID/PID are the Raspberry Pi CDC defaults so stock
-// host drivers bind; the product string identifies the jig.
+// host drivers bind; the product string identifies the ADSBee 1421 Programmer.
 
 #include "pico/unique_id.h"
 #include "tusb.h"
