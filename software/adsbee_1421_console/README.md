@@ -89,31 +89,38 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
 The device must be in the ROM bootloader before flashing. The mechanism (the CCFG
 bootloader backdoor on SYNC) is documented in
 [Reflashing over UART: the SYNC bootloader backdoor](../../firmware/adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
-The dialog offers three ways in:
+The dialog has one button for this, **Enter bootloader**, and three ways to get the
+module there:
 
-- **Enter bootloader** (one click): for the ADSBee 1421 Programmer, or any adapter
+- Automatically, for the ADSBee 1421 Programmer, or any adapter
   wired RTS → SYNC and DTR → RESET_N. The page drives the lines with Web Serial
   `setSignals()`, matching the Programmer's convention (asserting a line drives its pin
   low): RTS deasserted (SYNC high), then DTR deasserted → asserted for 50 ms → deasserted.
   The Programmer turns the assert edge into its 50 ms reset pulse; a plain adapter holds
-  RESET_N low while DTR is asserted. After 150 ms the page runs the same check as
-  **Check bootloader**. It makes one attempt. If the ROM doesn't answer, the page drives
+  RESET_N low while DTR is asserted. After 150 ms the page checks that the ROM answers
+  (see below). It makes one attempt. If the ROM doesn't answer, the page drives
   SYNC low again so a running module isn't left asleep, and reports whether the
   application answered (RTS/DTR not wired, or firmware older than 0.3.7) or nothing
   did.
 - By hand, for adapters without RTS/DTR wired to the module. The dialog prints the
-  steps:
+  steps, which end with the same button:
   1. Wire the adapter to the module: TX → SURX (pin 20, DIO_2), RX → SUTX (pin 21,
      DIO_3), and ground to ground.
   2. Hold SYNC (pin 28, DIO_5) high at 3.3 V.
   3. With SYNC still high, reset the module: pull RESET_N (pin 17) low briefly, or
      power-cycle it.
-  4. Release reset. SYNC can stay high, since the boot ROM samples it only at boot.
-  5. Press **Check bootloader**.
+  4. Release reset and keep SYNC high.
+  5. Press **Enter bootloader**.
+
+  With RTS and DTR unwired, the button's line changes reach nothing and it only runs
+  the check. On an adapter that wires DTR to RESET_N but leaves RTS unwired, its reset
+  pulse restarts the module, which lands back in the bootloader as long as SYNC is
+  still held high.
 - `AT+BOOT_UART_BOOTLOADER=1DEADBEE` in the terminal, when SYNC is unreachable or the
   firmware predates the backdoor. It erases the vector table (flash sector 0 only;
   settings survive), so the device stays in the bootloader until it is reflashed. Then
-  press **Check bootloader**.
+  press **Enter bootloader**. Any reset its line changes cause lands back in the
+  bootloader, because the ROM finds no valid image to boot.
 
 The firmware's CCFG must enable the bootloader backdoor, which
 `firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg` does (DIO_5, active high; every
@@ -134,7 +141,7 @@ holds SYNC low while DTR is deasserted, so a module behind it stays awake. On a 
 or a Programmer image from 0.3.11-rc2 or earlier, RTS deasserted is SYNC high and the module
 sleeps until something drives SYNC low.
 
-**Check bootloader** is the gate on flashing. It syncs, pings, and reads the chip ID,
+The check that ends **Enter bootloader** is the gate on flashing. It syncs, pings, and reads the chip ID,
 and only a device that answers all three unlocks the **Flash firmware** button. A
 failure says which failure it is: if the application firmware answers instead, it says
 so and names the baud; if nothing answers at all, it points at the wiring and power.
