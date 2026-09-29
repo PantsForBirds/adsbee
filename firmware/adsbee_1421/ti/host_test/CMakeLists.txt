@@ -14,3 +14,9 @@ add_executable(lr2021_ook_adsb_test lr2021_ook_adsb_test.cc)
 target_include_directories(lr2021_ook_adsb_test PRIVATE ../lr2021)
 target_compile_options(lr2021_ook_adsb_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME lr2021_ook_adsb_test COMMAND lr2021_ook_adsb_test)
+
+# Persisted 1090 receiver mode values: uses the real settings.hh and settings_strs.cpp.
+add_executable(r1090_preamble_mode_test r1090_preamble_mode_test.cc ../settings/settings_strs.cpp)
+target_include_directories(r1090_preamble_mode_test PRIVATE ../settings ../../../common/utils ../../../common/utils/crc)
+target_compile_options(r1090_preamble_mode_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME r1090_preamble_mode_test COMMAND r1090_preamble_mode_test)

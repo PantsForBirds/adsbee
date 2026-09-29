@@ -184,9 +184,6 @@ void LR2021::DelayUs(uint32_t us) {
     }
 }
 
-// Mode S CRC-24 generator polynomial (0x1FFF409 is 25 bits; bit 24 is the implicit top bit).
-static constexpr uint32_t kModeSCrc24Poly = 0x1FFF409;
-
 bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_t agc_gain, uint8_t rx_boost) {
     const bool df17_mode = IsOokDF17PreambleMode(preamble_mode);
     // NOTE: Stat for each command is for the previous instruction, so error messages reflect an error with the previous
@@ -221,29 +218,16 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokModulationParams.");
         return false;
     }
-    // DF17 mode keys on the DF data bits and captures the message remainder mid-byte, so it runs
-    // with the hardware CRC OFF (software validates). MODE_S_PREAMBLE uses the 3-byte hardware CRC
-    // (11-byte payload + appended parity). MODE_S_SW_CRC and MODE_S_STRONG run CRC-off with the
-    // parity bytes captured as payload, so software validates -- the FIFO packet is 14 bytes of raw
-    // air bits either way (GetOokRxPacketLenBytes).
-    uint16_t payload_len_bytes;
-    OokCrc crc_mode;
-    if (df17_mode) {
-        payload_len_bytes = kOokDF17PacketRxLenBytes;
-        crc_mode = kOokCrcOff;
-    } else if (IsOokSwCrcPreambleMode(preamble_mode)) {
-        payload_len_bytes = kOokADSBPacketRxLenBytes + kOokADSBPacketCrcLenBytes;
-        crc_mode = kOokCrcOff;
-    } else {
-        payload_len_bytes = kOokADSBPacketRxLenBytes;
-        crc_mode = kOokCrc3Byte;
-    }
-    if (!SetOokPacketParams(8,                         // Tx preamble length
-                            kOokAddrCompOff,           // No address filtering
-                            kOokPktFormatFixedLength,  // Fixed length packets
-                            payload_len_bytes,         // Payload length (mode dependent)
-                            crc_mode,                  // 3-byte hardware CRC or off (mode dependent)
-                            kOokEncodingManchesterInv  // Inverted Manchester encoding
+    // Every mode runs with the hardware CRC off and validates in software. DF17 mode keys on the DF
+    // data bits and captures the message remainder mid-byte; the other modes capture from message
+    // bit 0 with the parity bytes as payload. The FIFO packet is 14 bytes of raw air bits either way
+    // (GetOokRxPacketLenBytes).
+    if (!SetOokPacketParams(8,                                     // Tx preamble length
+                            kOokAddrCompOff,                       // No address filtering
+                            kOokPktFormatFixedLength,              // Fixed length packets
+                            GetOokRxPacketLenBytes(preamble_mode),  // Payload length (mode dependent)
+                            kOokCrcOff,                            // No hardware CRC
+                            kOokEncodingManchesterInv              // Inverted Manchester encoding
                             )) {
         CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokPacketParams.");
         return false;
@@ -300,13 +284,6 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
             return false;
         }
     }
-    // CRC polynomial/init only matter when the hardware CRC is enabled (preamble mode). DF17 mode
-    // has CRC off and validates in software, so this is a harmless no-op there.
-    if (!SetOokCrcParams(kModeSCrc24Poly, 0)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokCrcParams.");
-        return false;
-    }
-
     // Set up the FIFO. The high threshold doubles as the IRQ-paced drain valve: kIrqRxFifo latches
     // (and the DIO6 IRQ line rises) only once 9 whole packets have accumulated, i.e. only when the
     // main loop's routine level-read sweep is falling behind. The loop drain does NOT gate on this
@@ -314,8 +291,8 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     // latency.
     static_assert(GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeS) == kOokFifoPacketLenBytes &&
                       GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeDF17) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSSwCrc) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes,
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes &&
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSWeak) == kOokFifoPacketLenBytes,
                   "IRQ drain threshold math assumes 14-byte FIFO packets in every preamble mode.");
     uint8_t rx_fifo_flags = kFifoIrqFlagFifoHigh | kFifoIrqFlagFifoOverflow;
     uint8_t tx_fifo_flags = 0x0;
@@ -342,13 +319,12 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         return false;
     }
     // The standard preamble detector needs the whole preamble, and an AGC gain change during the
-    // preamble blanks its first three pulses (lr2021_ook_adsb.hh). With the AGC on, raise the level
-    // at which it starts cutting the gain so that packets up to -45 dBm arrive with the gain
-    // unchanged. DF17 and MODE_S_STRONG detect after the blanked chips and keep the chip default.
-    // Manual gain (agc_gain != 0) leaves the AGC off, so the register doesn't matter there.
-    const bool standard_preamble_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeS ||
-                                        preamble_mode == SettingsManager::kR1090PreambleModeModeSSwCrc;
-    if (agc_gain == 0 && standard_preamble_mode &&
+    // preamble blanks its first three pulses (lr2021_ook_adsb.hh). With the AGC on, MODE_S raises the
+    // level at which it starts cutting the gain so that packets up to -45 dBm arrive with the gain
+    // unchanged. MODE_S_WEAK keeps the chip default (the AGC acts from about -53 dBm). DF17 and
+    // MODE_S_STRONG detect after the blanked chips and keep the chip default too. Manual gain
+    // (agc_gain != 0) leaves the AGC off, so the register doesn't matter there.
+    if (agc_gain == 0 && preamble_mode == SettingsManager::kR1090PreambleModeModeS &&
         !WriteRegMemMask32(LR2021OokAdsb::kAgcConfigRegAddr, LR2021OokAdsb::kAgcTriggerMask,
                            LR2021OokAdsb::AgcTriggerRegValue(LR2021OokAdsb::kAgcTriggerStandardPreamble))) {
         CONSOLE_ERROR("LR2021::SetOokADSB", "Error while setting the AGC trigger.");

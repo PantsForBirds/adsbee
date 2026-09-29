@@ -296,7 +296,9 @@ CPP_AT_CALLBACK(CommsManager::ATR1090PreambleCallback) {
                 CPP_AT_ERROR("Need to specify a Mode S preamble mode.");
             }
             for (uint16_t i = 0; i < SettingsManager::kNumR1090PreambleModes; i++) {
-                if (args[0].compare(SettingsManager::kR1090PreambleModeStrs[i]) == 0) {
+                // Removed modes keep an empty name and can't be selected.
+                if (SettingsManager::kR1090PreambleModeStrs[i][0] != '\0' &&
+                    args[0].compare(SettingsManager::kR1090PreambleModeStrs[i]) == 0) {
                     SettingsManager::R1090PreambleMode mode = static_cast<SettingsManager::R1090PreambleMode>(i);
                     settings_manager.settings.r1090_preamble_mode = mode;
                     adsbee.SetR1090PreambleMode(mode);
@@ -1239,8 +1241,10 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "R1090_PREAMBLE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S_PREAMBLE DF17 MODE_S_SW_CRC MODE_S_STRONG]>\r\n\tSet the 1090MHz Mode S "
-                    "receiver preamble mode.\r\n\t"
+     .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S MODE_S_STRONG MODE_S_WEAK DF17]>\r\n\tSet the 1090MHz Mode S "
+                    "receiver mode. MODE_S: every downlink format, up to about -45 dBm. MODE_S_STRONG: strong "
+                    "signals, about -50 dBm and up. MODE_S_WEAK: every downlink format, up to about -55 dBm. "
+                    "DF17: DF17 frames only.\r\n\t"
                     "AT+R1090_PREAMBLE?\r\n\tQuery the current preamble mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATR1090PreambleCallback, comms_manager)},
     {.command = "R1090_RX_BOOST",

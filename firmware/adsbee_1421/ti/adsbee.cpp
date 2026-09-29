@@ -169,11 +169,8 @@ bool ADSBee::SetRxSubGHzEnabled(bool enabled) { return subg_radio.SetRxEnabled(e
 bool ADSBee::RxSubGHzIsEnabled() const { return subg_radio.RxIsEnabled(); }
 
 void ADSBee::SetR1090PreambleMode(SettingsManager::R1090PreambleMode mode) {
-    if (mode >= SettingsManager::kNumR1090PreambleModes) {
-        // Guard against stale persisted settings holding a removed enum value.
-        mode = SettingsManager::kR1090PreambleModeModeS;
-    }
-    r1090_preamble_mode_ = mode;
+    // Persisted settings may hold a removed or unknown value (see SettingsManager::R1090PreambleMode).
+    r1090_preamble_mode_ = SettingsManager::R1090PreambleModeFromStored(mode);
     ApplyReceiverConfig();
 }
 
