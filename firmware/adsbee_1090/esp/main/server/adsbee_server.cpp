@@ -6,6 +6,7 @@
 #include "comms.hh"
 #include "aircraftjson_utils.hh"
 #include "gdl90/gdl90_utils.hh"
+#include "heap_diagnostics.hh"
 #include "json_utils.hh"
 #include "pico.hh"
 #include "remote_id/remote_id_manager.hh"
@@ -82,6 +83,7 @@ bool ADSBeeServer::Init() {
         return false;
     }
 
+    HeapDiagnostics::Mark("pico");
     // Initialize SPI receive task before requesting settings so that we can tend to messages from the RP2040 and stop
     // it from freaking out.
     spi_receive_task_should_exit_ = false;
@@ -91,6 +93,7 @@ bool ADSBeeServer::Init() {
 
     // Initialize prerequisites for Ethernet and WiFi. Needs to be done before settings are applied.
     comms_manager.Init();
+    HeapDiagnostics::Mark("comms");
 
     SemaphoreHandle_t settings_read_semaphore = xSemaphoreCreateBinary();
     if (settings_read_semaphore == NULL) {
@@ -128,6 +131,7 @@ bool ADSBeeServer::Init() {
     vSemaphoreDelete(settings_read_semaphore);
     settings_manager.Print();
     settings_manager.Apply();
+    HeapDiagnostics::Mark("settings");
 
     return TCPServerInit();
 }
@@ -791,6 +795,7 @@ bool ADSBeeServer::TCPServerInit() {
     config.keep_alive_count = 3;     // Close connection after 3 failed probes (~20s dead detection).
 
     esp_err_t ret = httpd_start(&server, &config);
+    HeapDiagnostics::Mark("httpd");
     if (ret != ESP_OK) {
         CONSOLE_ERROR("ADSBeeServer::TCPServerInit", "Failed to start HTTP server: %s, remaining stack %u Bytes.",
                       esp_err_to_name(ret), uxTaskGetStackHighWaterMark(NULL));
@@ -903,6 +908,7 @@ bool ADSBeeServer::TCPServerInit() {
         CONSOLE_ERROR("ADSBeeServer::TCPServerInit", "Failed to start Network Aircraft WebSocket server.");
         return false;
     }
+    HeapDiagnostics::Mark("ws");
 
     if (server == nullptr) {
         CONSOLE_ERROR("ADSBeeServer::TCPServerInit", "HTTP server instance is null after start.");

@@ -7,6 +7,7 @@
 #include "esp_event.h"
 #include "esp_mac.h"
 #include "hal.hh"
+#include "heap_diagnostics.hh"
 #include "lwip/dns.h"
 #include "lwip/err.h"
 #include "lwip/netdb.h"
@@ -166,7 +167,9 @@ bool CommsManager::WiFiInit() {
     ESP_ERROR_CHECK(esp_netif_set_hostname(wifi_sta_netif_, hostname));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    HeapDiagnostics::Mark("netifs");
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    HeapDiagnostics::Mark("wifi_init");
 
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     if (!ip_event_handler_was_initialized_) {
@@ -222,6 +225,7 @@ bool CommsManager::WiFiInit() {
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());
+    HeapDiagnostics::Mark("wifi_start");
 
     if (wifi_ap_enabled) {
         CONSOLE_INFO("CommsManager::WiFiInit", "WiFi AP started. SSID:%s password:%s", wifi_ap_ssid, wifi_ap_password);

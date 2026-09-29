@@ -5,6 +5,7 @@
 #include "hardware_capabilities.hh"  // Internal-RAM heap guards (PSRAM must not mask an internal shortage).
 #include "esp_mac.h"
 #include "hal.hh"
+#include "heap_diagnostics.hh"
 #include "lwip/dns.h"
 #include "lwip/err.h"
 #include "lwip/netdb.h"
@@ -174,6 +175,7 @@ bool CommsManager::IPInit() {
     }
     // Set default instance.
     mdns_instance_name_set("ADSBee 1090");
+    HeapDiagnostics::Mark("ip_mdns");
 
     CONSOLE_INFO("CommsManager::IPInit", "MDNS initialized with hostname %s.\n",
                  settings_manager.settings.core_network_settings.hostname);

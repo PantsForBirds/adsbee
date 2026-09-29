@@ -1,6 +1,7 @@
 #include "settings.hh"
 
 #include "comms.hh"
+#include "heap_diagnostics.hh"
 #include "remote_id/remote_id_manager.hh"
 
 bool SettingsManager::Apply() {
@@ -69,6 +70,7 @@ bool SettingsManager::Apply() {
             CONSOLE_ERROR("SettingsManager::Apply", "Failed to initialize Ethernet.");
             return false;
         }
+        HeapDiagnostics::Mark("eth");
     }
 
     if (wifi_ap_restart_required || wifi_sta_restart_required) {
@@ -81,6 +83,7 @@ bool SettingsManager::Apply() {
             CONSOLE_ERROR("SettingsManager::Apply", "Failed to initialize WiFi.");
             return false;
         }
+        HeapDiagnostics::Mark("wifi");
     }
 
     // (Re)configure Broadcast Remote ID reception now that the WiFi/Ethernet state is settled. RemoteIDManager decides
