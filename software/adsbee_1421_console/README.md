@@ -131,7 +131,7 @@ after connecting. Right after opening, the page parks the lines in the normal-ru
 (RTS asserted = SYNC low, DTR deasserted); neither is an edge the Programmer acts on.
 Closing the port on Linux or macOS deasserts both lines (HUPCL). The ADSBee 1421 Programmer
 holds SYNC low while DTR is deasserted, so a module behind it stays awake. On a plain adapter,
-or a Programmer image from 0.3.11-rc3 or earlier, RTS deasserted is SYNC high and the module
+or a Programmer image from 0.3.11-rc2 or earlier, RTS deasserted is SYNC high and the module
 sleeps until something drives SYNC low.
 
 **Check bootloader** is the gate on flashing. It syncs, pings, and reads the chip ID,
