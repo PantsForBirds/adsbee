@@ -26,6 +26,11 @@ class ADSBeeTestAccessor {
     static uint32_t& FramesSinceValid() { return adsbee.lr2021_frames_since_valid_; }
     static bool ApplyReceiverConfig() { return adsbee.ApplyReceiverConfig(); }
     static bool ReceiverConfigOk() { return adsbee.receiver_config_ok_; }
+    static void ResetSlipCheck() {
+        adsbee.df17_prev_capture_valid_ = false;
+        adsbee.df17_fail_run_ = 0;
+        adsbee.df17_last_slip_check_ms_ = 0;
+    }
 };
 
 namespace {
@@ -215,4 +220,39 @@ UTEST(ReceiverConfig, RejectedConfigFallsBackOnce) {
     EXPECT_EQ(adsbee.lr2021.last_stat().chip_mode, LR2021::ChipMode::kRx);
 
     adsbee.SetR1090PreambleMode(old_mode);  // Back to what the device ran before the test.
+}
+
+// A FIFO stream with one stray byte (the live-air wedge, t-0093 D1): every read window straddles two captures.
+// The parser must find the slip and schedule the FIFO flush.
+UTEST(DF17Cpu, FramingSlipIsFoundAndResynced) {
+    const SettingsManager::R1090PreambleMode old_mode =
+        ADSBeeTestAccessor::SwapMode(SettingsManager::kR1090PreambleModeDF17);
+    const uint32_t old_frames_since_valid = ADSBeeTestAccessor::FramesSinceValid();
+    DrainDecoderQueues();
+    ADSBeeTestAccessor::ResetSlipCheck();
+    const bool old_pending = adsbee.lr2021.fifo_overflow_pending;
+    const uint32_t old_slips = adsbee.lr2021_fifo_slip_count;
+
+    static constexpr uint8_t kCaptures = 8;
+    uint8_t stream[1 + kCaptures * kModeSFrameLenBytes];
+    stream[0] = 0x5A;  // The stray byte.
+    for (uint8_t n = 0; n < kCaptures; n++) {
+        uint8_t f[kModeSFrameLenBytes];
+        RandomDF17Frame(5, f);
+        CaptureAt(f, kDF17HeaderLenBits, stream + 1 + n * kModeSFrameLenBytes);
+    }
+    const uint32_t t0 = CycleCounter::Now();
+    ADSBeeTestAccessor::Parse(stream, (kCaptures - 1) * kModeSFrameLenBytes);  // Whole 14-byte windows only.
+    const uint32_t cycles = CycleCounter::Since(t0);
+    DrainDecoderQueues();
+
+    EXPECT_EQ(adsbee.lr2021_fifo_slip_count, old_slips + 1);
+    EXPECT_TRUE(adsbee.lr2021.fifo_overflow_pending);
+    CONSOLE_PRINTF("DF17CPU slipped stream: %u windows parsed, slip found and resync scheduled, %lu cycles\r\n",
+                   kCaptures - 1, (unsigned long)cycles);
+
+    adsbee.lr2021.fifo_overflow_pending = old_pending;
+    ADSBeeTestAccessor::FramesSinceValid() = old_frames_since_valid;
+    ADSBeeTestAccessor::ResetSlipCheck();
+    ADSBeeTestAccessor::SwapMode(old_mode);
 }

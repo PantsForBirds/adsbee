@@ -346,6 +346,53 @@ static void TestDF17RecoveryMatchesReference() {
     printf("  RecoverDF17Frame == reference on %d captures\n", equivalence_checked);
 }
 
+// FIFO framing slip: with k stray bytes in the FIFO stream, every 14-byte read window holds the last k bytes of
+// one capture and the first 14 - k of the next. FindDF17ByteSlip finds the frame split across two windows.
+static void TestDF17ByteSlip() {
+    std::mt19937 rng(1421);
+    auto random_frame = [&rng]() {
+        std::vector<uint8_t> d(11);
+        for (auto& x : d) x = static_cast<uint8_t>(rng());
+        d[0] = static_cast<uint8_t>((17 << 3) | 5);
+        return DF17Frame(d);
+    };
+    for (uint8_t k = 1; k < kModeSFrameLenBytes; k++) {
+        std::vector<std::vector<uint8_t>> frames;
+        std::vector<uint8_t> stream(k);  // k stray bytes, then the captures of real frames.
+        for (auto& x : stream) x = static_cast<uint8_t>(rng());
+        for (int n = 0; n < 6; n++) {
+            frames.push_back(random_frame());
+            const std::vector<uint8_t> cap = Capture(frames.back(), kDF17HeaderLenBits, rng() & 1);
+            stream.insert(stream.end(), cap.begin(), cap.end());
+        }
+        // Window i (from 0) holds the tail of capture i-1 and the head of capture i; windows i and i+1 hold
+        // capture i whole.
+        for (size_t i = 1; i + 1 < frames.size(); i++) {
+            const uint8_t* w0 = stream.data() + i * kModeSFrameLenBytes;
+            const uint8_t* w1 = w0 + kModeSFrameLenBytes;
+            uint8_t out[kModeSFrameLenBytes], dummy[kModeSFrameLenBytes];
+            EXPECT(RecoverDF17Frame(w0, dummy, Crc24) == INT8_MIN);  // The slipped window alone fails.
+            EXPECT(FindDF17ByteSlip(w0, w1, out, Crc24) == k);
+            EXPECT(std::vector<uint8_t>(out, out + kModeSFrameLenBytes) == frames[i]);
+        }
+    }
+    // An aligned stream (consecutive whole captures) shows no slip, and random pairs almost never do: about
+    // 13 x 64 / 2^24 per pair.
+    int false_slips = 0;
+    for (int n = 0; n < 20000; n++) {
+        uint8_t a[kModeSFrameLenBytes], b[kModeSFrameLenBytes], out[kModeSFrameLenBytes];
+        for (auto& x : a) x = static_cast<uint8_t>(rng());
+        for (auto& x : b) x = static_cast<uint8_t>(rng());
+        false_slips += FindDF17ByteSlip(a, b, out, Crc24) != 0;
+    }
+    EXPECT(false_slips <= 2);
+    const std::vector<uint8_t> c1 = Capture(random_frame(), kDF17HeaderLenBits);
+    const std::vector<uint8_t> c2 = Capture(random_frame(), kDF17HeaderLenBits);
+    uint8_t out[kModeSFrameLenBytes];
+    EXPECT(FindDF17ByteSlip(c1.data(), c2.data(), out, Crc24) == 0);
+    printf("  byte slips 1-13 found; %d false slips in 20000 random pairs\n", false_slips);
+}
+
 int main() {
     TestPatternsMatchThePreamble();
     TestPatternValidity();
@@ -359,6 +406,7 @@ int main() {
     TestDF17RecoveryRejectsNoise();
     TestDF17RecoveryOnlyListedShifts();
     TestDF17RecoveryMatchesReference();
+    TestDF17ByteSlip();
     if (failures) {
         printf("%d failure(s)\n", failures);
         return 1;

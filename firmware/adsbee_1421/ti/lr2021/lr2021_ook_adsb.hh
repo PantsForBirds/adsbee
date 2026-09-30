@@ -346,6 +346,28 @@ int8_t RecoverDF17Frame(const uint8_t* capture, uint8_t* frame_out, Crc24Fn crc2
     return INT8_MIN;
 }
 
+// FIFO framing slip check. The FIFO is read in whole 14-byte packets, so if one stray byte ever enters it, every
+// later read window starts that many bytes before its packet, and every capture fails until the FIFO is flushed.
+// Live air (t-0093 D1, branch DF17 mode) showed exactly that: a 1-byte slip with the chip's capture rate, gain,
+// RSSI and every FIFO error counter unchanged, lasting until the validity watchdog reconfigured the receiver 2.5
+// to 8 minutes later. In a slipped stream, a real packet straddles two read windows: its first 14 - k bytes are
+// the end of one window and its last k bytes the start of the next.
+//
+// Returns the k (1..13) for which prev[k..13] + cur[0..k-1] realigns to a valid DF17 frame (frame_out holds it),
+// or 0. The same false-accept exposure as 13 captures (13 x 64 candidates, about 5e-5 per call on garbage), and
+// 13 realignments of CPU, so callers rate-limit it.
+template <typename Crc24Fn>
+uint8_t FindDF17ByteSlip(const uint8_t* prev, const uint8_t* cur, uint8_t* frame_out, Crc24Fn crc24) {
+    uint8_t joined[kModeSFrameLenBytes];
+    for (uint8_t k = 1; k < kModeSFrameLenBytes; k++) {
+        for (uint8_t i = 0; i < kModeSFrameLenBytes; i++) {
+            joined[i] = i < kModeSFrameLenBytes - k ? prev[i + k] : cur[i - (kModeSFrameLenBytes - k)];
+        }
+        if (RecoverDF17Frame(joined, frame_out, crc24) != INT8_MIN) return k;
+    }
+    return 0;
+}
+
 // The nominal reconstruction alone (what RecoverDF17Frame returns when nothing matches), for captures the CPU
 // budget leaves unrealigned.
 inline void NominalDF17Frame(const uint8_t* capture, uint8_t* frame_out) {

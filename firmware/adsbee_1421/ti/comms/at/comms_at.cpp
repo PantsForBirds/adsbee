@@ -358,7 +358,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 "dma_timeouts=%lu,report_q_ovf=%lu,"
                 "validity_reconfigs=%lu,stale_edges=%lu,uat_len_mismatch=%lu,df17_realigned=%lu,"
                 "df17_skipped=%lu,realign_max_cyc=%lu,realign_avg_cyc=%lu,parse_max_cyc=%lu,"
-                "decode_max_cyc=%lu,loop_max_cyc=%lu,loop_avg_cyc=%lu,cpu_1090_pm=%lu,cfg_fallbacks=%lu",
+                "decode_max_cyc=%lu,loop_max_cyc=%lu,loop_avg_cyc=%lu,cpu_1090_pm=%lu,cfg_fallbacks=%lu,"
+                "fifo_slips=%lu",
                 stats.pkt_rx, stats.crc_error, stats.len_error, stats.pbl_det, stats.sync_ok, stats.sync_fail,
                 stats.timeout, (unsigned long)adsbee.lr2021_fifo_full_count,
                 (unsigned long)packet_decoder.raw_queue_overflow_count,
@@ -387,7 +388,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)(adsbee.loop_total_cycles
                                     ? adsbee.rx1090_total_cycles * 1000 / adsbee.loop_total_cycles
                                     : 0),
-                (unsigned long)adsbee.lr2021_config_fallback_count);
+                (unsigned long)adsbee.lr2021_config_fallback_count, (unsigned long)adsbee.lr2021_fifo_slip_count);
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -422,6 +423,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.lr2021_rx_reconfig_count = 0;
             adsbee.lr2021_config_fail_count = 0;
             adsbee.lr2021_config_fallback_count = 0;
+            adsbee.lr2021_fifo_slip_count = 0;
             adsbee.lr2021.drain_dma_timeouts = 0;
             comms_manager.mode_s_report_queue_ovf_count = 0;
             adsbee.lr2021_validity_reconfig_count = 0;
@@ -1305,7 +1307,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "decoder queue was backing up; *_cyc = CPU cycles at 48 MHz (SysTick, exact up to 349 ms): realign max/avg per "
                     "capture, parse max per capture, decode max per packet, main loop max/avg; cpu_1090_pm = "
                     "per mille of main loop time in the 1090 receive and decode path; cfg_fallbacks = receiver "
-                    "configs the LR2021 rejected, run as DF17/auto gain instead).\r\n\tAT+RX_STATS=RESET\r\n\t"
+                    "configs the LR2021 rejected, run as DF17/auto gain instead; fifo_slips = FIFO framing slips "
+                    "found and flushed).\r\n\tAT+RX_STATS=RESET\r\n\t"
                     "Reset all Rx stats counters.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxStatsCallback, comms_manager)},
     {.command = "SETTINGS",
