@@ -208,7 +208,7 @@ static void TestDF17RecoveryShifts() {
 // are tried flipped.
 static void TestDF17RecoveryHeaderErrors() {
     const std::vector<uint8_t> f = DF17Frame({0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0});
-    for (int8_t shift : {-2, -1, 0, 3}) {
+    for (int8_t shift : kDF17Shifts) {
         for (uint16_t errs = 0; errs < 256; errs++) {  // Any error pattern in message bits 0-7.
             std::vector<uint8_t> g = f;
             for (int b = 0; b < 8; b++) {
@@ -231,8 +231,20 @@ static void TestDF17RecoveryHeaderErrors() {
            std::vector<uint8_t>(g.begin(), g.end() - 1));  // The last byte ends in capture slop.
 }
 
-// Random captures (noise triggers) must almost never turn into a valid frame: at most 112 candidates each,
-// so about 112 / 2^24 per capture.
+// Shifts real captures don't show are not tried: such a capture gets the nominal reconstruction (and the
+// decoder's single-bit correction), never a wrong frame.
+static void TestDF17RecoveryOnlyListedShifts() {
+    const std::vector<uint8_t> f = DF17Frame({0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0});
+    for (int shift : {-1, 0, 1, 2, 7}) {
+        EXPECT(std::find(std::begin(kDF17Shifts), std::end(kDF17Shifts), shift) == std::end(kDF17Shifts));
+        const std::vector<uint8_t> cap = Capture(f, shift);
+        uint8_t out[kModeSFrameLenBytes];
+        EXPECT(RecoverDF17Frame(cap.data(), out, Crc24) == INT8_MIN);
+    }
+}
+
+// Random captures (noise triggers) must almost never turn into a valid frame: 64 candidates each, so about
+// 64 / 2^24 per capture.
 static void TestDF17RecoveryRejectsNoise() {
     std::mt19937 rng(1090);
     int accepted = 0;
@@ -345,6 +357,7 @@ int main() {
     TestDF17RecoveryShifts();
     TestDF17RecoveryHeaderErrors();
     TestDF17RecoveryRejectsNoise();
+    TestDF17RecoveryOnlyListedShifts();
     TestDF17RecoveryMatchesReference();
     if (failures) {
         printf("%d failure(s)\n", failures);

@@ -84,9 +84,14 @@ static_assert(kDF17Pattern == 0x01A9, "DF17 pattern: chips 1001010110 (LSB first
 static_assert((kDF17Pattern & 1u) != ((kDF17Pattern >> 1) & 1u), "DF17 pattern must start with a transition.");
 
 // Realignment of a DF17-mode capture. The capture holds message bits s .. s+111 for an unknown shift s;
-// the nominal shift is kDF17HeaderLenBits. Shifts are tried in this order (the nominal one first, then the
-// ones seen on the bench, most frequent first):
-static constexpr int8_t kDF17Shifts[] = {5, 4, 3, 2, 1, 0, -1, -2, 6, 7};
+// the nominal shift is kDF17HeaderLenBits. Only the shifts real captures show are tried, nominal first, then
+// the others most frequent first. Across the t-0080 bench captures (Pluto, -92..0 dBm, every experiment with
+// this pattern) the capture start was bit 5 (3261), -2 (1532, the preamble alias from about -50 dBm up), 4 (737),
+// 3 (539) and 6 (491); bits 1, 8 and -1 turned up 74 times or less and mostly with errors, 0, 2 and 7 hardly at
+// all. Each shift left out saves CPU on every capture that matches nothing and removes candidates that a
+// garbage capture could falsely match: 64 candidates in all (8 per shift, 32 at shift -2 with its two unknown
+// bits), so about 64 / 2^24 false frames per garbage capture.
+static constexpr int8_t kDF17Shifts[] = {5, -2, 4, 3, 6};
 static constexpr uint16_t kModeSFrameLenBits = 112;
 static constexpr uint16_t kModeSFrameLenBytes = kModeSFrameLenBits / 8;
 // Bits after the DF field that are also tried flipped (the CA field): the AGC settling leaves errors in
@@ -312,8 +317,8 @@ inline void BuildDF17Frame(const uint8_t* capture, const DF17ShiftPlan& plan, ui
 // INT8_MIN (frame_out = the nominal reconstruction) if no candidate matched; the decoder then gets the frame
 // the old way.
 //
-// Cost: the candidates are the same 112 as in the first version (target_test/df17_recover_reference.hh, which
-// this matches bit for bit; host_test checks it), but no candidate is built or CRC'd. The CRC is linear, so one
+// Cost: the candidates are the same as in the first version (target_test/df17_recover_reference.hh, which this
+// matches bit for bit over the same kDF17Shifts; host_test checks it), but no candidate is built or CRC'd. The CRC is linear, so one
 // CRC of the capture gives every shift's syndrome by a few table lookups, and a candidate matches when its
 // precomputed syndrome (kDF17ShiftPlans) equals that. The frame is built once, for the winner.
 template <typename Crc24Fn>

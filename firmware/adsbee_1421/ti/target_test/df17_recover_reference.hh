@@ -1,7 +1,8 @@
 #pragma once
 
 // The first DF17 realignment (2e47e61f), kept verbatim as the reference that
-// LR2021OokAdsb::RecoverDF17Frame() must match bit for bit. Used by the host test (old vs new over every shift
+// LR2021OokAdsb::RecoverDF17Frame() must match bit for bit. It reads the shift list from kDF17Shifts, so it is
+// the first version restricted to the shifts the product tries now. Used by the host test (old vs new over every shift
 // and flip case and random captures) and by the on-target cycle benchmark (target_test/test_df17_cpu.cpp).
 // Nothing in the product calls it.
 
