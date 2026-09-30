@@ -26,9 +26,10 @@ class CommsManager {
 
     // Raw packet reports (RAW, Beast, GDL90 uplink) are formatted in chunks of at most this many packets per main loop
     // iteration, so a burst of traffic is spread over several iterations instead of stalling one. Formatting a RAW
-    // Mode S frame takes ~XXX us on the CC1314. At one chunk per iteration the console can still carry more reports
-    // than the 1 Mbaud UART can send.
-    static constexpr uint16_t kRawReportMaxModeSPacketsPerUpdate = 6;
+    // Mode S frame takes ~150 us on the CC1314, so a chunk adds ~0.5 ms to an iteration. Main loop iterations are short
+    // enough that one chunk per iteration still produces reports faster than the 1 Mbaud UART can send them (~2000
+    // RAW Mode S frames/s).
+    static constexpr uint16_t kRawReportMaxModeSPacketsPerUpdate = 3;
     static constexpr uint16_t kRawReportMaxUATADSBPacketsPerUpdate = 2;
     static constexpr uint16_t kRawReportMaxUATUplinkPacketsPerUpdate = 1;
 
