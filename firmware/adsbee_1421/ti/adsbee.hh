@@ -89,6 +89,9 @@ class ADSBee {
     uint32_t lr2021_rx_rearm_count = 0;      // Health ladder: minimal SetRxAdv re-arm (chip left RX).
     uint32_t lr2021_rx_reconfig_count = 0;   // Health ladder: full ApplyReceiverConfig escalation.
     uint32_t lr2021_config_fail_count = 0;   // ApplyReceiverConfig attempts that failed (retried on backoff).
+    // Receiver configs the LR2021 rejected (CMD_PERR), replaced by the factory config (DF17, auto gain, no
+    // boost) instead of being retried.
+    uint32_t lr2021_config_fallback_count = 0;
     uint32_t lr2021_validity_reconfig_count = 0;  // Validity watchdog: reconfigs after N frames with 0 CRC passes.
     // DF17 mode: captures that started off the nominal bit and were realigned (LR2021OokAdsb::RecoverDF17Frame).
     uint32_t lr2021_df17_realigned_count = 0;

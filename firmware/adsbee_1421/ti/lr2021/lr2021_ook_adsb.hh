@@ -81,6 +81,10 @@ constexpr uint16_t MessageBitsPattern(uint32_t bits, uint8_t num_bits) {
 static constexpr uint16_t kDF17Pattern = MessageBitsPattern(kDF17HeaderBits, kDF17HeaderLenBits);
 static constexpr uint8_t kDF17PatternLenChips = 2 * kDF17HeaderLenBits;
 static_assert(kDF17Pattern == 0x01A9, "DF17 pattern: chips 1001010110 (LSB first).");
+// The LR2021 rejects a detector pattern of odd length (CMD_PERR; 11 and 15 chips checked on a 1421, while 10, 12
+// and 16 are accepted), and a rejected config leaves the receiver unconfigured.
+static_assert(kModeSPatternLenChips % 2 == 0 && kStrongPatternLenChips % 2 == 0 && kDF17PatternLenChips % 2 == 0,
+              "Detector patterns must have an even number of chips.");
 static_assert((kDF17Pattern & 1u) != ((kDF17Pattern >> 1) & 1u), "DF17 pattern must start with a transition.");
 
 // Realignment of a DF17-mode capture. The capture holds message bits s .. s+111 for an unknown shift s;

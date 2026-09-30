@@ -1247,6 +1247,12 @@ class LR2021 {
      */
     const Stat& last_stat() const { return last_stat_; }
 
+#ifdef HARDWARE_UNIT_TESTS
+    // Target tests only: the next SetOokADSB() uses this detector pattern length (then it resets to 0). An odd
+    // length makes the chip reject the config with CMD_PERR.
+    uint8_t test_detector_len_override = 0;
+#endif
+
    private:
     friend class LR2021TestAccessor;
 

@@ -153,7 +153,28 @@ bool ADSBee::ApplyReceiverConfigInner() {
         return false;
     }
     if (!lr2021.SetOokADSB(r1090_preamble_mode_, r1090_gain_, r1090_rx_boost_)) {
-        return false;
+        // The chip rejected a parameter (CMD_PERR). That fails the same way on every attempt, and the health
+        // ladder would retry it on every backoff for good: a full reset and config each time, 8.7 ms of main
+        // loop per attempt, and no reception. Say so once and bring the receiver up in the factory config
+        // instead (the runtime settings follow it, so the parser agrees with the radio; nothing is saved).
+        // Any other failure (no SPI answer, BUSY stuck) may be transient and keeps the backoff retries.
+        const bool is_factory_config = r1090_preamble_mode_ == SettingsManager::kR1090PreambleModeDF17 &&
+                                       r1090_gain_ == 0 && r1090_rx_boost_ == 0;
+        if (lr2021.last_stat().command_status != LR2021::CommandStatus::kPErr || is_factory_config) {
+            return false;
+        }
+        CONSOLE_ERROR("ADSBee::ApplyReceiverConfig",
+                      "LR2021 rejected the receiver config (mode %u, gain %u, boost %u); running DF17, auto "
+                      "gain, no boost instead.",
+                      static_cast<unsigned>(r1090_preamble_mode_), r1090_gain_, r1090_rx_boost_);
+        lr2021_config_fallback_count++;
+        r1090_preamble_mode_ = SettingsManager::kR1090PreambleModeDF17;
+        r1090_gain_ = 0;
+        r1090_rx_boost_ = 0;
+        lr2021.DeInit();
+        if (!lr2021.Init() || !lr2021.SetOokADSB(r1090_preamble_mode_, r1090_gain_, r1090_rx_boost_)) {
+            return false;
+        }
     }
     // Arm the LR2021 IRQ rising-edge interrupt now that the chip side is routing kIrqRxFifo to it.
     // Clear any stale latched edge first: neither GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.

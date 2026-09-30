@@ -253,10 +253,17 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokSyncWord.");
         return false;
     }
+#ifdef HARDWARE_UNIT_TESTS
+    // One-shot pattern length override, so a target test can make the chip reject a config.
+    const uint8_t test_len_chips = test_detector_len_override;
+    test_detector_len_override = 0;
+#else
+    const uint8_t test_len_chips = 0;
+#endif
     if (df17_mode) {
         // Detect on the DF=17 data bits alone (see lr2021_ook_adsb.hh).
-        if (!SetOokDetector(kOokDF17Detector.pattern,            // DF17 header chips
-                            kOokDF17Detector.len_chips - 1,      // Pattern length (field is N-1)
+        if (!SetOokDetector(kOokDF17Detector.pattern,  // DF17 header chips
+                            (test_len_chips ? test_len_chips : kOokDF17Detector.len_chips) - 1,  // Field is N-1
                             0,                                   // No pattern repetition
                             false,                               // (no sync word used)
                             OokSfdKind::kOokSfdKindFallingEdge,  // SFD on falling edge
@@ -272,8 +279,8 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         const uint16_t pattern = strong_mode ? LR2021OokAdsb::kStrongPattern : LR2021OokAdsb::kModeSPattern;
         const uint8_t pattern_len_chips =
             strong_mode ? LR2021OokAdsb::kStrongPatternLenChips : LR2021OokAdsb::kModeSPatternLenChips;
-        if (!SetOokDetector(pattern,                             // Preamble pattern (LSB-first chips)
-                            pattern_len_chips - 1,               // Pattern length (field is N-1)
+        if (!SetOokDetector(pattern,  // Preamble pattern (LSB-first chips)
+                            (test_len_chips ? test_len_chips : pattern_len_chips) - 1,  // Field is N-1
                             0,                                   // No pattern repetition
                             false,                               // Sync word is not raw
                             OokSfdKind::kOokSfdKindFallingEdge,  // Start frame delimiter on falling edge

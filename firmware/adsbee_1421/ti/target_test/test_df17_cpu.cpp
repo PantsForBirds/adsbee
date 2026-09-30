@@ -24,6 +24,8 @@ class ADSBeeTestAccessor {
         return old;
     }
     static uint32_t& FramesSinceValid() { return adsbee.lr2021_frames_since_valid_; }
+    static bool ApplyReceiverConfig() { return adsbee.ApplyReceiverConfig(); }
+    static bool ReceiverConfigOk() { return adsbee.receiver_config_ok_; }
 };
 
 namespace {
@@ -191,4 +193,26 @@ UTEST(DF17Cpu, ParseAndDecodeCycles) {
     }
     ADSBeeTestAccessor::FramesSinceValid() = old_frames_since_valid;
     ADSBeeTestAccessor::SwapMode(old_mode);
+}
+
+// A receiver config the chip rejects (CMD_PERR) is replaced by the factory config once, instead of being retried
+// on every health-ladder backoff (a full reset and config each time, 8.7 ms of main loop, no reception).
+UTEST(ReceiverConfig, RejectedConfigFallsBackOnce) {
+    const SettingsManager::R1090PreambleMode old_mode = adsbee.GetR1090PreambleMode();
+    const uint32_t old_fallbacks = adsbee.lr2021_config_fallback_count;
+    const uint32_t old_fails = adsbee.lr2021_config_fail_count;
+
+    ADSBeeTestAccessor::SwapMode(SettingsManager::kR1090PreambleModeModeS);
+    adsbee.lr2021.test_detector_len_override = 11;  // Odd: the LR2021 answers CMD_PERR.
+    const bool ok = ADSBeeTestAccessor::ApplyReceiverConfig();
+
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(ADSBeeTestAccessor::ReceiverConfigOk());
+    EXPECT_EQ(adsbee.lr2021_config_fallback_count, old_fallbacks + 1);
+    EXPECT_EQ(adsbee.lr2021_config_fail_count, old_fails);
+    EXPECT_EQ(static_cast<int>(adsbee.GetR1090PreambleMode()),
+              static_cast<int>(SettingsManager::kR1090PreambleModeDF17));
+    EXPECT_EQ(adsbee.lr2021.last_stat().chip_mode, LR2021::ChipMode::kRx);
+
+    adsbee.SetR1090PreambleMode(old_mode);  // Back to what the device ran before the test.
 }
