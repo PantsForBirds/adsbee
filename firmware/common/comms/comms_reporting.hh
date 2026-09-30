@@ -57,8 +57,21 @@ bool SendBufToSinks(const ReportSink* sinks, uint16_t num_sinks, const char* buf
                     ReportFailureTally& tally, uint16_t num_msgs = 1, uint32_t uid = 0);
 
 // Reporting Functions
+/**
+ * Sends packets_to_report on every sink with a raw packet protocol (RAW, Beast, GDL90 uplink pass-through) and, if
+ * report_locally_decoded is set, drives the reporting rounds of the aircraft dictionary protocols (CSBee, MAVLINK,
+ * GDL90, Aircraft JSON).
+ * @param[in] sinks Array of ReportSinks to report on.
+ * @param[in] sink_protocols Reporting protocol of each sink.
+ * @param[in] num_sinks Number of ReportSinks in the sinks array.
+ * @param[in] packets_to_report Raw packets to report.
+ * @param[in] report_locally_decoded Set to false to send only packets_to_report, leaving the aircraft dictionary
+ * rounds for a later call. Lets a platform report raw packets on a different cadence than the dictionary.
+ * @retval True if successful, false if something broke.
+ */
 bool UpdateReporting(const ReportSink* sinks, const SettingsManager::ReportingProtocol* sink_protocols,
-                     uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report = nullptr);
+                     uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report = nullptr,
+                     bool report_locally_decoded = true);
 
 /**
  * Sends out RAW formatted transponder data on the selected serial interface.

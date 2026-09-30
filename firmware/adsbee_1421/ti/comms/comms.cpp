@@ -5,7 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "beast_utils.hh"
+#include "gdl90_utils.hh"
 #include "hal.hh"
+#include "raw_utils.hh"
 
 /* clang-format off */
 #include <ti/devices/DeviceFamily.h>
@@ -17,6 +20,19 @@
 
 static const CommsManager::ReportSink kReportingSinks[] = {SettingsManager::SerialInterface::kConsole};
 static const uint16_t kNumReportingSinks = sizeof(kReportingSinks) / sizeof(CommsManager::ReportSink);
+
+// Worst-case console bytes one ReportQueuedRawPackets() chunk can produce. RAW is the largest encoding of every
+// packet type, so the RAW sizes also cover Beast and GDL90 uplink pass-through.
+static_assert(BeastReporter::kModeSBeastFrameMaxLenBytes <= kRawModeSFrameMaxNumChars &&
+                  BeastReporter::kUATADSBBeastFrameMaxLenBytes <= kRawUATADSBFrameMaxNumChars &&
+                  BeastReporter::kUATUplinkBeastFrameMaxLenBytes <= kRawUATUplinkFrameMaxNumChars &&
+                  GDL90Reporter::kGDL90MessageMaxLenBytes <= kRawUATUplinkFrameMaxNumChars,
+              "RAW must be the largest raw packet encoding.");
+static constexpr uint16_t kRawReportChunkMaxTxBytes =
+    CommsManager::kRawReportMaxModeSPacketsPerUpdate * kRawModeSFrameMaxNumChars +
+    CommsManager::kRawReportMaxUATADSBPacketsPerUpdate * kRawUATADSBFrameMaxNumChars +
+    CommsManager::kRawReportMaxUATUplinkPacketsPerUpdate * kRawUATUplinkFrameMaxNumChars;
+static_assert(kRawReportChunkMaxTxBytes < CommsManager::kUartTxRingBytes, "A report chunk must fit in the TX ring.");
 
 // Margin added to every baud-derived TX wait so tiny shortfalls don't get a zero-length budget.
 static const uint32_t kTxWaitMarginMs = 5;
@@ -201,35 +217,58 @@ bool CommsManager::Update() {
     }
 
     UpdateAT();
+    ReportQueuedRawPackets();
 
     uint32_t timestamp_ms = get_time_since_boot_ms();
     if (timestamp_ms - last_raw_report_check_timestamp_ms_ > kRawReportingCheckIntervalMs) {
-        last_raw_report_check_timestamp_ms_ = timestamp_ms;  // Proceed with update and record timestamp.
-
-        // Calculate how much buffer space the current packets would need.
-        uint16_t required_buffer_len = CompositeArray::CalculateRawPacketsBufferLength(
-            &mode_s_packet_reporting_queue, &uat_adsb_packet_reporting_queue, &uat_uplink_packet_reporting_queue);
-
-        // Only forward packets if buffer would be full or if max reporting interval has elapsed.
-        bool buffer_would_be_full = required_buffer_len >= CompositeArray::RawPackets::kMaxLenBytes;
-        bool max_interval_elapsed = (timestamp_ms - last_raw_report_timestamp_ms_) >= kRawReportingMaxIntervalMs;
-
-        if (buffer_would_be_full || max_interval_elapsed) {
-            // Update the last report timestamp now that we're actually sending packets.
-            last_raw_report_timestamp_ms_ = timestamp_ms;
-
-            // Don't deplete the packet queues until we are ready to report!
-            uint8_t packets_to_report_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
-            CompositeArray::RawPackets packets_to_report = CompositeArray::PackRawPacketsBuffer(
-                packets_to_report_buf, sizeof(packets_to_report_buf), &mode_s_packet_reporting_queue,
-                &uat_adsb_packet_reporting_queue, &uat_uplink_packet_reporting_queue);
-
-            // Interfaces to send reports on.
-            UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks,
-                            &packets_to_report);
-        }
+        last_raw_report_check_timestamp_ms_ = timestamp_ms;
+        // Raw packets went out in ReportQueuedRawPackets(); this tick only drives the aircraft dictionary protocols.
+        uint8_t no_packets_buf[sizeof(CompositeArray::RawPackets::Header)];
+        CompositeArray::RawPackets no_packets = CompositeArray::PackRawPacketsBuffer(
+            no_packets_buf, sizeof(no_packets_buf), nullptr, nullptr, nullptr);
+        UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks,
+                        &no_packets);
     }
     return true;
+}
+
+bool CommsManager::ReportsRawPackets() const {
+    for (uint16_t i = 0; i < kNumReportingSinks; i++) {
+        switch (settings_manager.settings.reporting_protocols[kReportingSinks[i]]) {
+            case SettingsManager::kRaw:
+            case SettingsManager::kBeast:
+            case SettingsManager::kBeastNoUAT:
+            case SettingsManager::kBeastNoUATUplink:
+            case SettingsManager::kGDL90:  // Passes UAT uplinks through.
+                return true;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+
+void CommsManager::ReportQueuedRawPackets() {
+    if (mode_s_packet_reporting_queue.Length() == 0 && uat_adsb_packet_reporting_queue.Length() == 0 &&
+        uat_uplink_packet_reporting_queue.Length() == 0) {
+        return;
+    }
+    if (ReportsRawPackets() && TxRingFreeBytes() < kRawReportChunkMaxTxBytes) {
+        // The link is behind. Leave the packets queued rather than wait for ring space inside iface_write: the Mode S
+        // queue overwrites its oldest entry when full (report_q_ovf) and the UAT queues refuse new entries
+        // (uat_report_q_ovf), so an oversubscribed link costs reports but never stalls the receiver.
+        return;
+    }
+
+    // Format at most one chunk per main loop iteration. The rest stays queued for the following iterations.
+    alignas(4) uint8_t chunk_buf[kRawReportChunkBufBytes];
+    CompositeArray::RawPackets chunk = CompositeArray::PackRawPacketsBuffer(
+        chunk_buf, sizeof(chunk_buf), &mode_s_packet_reporting_queue, &uat_adsb_packet_reporting_queue,
+        &uat_uplink_packet_reporting_queue, nullptr,
+        CompositeArray::PackLimits(kRawReportMaxModeSPacketsPerUpdate, kRawReportMaxUATADSBPacketsPerUpdate,
+                                   kRawReportMaxUATUplinkPacketsPerUpdate));
+    UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks, &chunk,
+                    false);
 }
 
 int CommsManager::console_printf(const char* format, ...) {
