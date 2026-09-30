@@ -113,7 +113,9 @@ it. This is enforced by
 [`../scripts/check_version_sync.sh`](../scripts/check_version_sync.sh), which `build.sh` runs
 before every build (as a warning only — it never blocks the build) and which the repo pre-commit
 hook runs on every commit (where it does block). A
-`firmware/common/` change applies the rule to **both** products' versions. Markdown-only
+`firmware/common/` change applies the rule to **both** products' versions, except
+`firmware/common/coprocessor/object_dictionary.cpp`: it holds adsbee_1090's version constants and
+isn't built into adsbee_1421, so bumping the 1090 version alone needs no 1421 bump. Markdown-only
 changes (`*.md`) are exempt. See [`../AGENTS.md`](../AGENTS.md#automated-enforcement) for the
 tag naming and how versions compare.
 

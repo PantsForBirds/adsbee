@@ -7,6 +7,7 @@
 #include "esp_event.h"
 #include "esp_mac.h"
 #include "hal.hh"
+#include "heap_diagnostics.hh"
 #include "lwip/dns.h"
 #include "lwip/err.h"
 #include "lwip/netdb.h"
@@ -60,12 +61,9 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
             break;
         }
         case WIFI_EVENT_STA_START: {
-            // The ADSBee is attempting to connect to an external network.
-            char redacted_password[SettingsManager::Settings::kWiFiPasswordMaxLen];
-            SettingsManager::RedactPassword(wifi_sta_password, redacted_password,
-                                            SettingsManager::Settings::kWiFiPasswordMaxLen);
-            CONSOLE_INFO("CommsManager::WiFiInit", "WiFi Station started. SSID:%s password:%s", wifi_sta_ssid,
-                         redacted_password);
+            // The ADSBee is attempting to connect to an external network. Never log WiFi passwords: the console log
+            // reaches the RP2040 console and the web UI's /console websocket.
+            CONSOLE_INFO("CommsManager::WiFiInit", "WiFi Station started. SSID:%s", wifi_sta_ssid);
             ESP_ERROR_CHECK(esp_wifi_connect());
             // Note: wifi_sta_has_ip_ will get filled in by the IP event handler if an IP is issued.
             break;
@@ -74,8 +72,8 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
             // The ADSBee has disconnected from an external network.
             wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*)event_data;
             CONSOLE_ERROR("CommsManager::WiFiEventHandler",
-                          "Disconnected from (or failed to connect to) ap SSID:%s password:%s - Disconnect reason : %d",
-                          wifi_sta_ssid, wifi_sta_password, event->reason);
+                          "Disconnected from (or failed to connect to) ap SSID:%s - Disconnect reason : %d",
+                          wifi_sta_ssid, event->reason);
             wifi_sta_connected_ = false;
             wifi_sta_has_ip_ = false;
             if (wifi_sta_enabled) {
@@ -84,11 +82,7 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
             break;
         }
         case WIFI_EVENT_STA_CONNECTED:
-            char redacted_password[SettingsManager::Settings::kWiFiPasswordMaxLen];
-            SettingsManager::RedactPassword(wifi_sta_password, redacted_password,
-                                            SettingsManager::Settings::kWiFiPasswordMaxLen);
-            CONSOLE_INFO("CommsManager::WiFiInit", "Connected to ap SSID:%s password:%s", wifi_sta_ssid,
-                         redacted_password);
+            CONSOLE_INFO("CommsManager::WiFiInit", "Connected to ap SSID:%s", wifi_sta_ssid);
             wifi_sta_connected_ = true;
             wifi_sta_connected_timestamp_ms_ = get_time_since_boot_ms();
             break;
@@ -166,7 +160,9 @@ bool CommsManager::WiFiInit() {
     ESP_ERROR_CHECK(esp_netif_set_hostname(wifi_sta_netif_, hostname));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    HeapDiagnostics::Mark("netifs");
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    HeapDiagnostics::Mark("wifi_init");
 
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     if (!ip_event_handler_was_initialized_) {
@@ -222,21 +218,18 @@ bool CommsManager::WiFiInit() {
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());
+    HeapDiagnostics::Mark("wifi_start");
 
     if (wifi_ap_enabled) {
-        CONSOLE_INFO("CommsManager::WiFiInit", "WiFi AP started. SSID:%s password:%s", wifi_ap_ssid, wifi_ap_password);
+        CONSOLE_INFO("CommsManager::WiFiInit", "WiFi AP started. SSID:%s", wifi_ap_ssid);
         // Lazily create the AP broadcast queue now that the AP is actually enabled (see the CommsManager constructor).
         if (wifi_ap_message_queue_ == nullptr) {
             wifi_ap_message_queue_ = xQueueCreate(kWiFiMessageQueueLen, sizeof(NetworkMessage));
         }
-        xTaskCreate(wifi_access_point_task, "wifi_ap_task", 2 * 4096, &wifi_ap_task_handle, kWiFiAPTaskPriority, NULL);
+        xTaskCreate(wifi_access_point_task, "wifi_ap_task", kWiFiAPTaskStackSizeBytes, &wifi_ap_task_handle, kWiFiAPTaskPriority, NULL);
     }
     if (wifi_sta_enabled) {
-        char redacted_password[SettingsManager::Settings::kWiFiPasswordMaxLen];
-        SettingsManager::RedactPassword(wifi_sta_password, redacted_password,
-                                        SettingsManager::Settings::kWiFiPasswordMaxLen);
-        CONSOLE_INFO("CommsManager::WiFiInit", "WiFi Station started. SSID:%s password:%s", wifi_sta_ssid,
-                     redacted_password);
+        CONSOLE_INFO("CommsManager::WiFiInit", "WiFi Station started. SSID:%s", wifi_sta_ssid);
     }
 
     return true;

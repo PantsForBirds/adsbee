@@ -111,7 +111,8 @@ static_assert(kRawBatchBufMaxBytes >= kRawModeSFrameMaxNumChars &&
               "Raw batch buffer must be able to hold at least one frame of each type.");
 
 bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManager::ReportingProtocol* sink_protocols,
-                                   uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report) {
+                                   uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report,
+                                   bool report_locally_decoded) {
     bool ret = true;
     uint32_t timestamp_ms = get_time_since_boot_ms();
 
@@ -227,6 +228,9 @@ bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManage
     }
 
     /** Locally Decoded Reports **/
+    if (!report_locally_decoded) {
+        return ret;
+    }
     // All locally-decoded protocols share a UID snapshot and a single 1000ms reporting interval.
     // A new round starts only when every active protocol has finished its previous round.
 

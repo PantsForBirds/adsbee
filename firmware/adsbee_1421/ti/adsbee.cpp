@@ -541,7 +541,7 @@ void ADSBee::IngestAndForwardPackets() {
         aircraft_dictionary.IngestDecodedUATADSBPacket(decoded_uat_adsb_packet);
         aircraft_dictionary.RecordSubGHzMetrics(0, 1, 0, 0);
         if (!comms_manager.uat_adsb_packet_reporting_queue.Enqueue(decoded_uat_adsb_packet.raw)) {
-            CONSOLE_ERROR("ADSBee::IngestAndForwardPackets", "UAT ADS-B packet reporting queue overflowed.");
+            comms_manager.uat_report_queue_ovf_count++;  // Counted, not logged (see the Mode S queue above).
         }
     }
 
@@ -554,7 +554,7 @@ void ADSBee::IngestAndForwardPackets() {
          i++) {
         aircraft_dictionary.RecordSubGHzMetrics(0, 0, 0, 1);
         if (!comms_manager.uat_uplink_packet_reporting_queue.Enqueue(decoded_uat_uplink_packet.raw)) {
-            CONSOLE_ERROR("ADSBee::IngestAndForwardPackets", "UAT uplink packet reporting queue overflowed.");
+            comms_manager.uat_report_queue_ovf_count++;  // Counted, not logged (see the Mode S queue above).
         }
     }
 }

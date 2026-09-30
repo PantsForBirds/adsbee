@@ -24,6 +24,7 @@
 #include "freertos/task.h"
 #include "hardware_capabilities.hh"
 #include "hardware_unit_tests.hh"
+#include "heap_diagnostics.hh"
 #include "pico.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
@@ -34,6 +35,7 @@
 
 static const uint32_t kHeapUsagePrintIntervalMs = 100;
 static const uint32_t kDeviceStatusUpdateIntervalMs = 1000;
+static const uint32_t kHeapDiagnosticsReportIntervalMs = 10000;
 
 BSP bsp = BSP();
 ObjectDictionary object_dictionary;
@@ -79,6 +81,7 @@ void device_status_update_task(void* pvParameters) {
 // Main application
 extern "C" void app_main(void) {
     heap_caps_register_failed_alloc_callback(heap_caps_alloc_failed_hook);
+    HeapDiagnostics::Mark("app_main");
 
     ESP_LOGI("app_main", "Beginning ADSBee Server Application.");
     ESP_LOGI("app_main", "Default task priority: %d", uxTaskPriorityGet(NULL));
@@ -94,6 +97,7 @@ extern "C" void app_main(void) {
     xTaskCreate(device_status_update_task, "DeviceStatusUpdate", kDeviceStatusUpdateTaskStackSizeBytes, NULL,
                 kDeviceStatusUpdateTaskPriority, NULL);
     adsbee_server.Init();
+    HeapDiagnostics::Mark("init_done");
 
 #ifdef HARDWARE_UNIT_TESTS
     RunHardwareUnitTests();
@@ -102,11 +106,17 @@ extern "C" void app_main(void) {
 #ifdef PRINT_HEAP_USAGE
     uint32_t last_heap_print_timestamp_ms = 0;
 #endif
+    uint32_t last_heap_diagnostics_timestamp_ms = 0;
     while (1) {
         adsbee_server.Update();
 
         // Yield to the idle task to avoid a watchdog trigger. Note: Delay must be >= 10ms since 100Hz tick is typical.
         vTaskDelay(1);  // Delay 1 tick (10ms).
+
+        if (get_time_since_boot_ms() - last_heap_diagnostics_timestamp_ms > kHeapDiagnosticsReportIntervalMs) {
+            HeapDiagnostics::Report();  // No-op unless built with HEAP_DIAGNOSTICS.
+            last_heap_diagnostics_timestamp_ms = get_time_since_boot_ms();
+        }
 
 #ifdef PRINT_HEAP_USAGE
         if (get_time_since_boot_ms() - last_heap_print_timestamp_ms > kHeapUsagePrintIntervalMs) {
