@@ -2047,13 +2047,16 @@
                     <li>Hold <span class="pin">SYNC (pin 28, DIO_5)</span> high at 3.3 V.</li>
                     <li>With SYNC still high, reset the module: pull <span class="pin">RESET_N (pin 17)</span> low
                         briefly, or power-cycle it.</li>
-                    <li>Release reset. SYNC can stay high &mdash; the boot ROM samples it only at boot.</li>
-                    <li>Press <strong>Check bootloader</strong> below.</li>
+                    <li>Release reset and keep SYNC high. On an adapter that wires DTR to RESET_N,
+                        <strong>Enter bootloader</strong> resets the module again, and SYNC must still be high
+                        then for it to land back in the bootloader.</li>
+                    <li>Press <strong>Enter bootloader</strong> below.</li>
                 </ol>
                 <p class="firmware-modal-note">The baud rate does not need to match: the ROM locks onto whatever rate
                     this page sends its sync bytes at. If the SYNC pin is unreachable, running
                     <span class="pin">AT+BOOT_UART_BOOTLOADER=1DEADBEE</span> in the console also enters the
-                    bootloader, but it erases the vector table, so the device stays there until it is reflashed.</p>
+                    bootloader, but it erases the vector table, so the device stays there until it is reflashed.
+                    Then press <strong>Enter bootloader</strong>.</p>
                 <p id="firmware-check-result"></p>
             </div>
             <div class="progress-container" id="firmware-progress-row" style="display:none; margin: 12px 0 8px;">
@@ -2065,7 +2068,6 @@
             <div id="firmware-modal-log" style="display:none;"></div>
             <div class="fw-modal-buttons">
                 <button id="fw-enter-btn" class="tools-button">Enter bootloader</button>
-                <button id="fw-check-btn" class="tools-button">Check bootloader</button>
                 <button id="fw-start-btn" class="tools-button" disabled>Flash firmware</button>
                 <button id="fw-erase-settings-btn" class="tools-button" disabled>Erase settings</button>
                 <button id="fw-retry-btn" class="tools-button" style="display:none;">Retry</button>
@@ -4698,9 +4700,12 @@ function makeRxEnableEntry() {
         //    adapter wired that way. It makes a single attempt that takes a few seconds. If
         //    the ROM doesn't answer, it puts SYNC back low so a running module isn't left
         //    asleep.
-        //  - By hand (SYNC jumpered high, then a reset) or AT+BOOT_UART_BOOTLOADER, followed
-        //    by checkBootloader(), for adapters without RTS/DTR wired to the module.
-        // Either way checkBootloader() proves the ROM is actually answering before anything
+        //  - By hand (SYNC jumpered high, then a reset) or AT+BOOT_UART_BOOTLOADER, for
+        //    adapters without RTS/DTR wired to the module. The user then presses Enter
+        //    bootloader as well: with the lines unwired its toggles do nothing, and with DTR
+        //    wired the reset lands back in the bootloader (SYNC is still high, or the AT
+        //    command erased the vector table so the ROM has no valid image to boot).
+        // Either way verifyBootloader() proves the ROM is actually answering before anything
         // is erased, and every exit from the bootloader drives SYNC low first.
         const flashController = {
             active: false,
@@ -4721,7 +4726,7 @@ function makeRxEnableEntry() {
                     progressRow: $('firmware-progress-row'), fill: $('firmware-modal-fill'),
                     text: $('firmware-modal-text'), log: $('firmware-modal-log'),
                     enter: $('fw-enter-btn'),
-                    check: $('fw-check-btn'), checkResult: $('firmware-check-result'),
+                    checkResult: $('firmware-check-result'),
                     start: $('fw-start-btn'), retry: $('fw-retry-btn'), close: $('fw-close-btn'),
                     eraseSettings: $('fw-erase-settings-btn'),
                     uploadButton: $('uploadButton'), fileInput: $('fileInput'),
@@ -4733,7 +4738,6 @@ function makeRxEnableEntry() {
                     this.els.fileInput.value = '';
                 });
                 this.els.enter.addEventListener('click', () => this.enterBootloader());
-                this.els.check.addEventListener('click', () => this.checkBootloader());
                 this.els.start.addEventListener('click', () => this.run());
                 this.els.eraseSettings.addEventListener('click', () => this.eraseSettings());
                 // A mid-flash failure leaves the device in the bootloader, but that says
@@ -4754,7 +4758,6 @@ function makeRxEnableEntry() {
                 this.els.log.style.display = 'none';
                 this.els.progressRow.style.display = 'none';
                 this.els.preflight.style.display = '';
-                this.els.check.style.display = '';
                 this.els.enter.style.display = '';
                 this.els.start.style.display = '';
                 this.els.eraseSettings.style.display = '';
@@ -4767,7 +4770,6 @@ function makeRxEnableEntry() {
                     this._image = IntelHex.parse(text);
                 } catch (e) {
                     this.els.summary.textContent = '';
-                    this.els.check.style.display = 'none';
                     this.els.enter.style.display = 'none';
                     this.els.start.style.display = 'none';
                     this.els.eraseSettings.style.display = 'none';
@@ -4791,9 +4793,8 @@ function makeRxEnableEntry() {
                     ' (settings and device info preserved)';
                 this.els.summary.textContent = txt;
                 this.setStatus(serial.connected
-                    ? 'Press Enter bootloader (ADSBee 1421 Programmer or RTS/DTR-wired adapter), or put the device into the ROM bootloader by hand and press Check bootloader.'
+                    ? 'Press Enter bootloader. Without the ADSBee 1421 Programmer or an RTS/DTR-wired adapter, put the device into the ROM bootloader by hand first.'
                     : 'Not connected — connect to the serial port first.');
-                this.els.check.disabled = false;
                 this.els.enter.disabled = false;
             },
 
@@ -4854,7 +4855,7 @@ function makeRxEnableEntry() {
             // in-flight command will fail on its own and land in the error path.
             invalidateVerification(reason) {
                 if (!this._verified && !this._bl) return;
-                this.setVerified(false, reason ? `${reason} Check the bootloader again.` : '',
+                this.setVerified(false, reason ? `${reason} Press Enter bootloader again.` : '',
                     reason ? 'fail' : '');
             },
 
@@ -4879,8 +4880,8 @@ function makeRxEnableEntry() {
                 await bl.reset();
             },
 
-            // One-click entry through the SYNC backdoor, then the same check as by hand.
-            enterBootloader() { return this.checkBootloader({ enter: true }); },
+            // The Enter bootloader button: the SYNC backdoor, then the check.
+            enterBootloader() { return this.verifyBootloader({ enter: true }); },
 
             // Goof check: prove the ROM bootloader is really answering before anything is
             // erased. A bare sync ACK is not enough on its own, so this also pings and
@@ -4888,14 +4889,13 @@ function makeRxEnableEntry() {
             // "your device is still running its firmware" and "nothing is wired up" need
             // completely different fixes from the user. With enter set it first drives the
             // backdoor: SYNC high (RTS deasserted) and a reset pulse (DTR).
-            async checkBootloader({ enter = false } = {}) {
+            async verifyBootloader({ enter = false } = {}) {
                 if (this._checking || this._state === 'running') return;
                 if (!serial.connected) {
                     this.setVerified(false, 'Not connected to a serial port.', 'fail');
                     return;
                 }
                 this._checking = true;
-                this.els.check.disabled = true;
                 this.els.enter.disabled = true;
                 this.setVerified(false, '', '');
                 this.setStatus('Checking for the ROM bootloader...');
@@ -4955,7 +4955,6 @@ function makeRxEnableEntry() {
                     // Always clickable while the dialog is open. Pressing it with no port
                     // open reports that plainly, which beats a dead button whose state has
                     // to be kept in step with every connect and disconnect path.
-                    this.els.check.disabled = false;
                     this.els.enter.disabled = false;
                 }
             },
@@ -4986,7 +4985,7 @@ function makeRxEnableEntry() {
                 } else if (appBaud !== null) {
                     this.setVerified(false,
                         `The device answered as its application firmware at ${appBaud} baud. ` +
-                        'Reset it with SYNC held high (steps 2 and 3), then check again.',
+                        'Reset it with SYNC held high (steps 2 and 3), then press Enter bootloader again.',
                         'fail');
                 } else {
                     this.setVerified(false,
@@ -5005,11 +5004,10 @@ function makeRxEnableEntry() {
                 if (this._state === 'running' || this._checking) return;
                 this.els.preflight.style.display = '';
                 this.els.retry.style.display = 'none';
-                this.els.check.style.display = '';
                 this.els.enter.style.display = '';
                 this.els.start.style.display = '';
                 this.els.eraseSettings.style.display = '';
-                await this.checkBootloader();
+                await this.verifyBootloader();
                 if (this._verified) {
                     await this.run();
                 } else {
@@ -5025,7 +5023,7 @@ function makeRxEnableEntry() {
                 // The gate. Flashing is only reachable through a check that passed.
                 if (!this._verified || !this._bl) {
                     this.setVerified(false,
-                        'Press Check bootloader first — firmware is only written to a device that ' +
+                        'Press Enter bootloader first — firmware is only written to a device that ' +
                         'has answered as the ROM bootloader.', 'fail');
                     return;
                 }
@@ -5033,7 +5031,6 @@ function makeRxEnableEntry() {
                 this.els.preflight.style.display = 'none';
                 this.els.progressRow.style.display = 'flex';
                 this.els.log.style.display = '';
-                this.els.check.style.display = 'none';
                 this.els.enter.style.display = 'none';
                 this.els.start.style.display = 'none';
                 this.els.eraseSettings.style.display = 'none';
@@ -5057,7 +5054,7 @@ function makeRxEnableEntry() {
                     } catch (e) {
                         this.setVerified(false, '', '');
                         throw new Error('The device is no longer responding as the ROM bootloader ' +
-                            `(${e.message}). Put it back into the bootloader and check again.`);
+                            `(${e.message}). Put it back into the bootloader and press Enter bootloader again.`);
                     }
 
                     // Erase only the 2 KB sectors the image covers -- deliberately NOT a bank
@@ -5175,7 +5172,7 @@ function makeRxEnableEntry() {
             async eraseSettings() {
                 if (this._state === 'running') return;
                 if (!this._verified || !this._bl) {
-                    this.setStatus('Check the bootloader first.');
+                    this.setStatus('Press Enter bootloader first.');
                     return;
                 }
                 if (!confirm('Erase all saved settings on the device?\n\n' +
@@ -5189,7 +5186,6 @@ function makeRxEnableEntry() {
                 this._state = 'running';
                 this.els.preflight.style.display = 'none';
                 this.els.log.style.display = '';
-                this.els.check.style.display = 'none';
                 this.els.enter.style.display = 'none';
                 this.els.start.style.display = 'none';
                 this.els.eraseSettings.style.display = 'none';
@@ -5210,7 +5206,7 @@ function makeRxEnableEntry() {
                     } catch (e) {
                         this.setVerified(false, '', '');
                         throw new Error('The device is no longer responding as the ROM bootloader ' +
-                            `(${e.message}). Put it back into the bootloader and check again.`);
+                            `(${e.message}). Put it back into the bootloader and press Enter bootloader again.`);
                     }
 
                     const first = IntelHex.SETTINGS_FLASH_START;
@@ -5254,7 +5250,6 @@ function makeRxEnableEntry() {
                     // what was asked for. Put the preflight controls back instead, so the next action
                     // is whichever button the user presses.
                     this.els.preflight.style.display = '';
-                    this.els.check.style.display = '';
                     this.els.enter.style.display = '';
                     this.els.start.style.display = '';
                     this.els.eraseSettings.style.display = '';
