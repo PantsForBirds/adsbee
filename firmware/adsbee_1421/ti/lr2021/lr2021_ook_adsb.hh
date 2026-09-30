@@ -89,6 +89,24 @@ static_assert(kDF17Pattern == 0xA902 && kDF17PatternLenChips == 16,
               "DF17 pattern: preamble chips 8-15 + DF bits 1000 (the 0.3.11-rc3 pattern).");
 static_assert(PreambleChipsPatternIsValid(kDF17PatternFirstChip, kPreambleNumChips - 1),
               "DF17 pattern must start with a transition.");
+// Rebuilds a DF17-mode capture into the 112-bit frame, as 32-bit words MSB first (the RawModeSPacket layout):
+// the kDF17HeaderLenBits DF bits the detector consumed, then the capture (capture_len_bytes bytes). Bits past the
+// header plus the capture are 0. Word shifts: about a tenth of the cost of moving the capture a few bits at a
+// time.
+inline void ReconstructDF17Frame(const uint8_t* capture, uint16_t capture_len_bytes, uint32_t* words,
+                                 uint16_t num_words) {
+    uint32_t prev = static_cast<uint32_t>(kDF17HeaderBits) << (32 - kDF17HeaderLenBits);
+    for (uint16_t k = 0; k < num_words; k++) {
+        uint32_t w = 0;  // Capture bytes 4k .. 4k+3, MSB first; 0 past the end of the capture.
+        for (uint16_t b = 0; b < 4; b++) {
+            const uint16_t i = static_cast<uint16_t>(4 * k + b);
+            if (i < capture_len_bytes) w |= static_cast<uint32_t>(capture[i]) << (24 - 8 * b);
+        }
+        words[k] = prev | (w >> kDF17HeaderLenBits);
+        prev = w << (32 - kDF17HeaderLenBits);
+    }
+}
+
 // The LR2021 rejects a detector pattern of odd length (CMD_PERR; 11 and 15 chips checked on a 1421, while 10, 12
 // and 16 are accepted), and a rejected config leaves the receiver unconfigured.
 static_assert(kModeSPatternLenChips % 2 == 0 && kStrongPatternLenChips % 2 == 0 && kDF17PatternLenChips % 2 == 0,

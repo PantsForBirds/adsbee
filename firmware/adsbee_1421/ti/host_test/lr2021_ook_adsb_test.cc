@@ -187,6 +187,33 @@ static void TestSingleBitFilter() {
     printf("  single-bit prefilter passes %d of 100000 random syndromes\n", passes);
 }
 
+// ReconstructDF17Frame gives the same 128 bits as the 0.3.11-rc3 reconstruction: the consumed DF bits, the
+// 112 capture bits after them, and zeros from bit 116 on.
+static void TestDF17Reconstruction() {
+    std::mt19937 rng(1421);
+    for (int n = 0; n < 100000; n++) {
+        uint8_t cap[14];
+        for (auto& b : cap) b = static_cast<uint8_t>(rng());
+        uint32_t words[4];
+        ReconstructDF17Frame(cap, sizeof(cap), words, 4);
+        bool same = true;
+        for (uint16_t i = 0; i < 128; i++) {
+            bool expect;
+            if (i < kDF17HeaderLenBits) {
+                expect = (kDF17HeaderBits >> (kDF17HeaderLenBits - 1 - i)) & 1u;
+            } else if (i < kDF17HeaderLenBits + 8 * sizeof(cap)) {
+                const uint16_t c = i - kDF17HeaderLenBits;
+                expect = (cap[c / 8] >> (7 - c % 8)) & 1u;
+            } else {
+                expect = false;
+            }
+            same &= ((words[i / 32] >> (31 - i % 32)) & 1u) == expect;
+        }
+        EXPECT(same);
+        if (!same) break;
+    }
+}
+
 int main() {
     TestPatternsMatchThePreamble();
     TestPatternValidity();
@@ -195,6 +222,7 @@ int main() {
     TestAgcTriggerRegValue();
     TestOokDetectThresholdRegValue();
     TestDF17Pattern();
+    TestDF17Reconstruction();
     TestSingleBitFilter();
     if (failures) {
         printf("%d failure(s)\n", failures);

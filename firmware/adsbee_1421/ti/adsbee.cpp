@@ -735,16 +735,8 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
             // Reconstruct the full 112-bit frame by prepending the known DF=17 header bits
             // (which the detector consumed) in front of the captured remainder, so the decoder +
             // software CRC validate the whole frame.
-            const LR2021::OokDetectorConfig& detector = LR2021::kOokDF17Detector;
-            SetNBitsInWordBuffer(detector.header_len_bits, detector.header_bits, 0, rx_word_buf);
-            uint32_t remainder_words[RawModeSPacket::kMaxPacketLenWords32] = {0};
-            ByteBufferToWordBuffer(packet_start, remainder_words, packet_len_bytes);
-            const uint16_t remainder_bits = packet_len_bytes * 8;
-            for (uint16_t b = 0; b < remainder_bits; b += 8) {
-                uint16_t chunk = (remainder_bits - b) < 8 ? (remainder_bits - b) : 8;
-                uint32_t val = GetNBitsFromWordBuffer(chunk, b, remainder_words);
-                SetNBitsInWordBuffer(chunk, val, detector.header_len_bits + b, rx_word_buf);
-            }
+            LR2021OokAdsb::ReconstructDF17Frame(packet_start, packet_len_bytes, rx_word_buf,
+                                                RawModeSPacket::kMaxPacketLenWords32);
         } else {
             ByteBufferToWordBuffer(packet_start, rx_word_buf, packet_len_bytes);
         }
