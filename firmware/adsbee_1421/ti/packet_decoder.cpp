@@ -6,6 +6,7 @@
 #include "comms.hh"
 #include "crc.hh"
 #include "cycle_counter.hh"
+#include "mode_s_single_bit_filter.hh"
 #include "led.hh"
 
 PacketDecoder::PacketDecoder()
@@ -87,7 +88,7 @@ void PacketDecoder::DecodeOne(RawModeSPacket& raw_packet, bool df17_mode) {
         // one the decode above already computed over the same 112 bits (no second CRC per failed frame).
         // The prefilter answers "no single-bit error" for most failed frames without the 112-entry search.
         int16_t bit_flip_index =
-            LR2021OokAdsb::kModeSSingleBitFilter.MayMatch(decoded_packet.crc_syndrome)
+            ModeSSingleBitFilter::kFilter.MayMatch(decoded_packet.crc_syndrome)
                 ? crc24_find_single_bit_error(decoded_packet.crc_syndrome,
                                               RawModeSPacket::kExtendedSquitterPacketLenBits)
                 : -1;

@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 enable_testing()
 
 add_executable(lr2021_ook_adsb_test lr2021_ook_adsb_test.cc)
-target_include_directories(lr2021_ook_adsb_test PRIVATE ../lr2021 ../target_test ../../../common/utils/crc)
+target_include_directories(lr2021_ook_adsb_test PRIVATE ../lr2021 ../utils ../../../common/utils/crc)
 target_compile_options(lr2021_ook_adsb_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME lr2021_ook_adsb_test COMMAND lr2021_ook_adsb_test)
 

@@ -356,10 +356,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 "irq_errors=%lu,irq_assists=%lu,tx_stalls=%lu,tx_drops=%lu,tx_ring_hw=%u,"
                 "fifo_ovf=%lu,fifo_resyncs=%lu,rx_rearms=%lu,rx_reconfigs=%lu,cfg_fails=%lu,"
                 "dma_timeouts=%lu,report_q_ovf=%lu,"
-                "validity_reconfigs=%lu,stale_edges=%lu,uat_len_mismatch=%lu,df17_realigned=%lu,"
-                "df17_skipped=%lu,realign_max_cyc=%lu,realign_avg_cyc=%lu,parse_max_cyc=%lu,"
-                "decode_max_cyc=%lu,loop_max_cyc=%lu,loop_avg_cyc=%lu,cpu_1090_pm=%lu,cfg_fallbacks=%lu,"
-                "fifo_slips=%lu",
+                "validity_reconfigs=%lu,stale_edges=%lu,uat_len_mismatch=%lu,parse_max_cyc=%lu,"
+                "decode_max_cyc=%lu,loop_max_cyc=%lu,loop_avg_cyc=%lu,cpu_1090_pm=%lu,cfg_fallbacks=%lu",
                 stats.pkt_rx, stats.crc_error, stats.len_error, stats.pbl_det, stats.sync_ok, stats.sync_fail,
                 stats.timeout, (unsigned long)adsbee.lr2021_fifo_full_count,
                 (unsigned long)packet_decoder.raw_queue_overflow_count,
@@ -377,18 +375,13 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)adsbee.lr2021.drain_dma_timeouts,
                 (unsigned long)comms_manager.mode_s_report_queue_ovf_count,
                 (unsigned long)adsbee.lr2021_validity_reconfig_count, (unsigned long)adsbee.lr2021.irq_stale_edges,
-                (unsigned long)subg_radio.uat_len_mismatch_count, (unsigned long)adsbee.lr2021_df17_realigned_count,
-                (unsigned long)adsbee.lr2021_df17_realign_skipped_count, (unsigned long)adsbee.df17_realign_max_cycles,
-                (unsigned long)(adsbee.df17_realign_calls
-                                    ? adsbee.df17_realign_total_cycles / adsbee.df17_realign_calls
-                                    : 0),
-                (unsigned long)adsbee.parse_capture_max_cycles, (unsigned long)packet_decoder.decode_max_cycles,
+                (unsigned long)subg_radio.uat_len_mismatch_count, (unsigned long)adsbee.parse_capture_max_cycles, (unsigned long)packet_decoder.decode_max_cycles,
                 (unsigned long)adsbee.max_loop_cycles,
                 (unsigned long)(adsbee.loop_count ? adsbee.loop_total_cycles / adsbee.loop_count : 0),
                 (unsigned long)(adsbee.loop_total_cycles
                                     ? adsbee.rx1090_total_cycles * 1000 / adsbee.loop_total_cycles
                                     : 0),
-                (unsigned long)adsbee.lr2021_config_fallback_count, (unsigned long)adsbee.lr2021_fifo_slip_count);
+                (unsigned long)adsbee.lr2021_config_fallback_count);
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -423,17 +416,11 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.lr2021_rx_reconfig_count = 0;
             adsbee.lr2021_config_fail_count = 0;
             adsbee.lr2021_config_fallback_count = 0;
-            adsbee.lr2021_fifo_slip_count = 0;
             adsbee.lr2021.drain_dma_timeouts = 0;
             comms_manager.mode_s_report_queue_ovf_count = 0;
             adsbee.lr2021_validity_reconfig_count = 0;
             adsbee.lr2021.irq_stale_edges = 0;
             subg_radio.uat_len_mismatch_count = 0;
-            adsbee.lr2021_df17_realigned_count = 0;
-            adsbee.lr2021_df17_realign_skipped_count = 0;
-            adsbee.df17_realign_max_cycles = 0;
-            adsbee.df17_realign_total_cycles = 0;
-            adsbee.df17_realign_calls = 0;
             adsbee.parse_capture_max_cycles = 0;
             packet_decoder.decode_max_cycles = 0;
             adsbee.max_loop_cycles = 0;
@@ -1302,13 +1289,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "irq_* = IRQ-paced FIFO drain chain diagnostics (chains started / edges skipped busy / edges "
                     "skipped no-slot / back-to-back restarts / wedge timeouts / chain errors / thread-assisted "
                     "frame posts), tx_stalls / tx_drops / tx_ring_hw = "
-                    "console TX ring waits, dropped writes and peak occupancy in bytes; df17_realigned / "
-                    "df17_skipped = DF17-mode captures realigned / passed on unrealigned because the "
-                    "decoder queue was backing up; *_cyc = CPU cycles at 48 MHz (SysTick, exact up to 349 ms): realign max/avg per "
-                    "capture, parse max per capture, decode max per packet, main loop max/avg; cpu_1090_pm = "
-                    "per mille of main loop time in the 1090 receive and decode path; cfg_fallbacks = receiver "
-                    "configs the LR2021 rejected, run as DF17/auto gain instead; fifo_slips = FIFO framing slips "
-                    "found and flushed).\r\n\tAT+RX_STATS=RESET\r\n\t"
+                    "console TX ring waits, dropped writes and peak occupancy in bytes; *_cyc = CPU cycles at "
+                    "48 MHz, exact up to 349 ms: parse max per capture, decode max per packet, main loop "
+                    "max/avg; cpu_1090_pm = per mille of main loop time in the 1090 receive and decode path; "
+                    "cfg_fallbacks = receiver configs the LR2021 rejected, run as DF17/auto gain "
+                    "instead).\r\n\tAT+RX_STATS=RESET\r\n\t"
                     "Reset all Rx stats counters.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxStatsCallback, comms_manager)},
     {.command = "SETTINGS",

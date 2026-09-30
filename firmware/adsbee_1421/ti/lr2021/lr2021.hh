@@ -47,23 +47,31 @@ class LR2021 {
     static constexpr uint16_t kOokADSBPacketRxLenBytes = 11;  // 88-bit payload (DF .. end of data).
     static constexpr uint16_t kOokADSBPacketCrcLenBytes = 3;  // 24-bit CRC (parity).
 
-    // DF17 mode: the detector keys on the five DF=17 bits of the message, with no preamble chips
-    // (LR2021OokAdsb::kDF17Pattern; lr2021_ook_adsb.hh has the reasons). It consumes those bits, so the
-    // captured payload starts mid-byte. The byte-granular hardware CRC can't align to that, so DF17 mode
-    // runs with the hardware CRC off, and the RX path rebuilds and validates the frame in software
-    // (LR2021OokAdsb::RecoverDF17Frame).
+    // DF17 sync mode: instead of correlating on the full preamble, the detector keys on the tail of
+    // the preamble plus the leading DF=17 data bits (LR2021OokAdsb::kDF17Pattern; lr2021_ook_adsb.hh has
+    // the bench results). The detector consumes the DF bits of its pattern, so the captured payload starts
+    // mid-byte -- the byte-granular hardware CRC can't align to that, so DF17 mode runs with the hardware CRC
+    // OFF and validates in software over the reconstructed full frame.
     //
     // SetOokDetector preamble_pattern is LSB-first (LSB = first chip received) and its 2 LSBs MUST
     // be 01 or 10 (datasheet §16.3.8, p.197). ADS-B chips are inverse-Manchester (1->10, 0->01).
+    //
+    // The header fields describe the DF bits the detector consumes, which the RX path prepends back
+    // onto the captured remainder during frame reconstruction.
     struct OokDetectorConfig {
-        uint16_t pattern;   // Detection pattern, LSB-first chips.
-        uint8_t len_chips;  // Pattern length in chips (SetOokDetector length field is N-1).
+        uint16_t pattern;          // Detection pattern, LSB-first chips.
+        uint8_t len_chips;         // Pattern length in chips (SetOokDetector length field is N-1).
+        uint16_t header_bits;      // DF bits consumed by the detector (MSB-first bit values).
+        uint16_t header_len_bits;  // Number of DF bits consumed.
     };
-    static constexpr OokDetectorConfig kOokDF17Detector = {LR2021OokAdsb::kDF17Pattern,
-                                                           LR2021OokAdsb::kDF17PatternLenChips};
+    // Preamble chips 8-15 ("01000000", one pulse + quiet tail) followed by the first 4 DF bits "1000"
+    // (8 chips "10010101"). 16 chips total, the hardware max. Capture starts at message bit 4.
+    static constexpr OokDetectorConfig kOokDF17Detector = {
+        LR2021OokAdsb::kDF17Pattern, LR2021OokAdsb::kDF17PatternLenChips, LR2021OokAdsb::kDF17HeaderBits,
+        LR2021OokAdsb::kDF17HeaderLenBits};
     // Payload bytes captured after the detector pattern in DF17 mode (CRC off, so no CRC bytes
-    // appended). 14 bytes = 112 bits: message bits 5-116 for a capture at the nominal position; the
-    // realignment uses the spare bits when a capture starts early.
+    // appended). 14 bytes = 112 bits covers the message remainder; the last few captured bits
+    // (header_len_bits worth) are slop the reconstruction ignores.
     static constexpr uint16_t kOokDF17PacketRxLenBytes = 14;
 
     // True for the preamble mode that detects on DF17 header bits (hardware CRC off, mid-byte capture).

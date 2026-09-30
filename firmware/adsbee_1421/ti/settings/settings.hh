@@ -88,7 +88,7 @@ class SettingsManager {
     //   Any other value (settings from newer firmware): loads as the factory default, DF17.
     enum R1090PreambleMode : uint8_t {
         kR1090PreambleModeRemovedModeSPreamble = 0,  // Placeholder for the removed MODE_S_PREAMBLE.
-        kR1090PreambleModeDF17 = 1,   // Detector on the DF=17 bits, frames realigned in software: DF17 only.
+        kR1090PreambleModeDF17 = 1,   // Preamble chips 8-15 + DF17 header bits: DF17 frames only.
         kR1090PreambleModeModeS = 2,  // Standard preamble, raised AGC trigger: every downlink format,
                                       // weak signals up to about -45 dBm.
         kR1090PreambleModeModeSStrong = 3,  // Preamble chips 6-15, raised OOK threshold: strong signals (about

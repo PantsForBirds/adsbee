@@ -10,7 +10,6 @@
 
 #include "buffer_utils.hh"
 #include "comms.hh"
-#include "crc.hh"
 #include "cycle_counter.hh"
 #include "flash_utils.hh"
 #include "led.hh"
@@ -102,8 +101,6 @@ bool ADSBee::SetLR2021Enabled(bool enabled) {
 }
 
 bool ADSBee::ApplyReceiverConfig() {
-    df17_prev_capture_valid_ = false;  // A (re)configured receiver starts a new FIFO stream.
-    df17_fail_run_ = 0;
     bool success = ApplyReceiverConfigInner();
     receiver_config_ok_ = success;
     if (!success) {
@@ -619,8 +616,6 @@ bool ADSBee::UpdateLR2021() {
         if (resync_ok) {
             lr2021.fifo_overflow_pending = false;
             lr2021_fifo_resync_count++;
-            df17_prev_capture_valid_ = false;  // The flushed stream starts over.
-            df17_fail_run_ = 0;
         }  // On failure the flag stays set and the resync is retried next pass.
         GPIO_clearInt(bsp.kLR2021IrqPin);
         GPIO_enableInt(bsp.kLR2021IrqPin);
@@ -725,33 +720,6 @@ bool ADSBee::UpdateLR2021() {
     return success;
 }
 
-void ADSBee::CheckDF17FramingSlip(const uint8_t* capture, bool realign_failed) {
-    // A slipped FIFO stream (LR2021OokAdsb::FindDF17ByteSlip) makes every capture fail, so the check only runs
-    // after a run of failures, and at most once per kSlipCheckIntervalMs: in dense garbage every capture fails,
-    // and 13 realignments per capture would cost more than the realignment itself. A slip leaves every later
-    // capture misaligned, so with real traffic one of the next few checks finds a frame split across two windows.
-    df17_fail_run_ = realign_failed ? df17_fail_run_ + 1 : 0;
-    const uint32_t now_ms = get_time_since_boot_ms();
-    if (df17_prev_capture_valid_ && df17_fail_run_ >= kSlipCheckAfterFailures &&
-        now_ms - df17_last_slip_check_ms_ >= kSlipCheckIntervalMs) {
-        df17_last_slip_check_ms_ = now_ms;
-        uint8_t frame[LR2021OokAdsb::kModeSFrameLenBytes];
-        const uint8_t slip = LR2021OokAdsb::FindDF17ByteSlip(
-            df17_prev_capture_, capture, frame, [](const uint8_t* buf, uint16_t len) { return crc24(buf, len); });
-        if (slip) {
-            // The existing overflow resync (UpdateLR2021) flushes the FIFO and re-arms RX: the one way to get the
-            // read windows back onto packet boundaries.
-            lr2021.fifo_overflow_pending = true;
-            lr2021_fifo_slip_count++;
-            df17_fail_run_ = 0;
-            CONSOLE_WARNING("ADSBee::ParseLR2021RxFifo", "RX FIFO framing slipped by %u byte%s; resyncing.", slip,
-                            slip == 1 ? "" : "s");
-        }
-    }
-    for (uint16_t k = 0; k < LR2021OokAdsb::kModeSFrameLenBytes; k++) df17_prev_capture_[k] = capture[k];
-    df17_prev_capture_valid_ = true;
-}
-
 void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us) {
     // The FIFO packet length depends on the preamble mode: DF17 mode captures a shorter
     // remainder because the detector consumed the preamble + DF17 header bits.
@@ -764,33 +732,19 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
 
         uint32_t rx_word_buf[RawModeSPacket::kMaxPacketLenWords32] = {0};
         if (df17_mode) {
-            // The detector consumed the DF=17 bits, and the capture may start a few bits off: rebuild the
-            // full 112-bit frame against the known DF bits and the CRC (lr2021_ook_adsb.hh). Without a match
-            // this is the nominal reconstruction, and the decoder handles it as before.
-            static_assert(LR2021::kOokDF17PacketRxLenBytes == LR2021OokAdsb::kModeSFrameLenBytes,
-                          "RecoverDF17Frame reads one 112-bit capture.");
-            uint8_t frame[LR2021OokAdsb::kModeSFrameLenBytes];
-            if (packet_decoder.raw_mode_s_packet_queue.Length() >= kDF17RealignMaxQueueDepth) {
-                // Budget: the decoder is falling behind, so this burst gets no realignment. Realigning costs
-                // about 1000 cycles for a capture that matches nothing (noise, garbled or overlapping frames),
-                // and those are exactly what a dense burst is full of.
-                LR2021OokAdsb::NominalDF17Frame(packet_start, frame);
-                lr2021_df17_realign_skipped_count++;
-                df17_prev_capture_valid_ = false;  // No realignment, so no slip check across this capture either.
-            } else {
-                const uint32_t realign_start_cycles = CycleCounter::Now();
-                const int8_t shift = LR2021OokAdsb::RecoverDF17Frame(
-                    packet_start, frame, [](const uint8_t* buf, uint16_t len) { return crc24(buf, len); });
-                const uint32_t realign_cycles = CycleCounter::Since(realign_start_cycles);
-                if (realign_cycles > df17_realign_max_cycles) df17_realign_max_cycles = realign_cycles;
-                df17_realign_total_cycles += realign_cycles;
-                df17_realign_calls++;
-                if (shift != INT8_MIN && shift != LR2021OokAdsb::kDF17HeaderLenBits) {
-                    lr2021_df17_realigned_count++;
-                }
-                CheckDF17FramingSlip(packet_start, shift == INT8_MIN);
+            // Reconstruct the full 112-bit frame by prepending the known DF=17 header bits
+            // (which the detector consumed) in front of the captured remainder, so the decoder +
+            // software CRC validate the whole frame.
+            const LR2021::OokDetectorConfig& detector = LR2021::kOokDF17Detector;
+            SetNBitsInWordBuffer(detector.header_len_bits, detector.header_bits, 0, rx_word_buf);
+            uint32_t remainder_words[RawModeSPacket::kMaxPacketLenWords32] = {0};
+            ByteBufferToWordBuffer(packet_start, remainder_words, packet_len_bytes);
+            const uint16_t remainder_bits = packet_len_bytes * 8;
+            for (uint16_t b = 0; b < remainder_bits; b += 8) {
+                uint16_t chunk = (remainder_bits - b) < 8 ? (remainder_bits - b) : 8;
+                uint32_t val = GetNBitsFromWordBuffer(chunk, b, remainder_words);
+                SetNBitsInWordBuffer(chunk, val, detector.header_len_bits + b, rx_word_buf);
             }
-            ByteBufferToWordBuffer(frame, rx_word_buf, LR2021OokAdsb::kModeSFrameLenBytes);
         } else {
             ByteBufferToWordBuffer(packet_start, rx_word_buf, packet_len_bytes);
         }

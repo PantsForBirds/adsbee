@@ -93,26 +93,9 @@ class ADSBee {
     // boost) instead of being retried.
     uint32_t lr2021_config_fallback_count = 0;
     uint32_t lr2021_validity_reconfig_count = 0;  // Validity watchdog: reconfigs after N frames with 0 CRC passes.
-    // DF17 mode: captures that started off the nominal bit and were realigned (LR2021OokAdsb::RecoverDF17Frame).
-    uint32_t lr2021_df17_realigned_count = 0;
-    // DF17 mode: captures passed on without realignment because the raw packet queue was backing up (at least
-    // kDF17RealignMaxQueueDepth packets waiting for the decoder). They get the nominal reconstruction, which is
-    // what a capture that starts on the nominal bit needs anyway.
-    uint32_t lr2021_df17_realign_skipped_count = 0;
-    // DF17 mode: FIFO framing slips found (LR2021OokAdsb::FindDF17ByteSlip) and flushed away. Reported via
-    // AT+RX_STATS as fifo_slips; each one also counts as a fifo_resync.
-    uint32_t lr2021_fifo_slip_count = 0;
-    // Slip check: after this many consecutive DF17 captures without a realignment match, look at most once per
-    // kSlipCheckIntervalMs whether the last two captures are a real frame split across a slipped read window.
-    static constexpr uint16_t kSlipCheckAfterFailures = 4;
-    static constexpr uint32_t kSlipCheckIntervalMs = 100;
-    static constexpr uint16_t kDF17RealignMaxQueueDepth = 50;
 
     // CPU cost, in CPU cycles (48 per microsecond; utils/cycle_counter.hh). Reported and reset via AT+RX_STATS.
-    uint32_t df17_realign_max_cycles = 0;     // Longest RecoverDF17Frame call.
-    uint64_t df17_realign_total_cycles = 0;   // Sum and count of RecoverDF17Frame calls, for the average.
-    uint32_t df17_realign_calls = 0;
-    uint32_t parse_capture_max_cycles = 0;    // Longest per-capture pass of ParseLR2021RxFifo (realignment included).
+    uint32_t parse_capture_max_cycles = 0;    // Longest per-capture pass of ParseLR2021RxFifo.
     uint32_t max_loop_cycles = 0;             // Longest main loop iteration (max_loop_us, at cycle resolution).
     uint64_t loop_total_cycles = 0;           // Sum and count of main loop iterations, for the average.
     uint32_t loop_count = 0;
@@ -140,7 +123,7 @@ class ADSBee {
 
    private:
 #ifdef HARDWARE_UNIT_TESTS
-    friend class ADSBeeTestAccessor;  // target_test/test_df17_cpu.cpp: feeds synthetic captures to the parser.
+    friend class ADSBeeTestAccessor;  // target_test/test_rx_cpu.cpp: feeds synthetic captures to the parser.
 #endif
     void IngestAndForwardPackets();
     void PruneAircraftDictionary();
@@ -154,9 +137,6 @@ class ADSBee {
     // mlat_timestamp_us stamps every packet in the batch (IRQ-edge time for chain slots, parse time
     // for loop-drain payloads).
     void ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us);
-    // DF17 mode: remembers the capture and, after a run of captures without a realignment match, checks whether
-    // the FIFO framing has slipped; if so, schedules the FIFO flush/resync.
-    void CheckDF17FramingSlip(const uint8_t* capture, bool realign_failed);
     // (Re)applies the current receiver configuration (sync mode, gain, CRC filter) to the LR2021.
     bool ApplyReceiverConfig();
 
@@ -206,13 +186,7 @@ class ADSBee {
     uint8_t lr2021_rearm_attempts_ = 0;     // Consecutive minimal re-arms without a confirmed kRx.
     bool receiver_config_ok_ = false;       // Last ApplyReceiverConfig attempt succeeded end-to-end.
     uint32_t last_drain_error_log_ms_ = 0;  // Rate-limits the drain-failure CONSOLE_ERROR (1/s).
-    uint32_t lr2021_frames_since_valid_ = 0;
-    // Slip check state (ParseLR2021RxFifo, DF17 mode): the previous capture, the run of captures without a
-    // realignment match, and when the check last ran.
-    uint8_t df17_prev_capture_[LR2021OokAdsb::kModeSFrameLenBytes] = {0};
-    bool df17_prev_capture_valid_ = false;
-    uint16_t df17_fail_run_ = 0;
-    uint32_t df17_last_slip_check_ms_ = 0;  // Parsed frames since the last CRC-valid decode (watchdog input).
+    uint32_t lr2021_frames_since_valid_ = 0;  // Parsed frames since the last CRC-valid decode (watchdog input).
 };
 
 extern ADSBee adsbee;
