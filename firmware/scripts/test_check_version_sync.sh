@@ -62,7 +62,8 @@ make_repo() {
         firmware/adsbee_1421/programmer/scripts/hex_to_c.py firmware/adsbee_1421/ti/CMakeLists.txt \
         firmware/adsbee_1090/esp/README.md firmware/adsbee_1090/esp/main.cpp \
         firmware/adsbee_1090/ti/README.md firmware/adsbee_1090/pico/main.cpp \
-        firmware/common/README.md firmware/common/decoder.cc; do
+        firmware/common/README.md firmware/common/decoder.cc \
+        firmware/common/coprocessor/spi_coprocessor.cpp; do
         echo original > "$f"
     done
     git add -A
@@ -179,6 +180,12 @@ expect fail "common: .cc (needs both bumps)" firmware/common/decoder.cc version:
 expect pass "common: .cc with both bumps" firmware/common/decoder.cc \
     version:1090:0.9.1-rc5 version:1421:0.3.11-rc4
 expect pass "adsbee_1421: .cpp with a version bump" firmware/adsbee_1421/ti/main.cpp version:1421:0.3.11-rc4
+expect pass "adsbee_1090: esp .cpp with a 1090-only bump (1090 version file not watched for 1421)" \
+    --msg "adsbee_1421: no firmware changes" firmware/adsbee_1090/esp/main.cpp version:1090:0.9.1-rc5
+expect pass "adsbee_1090: 1090-only bump, committed (refs)" \
+    --msg "adsbee_1421: no firmware changes" firmware/adsbee_1090/esp/main.cpp version:1090:0.9.1-rc5 commit
+expect fail "common: other coprocessor file still watched for 1421" \
+    --msg "adsbee_1421-0.3.11-rc3" firmware/common/coprocessor/spi_coprocessor.cpp version:1090:0.9.1-rc5
 expect fail "adsbee_1421: committed .cpp on top of the release (refs)" \
     firmware/adsbee_1421/ti/main.cpp commit
 

@@ -70,4 +70,9 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-packed-bitfield-compat)
 # Drop the Open Drone ID library's printf/debug helpers (we only use the decode path). Saves flash and avoids stdio.
 target_compile_definitions(${COMPONENT_LIB} PRIVATE ODID_DISABLE_PRINTF)
 
+# Internal RAM diagnostics for memory tuning (see heap_diagnostics.hh): idf.py -DHEAP_DIAGNOSTICS=1 build
+if(HEAP_DIAGNOSTICS)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE HEAP_DIAGNOSTICS)
+endif()
+
 message("PROJECT_SOURCE_DIR: ${PROJECT_SOURCE_DIR}")
