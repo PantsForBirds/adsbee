@@ -54,6 +54,107 @@ static_assert(kStrongPattern == 0x000A, "Strong pattern: chips 6-15 = 0101000000
 static_assert(PreambleChipsPatternIsValid(kStrongPatternFirstChip, kStrongPatternLastChip),
               "Strong pattern must start with a transition.");
 
+// DF17 detector: the five DF bits "10001" of the message (10 chips "10 01 01 01 10"), nothing from the
+// preamble. The capture starts at message bit 5.
+//
+// Why no preamble chips: at a weak level (no AGC action) the LR2021 accepts a window about one chip away
+// from the pattern, and any pattern made of chips 6-15 near-matches the first pulse pair (the preamble is two
+// copies of 1010000), so it fires early and the real frame is lost. From about -53 dBm up the AGC blanks
+// chips 0-8. Patterns that end in the preamble or just after it (the old chips 8-15 + DF bits "1000") lose
+// about 20 % of the frames at every level: the detector then latches later inside the data (capture from
+// message bit 24, 41 or 70). The DF bits sit after both effects.
+//
+// What the capture looks like (Pluto bench, 50 frames per level, t-0080): up to -60 dBm it starts at bit 5
+// (98-100 % from -84 dBm). From about -60 dBm up the start moves by whole bits: bit -2, 3, 4, 6 or 7 (the
+// detector fires early or late while the AGC settles), and bits 0-7 can carry errors. RecoverDF17Frame() realigns such captures against the known DF bits and the CRC.
+static constexpr uint8_t kDF17HeaderBits = 0b10001;  // DF = 17, MSB first.
+static constexpr uint8_t kDF17HeaderLenBits = 5;
+// Chips of the first num_bits message bits of value `bits` (MSB first), LSB-first pattern layout.
+constexpr uint16_t MessageBitsPattern(uint32_t bits, uint8_t num_bits) {
+    uint16_t pattern = 0;
+    for (uint8_t i = 0; i < num_bits; i++) {
+        const bool bit = (bits >> (num_bits - 1 - i)) & 1u;
+        pattern |= static_cast<uint16_t>((bit ? 0b01u : 0b10u) << (2 * i));  // 1 -> chips 1,0; 0 -> chips 0,1.
+    }
+    return pattern;
+}
+static constexpr uint16_t kDF17Pattern = MessageBitsPattern(kDF17HeaderBits, kDF17HeaderLenBits);
+static constexpr uint8_t kDF17PatternLenChips = 2 * kDF17HeaderLenBits;
+static_assert(kDF17Pattern == 0x01A9, "DF17 pattern: chips 1001010110 (LSB first).");
+static_assert((kDF17Pattern & 1u) != ((kDF17Pattern >> 1) & 1u), "DF17 pattern must start with a transition.");
+
+// Realignment of a DF17-mode capture. The capture holds message bits s .. s+111 for an unknown shift s;
+// the nominal shift is kDF17HeaderLenBits. Shifts are tried in this order (the nominal one first, then the
+// ones seen on the bench, most frequent first):
+static constexpr int8_t kDF17Shifts[] = {5, 4, 3, 2, 1, 0, -1, -2, 6, 7};
+static constexpr uint16_t kModeSFrameLenBits = 112;
+static constexpr uint16_t kModeSFrameLenBytes = kModeSFrameLenBits / 8;
+// Bits after the DF field that are also tried flipped (the CA field): the AGC settling leaves errors in
+// message bits 0-7, and bits 0-4 are known.
+static constexpr uint8_t kDF17FlipFirstBit = kDF17HeaderLenBits;
+static constexpr uint8_t kDF17FlipNumBits = 3;
+
+inline bool GetMsgBit(const uint8_t* buf, uint16_t i) { return (buf[i / 8] >> (7 - i % 8)) & 1u; }
+inline void SetMsgBit(uint8_t* buf, uint16_t i, bool v) {
+    buf[i / 8] = static_cast<uint8_t>(v ? (buf[i / 8] | (0x80u >> (i % 8))) : (buf[i / 8] & ~(0x80u >> (i % 8))));
+}
+
+// Rebuilds a 112-bit DF17 frame from a DF17-mode capture (kModeSFrameLenBytes bytes, MSB first). For each
+// shift: message bits 0-4 are set to DF=17, bits the capture doesn't hold (CA bits before a late capture, the
+// last bits after an early one) are tried both ways, and so are the three CA bits. The first candidate with
+// a matching parity wins. crc24(buf, len) must return the Mode S CRC of len bytes. Returns the shift used, or
+// INT8_MIN (frame_out = the nominal reconstruction) if no candidate matched; the decoder then gets the frame
+// the old way. Worst case (no match): 112 CRCs of 11 bytes, as many candidates as the decoder's single-bit
+// correction tries.
+template <typename Crc24Fn>
+int8_t RecoverDF17Frame(const uint8_t* capture, uint8_t* frame_out, Crc24Fn crc24) {
+    for (int8_t shift : kDF17Shifts) {
+        uint8_t base[kModeSFrameLenBytes] = {0};
+        uint8_t unknown[4];  // Message bits the capture doesn't hold: at most 2 late + 2 early.
+        uint8_t num_unknown = 0;
+        for (uint16_t i = 0; i < kModeSFrameLenBits; i++) {
+            const int16_t c = static_cast<int16_t>(i) - shift;  // Capture bit holding message bit i.
+            if (i < kDF17HeaderLenBits) {
+                SetMsgBit(base, i, (kDF17HeaderBits >> (kDF17HeaderLenBits - 1 - i)) & 1u);
+            } else if (c < 0 || c >= static_cast<int16_t>(kModeSFrameLenBits)) {
+                unknown[num_unknown++] = static_cast<uint8_t>(i);
+            } else {
+                SetMsgBit(base, i, GetMsgBit(capture, static_cast<uint16_t>(c)));
+            }
+        }
+        // Flip bits: the CA bits, unless they are already unknown (then trying both covers them).
+        uint8_t flips[kDF17FlipNumBits];
+        uint8_t num_flips = 0;
+        for (uint8_t b = kDF17FlipFirstBit; b < kDF17FlipFirstBit + kDF17FlipNumBits; b++) {
+            bool is_unknown = false;
+            for (uint8_t u = 0; u < num_unknown; u++) is_unknown |= unknown[u] == b;
+            if (!is_unknown) flips[num_flips++] = b;
+        }
+        const uint16_t num_candidates = static_cast<uint16_t>(1u << (num_unknown + num_flips));
+        for (uint16_t v = 0; v < num_candidates; v++) {
+            uint8_t f[kModeSFrameLenBytes];
+            for (uint16_t k = 0; k < kModeSFrameLenBytes; k++) f[k] = base[k];
+            for (uint8_t u = 0; u < num_unknown; u++) SetMsgBit(f, unknown[u], (v >> u) & 1u);
+            for (uint8_t j = 0; j < num_flips; j++) {
+                if ((v >> (num_unknown + j)) & 1u) SetMsgBit(f, flips[j], !GetMsgBit(f, flips[j]));
+            }
+            const uint32_t parity = (static_cast<uint32_t>(f[11]) << 16) | (static_cast<uint32_t>(f[12]) << 8) | f[13];
+            if (crc24(f, kModeSFrameLenBytes - 3) == parity) {
+                for (uint16_t k = 0; k < kModeSFrameLenBytes; k++) frame_out[k] = f[k];
+                return shift;
+            }
+        }
+    }
+    // No match: the nominal reconstruction (DF bits + capture).
+    uint8_t f[kModeSFrameLenBytes] = {0};
+    for (uint16_t i = 0; i < kModeSFrameLenBits; i++) {
+        SetMsgBit(f, i, i < kDF17HeaderLenBits ? ((kDF17HeaderBits >> (kDF17HeaderLenBits - 1 - i)) & 1u)
+                                               : GetMsgBit(capture, i - kDF17HeaderLenBits));
+    }
+    for (uint16_t k = 0; k < kModeSFrameLenBytes; k++) frame_out[k] = f[k];
+    return INT8_MIN;
+}
+
 // LR2021 AGC configuration register. Undocumented; the fields below were characterized on the bench
 // (ADSBee 1421, 1090 MHz, OOK 2 Mchip/s, 3076 kHz RX bandwidth). Bits 23:16 set the input level at which
 // the AGC starts cutting the gain while a packet arrives. Bits 15:8 hold enables (values with bit 4 set

@@ -10,6 +10,7 @@
 
 #include "buffer_utils.hh"
 #include "comms.hh"
+#include "crc.hh"
 #include "flash_utils.hh"
 #include "led.hh"
 #include "packet_decoder.hh"
@@ -709,19 +710,18 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
 
         uint32_t rx_word_buf[RawModeSPacket::kMaxPacketLenWords32] = {0};
         if (df17_mode) {
-            // Reconstruct the full 112-bit frame by prepending the known DF=17 header bits
-            // (which the detector consumed) in front of the captured remainder, so the decoder +
-            // software CRC validate the whole frame.
-            const LR2021::OokDetectorConfig& detector = LR2021::kOokDF17Detector;
-            SetNBitsInWordBuffer(detector.header_len_bits, detector.header_bits, 0, rx_word_buf);
-            uint32_t remainder_words[RawModeSPacket::kMaxPacketLenWords32] = {0};
-            ByteBufferToWordBuffer(packet_start, remainder_words, packet_len_bytes);
-            const uint16_t remainder_bits = packet_len_bytes * 8;
-            for (uint16_t b = 0; b < remainder_bits; b += 8) {
-                uint16_t chunk = (remainder_bits - b) < 8 ? (remainder_bits - b) : 8;
-                uint32_t val = GetNBitsFromWordBuffer(chunk, b, remainder_words);
-                SetNBitsInWordBuffer(chunk, val, detector.header_len_bits + b, rx_word_buf);
+            // The detector consumed the DF=17 bits, and the capture may start a few bits off: rebuild the
+            // full 112-bit frame against the known DF bits and the CRC (lr2021_ook_adsb.hh). Without a match
+            // this is the nominal reconstruction, and the decoder handles it as before.
+            static_assert(LR2021::kOokDF17PacketRxLenBytes == LR2021OokAdsb::kModeSFrameLenBytes,
+                          "RecoverDF17Frame reads one 112-bit capture.");
+            uint8_t frame[LR2021OokAdsb::kModeSFrameLenBytes];
+            const int8_t shift = LR2021OokAdsb::RecoverDF17Frame(
+                packet_start, frame, [](const uint8_t* buf, uint16_t len) { return crc24(buf, len); });
+            if (shift != INT8_MIN && shift != LR2021OokAdsb::kDF17HeaderLenBits) {
+                lr2021_df17_realigned_count++;
             }
+            ByteBufferToWordBuffer(frame, rx_word_buf, LR2021OokAdsb::kModeSFrameLenBytes);
         } else {
             ByteBufferToWordBuffer(packet_start, rx_word_buf, packet_len_bytes);
         }

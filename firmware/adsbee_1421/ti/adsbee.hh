@@ -90,6 +90,8 @@ class ADSBee {
     uint32_t lr2021_rx_reconfig_count = 0;   // Health ladder: full ApplyReceiverConfig escalation.
     uint32_t lr2021_config_fail_count = 0;   // ApplyReceiverConfig attempts that failed (retried on backoff).
     uint32_t lr2021_validity_reconfig_count = 0;  // Validity watchdog: reconfigs after N frames with 0 CRC passes.
+    // DF17 mode: captures that started off the nominal bit and were realigned (LR2021OokAdsb::RecoverDF17Frame).
+    uint32_t lr2021_df17_realigned_count = 0;
 
     // Longest single super-loop iteration observed, in microseconds. Reported and reset via AT+RX_STATS. Every
     // millisecond spent in one iteration is a millisecond the LR2021 FIFO isn't drained and AT commands aren't

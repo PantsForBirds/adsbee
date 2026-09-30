@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <algorithm>
+#include <iterator>
+#include <random>
 #include <vector>
 
 #include "lr2021_ook_adsb.hh"
@@ -117,6 +120,128 @@ static void TestOokDetectThresholdRegValue() {
     EXPECT((OokDetectThresholdRegValue(0xFF) & ~kOokDetectThresholdMask) == 0);
 }
 
+// Mode S CRC-24 (generator 0xFFF409), bitwise, independent of the firmware's table implementation.
+static uint32_t Crc24(const uint8_t* buf, uint16_t len) {
+    uint32_t r = 0;
+    for (uint16_t i = 0; i < len; i++) {
+        r ^= static_cast<uint32_t>(buf[i]) << 16;
+        for (int b = 0; b < 8; b++) r = (r & 0x800000) ? ((r << 1) ^ 0xFFF409) : (r << 1);
+    }
+    return r & 0xFFFFFF;
+}
+
+// A valid DF17 frame: the first 11 bytes given, the parity computed.
+static std::vector<uint8_t> DF17Frame(std::vector<uint8_t> data11) {
+    const uint32_t p = Crc24(data11.data(), 11);
+    data11.push_back(p >> 16);
+    data11.push_back((p >> 8) & 0xFF);
+    data11.push_back(p & 0xFF);
+    return data11;
+}
+
+// What the detector's capture holds when it starts at message bit `shift`: 112 bits, bits before the frame
+// (shift < 0) and after it set to `fill`.
+static std::vector<uint8_t> Capture(const std::vector<uint8_t>& frame, int shift, bool fill = true) {
+    std::vector<uint8_t> cap(kModeSFrameLenBytes, 0);
+    for (int j = 0; j < kModeSFrameLenBits; j++) {
+        const int i = j + shift;
+        SetMsgBit(cap.data(), j, (i < 0 || i >= kModeSFrameLenBits) ? fill : GetMsgBit(frame.data(), i));
+    }
+    return cap;
+}
+
+static void TestDF17Pattern() {
+    // The pattern is the chips of the five DF bits and ends on a bit boundary (message bit 5).
+    const std::vector<uint8_t> chips = ModeSChips({0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0,
+                                                   0x57, 0x60, 0x98});
+    EXPECT(Window(chips, kPreambleNumChips, kDF17PatternLenChips) == kDF17Pattern);
+    EXPECT(kDF17PatternLenChips == 10 && kDF17PatternLenChips <= 16);
+    // Every other DF differs from DF17 in at least one bit, i.e. two chips.
+    for (uint8_t df = 0; df < 32; df++) {
+        if (df == 17) continue;
+        EXPECT(ChipErrors(MessageBitsPattern(df, 5), kDF17Pattern, kDF17PatternLenChips) >= 2);
+    }
+    // Nothing in the preamble (clean, or with the first 9 chips blanked by the AGC) is within one chip of it.
+    // The closest window is preamble chips 2-11 (two chips off, clean preamble only): a detector firing there
+    // captures from chip 12, message bit -2, one of the shifts the realignment handles.
+    for (int blanked = 0; blanked <= 1; blanked++) {
+        std::vector<uint8_t> c(12, 0);  // Silence before the packet.
+        c.insert(c.end(), chips.begin(), chips.end());
+        if (blanked) {
+            for (size_t i = 12; i < 12 + 9; i++) c[i] = 0;
+        }
+        for (size_t first = 0; first + kDF17PatternLenChips <= 12 + kPreambleNumChips; first++) {
+            const int errors = ChipErrors(Window(c, first, kDF17PatternLenChips), kDF17Pattern, kDF17PatternLenChips);
+            EXPECT(errors > 1);
+            EXPECT(errors > 2 || (!blanked && first == 12 + 2));
+        }
+    }
+    EXPECT(ChipErrors(Window(chips, 2, kDF17PatternLenChips), kDF17Pattern, kDF17PatternLenChips) == 2);
+    const int alias_capture_bit = (2 + kDF17PatternLenChips - static_cast<int>(kPreambleNumChips)) / 2;
+    EXPECT(alias_capture_bit == -2 &&
+           std::find(std::begin(kDF17Shifts), std::end(kDF17Shifts), alias_capture_bit) != std::end(kDF17Shifts));
+}
+
+static void TestDF17RecoveryShifts() {
+    const std::vector<std::vector<uint8_t>> frames = {
+        DF17Frame({0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0}),  // CA 5
+        DF17Frame({0x8C, 0xAB, 0xCD, 0xEF, 0x99, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01}),  // CA 4
+        DF17Frame({0x8E, 0x00, 0x00, 0x01, 0x58, 0xC3, 0x82, 0xD6, 0x90, 0xC8, 0xAC}),  // CA 6
+        DF17Frame({0x88, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}),  // CA 0
+    };
+    for (const auto& f : frames) {
+        EXPECT(Crc24(f.data(), 11) == ((uint32_t(f[11]) << 16) | (uint32_t(f[12]) << 8) | f[13]));
+        for (int8_t shift : kDF17Shifts) {
+            for (int fill = 0; fill <= 1; fill++) {
+                const std::vector<uint8_t> cap = Capture(f, shift, fill);
+                uint8_t out[kModeSFrameLenBytes];
+                EXPECT(RecoverDF17Frame(cap.data(), out, Crc24) == shift);
+                EXPECT(std::vector<uint8_t>(out, out + kModeSFrameLenBytes) == f);
+            }
+        }
+    }
+}
+
+// The AGC settling leaves errors in message bits 0-7 of a strong frame: bits 0-4 are known, the CA bits 5-7
+// are tried flipped.
+static void TestDF17RecoveryHeaderErrors() {
+    const std::vector<uint8_t> f = DF17Frame({0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0});
+    for (int8_t shift : {-2, -1, 0, 3}) {
+        for (uint16_t errs = 0; errs < 256; errs++) {  // Any error pattern in message bits 0-7.
+            std::vector<uint8_t> g = f;
+            for (int b = 0; b < 8; b++) {
+                if ((errs >> b) & 1) SetMsgBit(g.data(), b, !GetMsgBit(g.data(), b));
+            }
+            const std::vector<uint8_t> cap = Capture(g, shift);
+            uint8_t out[kModeSFrameLenBytes];
+            EXPECT(RecoverDF17Frame(cap.data(), out, Crc24) == shift);
+            EXPECT(std::vector<uint8_t>(out, out + kModeSFrameLenBytes) == f);
+        }
+    }
+    // An error after bit 7 is left to the decoder (single-bit correction): no candidate matches, and the output
+    // is the nominal reconstruction.
+    std::vector<uint8_t> g = f;
+    SetMsgBit(g.data(), 40, !GetMsgBit(g.data(), 40));
+    const std::vector<uint8_t> cap = Capture(g, kDF17HeaderLenBits);
+    uint8_t out[kModeSFrameLenBytes];
+    EXPECT(RecoverDF17Frame(cap.data(), out, Crc24) == INT8_MIN);
+    EXPECT(std::vector<uint8_t>(out, out + kModeSFrameLenBytes - 1) ==
+           std::vector<uint8_t>(g.begin(), g.end() - 1));  // The last byte ends in capture slop.
+}
+
+// Random captures (noise triggers) must almost never turn into a valid frame: at most 112 candidates each,
+// so about 112 / 2^24 per capture.
+static void TestDF17RecoveryRejectsNoise() {
+    std::mt19937 rng(1090);
+    int accepted = 0;
+    for (int n = 0; n < 20000; n++) {
+        uint8_t cap[kModeSFrameLenBytes], out[kModeSFrameLenBytes];
+        for (auto& b : cap) b = static_cast<uint8_t>(rng());
+        if (RecoverDF17Frame(cap, out, Crc24) != INT8_MIN) accepted++;
+    }
+    EXPECT(accepted <= 1);
+}
+
 int main() {
     TestPatternsMatchThePreamble();
     TestPatternValidity();
@@ -124,6 +249,10 @@ int main() {
     TestStrongPatternAliasOnCleanPreamble();
     TestAgcTriggerRegValue();
     TestOokDetectThresholdRegValue();
+    TestDF17Pattern();
+    TestDF17RecoveryShifts();
+    TestDF17RecoveryHeaderErrors();
+    TestDF17RecoveryRejectsNoise();
     if (failures) {
         printf("%d failure(s)\n", failures);
         return 1;

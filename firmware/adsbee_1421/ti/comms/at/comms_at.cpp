@@ -356,7 +356,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 "irq_errors=%lu,irq_assists=%lu,tx_stalls=%lu,tx_drops=%lu,tx_ring_hw=%u,"
                 "fifo_ovf=%lu,fifo_resyncs=%lu,rx_rearms=%lu,rx_reconfigs=%lu,cfg_fails=%lu,"
                 "dma_timeouts=%lu,report_q_ovf=%lu,"
-                "validity_reconfigs=%lu,stale_edges=%lu,uat_len_mismatch=%lu",
+                "validity_reconfigs=%lu,stale_edges=%lu,uat_len_mismatch=%lu,df17_realigned=%lu",
                 stats.pkt_rx, stats.crc_error, stats.len_error, stats.pbl_det, stats.sync_ok, stats.sync_fail,
                 stats.timeout, (unsigned long)adsbee.lr2021_fifo_full_count,
                 (unsigned long)packet_decoder.raw_queue_overflow_count,
@@ -374,7 +374,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)adsbee.lr2021.drain_dma_timeouts,
                 (unsigned long)comms_manager.mode_s_report_queue_ovf_count,
                 (unsigned long)adsbee.lr2021_validity_reconfig_count, (unsigned long)adsbee.lr2021.irq_stale_edges,
-                (unsigned long)subg_radio.uat_len_mismatch_count);
+                (unsigned long)subg_radio.uat_len_mismatch_count, (unsigned long)adsbee.lr2021_df17_realigned_count);
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -413,6 +413,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.lr2021_validity_reconfig_count = 0;
             adsbee.lr2021.irq_stale_edges = 0;
             subg_radio.uat_len_mismatch_count = 0;
+            adsbee.lr2021_df17_realigned_count = 0;
             CPP_AT_SUCCESS();
             break;
         }

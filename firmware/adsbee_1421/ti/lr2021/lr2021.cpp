@@ -254,9 +254,8 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         return false;
     }
     if (df17_mode) {
-        // Detect on the preamble tail + leading DF=17 data bits rather than the full preamble. The
-        // real preamble still lets the (manual) AGC settle before the pattern completes.
-        if (!SetOokDetector(kOokDF17Detector.pattern,            // Preamble tail + DF17 header chips
+        // Detect on the DF=17 data bits alone (see lr2021_ook_adsb.hh).
+        if (!SetOokDetector(kOokDF17Detector.pattern,            // DF17 header chips
                             kOokDF17Detector.len_chips - 1,      // Pattern length (field is N-1)
                             0,                                   // No pattern repetition
                             false,                               // (no sync word used)
