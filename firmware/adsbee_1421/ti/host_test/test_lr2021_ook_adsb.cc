@@ -1,0 +1,174 @@
+// LR2021 Mode S detector patterns (lr2021_ook_adsb.hh), checked against a chip-level model of a Mode S
+// transmission: the preamble, the data chips, and what the demodulator puts out while the AGC settles on a strong
+// packet (the first 9 chips blanked).
+#include <random>
+#include <vector>
+
+#include "gtest/gtest.h"
+#include "lr2021_ook_adsb.hh"
+
+using namespace LR2021OokAdsb;
+
+// Chips of a Mode S transmission: 16 preamble chips (pulses at 0, 1, 3.5 and 4.5 us), then 2 chips per
+// message bit (1 -> 10, 0 -> 01), MSB of msg[0] first.
+static std::vector<uint8_t> ModeSChips(const std::vector<uint8_t>& msg) {
+    std::vector<uint8_t> chips(kPreambleNumChips, 0);
+    chips[0] = chips[2] = chips[7] = chips[9] = 1;
+    for (uint8_t byte : msg) {
+        for (int b = 7; b >= 0; b--) {
+            bool bit = (byte >> b) & 1;
+            chips.push_back(bit ? 1 : 0);
+            chips.push_back(bit ? 0 : 1);
+        }
+    }
+    return chips;
+}
+
+// Chips first..first+len-1 of the stream packed LSB-first, the SetOokDetector pattern layout.
+static uint16_t Window(const std::vector<uint8_t>& chips, size_t first, size_t len) {
+    uint16_t w = 0;
+    for (size_t i = 0; i < len; i++) {
+        w |= static_cast<uint16_t>(chips[first + i] & 1) << i;
+    }
+    return w;
+}
+
+static int ChipErrors(uint16_t a, uint16_t b, size_t len) {
+    uint16_t x = (a ^ b) & static_cast<uint16_t>((1u << len) - 1u);
+    return __builtin_popcount(x);
+}
+
+TEST(LR2021OokAdsb, PatternsMatchThePreamble) {
+    const std::vector<uint8_t> chips = ModeSChips({0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0,
+                                                   0x57, 0x60, 0x98});
+    EXPECT_EQ(Window(chips, 0, kPreambleNumChips), kPreambleChips);
+    EXPECT_EQ(Window(chips, kModeSPatternFirstChip, kModeSPatternLenChips), kModeSPattern);
+    EXPECT_EQ(Window(chips, kStrongPatternFirstChip, kStrongPatternLenChips), kStrongPattern);
+    // Both patterns end on the last preamble chip, so the capture starts at message bit 0.
+    EXPECT_EQ(kModeSPatternFirstChip + kModeSPatternLenChips, kPreambleNumChips);
+    EXPECT_EQ(kStrongPatternFirstChip + kStrongPatternLenChips, kPreambleNumChips);
+    // SetOokDetector maximum.
+    EXPECT_LE(kModeSPatternLenChips, 16);
+    EXPECT_LE(kStrongPatternLenChips, 16);
+}
+
+TEST(LR2021OokAdsb, PatternValidity) {
+    // SetOokDetector: the first two chips of a pattern must be 01 or 10.
+    EXPECT_TRUE(PreambleChipsPatternIsValid(0, 15));
+    EXPECT_TRUE(PreambleChipsPatternIsValid(6, 15));
+    EXPECT_TRUE(PreambleChipsPatternIsValid(7, 15));
+    EXPECT_FALSE(PreambleChipsPatternIsValid(3, 15));  // Starts with 00.
+    EXPECT_FALSE(PreambleChipsPatternIsValid(10, 15));
+    EXPECT_FALSE(PreambleChipsPatternIsValid(15, 15));
+    EXPECT_FALSE(PreambleChipsPatternIsValid(0, 16));
+    EXPECT_EQ(PreambleChipsPattern(7, 15), 0b000000101);
+    EXPECT_EQ(PreambleChipsPattern(0, 9), 0b1010000101);
+}
+
+// A strong packet makes the AGC cut the gain during the preamble, and the demodulator puts out 0 for
+// the first 9 chips. The standard pattern then differs from what the detector sees in 3 chips, the
+// strong pattern in 1.
+TEST(LR2021OokAdsb, AgcBlanking) {
+    std::vector<uint8_t> chips = ModeSChips({0x5D, 0xAB, 0xCD, 0xEF, 0x00, 0x00, 0x00});
+    for (size_t i = 0; i < 9; i++) {
+        chips[i] = 0;
+    }
+    EXPECT_EQ(ChipErrors(Window(chips, kModeSPatternFirstChip, kModeSPatternLenChips), kModeSPattern,
+                         kModeSPatternLenChips),
+              3);
+    EXPECT_EQ(ChipErrors(Window(chips, kStrongPatternFirstChip, kStrongPatternLenChips), kStrongPattern,
+                         kStrongPatternLenChips),
+              1);
+}
+
+// Without blanking, the strong pattern also lies one chip away from the first pulse pair, 7 chips
+// early (the preamble is two copies of 1010000). The detector latches onto that near-match and then
+// syncs late in the data, which is why MODE_S_STRONG is only for strong signals.
+TEST(LR2021OokAdsb, StrongPatternAliasOnCleanPreamble) {
+    std::vector<uint8_t> chips(7, 0);  // Silence before the packet.
+    std::vector<uint8_t> packet = ModeSChips({0x8D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+    chips.insert(chips.end(), packet.begin(), packet.end());
+    const size_t true_first = 7 + kStrongPatternFirstChip;
+    EXPECT_EQ(ChipErrors(Window(chips, true_first, kStrongPatternLenChips), kStrongPattern, kStrongPatternLenChips),
+              0);
+    EXPECT_EQ(
+        ChipErrors(Window(chips, true_first - 7, kStrongPatternLenChips), kStrongPattern, kStrongPatternLenChips), 1);
+}
+
+TEST(LR2021OokAdsb, AgcTriggerRegValue) {
+    EXPECT_EQ(AgcTriggerRegValue(kAgcTriggerDefault), 0x00100000u);
+    EXPECT_EQ(AgcTriggerRegValue(kAgcTriggerStandardPreamble), 0x00400000u);
+    EXPECT_EQ(AgcTriggerRegValue(0xFF) & ~kAgcTriggerMask, 0u);
+    EXPECT_GT(kAgcTriggerStandardPreamble, kAgcTriggerDefault);
+}
+
+TEST(LR2021OokAdsb, OokDetectThresholdRegValue) {
+    EXPECT_EQ(OokDetectThresholdRegValue(kOokDetectThresholdStrong), 0x00400000u);
+    EXPECT_EQ(OokDetectThresholdRegValue(0x61), 0x06100000u);  // Chip value read back at 3076 kHz.
+    // Never touches the pattern length in bits 3:0 of the same register.
+    EXPECT_EQ(OokDetectThresholdRegValue(0x7F) & 0xF, 0u);
+    EXPECT_EQ(OokDetectThresholdRegValue(0xFF) & ~kOokDetectThresholdMask, 0u);
+}
+
+// The DF17 pattern is preamble chips 8-15 plus the chips of the first four DF bits, so it matches at the end of
+// the preamble of a DF 16 or 17 frame, and only there: six quiet chips never occur inside Manchester data.
+TEST(LR2021OokAdsb, DF17Pattern) {
+    const std::vector<uint8_t> chips = ModeSChips({0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0,
+                                                   0x57, 0x60, 0x98});
+    EXPECT_EQ(Window(chips, kDF17PatternFirstChip, kDF17PatternLenChips), kDF17Pattern);
+    EXPECT_EQ(kDF17PatternLenChips, 16);
+    // The capture starts right after the pattern: message bit 4.
+    EXPECT_EQ(kDF17PatternFirstChip + kDF17PatternLenChips, kPreambleNumChips + 2 * kDF17HeaderLenBits);
+    // DF 16 and 17 share the pattern's DF bits; every other DF differs in at least one bit, i.e. two chips.
+    for (uint8_t df = 0; df < 32; df++) {
+        const int errors = ChipErrors(MessageBitsPattern(df >> 1, kDF17HeaderLenBits) << 8, kDF17Pattern & 0xFF00u,
+                                      kDF17PatternLenChips);
+        if ((df >> 1) == kDF17HeaderBits) {
+            EXPECT_EQ(errors, 0) << "DF " << int(df);
+        } else {
+            EXPECT_GE(errors, 2) << "DF " << int(df);
+        }
+    }
+    // No window of random frames' data, at any chip phase, is within one chip of the pattern.
+    std::mt19937 rng(8);
+    for (int n = 0; n < 200; n++) {
+        std::vector<uint8_t> msg(14);
+        for (auto& b : msg) b = static_cast<uint8_t>(rng());
+        const std::vector<uint8_t> c = ModeSChips(msg);
+        for (size_t first = kPreambleNumChips; first + kDF17PatternLenChips <= c.size(); first++) {
+            EXPECT_GE(ChipErrors(Window(c, first, kDF17PatternLenChips), kDF17Pattern, kDF17PatternLenChips), 2)
+                << "random frame " << n << ", window at chip " << first;
+        }
+    }
+    // And nothing earlier in the preamble (after silence) is within one chip of it either.
+    std::vector<uint8_t> c(12, 0);
+    c.insert(c.end(), chips.begin(), chips.end());
+    for (size_t first = 0; first < 12 + kDF17PatternFirstChip; first++) {
+        EXPECT_GE(ChipErrors(Window(c, first, kDF17PatternLenChips), kDF17Pattern, kDF17PatternLenChips), 2)
+            << "window at chip " << first << " (12 chips of silence, then the preamble)";
+    }
+}
+
+// ReconstructDF17Frame gives the same 128 bits as the 0.3.11-rc3 reconstruction: the consumed DF bits, the
+// 112 capture bits after them, and zeros from bit 116 on.
+TEST(LR2021OokAdsb, DF17Reconstruction) {
+    std::mt19937 rng(1421);
+    for (int n = 0; n < 100000; n++) {
+        uint8_t cap[14];
+        for (auto& b : cap) b = static_cast<uint8_t>(rng());
+        uint32_t words[4];
+        ReconstructDF17Frame(cap, sizeof(cap), words, 4);
+        for (uint16_t i = 0; i < 128; i++) {
+            bool expect;
+            if (i < kDF17HeaderLenBits) {
+                expect = (kDF17HeaderBits >> (kDF17HeaderLenBits - 1 - i)) & 1u;
+            } else if (i < kDF17HeaderLenBits + 8 * sizeof(cap)) {
+                const uint16_t c = i - kDF17HeaderLenBits;
+                expect = (cap[c / 8] >> (7 - c % 8)) & 1u;
+            } else {
+                expect = false;
+            }
+            ASSERT_EQ(((words[i / 32] >> (31 - i % 32)) & 1u) != 0, expect) << "random capture " << n << ", bit " << i;
+        }
+    }
+}

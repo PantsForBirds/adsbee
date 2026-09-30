@@ -274,6 +274,9 @@ jobs:
       with:
         # cppAT (firmware/modules/cppAT) is compiled into the adsbee_1421 comms library.
         submodules: 'recursive'
+    - name: Build googletest
+      working-directory: firmware/modules/googletest
+      run: mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make
     - name: Run host tests
       working-directory: firmware/adsbee_1421/ti
       run: |
@@ -342,6 +345,9 @@ jobs:
       with:
         name: adsbee_1421-${{ needs.adsbee_1421_build.outputs.version }}.hex
         path: firmware/adsbee_1421/ti/build/Release
+    - name: Build googletest
+      working-directory: firmware/modules/googletest
+      run: mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make
     - name: Run host tests
       working-directory: firmware/adsbee_1421/programmer
       run: |
