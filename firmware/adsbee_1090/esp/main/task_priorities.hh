@@ -7,7 +7,10 @@
 
 // This will cause weird crashes if it's too small to support full size SPI transfers!
 static const unsigned int kSPIReceiveTaskStackSizeBytes = 1 * 4096;
-static const unsigned int kSPIReceiveTaskPriority = 10;
+// Above the W5500 Ethernet RX task (w5500_tsk, IDF default priority 15, no core affinity), the only task that can
+// otherwise preempt this one on core 1. The RP2040 busy-waits for each response, so a preempted SPI receive task
+// costs RP2040 time and, before responses queued the next receive, dropped RP2040 packets.
+static const unsigned int kSPIReceiveTaskPriority = 16;
 static const unsigned int kSPIReceiveTaskCore = 1;
 static const unsigned int kWiFiAPTaskPriority = tskIDLE_PRIORITY;
 // static const unsigned int kWiFiAPTaskCore = 0;
