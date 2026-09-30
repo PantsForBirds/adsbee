@@ -17,7 +17,7 @@
 #define PFB_MUTEX_LOCK(mtx) mutex_enter_blocking(&(mtx))
 #define PFB_MUTEX_UNLOCK(mtx) mutex_exit(&(mtx))
 
-#elif __has_include("freertos/semphr.h")
+#elif __has_include("freertos/semphr.h") && defined(ESP_PLATFORM)
 // FreeRTOS spinlock implementation (ESP32 / IDF). PFBQueue only holds the lock to copy one element or move an index,
 // so a critical section is cheap. A sleeping mutex let a low-priority task that was preempted while holding it (e.g.
 // a core 0 task logging while tiT keeps core 0 busy) stall the high-priority SPI receive task on core 1 for 100+ ms,
@@ -28,6 +28,16 @@
 #define PFB_MUTEX_INIT(mtx)   portMUX_INITIALIZE(&(mtx))
 #define PFB_MUTEX_LOCK(mtx)   portENTER_CRITICAL(&(mtx))
 #define PFB_MUTEX_UNLOCK(mtx) portEXIT_CRITICAL(&(mtx))
+
+#elif __has_include("freertos/semphr.h")
+// FreeRTOS mutex implementation (other FreeRTOS ports).
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
+#define PFB_MUTEX_TYPE        SemaphoreHandle_t
+#define PFB_MUTEX_INIT(mtx)   ((mtx) = xSemaphoreCreateMutex())
+#define PFB_MUTEX_LOCK(mtx)   xSemaphoreTake((mtx), portMAX_DELAY)
+#define PFB_MUTEX_UNLOCK(mtx) xSemaphoreGive((mtx))
 
 #else
 // Stub implementation for platforms without mutex support (single-core/non-concurrent use).
