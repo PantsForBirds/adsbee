@@ -260,7 +260,14 @@ class CommsManager {
     bool SendBuf(uint16_t iface, const char* buf, uint16_t buf_len, uint16_t num_msgs = 1);
 
    private:
+    /**
+     * Opens the socket for a feed, or advances a connect that is already in progress. Never blocks on the connect.
+     * @param[in] feed_index Feed to connect.
+     * @retval True if the feed is connected and ready to send.
+     */
     bool ConnectFeedSocket(uint16_t feed_index);
+    bool PollFeedSocketConnect(uint16_t feed_index);
+    bool FinishFeedSocketConnect(uint16_t feed_index);
     void CloseFeedSocket(uint16_t feed_index);
 
     /**
@@ -325,6 +332,7 @@ class CommsManager {
     uint32_t feed_mps_last_update_timestamp_ms_ = 0;
     int feed_sock_[SettingsManager::Settings::kMaxNumFeeds] = {0};
     bool feed_sock_is_connected_[SettingsManager::Settings::kMaxNumFeeds] = {false};
+    bool feed_sock_is_connecting_[SettingsManager::Settings::kMaxNumFeeds] = {false};  // Non-blocking connect pending.
     uint32_t feed_sock_last_connect_timestamp_ms_[SettingsManager::Settings::kMaxNumFeeds] = {0};
 
     // Queue for raw packets staged for reporting via comms interfaces.

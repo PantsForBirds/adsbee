@@ -22,6 +22,32 @@ static const uint16_t kWiFiStaMaxNumReconnectAttempts = 5;
 static const uint16_t kWiFiScanDefaultListSize = 20;
 static const uint16_t kWiFiAPMessageQueueTimeout = 100;     // ms
 static const uint16_t kWiFiSTAMessageQueueTimeoutMs = 100;  // ms
+static const uint32_t kWANQueueOverflowLogIntervalMs = 10000;
+
+// Counts packets dropped because the WAN queue overflowed and logs them at most once per
+// kWANQueueOverflowLogIntervalMs, since a stalled feed path can overflow the queue every few seconds.
+static void LogWANQueueOverflow(const uint8_t* raw_packets_buf) {
+    static uint32_t num_overflows = 0, dropped_mode_s = 0, dropped_uat_adsb = 0, dropped_uat_uplink = 0;
+    static uint32_t last_log_timestamp_ms = 0;
+    static bool logged_once = false;
+    auto* header = reinterpret_cast<const CompositeArray::RawPackets::Header*>(raw_packets_buf);
+    num_overflows++;
+    dropped_mode_s += header->num_mode_s_packets;
+    dropped_uat_adsb += header->num_uat_adsb_packets;
+    dropped_uat_uplink += header->num_uat_uplink_packets;
+    uint32_t timestamp_ms = get_time_since_boot_ms();
+    if (logged_once && timestamp_ms - last_log_timestamp_ms < kWANQueueOverflowLogIntervalMs) {
+        return;
+    }
+    CONSOLE_WARNING("CommsManager::IPWANSendRawPacketCompositeArray",
+                    "WAN raw packet queue overflowed %lu times in %lu ms, dropped at least %lu ModeS, %lu UAT-ADS-B, %lu "
+                    "UAT-Uplink.",
+                    num_overflows, logged_once ? timestamp_ms - last_log_timestamp_ms : 0, dropped_mode_s,
+                    dropped_uat_adsb, dropped_uat_uplink);
+    logged_once = true;
+    last_log_timestamp_ms = timestamp_ms;
+    num_overflows = dropped_mode_s = dropped_uat_adsb = dropped_uat_uplink = 0;
+}
 
 /* The event group allows multiple bits for each event, but we only care about two events:
  * - we are connected to the AP with an IP
@@ -283,14 +309,7 @@ bool CommsManager::IPWANSendRawPacketCompositeArray(uint8_t* raw_packets_buf) {
             int flush_err = xQueueSend(ip_wan_reporting_composite_array_queue_, composite_array_scratch_buf_,
                                        pdMS_TO_TICKS(kWiFiSTAMessageQueueTimeoutMs));
             if (flush_err == errQUEUE_FULL) {
-                UBaseType_t slots_waiting = uxQueueMessagesWaiting(ip_wan_reporting_composite_array_queue_);
-                auto* scratch_hdr = reinterpret_cast<CompositeArray::RawPackets::Header*>(composite_array_scratch_buf_);
-                CONSOLE_WARNING("CommsManager::IPWANSendRawPacketCompositeArray",
-                                "Overflowed WAN raw packet composite array queue (%u/%u slots used) while flushing "
-                                "scratch buffer. Dropping: %u ModeS, %u UAT-ADS-B, %u UAT-Uplink.",
-                                (unsigned)slots_waiting, kReportingCompositeArrayQueueNumElements,
-                                scratch_hdr->num_mode_s_packets, scratch_hdr->num_uat_adsb_packets,
-                                scratch_hdr->num_uat_uplink_packets);
+                LogWANQueueOverflow(composite_array_scratch_buf_);
                 xQueueReset(ip_wan_reporting_composite_array_queue_);
             }
             composite_array_scratch_has_data_ = false;
@@ -305,14 +324,7 @@ bool CommsManager::IPWANSendRawPacketCompositeArray(uint8_t* raw_packets_buf) {
     int err = xQueueSend(ip_wan_reporting_composite_array_queue_, raw_packets_buf,
                          pdMS_TO_TICKS(kWiFiSTAMessageQueueTimeoutMs));
     if (err == errQUEUE_FULL) {
-        UBaseType_t slots_waiting = uxQueueMessagesWaiting(ip_wan_reporting_composite_array_queue_);
-        auto* incoming_hdr = reinterpret_cast<CompositeArray::RawPackets::Header*>(raw_packets_buf);
-        CONSOLE_WARNING("CommsManager::IPWANSendRawPacketCompositeArray",
-                        "Overflowed WAN raw packet composite array queue (%u/%u slots used). "
-                        "Rejected: %u ModeS, %u UAT-ADS-B, %u UAT-Uplink.",
-                        (unsigned)slots_waiting, kReportingCompositeArrayQueueNumElements,
-                        incoming_hdr->num_mode_s_packets, incoming_hdr->num_uat_adsb_packets,
-                        incoming_hdr->num_uat_uplink_packets);
+        LogWANQueueOverflow(raw_packets_buf);
         xQueueReset(ip_wan_reporting_composite_array_queue_);
         return false;
     } else if (err != pdTRUE) {
