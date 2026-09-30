@@ -18,7 +18,8 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
                                                                 PFBQueue<RawModeSPacket>* mode_s_queue,
                                                                 PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
                                                                 PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
-                                                                PFBQueue<RawRemoteIDPacket>* remote_id_queue) {
+                                                                PFBQueue<RawRemoteIDPacket>* remote_id_queue,
+                                                                const PackLimits& limits) {
     RawPackets packets_to_report = {
         .len_bytes = sizeof(RawPackets::Header),
         .header = reinterpret_cast<RawPackets::Header*>(buf),
@@ -47,6 +48,7 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         uint16_t num_uplinks = uat_uplink_queue->Length();
         if (num_uplinks > kMaxReservedUplinkPackets) num_uplinks = kMaxReservedUplinkPackets;
         if (num_uplinks > max_uplinks_that_fit) num_uplinks = max_uplinks_that_fit;
+        if (num_uplinks > limits.max_uat_uplink_packets) num_uplinks = limits.max_uat_uplink_packets;
         reserved_uplink_bytes = num_uplinks * sizeof(RawUATUplinkPacket);
     }
 
@@ -55,7 +57,8 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         // Stuff with Mode S packets.
         RawModeSPacket mode_s_packet;
         packets_to_report.mode_s_packets = reinterpret_cast<RawModeSPacket*>(buf + packets_to_report.len_bytes);
-        while (packets_to_report.len_bytes + sizeof(RawModeSPacket) + reserved_uplink_bytes <= buf_len_bytes &&
+        while (packets_to_report.header->num_mode_s_packets < limits.max_mode_s_packets &&
+               packets_to_report.len_bytes + sizeof(RawModeSPacket) + reserved_uplink_bytes <= buf_len_bytes &&
                mode_s_queue->Dequeue(mode_s_packet)) {
             memcpy(&packets_to_report.mode_s_packets[packets_to_report.header->num_mode_s_packets], &mode_s_packet,
                    sizeof(RawModeSPacket));
@@ -67,7 +70,8 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         // Stuff with UAT ADS-B packets.
         RawUATADSBPacket uat_adsb_packet;
         packets_to_report.uat_adsb_packets = reinterpret_cast<RawUATADSBPacket*>(buf + packets_to_report.len_bytes);
-        while (packets_to_report.len_bytes + sizeof(RawUATADSBPacket) + reserved_uplink_bytes <= buf_len_bytes &&
+        while (packets_to_report.header->num_uat_adsb_packets < limits.max_uat_adsb_packets &&
+               packets_to_report.len_bytes + sizeof(RawUATADSBPacket) + reserved_uplink_bytes <= buf_len_bytes &&
                uat_adsb_queue->Dequeue(uat_adsb_packet)) {
             memcpy(&packets_to_report.uat_adsb_packets[packets_to_report.header->num_uat_adsb_packets],
                    &uat_adsb_packet, sizeof(RawUATADSBPacket));
@@ -79,7 +83,8 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         // Stuff with UAT Uplink packets.
         RawUATUplinkPacket uat_uplink_packet;
         packets_to_report.uat_uplink_packets = reinterpret_cast<RawUATUplinkPacket*>(buf + packets_to_report.len_bytes);
-        while (packets_to_report.len_bytes + sizeof(RawUATUplinkPacket) <= buf_len_bytes &&
+        while (packets_to_report.header->num_uat_uplink_packets < limits.max_uat_uplink_packets &&
+               packets_to_report.len_bytes + sizeof(RawUATUplinkPacket) <= buf_len_bytes &&
                uat_uplink_queue->Dequeue(uat_uplink_packet)) {
             memcpy(&packets_to_report.uat_uplink_packets[packets_to_report.header->num_uat_uplink_packets],
                    &uat_uplink_packet, sizeof(RawUATUplinkPacket));
@@ -91,7 +96,8 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         // Stuff with Remote ID packets.
         RawRemoteIDPacket remote_id_packet;
         packets_to_report.remote_id_packets = reinterpret_cast<RawRemoteIDPacket*>(buf + packets_to_report.len_bytes);
-        while (packets_to_report.len_bytes + sizeof(RawRemoteIDPacket) <= buf_len_bytes &&
+        while (packets_to_report.header->num_remote_id_packets < limits.max_remote_id_packets &&
+               packets_to_report.len_bytes + sizeof(RawRemoteIDPacket) <= buf_len_bytes &&
                remote_id_queue->Dequeue(remote_id_packet)) {
             memcpy(&packets_to_report.remote_id_packets[packets_to_report.header->num_remote_id_packets],
                    &remote_id_packet, sizeof(RawRemoteIDPacket));

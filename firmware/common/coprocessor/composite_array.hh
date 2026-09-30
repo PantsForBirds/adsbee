@@ -91,6 +91,25 @@ class CompositeArray {
     static_assert(sizeof(RawRemoteIDPacket) % 4 == 0);
 
     /**
+     * Per-type caps on how many packets one PackRawPacketsBuffer() call dequeues. The defaults are unlimited, so only
+     * the buffer length bounds the pack. A caller that formats the packed packets in a latency-sensitive loop uses
+     * these to bound the work per call and leaves the rest queued for the next one.
+     */
+    struct PackLimits {
+        uint16_t max_mode_s_packets;
+        uint16_t max_uat_adsb_packets;
+        uint16_t max_uat_uplink_packets;
+        uint16_t max_remote_id_packets;
+
+        constexpr PackLimits(uint16_t max_mode_s = UINT16_MAX, uint16_t max_uat_adsb = UINT16_MAX,
+                             uint16_t max_uat_uplink = UINT16_MAX, uint16_t max_remote_id = UINT16_MAX)
+            : max_mode_s_packets(max_mode_s),
+              max_uat_adsb_packets(max_uat_adsb),
+              max_uat_uplink_packets(max_uat_uplink),
+              max_remote_id_packets(max_remote_id) {}
+    };
+
+    /**
      * Fills a buffer as a CompositeArray (RawPackets::Header) followed by arrays of raw packets of each kind. Takes
      * pointers to queues to dequeue the packets from; any queues that are passed as a nullptr are skipped.
      * @param[out] buf Buffer to fill with header and packed packets.
@@ -100,12 +119,14 @@ class CompositeArray {
      * @param[in] uat_uplink_queue Pointer to a PFBQueue of RawUATUplinkPacket to dequeue packets from, or nullptr to
      * skip.
      * @param[in] remote_id_queue Pointer to a PFBQueue of RawRemoteIDPacket to dequeue packets from, or nullptr to skip.
+     * @param[in] limits Per-type caps on the number of packets to dequeue. Unlimited by default.
      * @retval CompositeArray::RawPackets struct that describes the contents of the buffer.
      */
     static RawPackets PackRawPacketsBuffer(uint8_t* buf, uint16_t buf_len_bytes, PFBQueue<RawModeSPacket>* mode_s_queue,
                                            PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
                                            PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
-                                           PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr);
+                                           PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr,
+                                           const PackLimits& limits = PackLimits());
 
     /**
      * Unpacks a buffer containing a CompositeArray (RawPackets::Header) followed by arrays of raw packets of each kind,

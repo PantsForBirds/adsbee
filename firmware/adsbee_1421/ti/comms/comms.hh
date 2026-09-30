@@ -24,12 +24,20 @@ class CommsManager {
     // depth 8 covers a full 50ms reporting check interval of back-to-back slots (~580B per entry).
     static constexpr uint16_t kUATUplinkPacketReportingQueueDepth = 8;
 
+    // Raw packet reports (RAW, Beast, GDL90 uplink) are formatted in chunks of at most this many packets per main loop
+    // iteration, so a burst of traffic is spread over several iterations instead of stalling one. Formatting a RAW
+    // Mode S frame takes ~XXX us on the CC1314. At one chunk per iteration the console can still carry more reports
+    // than the 1 Mbaud UART can send.
+    static constexpr uint16_t kRawReportMaxModeSPacketsPerUpdate = 6;
+    static constexpr uint16_t kRawReportMaxUATADSBPacketsPerUpdate = 2;
+    static constexpr uint16_t kRawReportMaxUATUplinkPacketsPerUpdate = 1;
+
     static constexpr uint16_t kATCommandBufMaxLen = 1000;
     static constexpr uint16_t kPrintfBufferMaxSize = 1000;
-    // Software TX ring behind the console UART. Sized to absorb a full worst-case raw reporting batch (~4.6 kB of RAW
-    // hex for a 2 kB composite array of uplinks) plus console traffic without the main loop ever waiting on the wire:
-    // at 1 Mbaud the ring drains in ~80 ms, well inside the 50 ms reporting tick for a typical batch. Must be a power
-    // of two.
+    // Software TX ring behind the console UART. Raw reports are formatted into it one chunk per main loop iteration
+    // (see kRawReportMaxModeSPacketsPerUpdate) and only when a worst-case chunk fits, so it absorbs bursts of reports
+    // plus console traffic without the main loop waiting on the wire. At 1 Mbaud a full ring drains in ~80 ms. Must be
+    // a power of two.
     static constexpr uint16_t kUartTxRingBytes = 8192;
     static_assert((kUartTxRingBytes & (kUartTxRingBytes - 1)) == 0, "kUartTxRingBytes must be a power of two.");
 
@@ -105,6 +113,9 @@ class CommsManager {
     // Mode S packets overwritten in the (overwrite-oldest) reporting queue because the reporting path
     // fell behind. Surfaced via AT+RX_STATS.
     uint32_t mode_s_report_queue_ovf_count = 0;
+    // UAT ADS-B and uplink packets refused by their (drop-newest) reporting queues because the reporting path fell
+    // behind. Surfaced via AT+RX_STATS.
+    uint32_t uat_report_queue_ovf_count = 0;
 
     /**
      * Change the console UART baud rate at runtime. TI's UART2 driver has no live baud-change API, so
@@ -222,6 +233,22 @@ class CommsManager {
     // AT Functions
     bool UpdateAT();
 
+    // Size of a CompositeArray that holds one full raw report chunk.
+    static constexpr uint16_t kRawReportChunkBufBytes =
+        sizeof(CompositeArray::RawPackets::Header) + kRawReportMaxModeSPacketsPerUpdate * sizeof(RawModeSPacket) +
+        kRawReportMaxUATADSBPacketsPerUpdate * sizeof(RawUATADSBPacket) +
+        kRawReportMaxUATUplinkPacketsPerUpdate * sizeof(RawUATUplinkPacket);
+
+    /**
+     * Formats and queues one chunk of raw packet reports (at most kRawReportMax*PacketsPerUpdate of each type) for
+     * the console, taken from the reporting queues. Called once per main loop iteration. If the console reports raw
+     * packets and the TX ring can't take a worst-case chunk, it leaves the packets queued and returns without waiting.
+     */
+    void ReportQueuedRawPackets();
+
+    // True if a reporting sink uses a protocol that sends raw packets.
+    bool ReportsRawPackets() const;
+
     // Opens the console UART at the given baud rate and enables RX. Used by Init() and SetBaudRate().
     bool OpenUART(uint32_t baud);
 
@@ -269,10 +296,8 @@ class CommsManager {
     RawUATUplinkPacket uat_uplink_packet_reporting_queue_buffer_[kUATUplinkPacketReportingQueueDepth];
 
     // Reporting protocol timestamps
-    // NOTE: Raw reporting interval used for RAW and BEAST protocols as well as internal functions.
-    uint32_t last_raw_report_check_timestamp_ms_ =
-        0;  // Timestamp of last time we checked whether we need to report packets.
-    uint32_t last_raw_report_timestamp_ms_ = 0;
+    // Timestamp of the last tick that drove the aircraft dictionary protocols (CSBee, MAVLINK, GDL90, Aircraft JSON).
+    uint32_t last_raw_report_check_timestamp_ms_ = 0;
     // Single shared timer for all locally-decoded dictionary report protocols (CSBee, MAVLINK, GDL90).
     // All protocols share a UID snapshot and therefore share a reporting interval.
     uint32_t last_locally_decoded_report_timestamp_ms_ = 0;

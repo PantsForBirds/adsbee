@@ -703,3 +703,77 @@ TEST(CompositeArray, FullQueueOnlyDropsItsOwnPacketType) {
                                                                 &uat_uplink_rx));
     EXPECT_EQ(CompositeArray::queue_full_drops.mode_s - drops_before.mode_s, 8u);
 }
+
+TEST(CompositeArray, PackRawPacketsBufferLimitsCapEachTypeAndLeaveTheRestQueued) {
+    PFBQueue<RawModeSPacket> mode_s_queue = PFBQueue<RawModeSPacket>(
+        {.buf_len_num_elements = 20, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATADSBPacket> uat_adsb_queue = PFBQueue<RawUATADSBPacket>(
+        {.buf_len_num_elements = 10, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATUplinkPacket> uat_uplink_queue = PFBQueue<RawUATUplinkPacket>(
+        {.buf_len_num_elements = 4, .buffer = nullptr, .overwrite_when_full = false});
+    RawModeSPacket mode_s_packet;
+    for (uint32_t i = 0; i < 15; i++) {
+        mode_s_packet.buffer[0] = i;
+        mode_s_queue.Enqueue(mode_s_packet);
+    }
+    RawUATADSBPacket uat_adsb_packet;
+    for (uint8_t i = 0; i < 5; i++) {
+        uat_adsb_packet.buffer[0] = i;
+        uat_adsb_queue.Enqueue(uat_adsb_packet);
+    }
+    RawUATUplinkPacket uat_uplink_packet;
+    for (uint8_t i = 0; i < 3; i++) {
+        uat_uplink_packet.encoded_message[0] = i;
+        uat_uplink_queue.Enqueue(uat_uplink_packet);
+    }
+
+    // Buffer sized for exactly one chunk, as the ADSBee 1421 sizes its per-loop report chunk.
+    const CompositeArray::PackLimits limits(6, 2, 1);
+    uint8_t buffer[sizeof(CompositeArray::RawPackets::Header) + 6 * sizeof(RawModeSPacket) +
+                   2 * sizeof(RawUATADSBPacket) + 1 * sizeof(RawUATUplinkPacket)] = {0};
+
+    // Draining chunk by chunk returns every packet once, in order, never more than the limit of each type per chunk.
+    uint32_t next_mode_s = 0;
+    uint8_t next_uat_adsb = 0, next_uat_uplink = 0;
+    uint16_t num_chunks = 0;
+    while (mode_s_queue.Length() > 0 || uat_adsb_queue.Length() > 0 || uat_uplink_queue.Length() > 0) {
+        CompositeArray::RawPackets packets = CompositeArray::PackRawPacketsBuffer(
+            buffer, sizeof(buffer), &mode_s_queue, &uat_adsb_queue, &uat_uplink_queue, nullptr, limits);
+        ASSERT_TRUE(packets.IsValid());
+        EXPECT_LE(packets.header->num_mode_s_packets, 6);
+        EXPECT_LE(packets.header->num_uat_adsb_packets, 2);
+        EXPECT_LE(packets.header->num_uat_uplink_packets, 1);
+        for (uint16_t i = 0; i < packets.header->num_mode_s_packets; i++) {
+            EXPECT_EQ(packets.mode_s_packets[i].buffer[0], next_mode_s++);
+        }
+        for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
+            EXPECT_EQ(packets.uat_adsb_packets[i].buffer[0], next_uat_adsb++);
+        }
+        for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
+            EXPECT_EQ(packets.uat_uplink_packets[i].encoded_message[0], next_uat_uplink++);
+        }
+        ASSERT_LT(++num_chunks, 10);
+    }
+    EXPECT_EQ(num_chunks, 3);  // 15 Mode S packets at 6 per chunk.
+    EXPECT_EQ(next_mode_s, 15u);
+    EXPECT_EQ(next_uat_adsb, 5);
+    EXPECT_EQ(next_uat_uplink, 3);
+}
+
+TEST(CompositeArray, PackRawPacketsBufferDefaultLimitsAreUnlimited) {
+    PFBQueue<RawModeSPacket> mode_s_queue = PFBQueue<RawModeSPacket>(
+        {.buf_len_num_elements = 80, .buffer = nullptr, .overwrite_when_full = false});
+    RawModeSPacket mode_s_packet;
+    for (uint32_t i = 0; i < 70; i++) {
+        mode_s_packet.buffer[0] = i;
+        mode_s_queue.Enqueue(mode_s_packet);
+    }
+    uint8_t buffer[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    CompositeArray::RawPackets packets =
+        CompositeArray::PackRawPacketsBuffer(buffer, sizeof(buffer), &mode_s_queue, nullptr, nullptr);
+    // Only the buffer length bounds the pack.
+    uint16_t expected = (sizeof(buffer) - sizeof(CompositeArray::RawPackets::Header)) / sizeof(RawModeSPacket);
+    if (expected > 70) expected = 70;
+    EXPECT_EQ(packets.header->num_mode_s_packets, expected);
+    EXPECT_EQ(mode_s_queue.Length(), 70 - expected);
+}
