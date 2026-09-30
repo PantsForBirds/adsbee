@@ -92,6 +92,23 @@ class ADSBee {
     uint32_t lr2021_validity_reconfig_count = 0;  // Validity watchdog: reconfigs after N frames with 0 CRC passes.
     // DF17 mode: captures that started off the nominal bit and were realigned (LR2021OokAdsb::RecoverDF17Frame).
     uint32_t lr2021_df17_realigned_count = 0;
+    // DF17 mode: captures passed on without realignment because the raw packet queue was backing up (at least
+    // kDF17RealignMaxQueueDepth packets waiting for the decoder). They get the nominal reconstruction, which is
+    // what a capture that starts on the nominal bit needs anyway.
+    uint32_t lr2021_df17_realign_skipped_count = 0;
+    static constexpr uint16_t kDF17RealignMaxQueueDepth = 50;
+
+    // CPU cost, in CPU cycles (48 per microsecond; utils/cycle_counter.hh). Reported and reset via AT+RX_STATS.
+    uint32_t df17_realign_max_cycles = 0;     // Longest RecoverDF17Frame call.
+    uint64_t df17_realign_total_cycles = 0;   // Sum and count of RecoverDF17Frame calls, for the average.
+    uint32_t df17_realign_calls = 0;
+    uint32_t parse_capture_max_cycles = 0;    // Longest per-capture pass of ParseLR2021RxFifo (realignment included).
+    uint32_t max_loop_cycles = 0;             // Longest main loop iteration (max_loop_us, at cycle resolution).
+    uint64_t loop_total_cycles = 0;           // Sum and count of main loop iterations, for the average.
+    uint32_t loop_count = 0;
+    // Share of main loop time spent in the 1090 path (adsbee.Update(): LR2021 drain and parse, plus
+    // packet_decoder.Update()); 1000 minus this is what is left for UAT, reporting and the console.
+    uint64_t rx1090_total_cycles = 0;
 
     // Longest single super-loop iteration observed, in microseconds. Reported and reset via AT+RX_STATS. Every
     // millisecond spent in one iteration is a millisecond the LR2021 FIFO isn't drained and AT commands aren't
@@ -112,6 +129,9 @@ class ADSBee {
     bool rx_position_available = false;
 
    private:
+#ifdef HARDWARE_UNIT_TESTS
+    friend class ADSBeeTestAccessor;  // target_test/test_df17_cpu.cpp: feeds synthetic captures to the parser.
+#endif
     void IngestAndForwardPackets();
     void PruneAircraftDictionary();
     // Periodically refreshes rx_position / rx_position_available from the configured source (e.g. the

@@ -11,6 +11,7 @@
 #include "buffer_utils.hh"
 #include "comms.hh"
 #include "crc.hh"
+#include "cycle_counter.hh"
 #include "flash_utils.hh"
 #include "led.hh"
 #include "packet_decoder.hh"
@@ -706,6 +707,7 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
     const uint16_t packet_len_bytes = LR2021::GetOokRxPacketLenBytes(r1090_preamble_mode_);
     uint16_t num_packets = packet_len_bytes ? (rx_len_bytes / packet_len_bytes) : 0;
     for (uint16_t i = 0; i < num_packets; i++) {
+        const uint32_t capture_start_cycles = CycleCounter::Now();
         const uint8_t* packet_start = rx_buf + i * packet_len_bytes;
 
         uint32_t rx_word_buf[RawModeSPacket::kMaxPacketLenWords32] = {0};
@@ -716,10 +718,23 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
             static_assert(LR2021::kOokDF17PacketRxLenBytes == LR2021OokAdsb::kModeSFrameLenBytes,
                           "RecoverDF17Frame reads one 112-bit capture.");
             uint8_t frame[LR2021OokAdsb::kModeSFrameLenBytes];
-            const int8_t shift = LR2021OokAdsb::RecoverDF17Frame(
-                packet_start, frame, [](const uint8_t* buf, uint16_t len) { return crc24(buf, len); });
-            if (shift != INT8_MIN && shift != LR2021OokAdsb::kDF17HeaderLenBits) {
-                lr2021_df17_realigned_count++;
+            if (packet_decoder.raw_mode_s_packet_queue.Length() >= kDF17RealignMaxQueueDepth) {
+                // Budget: the decoder is falling behind, so this burst gets no realignment. Realigning costs
+                // about 1000 cycles for a capture that matches nothing (noise, garbled or overlapping frames),
+                // and those are exactly what a dense burst is full of.
+                LR2021OokAdsb::NominalDF17Frame(packet_start, frame);
+                lr2021_df17_realign_skipped_count++;
+            } else {
+                const uint32_t realign_start_cycles = CycleCounter::Now();
+                const int8_t shift = LR2021OokAdsb::RecoverDF17Frame(
+                    packet_start, frame, [](const uint8_t* buf, uint16_t len) { return crc24(buf, len); });
+                const uint32_t realign_cycles = CycleCounter::Since(realign_start_cycles);
+                if (realign_cycles > df17_realign_max_cycles) df17_realign_max_cycles = realign_cycles;
+                df17_realign_total_cycles += realign_cycles;
+                df17_realign_calls++;
+                if (shift != INT8_MIN && shift != LR2021OokAdsb::kDF17HeaderLenBits) {
+                    lr2021_df17_realigned_count++;
+                }
             }
             ByteBufferToWordBuffer(frame, rx_word_buf, LR2021OokAdsb::kModeSFrameLenBytes);
         } else {
@@ -736,5 +751,7 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
             packet_decoder.raw_queue_overflow_count++;
         }
         packet_decoder.raw_mode_s_packet_queue.Enqueue(raw_packet);
+        const uint32_t capture_cycles = CycleCounter::Since(capture_start_cycles);
+        if (capture_cycles > parse_capture_max_cycles) parse_capture_max_cycles = capture_cycles;
     }
 }

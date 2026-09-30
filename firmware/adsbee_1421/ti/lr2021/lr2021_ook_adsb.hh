@@ -99,60 +99,248 @@ inline void SetMsgBit(uint8_t* buf, uint16_t i, bool v) {
     buf[i / 8] = static_cast<uint8_t>(v ? (buf[i / 8] | (0x80u >> (i % 8))) : (buf[i / 8] & ~(0x80u >> (i % 8))));
 }
 
+// Mode S parity (CRC-24): the syndrome of a 112-bit frame, crc24(bits 0-87) XOR parity(bits 88-111), is the
+// frame read as a polynomial modulo the generator x^24 + 0xFFF409. It is linear: flipping message bit i changes
+// the syndrome by kDF17BitSyndromes.v[i] (= x^(111-i) mod G, the decoder's crc24_single_bit_syndrome_112 table).
+static constexpr uint32_t kModeSCrcGenerator = 0x1FFF409;
+constexpr uint32_t CrcMulX(uint32_t r) {
+    r <<= 1;
+    return (r & 0x1000000u) ? r ^ kModeSCrcGenerator : r;
+}
+// Division by x modulo the generator. Exact because the generator's constant term is 1.
+constexpr uint32_t CrcDivX(uint32_t r) { return ((r & 1u) ? r ^ kModeSCrcGenerator : r) >> 1; }
+
+struct ModeSBitSyndromes {
+    uint32_t v[kModeSFrameLenBits];
+};
+constexpr ModeSBitSyndromes MakeModeSBitSyndromes() {
+    ModeSBitSyndromes s{};
+    uint32_t r = 1;  // Bit 111 is x^0.
+    for (int i = kModeSFrameLenBits - 1; i >= 0; i--) {
+        s.v[i] = r;
+        r = CrcMulX(r);
+    }
+    return s;
+}
+static constexpr ModeSBitSyndromes kDF17BitSyndromes = MakeModeSBitSyndromes();
+static_assert(kDF17BitSyndromes.v[0] == 0x3935EA && kDF17BitSyndromes.v[87] == 0xFFF409 &&
+                  kDF17BitSyndromes.v[88] == 0x800000,
+              "Bit syndromes must match crc24_single_bit_syndrome_112.");
+
+// Prefilter for the decoder's single-bit correction (crc24_find_single_bit_error, a linear search of the 112 bit
+// syndromes): bit b of the 4096 is set when some single-bit syndrome has low 12 bits b. A syndrome whose bit is
+// clear can't be a single-bit error, which is the answer for about 97 % of failed frames (noise, garbled or
+// overlapping captures), without the search.
+struct ModeSSingleBitFilter {
+    uint32_t bits[4096 / 32];
+    bool MayMatch(uint32_t syndrome) const { return (bits[(syndrome >> 5) & 127u] >> (syndrome & 31u)) & 1u; }
+};
+constexpr ModeSSingleBitFilter MakeModeSSingleBitFilter() {
+    ModeSSingleBitFilter f{};
+    for (uint16_t i = 0; i < kModeSFrameLenBits; i++) {
+        const uint32_t r = kDF17BitSyndromes.v[i];
+        f.bits[(r >> 5) & 127u] |= 1u << (r & 31u);
+    }
+    return f;
+}
+static constexpr ModeSSingleBitFilter kModeSSingleBitFilter = MakeModeSSingleBitFilter();
+
+constexpr uint32_t DF17HeaderSyndrome() {
+    uint32_t r = 0;
+    for (uint8_t i = 0; i < kDF17HeaderLenBits; i++) {
+        if ((kDF17HeaderBits >> (kDF17HeaderLenBits - 1 - i)) & 1u) r ^= kDF17BitSyndromes.v[i];
+    }
+    return r;
+}
+static constexpr uint32_t kDF17HeaderSyndrome = DF17HeaderSyndrome();
+
+// What RecoverDF17Frame tries at one shift: the message bits the capture doesn't hold (tried both ways), the CA
+// bits (tried flipped, unless already unknown), and the syndrome of every combination, in the order the
+// candidates are tried (candidate v: bit u of v sets unknown[u], bit num_unknown + j flips flips[j]).
+//
+// Plus what turns the capture's syndrome into this shift's syndrome in a few table lookups (DF17ShiftSyndrome):
+// the multiplication by x^-shift, and the contribution of the capture's first 7 bits (the ones that land in the
+// DF field, or fall off the start, depending on the shift), and a 256-bit filter on the low syndrome byte that
+// rejects almost every non-matching shift before the candidate list is looked at.
+struct DF17ShiftPlan {
+    int8_t shift = 0;
+    uint8_t num_unknown = 0;
+    uint8_t unknown[2] = {0, 0};
+    uint8_t num_flips = 0;
+    uint8_t flips[kDF17FlipNumBits] = {0, 0, 0};
+    uint8_t num_candidates = 0;
+    uint32_t candidate_syndrome[32] = {};
+    uint32_t candidate_filter[8] = {};  // Bit b of the 256: some candidate syndrome has low byte b.
+    uint32_t mul_low[128] = {};         // shift > 0: x^-shift times the low `shift` bits. shift < 0: x^-shift
+                                        // times the top -shift bits (24 - (-shift) .. 23).
+    uint32_t head_hi[16] = {};          // Correction for capture bits 0-3 (capture[0] >> 4) at this shift.
+    uint32_t head_lo[8] = {};           // Correction for capture bits 4-6 ((capture[0] >> 1) & 7).
+};
+static constexpr uint8_t kDF17NumShifts = sizeof(kDF17Shifts) / sizeof(kDF17Shifts[0]);
+struct DF17ShiftPlans {
+    DF17ShiftPlan plan[kDF17NumShifts];
+};
+constexpr uint32_t CrcMulXPow(uint32_t r, int8_t n) {  // r * x^n mod G, for n of either sign.
+    for (int8_t k = 0; k < n; k++) r = CrcMulX(r);
+    for (int8_t k = 0; k > n; k--) r = CrcDivX(r);
+    return r;
+}
+// What capture bit c contributes to the syndrome of the frame at `shift` (before the DF bits are added): nothing
+// if it lands at message bit 5 or later (it is part of the shifted capture), the removal of its value if it lands
+// in the DF field (message bit c + shift < 5), and the removal of its value from the shifted capture if it falls
+// off the start (c + shift < 0: its x^(111 - c) term, now x^(111 - c + (-shift)), is not in the frame).
+constexpr uint32_t DF17CaptureBitCorrection(int8_t shift, uint8_t c) {
+    const int16_t i = static_cast<int16_t>(c) + shift;  // Message bit that capture bit c lands on.
+    if (i >= static_cast<int16_t>(kDF17HeaderLenBits)) return 0;
+    // Its term in the shifted capture: x^(111 - c) * x^-shift. Removing it covers both cases (a DF bit is then
+    // set from kDF17HeaderSyndrome).
+    return CrcMulXPow(kDF17BitSyndromes.v[c], static_cast<int8_t>(-shift));
+}
+constexpr DF17ShiftPlans MakeDF17ShiftPlans() {
+    DF17ShiftPlans p{};
+    for (uint8_t k = 0; k < kDF17NumShifts; k++) {
+        DF17ShiftPlan& plan = p.plan[k];
+        plan.shift = kDF17Shifts[k];
+        for (uint16_t i = kDF17HeaderLenBits; i < kModeSFrameLenBits; i++) {
+            const int16_t c = static_cast<int16_t>(i) - plan.shift;  // Capture bit holding message bit i.
+            if (c < 0 || c >= static_cast<int16_t>(kModeSFrameLenBits)) {
+                plan.unknown[plan.num_unknown++] = static_cast<uint8_t>(i);
+            }
+        }
+        for (uint8_t b = kDF17FlipFirstBit; b < kDF17FlipFirstBit + kDF17FlipNumBits; b++) {
+            bool is_unknown = false;
+            for (uint8_t u = 0; u < plan.num_unknown; u++) is_unknown |= plan.unknown[u] == b;
+            if (!is_unknown) plan.flips[plan.num_flips++] = b;
+        }
+        plan.num_candidates = static_cast<uint8_t>(1u << (plan.num_unknown + plan.num_flips));
+        for (uint8_t v = 0; v < plan.num_candidates; v++) {
+            uint32_t r = 0;
+            for (uint8_t u = 0; u < plan.num_unknown; u++) {
+                if ((v >> u) & 1u) r ^= kDF17BitSyndromes.v[plan.unknown[u]];
+            }
+            for (uint8_t j = 0; j < plan.num_flips; j++) {
+                if ((v >> (plan.num_unknown + j)) & 1u) r ^= kDF17BitSyndromes.v[plan.flips[j]];
+            }
+            plan.candidate_syndrome[v] = r;
+            plan.candidate_filter[(r >> 5) & 7u] |= 1u << (r & 31u);
+        }
+        // x^-shift of the part of a 24-bit value that doesn't shift out cleanly: the low `shift` bits (shift > 0)
+        // or the top -shift bits (shift < 0). The rest is a plain shift.
+        const uint8_t n = static_cast<uint8_t>(plan.shift >= 0 ? plan.shift : -plan.shift);
+        for (uint32_t low = 0; low < (1u << n); low++) {
+            plan.mul_low[low] = plan.shift >= 0 ? CrcMulXPow(low, static_cast<int8_t>(-plan.shift))
+                                                : CrcMulXPow(low << (24 - n), static_cast<int8_t>(-plan.shift));
+        }
+        for (uint8_t v = 0; v < 16; v++) {
+            for (uint8_t b = 0; b < 4; b++) {
+                if ((v >> (3 - b)) & 1u) plan.head_hi[v] ^= DF17CaptureBitCorrection(plan.shift, b);
+            }
+        }
+        for (uint8_t v = 0; v < 8; v++) {
+            for (uint8_t b = 0; b < 3; b++) {
+                if ((v >> (2 - b)) & 1u) plan.head_lo[v] ^= DF17CaptureBitCorrection(plan.shift, 4 + b);
+            }
+        }
+    }
+    return p;
+}
+static constexpr DF17ShiftPlans kDF17ShiftPlans = MakeDF17ShiftPlans();
+static_assert(kDF17Shifts[0] == kDF17HeaderLenBits, "The nominal shift is tried first (and is the fallback).");
+static_assert(kDF17ShiftPlans.plan[0].num_unknown == 0, "The nominal shift leaves no message bit unknown.");
+// DF17CaptureBitCorrection only looks at capture bits 0-6: every shift must put bit 7 past the DF field and
+// keep bits 0-6 within reach of the head tables.
+static_assert(kDF17HeaderLenBits - (-2) <= 7, "Capture bits past 6 would need a head correction.");
+
+// Syndrome of the frame the capture gives at `shift` (DF bits set, unknown bits 0), from the capture's own
+// syndrome: a shift is a multiplication by x^-shift, after taking out the capture bits that fall off the end
+// (shift > 0), then the capture bits that land in the DF field or fall off the start are taken out and the DF
+// bits put in. About a dozen instructions per shift.
+inline uint32_t DF17ShiftSyndrome(const uint8_t* capture, uint32_t capture_syndrome, const DF17ShiftPlan& plan) {
+    uint32_t r;
+    if (plan.shift >= 0) {
+        // Capture bits 112 - shift .. 111 (the low bits of the last byte) are past the frame: drop them, then
+        // divide by x^shift. The dropped bits make the value an exact multiple of x^shift below bit `shift`, so
+        // the division is (r >> shift) plus a table for the low bits of the value as it was.
+        const uint32_t mask = (1u << plan.shift) - 1u;
+        const uint32_t v = capture_syndrome ^ (capture[kModeSFrameLenBytes - 1] & mask);
+        r = (v >> plan.shift) ^ plan.mul_low[v & mask];
+    } else {
+        const uint8_t n = static_cast<uint8_t>(-plan.shift);
+        r = ((capture_syndrome << n) & 0xFFFFFFu) ^ plan.mul_low[capture_syndrome >> (24 - n)];
+    }
+    return r ^ plan.head_hi[capture[0] >> 4] ^ plan.head_lo[(capture[0] >> 1) & 7u] ^ kDF17HeaderSyndrome;
+}
+
+// Writes candidate v of `plan`: the capture moved by plan.shift bits (word operations), DF = 17, the unknown
+// bits set and the CA bits flipped as v says.
+inline void BuildDF17Frame(const uint8_t* capture, const DF17ShiftPlan& plan, uint8_t v, uint8_t* frame_out) {
+    uint32_t w[4] = {0, 0, 0, 0};  // Capture bits 0-111, MSB first; bits 112-127 are 0.
+    for (uint8_t k = 0; k < kModeSFrameLenBytes; k++) {
+        w[k / 4] |= static_cast<uint32_t>(capture[k]) << (24 - 8 * (k % 4));
+    }
+    uint32_t f[4];
+    if (plan.shift > 0) {  // Message bit i = capture bit i - shift: move towards the end.
+        const uint8_t n = static_cast<uint8_t>(plan.shift);
+        f[0] = w[0] >> n;
+        for (uint8_t k = 1; k < 4; k++) f[k] = (w[k] >> n) | (w[k - 1] << (32 - n));
+    } else if (plan.shift < 0) {  // Move towards the start.
+        const uint8_t n = static_cast<uint8_t>(-plan.shift);
+        for (uint8_t k = 0; k < 3; k++) f[k] = (w[k] << n) | (w[k + 1] >> (32 - n));
+        f[3] = w[3] << n;
+    } else {
+        for (uint8_t k = 0; k < 4; k++) f[k] = w[k];
+    }
+    f[0] = (f[0] & (0xFFFFFFFFu >> kDF17HeaderLenBits)) |
+           (static_cast<uint32_t>(kDF17HeaderBits) << (32 - kDF17HeaderLenBits));
+    for (uint8_t u = 0; u < plan.num_unknown; u++) {
+        const uint8_t i = plan.unknown[u];
+        if ((v >> u) & 1u) f[i / 32] |= 0x80000000u >> (i % 32);  // Unknown bits start out 0.
+    }
+    for (uint8_t j = 0; j < plan.num_flips; j++) {
+        const uint8_t i = plan.flips[j];
+        if ((v >> (plan.num_unknown + j)) & 1u) f[i / 32] ^= 0x80000000u >> (i % 32);
+    }
+    for (uint8_t k = 0; k < kModeSFrameLenBytes; k++) {
+        frame_out[k] = static_cast<uint8_t>(f[k / 4] >> (24 - 8 * (k % 4)));
+    }
+}
+
 // Rebuilds a 112-bit DF17 frame from a DF17-mode capture (kModeSFrameLenBytes bytes, MSB first). For each
 // shift: message bits 0-4 are set to DF=17, bits the capture doesn't hold (CA bits before a late capture, the
 // last bits after an early one) are tried both ways, and so are the three CA bits. The first candidate with
 // a matching parity wins. crc24(buf, len) must return the Mode S CRC of len bytes. Returns the shift used, or
 // INT8_MIN (frame_out = the nominal reconstruction) if no candidate matched; the decoder then gets the frame
-// the old way. Worst case (no match): 112 CRCs of 11 bytes, as many candidates as the decoder's single-bit
-// correction tries.
+// the old way.
+//
+// Cost: the candidates are the same 112 as in the first version (target_test/df17_recover_reference.hh, which
+// this matches bit for bit; host_test checks it), but no candidate is built or CRC'd. The CRC is linear, so one
+// CRC of the capture gives every shift's syndrome by a few table lookups, and a candidate matches when its
+// precomputed syndrome (kDF17ShiftPlans) equals that. The frame is built once, for the winner.
 template <typename Crc24Fn>
 int8_t RecoverDF17Frame(const uint8_t* capture, uint8_t* frame_out, Crc24Fn crc24) {
-    for (int8_t shift : kDF17Shifts) {
-        uint8_t base[kModeSFrameLenBytes] = {0};
-        uint8_t unknown[4];  // Message bits the capture doesn't hold: at most 2 late + 2 early.
-        uint8_t num_unknown = 0;
-        for (uint16_t i = 0; i < kModeSFrameLenBits; i++) {
-            const int16_t c = static_cast<int16_t>(i) - shift;  // Capture bit holding message bit i.
-            if (i < kDF17HeaderLenBits) {
-                SetMsgBit(base, i, (kDF17HeaderBits >> (kDF17HeaderLenBits - 1 - i)) & 1u);
-            } else if (c < 0 || c >= static_cast<int16_t>(kModeSFrameLenBits)) {
-                unknown[num_unknown++] = static_cast<uint8_t>(i);
-            } else {
-                SetMsgBit(base, i, GetMsgBit(capture, static_cast<uint16_t>(c)));
-            }
-        }
-        // Flip bits: the CA bits, unless they are already unknown (then trying both covers them).
-        uint8_t flips[kDF17FlipNumBits];
-        uint8_t num_flips = 0;
-        for (uint8_t b = kDF17FlipFirstBit; b < kDF17FlipFirstBit + kDF17FlipNumBits; b++) {
-            bool is_unknown = false;
-            for (uint8_t u = 0; u < num_unknown; u++) is_unknown |= unknown[u] == b;
-            if (!is_unknown) flips[num_flips++] = b;
-        }
-        const uint16_t num_candidates = static_cast<uint16_t>(1u << (num_unknown + num_flips));
-        for (uint16_t v = 0; v < num_candidates; v++) {
-            uint8_t f[kModeSFrameLenBytes];
-            for (uint16_t k = 0; k < kModeSFrameLenBytes; k++) f[k] = base[k];
-            for (uint8_t u = 0; u < num_unknown; u++) SetMsgBit(f, unknown[u], (v >> u) & 1u);
-            for (uint8_t j = 0; j < num_flips; j++) {
-                if ((v >> (num_unknown + j)) & 1u) SetMsgBit(f, flips[j], !GetMsgBit(f, flips[j]));
-            }
-            const uint32_t parity = (static_cast<uint32_t>(f[11]) << 16) | (static_cast<uint32_t>(f[12]) << 8) | f[13];
-            if (crc24(f, kModeSFrameLenBytes - 3) == parity) {
-                for (uint16_t k = 0; k < kModeSFrameLenBytes; k++) frame_out[k] = f[k];
-                return shift;
+    const uint32_t parity = (static_cast<uint32_t>(capture[kModeSFrameLenBytes - 3]) << 16) |
+                            (static_cast<uint32_t>(capture[kModeSFrameLenBytes - 2]) << 8) |
+                            capture[kModeSFrameLenBytes - 1];
+    const uint32_t capture_syndrome = crc24(capture, kModeSFrameLenBytes - 3) ^ parity;
+    for (const DF17ShiftPlan& plan : kDF17ShiftPlans.plan) {
+        const uint32_t syndrome = DF17ShiftSyndrome(capture, capture_syndrome, plan);
+        if (!((plan.candidate_filter[(syndrome >> 5) & 7u] >> (syndrome & 31u)) & 1u)) continue;
+        for (uint8_t v = 0; v < plan.num_candidates; v++) {
+            if (plan.candidate_syndrome[v] == syndrome) {
+                BuildDF17Frame(capture, plan, v, frame_out);
+                return plan.shift;
             }
         }
     }
     // No match: the nominal reconstruction (DF bits + capture).
-    uint8_t f[kModeSFrameLenBytes] = {0};
-    for (uint16_t i = 0; i < kModeSFrameLenBits; i++) {
-        SetMsgBit(f, i, i < kDF17HeaderLenBits ? ((kDF17HeaderBits >> (kDF17HeaderLenBits - 1 - i)) & 1u)
-                                               : GetMsgBit(capture, i - kDF17HeaderLenBits));
-    }
-    for (uint16_t k = 0; k < kModeSFrameLenBytes; k++) frame_out[k] = f[k];
+    BuildDF17Frame(capture, kDF17ShiftPlans.plan[0], 0, frame_out);
     return INT8_MIN;
+}
+
+// The nominal reconstruction alone (what RecoverDF17Frame returns when nothing matches), for captures the CPU
+// budget leaves unrealigned.
+inline void NominalDF17Frame(const uint8_t* capture, uint8_t* frame_out) {
+    BuildDF17Frame(capture, kDF17ShiftPlans.plan[0], 0, frame_out);
 }
 
 // LR2021 AGC configuration register. Undocumented; the fields below were characterized on the bench

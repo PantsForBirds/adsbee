@@ -9,6 +9,8 @@
 #include <random>
 #include <vector>
 
+#include "crc_tables.hh"
+#include "df17_recover_reference.hh"
 #include "lr2021_ook_adsb.hh"
 
 using namespace LR2021OokAdsb;
@@ -242,6 +244,96 @@ static void TestDF17RecoveryRejectsNoise() {
     EXPECT(accepted <= 1);
 }
 
+// RecoverDF17Frame (syndrome version) against the first version (df17_recover_reference.hh): the same shift and
+// the same 14 output bytes, for every input.
+static int equivalence_checked = 0;
+static void ExpectSameAsReference(const uint8_t* cap) {
+    uint8_t a[kModeSFrameLenBytes], b[kModeSFrameLenBytes];
+    const int8_t sa = LR2021OokAdsbReference::RecoverDF17Frame(cap, a, Crc24);
+    const int8_t sb = RecoverDF17Frame(cap, b, Crc24);
+    EXPECT(sa == sb);
+    EXPECT(std::equal(a, a + kModeSFrameLenBytes, b));
+    if (sa != sb || !std::equal(a, a + kModeSFrameLenBytes, b)) {
+        printf("    capture:");
+        for (uint8_t k = 0; k < kModeSFrameLenBytes; k++) printf(" %02X", cap[k]);
+        printf("  (reference shift %d, new %d)\n", sa, sb);
+    }
+    equivalence_checked++;
+}
+
+static void TestDF17RecoveryMatchesReference() {
+    EXPECT(kDF17BitSyndromes.v[0] == 0x3935EA);
+    // The firmware's own single-bit syndrome table (the decoder's crc24_find_single_bit_error) is the same, so
+    // the decoder's prefilter never hides one of its matches.
+    for (uint16_t i = 0; i < kModeSFrameLenBits; i++) {
+        EXPECT(kDF17BitSyndromes.v[i] == crc24_single_bit_syndrome_112[i]);
+        EXPECT(kModeSSingleBitFilter.MayMatch(crc24_single_bit_syndrome_112[i]));
+    }
+    int filter_passes = 0;
+    std::mt19937 filter_rng(4096);
+    for (int n = 0; n < 100000; n++) filter_passes += kModeSSingleBitFilter.MayMatch(filter_rng() & 0xFFFFFF);
+    EXPECT(filter_passes < 4000);  // About 112 / 4096 of random syndromes get through.
+    printf("  single-bit prefilter passes %d of 100000 random syndromes\n", filter_passes);
+    // Every bit syndrome is the CRC of that single bit, by the independent bitwise CRC.
+    for (uint16_t i = 0; i < kModeSFrameLenBits; i++) {
+        uint8_t f[kModeSFrameLenBytes] = {0};
+        SetMsgBit(f, i, true);
+        const uint32_t parity = (uint32_t(f[11]) << 16) | (uint32_t(f[12]) << 8) | f[13];
+        EXPECT((Crc24(f, 11) ^ parity) == kDF17BitSyndromes.v[i]);
+    }
+    std::mt19937 rng(17);
+    auto random_frame = [&rng](uint8_t first_byte) {
+        std::vector<uint8_t> d(11);
+        for (auto& x : d) x = static_cast<uint8_t>(rng());
+        d[0] = first_byte;
+        return DF17Frame(d);
+    };
+    // Every shift the detector can produce and more (-4..9), every error pattern in message bits 0-7 (the CA
+    // flips, and the DF bits that are overwritten anyway), both fills, every CA value, 8 frames each.
+    for (uint8_t ca = 0; ca < 8; ca++) {
+        for (int n = 0; n < 8; n++) {
+            const std::vector<uint8_t> f = random_frame(static_cast<uint8_t>((17 << 3) | ca));
+            for (int shift = -4; shift <= 9; shift++) {
+                for (uint16_t errs = 0; errs < 256; errs++) {
+                    std::vector<uint8_t> g = f;
+                    for (int b = 0; b < 8; b++) {
+                        if ((errs >> b) & 1) SetMsgBit(g.data(), b, !GetMsgBit(g.data(), b));
+                    }
+                    for (int fill = 0; fill <= 1; fill++) ExpectSameAsReference(Capture(g, shift, fill).data());
+                }
+            }
+        }
+    }
+    // Valid frames with 1-3 errors anywhere (inside the data, the parity, the unknown bits), at every listed shift.
+    for (int n = 0; n < 200000; n++) {
+        std::vector<uint8_t> g = random_frame(static_cast<uint8_t>((17 << 3) | (rng() & 7)));
+        const int num_errors = 1 + static_cast<int>(rng() % 3);
+        for (int e = 0; e < num_errors; e++) {
+            const uint16_t b = static_cast<uint16_t>(rng() % kModeSFrameLenBits);
+            SetMsgBit(g.data(), b, !GetMsgBit(g.data(), b));
+        }
+        const int8_t shift = kDF17Shifts[rng() % kDF17NumShifts];
+        ExpectSameAsReference(Capture(g, shift, rng() & 1).data());
+    }
+    // Other DFs and pure noise (false triggers): almost never a match, and the same nominal output.
+    for (int n = 0; n < 300000; n++) {
+        uint8_t cap[kModeSFrameLenBytes];
+        for (auto& x : cap) x = static_cast<uint8_t>(rng());
+        ExpectSameAsReference(cap);
+    }
+    // Every capture where a candidate matches at two shifts must pick the same (the first) one: captures built
+    // to be valid at one shift and then shifted into another listed shift's window.
+    for (int n = 0; n < 20000; n++) {
+        const std::vector<uint8_t> f = random_frame(static_cast<uint8_t>((17 << 3) | (rng() & 7)));
+        for (int8_t shift : kDF17Shifts) {
+            std::vector<uint8_t> cap = Capture(f, shift, rng() & 1);
+            cap[rng() % kModeSFrameLenBytes] ^= static_cast<uint8_t>(1u << (rng() % 8));
+            ExpectSameAsReference(cap.data());
+        }
+    }
+    printf("  RecoverDF17Frame == reference on %d captures\n", equivalence_checked);
+}
+
 int main() {
     TestPatternsMatchThePreamble();
     TestPatternValidity();
@@ -253,6 +345,7 @@ int main() {
     TestDF17RecoveryShifts();
     TestDF17RecoveryHeaderErrors();
     TestDF17RecoveryRejectsNoise();
+    TestDF17RecoveryMatchesReference();
     if (failures) {
         printf("%d failure(s)\n", failures);
         return 1;
