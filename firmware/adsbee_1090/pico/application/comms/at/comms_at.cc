@@ -1757,7 +1757,7 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiSTACallback) {
             if (CPP_AT_HAS_ARG(2)) {
                 strncpy(cns.wifi_sta_password, args[2].data(), SettingsManager::Settings::kWiFiPasswordMaxLen);
                 cns.wifi_sta_password[SettingsManager::Settings::kWiFiPasswordMaxLen] = '\0';
-                char redacted_password[SettingsManager::Settings::kWiFiPasswordMaxLen];
+                char redacted_password[SettingsManager::Settings::kWiFiPasswordMaxLen + 1];
                 SettingsManager::RedactPassword(cns.wifi_sta_password, redacted_password,
                                                 SettingsManager::Settings::kWiFiPasswordMaxLen);
                 CPP_AT_CMD_PRINTF(": sta_password=%s\r\n", redacted_password);

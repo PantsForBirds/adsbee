@@ -155,7 +155,7 @@ Tools that already drive the backdoor:
 | Tool | Drives RTS/DTR itself? |
 |---|---|
 | [ADSBee 1421 Programmer](programmer/README.md) | Yes. It drives SYNC and RESET_N directly at power-up and on a BOOTSEL tap, and passes host RTS/DTR through during pass-through. |
-| [Web console](../../software/adsbee_1421_console/README.md#firmware-upload-wiring) **Upload Firmware** | Yes. **Enter bootloader** drives RTS/DTR with Web Serial `setSignals()` (SYNC high, DTR deasserted → asserted 50 ms → deasserted, which suits both the Programmer and a plain adapter), checks the ROM answers, and after flashing drives SYNC low and restarts the module. A manual **Check bootloader** path remains for adapters without RTS/DTR wired. |
+| [Web console](../../software/adsbee_1421_console/README.md#firmware-upload-wiring) **Upload Firmware** | Yes. **Enter bootloader** drives RTS/DTR with Web Serial `setSignals()` (SYNC high, DTR deasserted → asserted 50 ms → deasserted, which suits both the Programmer and a plain adapter), checks the ROM answers, and after flashing drives SYNC low and restarts the module. On adapters without RTS/DTR wired, put the module into the bootloader by hand (or with `AT+BOOT_UART_BOOTLOADER`) and press the same button; it then only runs the check. |
 | Your own script | Yes, with the snippet above in front of any client that speaks the CC13x4 ROM bootloader protocol. |
 
 Opening a serial port resets a module behind the Programmer or a DTR-wired adapter: the
