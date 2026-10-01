@@ -42,9 +42,9 @@ bool LR2021::Init() {
     PackU16(chain_clear_tx_buf_, kOpcodeGetAndClearFifoIrqFlags);
     PackU16(chain_irq_tx_buf_, kOpcodeGetAndClearIrq);
     CONSOLE_INFO("LR2021::Init", "Initializing.");
-    // Do a proper reboot.
+    // Do a proper reboot: a hardware reset on NRESET (the ENABLE line), held for kResetPulseUs.
     SetEnable(false);
-    DelayUs(100);
+    DelayUs(kResetPulseUs);
     SetEnable(true);
 
     // A SYNC assertion may have tri-stated the interface (and set the abort flag) while we were getting
@@ -254,9 +254,13 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         return false;
     }
 #ifdef HARDWARE_UNIT_TESTS
-    // One-shot pattern length override, so a target test can make the chip reject a config.
-    const uint8_t test_len_chips = test_detector_len_override;
-    test_detector_len_override = 0;
+    // Pattern length override for the next test_detector_len_override_count configs, so a target test can make
+    // the chip reject a config (and its retries).
+    uint8_t test_len_chips = 0;
+    if (test_detector_len_override_count > 0) {
+        test_detector_len_override_count--;
+        test_len_chips = test_detector_len_override;
+    }
 #else
     const uint8_t test_len_chips = 0;
 #endif

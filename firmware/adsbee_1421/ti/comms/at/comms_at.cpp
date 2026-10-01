@@ -342,8 +342,10 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
     }
     switch (op) {
         case '?': {
-            LR2021::OokRxStatsAdv stats;
-            if (!adsbee.lr2021.GetOokRxStatsAdv(&stats)) {
+            LR2021::OokRxStatsAdv stats = {};
+            // With the config rejected the chip is held in reset and has no stats to give; the rest of the line
+            // (rx_cfg_error above all) is what matters then, so report its counters as 0.
+            if (!adsbee.ReceiverConfigRejected() && !adsbee.lr2021.GetOokRxStatsAdv(&stats)) {
                 CPP_AT_ERROR("Failed to read LR2021 Rx stats.");
             }
             CPP_AT_CMD_PRINTF(
@@ -356,7 +358,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 "dma_timeouts=%lu,report_q_ovf=%lu,"
                 "validity_reconfigs=%lu,stale_edges=%lu,uat_len_mismatch=%lu,uat_report_q_ovf=%lu,"
                 "parse_max_cyc=%lu,decode_max_cyc=%lu,loop_max_cyc=%lu,loop_avg_cyc=%lu,cpu_1090_pm=%lu,"
-                "cfg_fallbacks=%lu",
+                "cfg_perrs=%lu,rx_cfg_error=%u",
                 stats.pkt_rx, stats.crc_error, stats.len_error, stats.pbl_det, stats.sync_ok, stats.sync_fail,
                 stats.timeout, (unsigned long)adsbee.lr2021_fifo_full_count,
                 (unsigned long)packet_decoder.raw_queue_overflow_count,
@@ -382,7 +384,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)(adsbee.loop_total_cycles
                                     ? adsbee.rx1090_total_cycles * 1000 / adsbee.loop_total_cycles
                                     : 0),
-                (unsigned long)adsbee.lr2021_config_fallback_count);
+                (unsigned long)adsbee.lr2021_config_perr_count, adsbee.ReceiverConfigRejected() ? 1u : 0u);
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -390,7 +392,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             if (!CPP_AT_HAS_ARG(0) || args[0].compare("RESET") != 0) {
                 CPP_AT_ERROR("Only AT+RX_STATS=RESET is supported.");
             }
-            if (!adsbee.lr2021.ResetRxStats()) {
+            if (!adsbee.ReceiverConfigRejected() && !adsbee.lr2021.ResetRxStats()) {  // Held in reset when rejected.
                 CPP_AT_ERROR("Failed to reset LR2021 Rx stats.");
             }
             adsbee.lr2021_fifo_full_count = 0;
@@ -416,7 +418,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.lr2021_rx_rearm_count = 0;
             adsbee.lr2021_rx_reconfig_count = 0;
             adsbee.lr2021_config_fail_count = 0;
-            adsbee.lr2021_config_fallback_count = 0;
+            adsbee.lr2021_config_perr_count = 0;
             adsbee.lr2021.drain_dma_timeouts = 0;
             comms_manager.mode_s_report_queue_ovf_count = 0;
             adsbee.lr2021_validity_reconfig_count = 0;
@@ -1295,8 +1297,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "console TX ring waits, dropped writes and peak occupancy in bytes; *_cyc = CPU cycles at "
                     "48 MHz, exact up to 349 ms: parse max per capture, decode max per packet, main loop "
                     "max/avg; cpu_1090_pm = per mille of main loop time in the 1090 receive and decode path; "
-                    "cfg_fallbacks = receiver configs the LR2021 rejected, run as DF17/auto gain "
-                    "instead).\r\n\tAT+RX_STATS=RESET\r\n\t"
+                    "cfg_perrs = receiver config attempts the LR2021 answered with CMD_PERR, each followed by "
+                    "a hard reset and a retry of the same config; rx_cfg_error = 1 while the selected config "
+                    "is rejected and the 1090 MHz receiver is down).\r\n\tAT+RX_STATS=RESET\r\n\t"
                     "Reset all Rx stats counters.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxStatsCallback, comms_manager)},
     {.command = "SETTINGS",

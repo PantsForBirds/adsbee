@@ -1,6 +1,7 @@
 // On-target tests of the 1090 receive path (AT+TEST): its CPU cost in CPU cycles (utils/cycle_counter.hh), for
-// synthetic DF17-mode captures through ADSBee::ParseLR2021RxFifo and PacketDecoder, and the receiver config
-// fallback. Every cycle measurement runs with interrupts off, so min/avg/max are the functions' own cost.
+// synthetic DF17-mode captures through ADSBee::ParseLR2021RxFifo and PacketDecoder, and what a receiver config
+// the LR2021 rejects (CMD_PERR) does. Every cycle measurement runs with interrupts off, so min/avg/max are the
+// functions' own cost.
 #include <ti/drivers/dpl/HwiP.h>
 
 #include "adsbee.hh"
@@ -22,6 +23,15 @@ class ADSBeeTestAccessor {
     static uint32_t& FramesSinceValid() { return adsbee.lr2021_frames_since_valid_; }
     static bool ApplyReceiverConfig() { return adsbee.ApplyReceiverConfig(); }
     static bool ReceiverConfigOk() { return adsbee.receiver_config_ok_; }
+    static uint8_t SwapGain(uint8_t gain) {
+        const uint8_t old = adsbee.r1090_gain_;
+        adsbee.r1090_gain_ = gain;
+        return old;
+    }
+    static uint8_t Gain() { return adsbee.r1090_gain_; }
+    static uint32_t RejectedBackoffMs() { return adsbee.config_rejected_backoff_ms_; }
+    static uint32_t PErrTries() { return ADSBee::kConfigPErrRetries + 1u; }
+    static uint32_t BackoffMinMs() { return ADSBee::kConfigRejectedBackoffMinMs; }
 };
 
 namespace {
@@ -140,23 +150,87 @@ UTEST(RxCpu, ParseAndDecodeCycles) {
     ADSBeeTestAccessor::SwapMode(old_mode);
 }
 
-// A receiver config the chip rejects (CMD_PERR) is replaced by the factory config once, instead of being retried
-// on every health-ladder backoff (a full reset and config each time, 8.7 ms of main loop, no reception).
-UTEST(ReceiverConfig, RejectedConfigFallsBackOnce) {
+// The LR2021 answering CMD_PERR once: a hard reset, and the same config again, which applies. The receiver runs the
+// config it was given.
+UTEST(ReceiverConfig, PErrResetsAndRetriesTheSameConfig) {
     const SettingsManager::R1090PreambleMode old_mode = adsbee.GetR1090PreambleMode();
-    const uint32_t old_fallbacks = adsbee.lr2021_config_fallback_count;
+    const uint32_t old_perrs = adsbee.lr2021_config_perr_count;
     const uint32_t old_fails = adsbee.lr2021_config_fail_count;
 
     ADSBeeTestAccessor::SwapMode(SettingsManager::kR1090PreambleModeModeS);
     adsbee.lr2021.test_detector_len_override = 11;  // Odd: the LR2021 answers CMD_PERR.
+    adsbee.lr2021.test_detector_len_override_count = 1;
     const bool ok = ADSBeeTestAccessor::ApplyReceiverConfig();
 
     EXPECT_TRUE(ok);
     EXPECT_TRUE(ADSBeeTestAccessor::ReceiverConfigOk());
-    EXPECT_EQ(adsbee.lr2021_config_fallback_count, old_fallbacks + 1);
+    EXPECT_FALSE(adsbee.ReceiverConfigRejected());
+    EXPECT_EQ(adsbee.lr2021_config_perr_count, old_perrs + 1);
     EXPECT_EQ(adsbee.lr2021_config_fail_count, old_fails);
     EXPECT_EQ(static_cast<int>(adsbee.GetR1090PreambleMode()),
-              static_cast<int>(SettingsManager::kR1090PreambleModeDF17));
+              static_cast<int>(SettingsManager::kR1090PreambleModeModeS));
+    EXPECT_EQ(adsbee.lr2021.last_stat().chip_mode, LR2021::ChipMode::kRx);
+
+    adsbee.SetR1090PreambleMode(old_mode);  // Back to what the device ran before the test.
+}
+
+// A config rejected on every retry: the receiver stays down in the error state, still on the selected config (never
+// another mode), with the health ladder's backoff doubling on each further rejection; a config that applies clears
+// it all.
+UTEST(ReceiverConfig, RejectedConfigStaysDownInErrorUntilAConfigApplies) {
+    const SettingsManager::R1090PreambleMode old_mode = adsbee.GetR1090PreambleMode();
+    const uint32_t old_perrs = adsbee.lr2021_config_perr_count;
+    const uint32_t old_fails = adsbee.lr2021_config_fail_count;
+
+    ADSBeeTestAccessor::SwapMode(SettingsManager::kR1090PreambleModeModeS);
+    adsbee.lr2021.test_detector_len_override = 11;
+    adsbee.lr2021.test_detector_len_override_count = ADSBeeTestAccessor::PErrTries();
+    const uint64_t start_us = get_time_since_boot_us();
+    const bool ok = ADSBeeTestAccessor::ApplyReceiverConfig();
+    const uint32_t rejected_us = static_cast<uint32_t>(get_time_since_boot_us() - start_us);
+    CONSOLE_PRINTF("RXCFG rejected config, %lu tries with a hard reset each: %lu us\r\n",
+                   (unsigned long)ADSBeeTestAccessor::PErrTries(), (unsigned long)rejected_us);
+
+    EXPECT_FALSE(ok);
+    EXPECT_FALSE(ADSBeeTestAccessor::ReceiverConfigOk());
+    EXPECT_TRUE(adsbee.ReceiverConfigRejected());
+    EXPECT_EQ(adsbee.lr2021_config_perr_count, old_perrs + ADSBeeTestAccessor::PErrTries());
+    EXPECT_EQ(adsbee.lr2021_config_fail_count, old_fails + 1);
+    EXPECT_EQ(static_cast<int>(adsbee.GetR1090PreambleMode()),
+              static_cast<int>(SettingsManager::kR1090PreambleModeModeS));
+    EXPECT_EQ(ADSBeeTestAccessor::RejectedBackoffMs(), ADSBeeTestAccessor::BackoffMinMs());
+
+    // The health ladder's retry of the same config, rejected again: one try, still down, still MODE_S, backing
+    // off further.
+    adsbee.lr2021.test_detector_len_override_count = 1;
+    const uint32_t perrs_before_retry = adsbee.lr2021_config_perr_count;
+    EXPECT_FALSE(ADSBeeTestAccessor::ApplyReceiverConfig());
+    EXPECT_EQ(adsbee.lr2021_config_perr_count, perrs_before_retry + 1);
+    EXPECT_TRUE(adsbee.ReceiverConfigRejected());
+    EXPECT_EQ(static_cast<int>(adsbee.GetR1090PreambleMode()),
+              static_cast<int>(SettingsManager::kR1090PreambleModeModeS));
+    EXPECT_EQ(ADSBeeTestAccessor::RejectedBackoffMs(), 2 * ADSBeeTestAccessor::BackoffMinMs());
+
+    // The user changes the config (another gain) and the chip rejects that too: a new episode, logged once, with
+    // the retries and the shortest backoff again, and the receiver still on what was selected.
+    const uint8_t old_gain = ADSBeeTestAccessor::SwapGain(7);
+    adsbee.lr2021.test_detector_len_override_count = ADSBeeTestAccessor::PErrTries();
+    EXPECT_FALSE(ADSBeeTestAccessor::ApplyReceiverConfig());
+    EXPECT_TRUE(adsbee.ReceiverConfigRejected());
+    EXPECT_EQ(ADSBeeTestAccessor::RejectedBackoffMs(), ADSBeeTestAccessor::BackoffMinMs());
+    EXPECT_EQ(ADSBeeTestAccessor::Gain(), 7);
+    EXPECT_EQ(static_cast<int>(adsbee.GetR1090PreambleMode()),
+              static_cast<int>(SettingsManager::kR1090PreambleModeModeS));
+    EXPECT_EQ(adsbee.lr2021.test_detector_len_override_count, 0);  // All three tries were made.
+    ADSBeeTestAccessor::SwapGain(old_gain);
+
+    // A config that applies (the same one, now accepted) brings the receiver back and clears the error state.
+    EXPECT_TRUE(ADSBeeTestAccessor::ApplyReceiverConfig());
+    EXPECT_TRUE(ADSBeeTestAccessor::ReceiverConfigOk());
+    EXPECT_FALSE(adsbee.ReceiverConfigRejected());
+    EXPECT_EQ(ADSBeeTestAccessor::RejectedBackoffMs(), 0u);
+    EXPECT_EQ(static_cast<int>(adsbee.GetR1090PreambleMode()),
+              static_cast<int>(SettingsManager::kR1090PreambleModeModeS));
     EXPECT_EQ(adsbee.lr2021.last_stat().chip_mode, LR2021::ChipMode::kRx);
 
     adsbee.SetR1090PreambleMode(old_mode);  // Back to what the device ran before the test.

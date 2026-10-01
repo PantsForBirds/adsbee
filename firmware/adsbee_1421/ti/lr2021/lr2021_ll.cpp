@@ -25,6 +25,14 @@ bool LR2021::SPITransfer(const uint8_t* tx_buf, uint8_t* rx_buf, size_t length) 
 
     // The LPF2 SPI driver accepts nullptr for txBuf (sends 0x00) and for
     // rxBuf (discards incoming bytes), matching the LR2021HAL contract.
+    // Which command the Stat word coming back reports on, for error logs (status_command_opcode()).
+    const uint16_t opcode =
+        (tx_buf != nullptr && length >= 2) ? static_cast<uint16_t>(static_cast<uint16_t>(tx_buf[0] << 8) | tx_buf[1]) : 0;
+    last_frame_was_command_ = opcode != 0;
+    if (last_frame_was_command_) {
+        previous_command_opcode_ = last_command_opcode_;
+        last_command_opcode_ = opcode;
+    }
 
     sync_done_ = false;
     if (!SPI_transfer(spi_handle_, &txn)) {

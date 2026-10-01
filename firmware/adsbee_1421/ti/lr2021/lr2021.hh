@@ -41,6 +41,10 @@
 class LR2021 {
    public:
     static const uint32_t kBootupTimeoutMs = 10;
+    // NRESET low time in Init(). The datasheet asks for at least 100 us (LR20xx datasheet section 4.2, "Reset").
+    // DelayUs() counts ClockP ticks, which are 100 us on this build (main.cpp, clockTickPeriod), so a wait of
+    // N us can end up to one tick early: 300 us guarantees at least 200 us.
+    static constexpr uint32_t kResetPulseUs = 300;
     static const uint32_t kBusyTimeoutMs = 100;
     static constexpr uint16_t kRxFifoMaxDepthBytes = 256;
 
@@ -1255,10 +1259,21 @@ class LR2021 {
      */
     const Stat& last_stat() const { return last_stat_; }
 
+    /**
+     * Opcode of the command whose status last_stat() reports, for error logs. The Stat word of a command frame
+     * reports the PREVIOUS command ("Returns CMD_PERR in the status of the next command", LR20xx datasheet), so
+     * a command rejected with CMD_PERR shows up in the frame of the command after it; the data frame of a read
+     * (opcode 0x0000) reports the read itself. Tracks frames sent through SPITransfer() only.
+     */
+    uint16_t status_command_opcode() const {
+        return last_frame_was_command_ ? previous_command_opcode_ : last_command_opcode_;
+    }
+
 #ifdef HARDWARE_UNIT_TESTS
-    // Target tests only: the next SetOokADSB() uses this detector pattern length (then it resets to 0). An odd
-    // length makes the chip reject the config with CMD_PERR.
+    // Target tests only: the next test_detector_len_override_count calls of SetOokADSB() use this detector
+    // pattern length. An odd length makes the chip reject the config with CMD_PERR.
     uint8_t test_detector_len_override = 0;
+    uint8_t test_detector_len_override_count = 0;
 #endif
 
    private:
@@ -1486,6 +1501,9 @@ class LR2021 {
     // Set from the SYNC ISR via RequestAbort(); checked in WaitUntilReady(); cleared in Init().
     volatile bool abort_requested_ = false;
     Stat last_stat_;
+    uint16_t last_command_opcode_ = 0;      // Opcode of the last command frame (status_command_opcode()).
+    uint16_t previous_command_opcode_ = 0;  // The command frame before it.
+    bool last_frame_was_command_ = false;   // False after a read's data frame (opcode 0x0000).
 
     // Async RX drain state. The tx/rx buffers and transaction must be persistent: DMA reads/writes them
     // after ServiceRxDrain() returns. One extra 2-byte slot ahead of the payload holds the ReadRxFifo

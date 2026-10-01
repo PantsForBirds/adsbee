@@ -127,6 +127,7 @@ bool ADSBee::ApplyReceiverConfigInner() {
     // pull-down). Both are idempotent, so every caller (boot, AT commands, sync-sleep wake, R1090_*
     // setters) can funnel through here.
     if (!lr2021_enabled_) {
+        receiver_config_rejected_ = false;  // Down by the user's choice; nothing is being retried.
         lr2021.DeInit();
         lr2021.TristateInterface();
         return true;
@@ -140,6 +141,7 @@ bool ADSBee::ApplyReceiverConfigInner() {
     // interrupts. Every RX-arming path funnels through here (boot, gain/preamble/boost changes,
     // sync-sleep wake), so none of them can re-enable a user-disabled receiver.
     if (!rx_1090_enabled_) {
+        receiver_config_rejected_ = false;  // Down by the user's choice; nothing is being retried.
         lr2021.DeInit();
         return true;
     }
@@ -147,34 +149,34 @@ bool ADSBee::ApplyReceiverConfigInner() {
     // must be set up from standby (kStdbyRC); reconfiguring while the radio is in continuous RX
     // leaves it demodulating but never validating. DeInit()+Init() reproduces the exact known-good
     // boot sequence (reset -> kStdbyRC) before configuring, for both boot and live AT changes.
-    lr2021.DeInit();  // Safe even if never inited (SPI_close is guarded).
-    if (!lr2021.Init()) {
-        return false;
-    }
-    if (!lr2021.SetOokADSB(r1090_preamble_mode_, r1090_gain_, r1090_rx_boost_)) {
-        // The chip rejected a parameter (CMD_PERR). That fails the same way on every attempt, and the health
-        // ladder would retry it on every backoff for good: a full reset and config each time, 8.7 ms of main
-        // loop per attempt, and no reception. Say so once and bring the receiver up in the factory config
-        // instead (the runtime settings follow it, so the parser agrees with the radio; nothing is saved).
-        // Any other failure (no SPI answer, BUSY stuck) may be transient and keeps the backoff retries.
-        const bool is_factory_config = r1090_preamble_mode_ == SettingsManager::kR1090PreambleModeDF17 &&
-                                       r1090_gain_ == 0 && r1090_rx_boost_ == 0;
-        if (lr2021.last_stat().command_status != LR2021::CommandStatus::kPErr || is_factory_config) {
+    //
+    // CMD_PERR (the chip rejected a parameter of the config) is answered with a hard reset (Init() pulses
+    // NRESET) and a retry of the SAME config, kConfigPErrRetries more times: a PERR can come from a chip in a
+    // bad state as well as from a config it will never take. If every try is rejected the receiver stays down
+    // (held in reset) in the error state, and the health ladder retries the same config, one try at a time,
+    // on a doubling backoff (OnReceiverConfigRejected). The receiver never runs a config other than the one
+    // selected. Any other failure (no SPI answer, BUSY stuck) may be transient and keeps the ordinary backoff
+    // retries.
+    const uint8_t perr_retries = RejectedConfigIsCurrent() ? 0 : kConfigPErrRetries;
+    for (uint8_t attempt = 0;; attempt++) {
+        lr2021.DeInit();  // Safe even if never inited (SPI_close is guarded).
+        if (!lr2021.Init()) {
             return false;
         }
-        CONSOLE_ERROR("ADSBee::ApplyReceiverConfig",
-                      "LR2021 rejected the receiver config (mode %u, gain %u, boost %u); running DF17, auto "
-                      "gain, no boost instead.",
-                      static_cast<unsigned>(r1090_preamble_mode_), r1090_gain_, r1090_rx_boost_);
-        lr2021_config_fallback_count++;
-        r1090_preamble_mode_ = SettingsManager::kR1090PreambleModeDF17;
-        r1090_gain_ = 0;
-        r1090_rx_boost_ = 0;
-        lr2021.DeInit();
-        if (!lr2021.Init() || !lr2021.SetOokADSB(r1090_preamble_mode_, r1090_gain_, r1090_rx_boost_)) {
+        if (lr2021.SetOokADSB(r1090_preamble_mode_, r1090_gain_, r1090_rx_boost_)) {
+            break;
+        }
+        if (lr2021.last_stat().command_status != LR2021::CommandStatus::kPErr) {
+            return false;
+        }
+        lr2021_config_perr_count++;
+        if (attempt >= perr_retries) {
+            OnReceiverConfigRejected();
             return false;
         }
     }
+    receiver_config_rejected_ = false;
+    config_rejected_backoff_ms_ = 0;
     // Arm the LR2021 IRQ rising-edge interrupt now that the chip side is routing kIrqRxFifo to it.
     // Clear any stale latched edge first: neither GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
     // The BUSY callback is registered here too, but its interrupt stays disarmed until a chain frame
@@ -184,6 +186,31 @@ bool ADSBee::ApplyReceiverConfigInner() {
     GPIO_clearInt(bsp.kLR2021IrqPin);
     GPIO_enableInt(bsp.kLR2021IrqPin);
     return true;
+}
+
+void ADSBee::OnReceiverConfigRejected() {
+    if (RejectedConfigIsCurrent()) {
+        // Retried by the health ladder and rejected again: back off further.
+        config_rejected_backoff_ms_ = config_rejected_backoff_ms_ * 2 > kConfigRejectedBackoffMaxMs
+                                          ? kConfigRejectedBackoffMaxMs
+                                          : config_rejected_backoff_ms_ * 2;
+    } else {
+        // A new rejection, or the user changed the config: say so once, and start at the shortest backoff.
+        CONSOLE_ERROR("ADSBee::ApplyReceiverConfig",
+                      "LR2021 rejected the receiver config (mode %s, gain %u, boost %u) with CMD_PERR on command "
+                      "0x%04x, %u times with a hard reset before each retry. 1090 MHz receiver down; retrying the "
+                      "same config with a backoff from %lu s up to %lu s.",
+                      SettingsManager::kR1090PreambleModeStrs[r1090_preamble_mode_], r1090_gain_, r1090_rx_boost_,
+                      lr2021.status_command_opcode(), static_cast<unsigned>(kConfigPErrRetries + 1),
+                      (unsigned long)(kConfigRejectedBackoffMinMs / 1000),
+                      (unsigned long)(kConfigRejectedBackoffMaxMs / 1000));
+        rejected_mode_ = r1090_preamble_mode_;
+        rejected_gain_ = r1090_gain_;
+        rejected_rx_boost_ = r1090_rx_boost_;
+        config_rejected_backoff_ms_ = kConfigRejectedBackoffMinMs;
+    }
+    receiver_config_rejected_ = true;
+    lr2021.DeInit();  // Hold the chip in reset: no half-configured receiver, no interrupts.
 }
 
 bool ADSBee::SetRxSubGHzEnabled(bool enabled) { return subg_radio.SetRxEnabled(enabled); }
@@ -676,7 +703,7 @@ bool ADSBee::UpdateLR2021() {
         lr2021_last_rx_ok_ms_ = now_ms;
         lr2021_rearm_attempts_ = 0;
     } else if (now_ms - lr2021_last_rx_ok_ms_ > kRxHealthTimeoutMs &&
-               now_ms - lr2021_last_recovery_ms_ > kRxRecoveryBackoffMs) {
+               now_ms - lr2021_last_recovery_ms_ > RecoveryBackoffMs()) {
         lr2021_last_recovery_ms_ = now_ms;
         if (receiver_config_ok_ && lr2021_rearm_attempts_ < kMaxRearmAttempts) {
             // Config intact but the chip left RX: re-arm continuous RX in place. LR_IRQ is disarmed
@@ -695,8 +722,10 @@ bool ADSBee::UpdateLR2021() {
             // Re-arm didn't stick, or the config never applied: full receiver bring-up (resets the
             // health clocks on both outcomes, so a hard failure retries forever on the backoff).
             lr2021_rx_reconfig_count++;
-            CONSOLE_WARNING("ADSBee::UpdateLR2021", "No confirmed RX for %lu ms; reconfiguring receiver.",
-                            (unsigned long)(now_ms - lr2021_last_rx_ok_ms_));
+            if (!receiver_config_rejected_) {  // A rejected config was logged once, when it was rejected.
+                CONSOLE_WARNING("ADSBee::UpdateLR2021", "No confirmed RX for %lu ms; reconfiguring receiver.",
+                                (unsigned long)(now_ms - lr2021_last_rx_ok_ms_));
+            }
             ApplyReceiverConfig();
         }
     }
@@ -708,7 +737,7 @@ bool ADSBee::UpdateLR2021() {
     // equivalent, which provably recovers). In dead-quiet airspace, noise frames accumulate slowly,
     // so a spurious reconfig is rare and costs nothing (there is no traffic to lose).
     if (lr2021_frames_since_valid_ >= kMaxFramesWithoutValid &&
-        now_ms - lr2021_last_recovery_ms_ > kRxRecoveryBackoffMs) {
+        now_ms - lr2021_last_recovery_ms_ > RecoveryBackoffMs()) {
         lr2021_frames_since_valid_ = 0;
         lr2021_validity_reconfig_count++;
         CONSOLE_WARNING("ADSBee::UpdateLR2021", "%lu frames without a valid packet; reconfiguring receiver.",
