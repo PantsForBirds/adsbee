@@ -164,6 +164,18 @@ console, UAT RX and the LED clock.
 > SYNC — the CC1314 re-drives `LR_CS`/`LR_RESET` and re-muxes the SPI pins as soon as it wakes, so
 > overlapping drive would cause bus contention.
 
+> **Sleep current:** the LR2021 stays held in reset for the whole sleep, by design: a host taking
+> over the bus receives a reset chip, and `LR_RESET` falling is the handoff signal the module
+> datasheet and schematic note describe. On a PCBA Rev D module at 3.3 V, SYNC sleep draws about
+> 0.70 mA, almost all of it the LR2021 in reset; the CC1314 in STANDBY adds about 1 µA. In reset, the
+> LR2021's DIO6 (`LR_IRQ`) comes back with its default pull-up, so `LR2021::DeInit()` turns the
+> `LR_IRQ` input buffer off (`GPIO_CFG_NO_DIR`) instead of leaving its pull-down to fight it (about
+> 0.35 mA), and `Init()` restores it. This also applies to `AT+LR_ENABLE=0` and to 1090 RX disabled.
+> A supply trace of the sleep shows the watchdog-feed wake at half the watchdog timeout (about
+> 0.5 ms at up to ~4.5 mA) and a shorter pulse about every 0.74 s that doesn't return from the power
+> policy: the CC13x4's VDDR recharge in STANDBY (TI's standby path enables the recharge comparator),
+> part of the datasheet STANDBY current and under 1 µA on average.
+
 > **SYNC pull-down note:** while awake, SYNC/DIO_5 is configured with an internal **pull-down**
 > (fail-safe: a floating/disconnected host reads LOW = the device stays awake). This is **redundant with
 > the external 120 kΩ pull present on ADSBee m1421 PCBA Rev D and later** and is retained to protect
