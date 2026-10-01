@@ -164,12 +164,15 @@ console, UAT RX and the LED clock.
 > SYNC — the CC1314 re-drives `LR_CS`/`LR_RESET` and re-muxes the SPI pins as soon as it wakes, so
 > overlapping drive would cause bus contention.
 
-> **SYNC pull-down note:** SYNC/DIO_5 is configured with an internal **pull-down** (fail-safe: a
-> floating/disconnected host reads LOW = the device stays awake). This is **redundant with the
-> external 120 kΩ pull present on ADSBee m1421 PCBA Rev D and later and draws extra power** — it is
-> retained only to protect earlier PCBAs. The setting lives in
-> [`adsbee_1421.syscfg`](ti/syscfg/adsbee_1421.syscfg) (`GPIO7.pull`) and the
-> generated `ti_drivers_config.c`; keep the two in sync.
+> **SYNC pull-down note:** while awake, SYNC/DIO_5 is configured with an internal **pull-down**
+> (fail-safe: a floating/disconnected host reads LOW = the device stays awake). This is **redundant with
+> the external 120 kΩ pull present on ADSBee m1421 PCBA Rev D and later** and is retained to protect
+> earlier PCBAs. The setting lives in [`adsbee_1421.syscfg`](ti/syscfg/adsbee_1421.syscfg) (`GPIO7.pull`)
+> and the generated `ti_drivers_config.c`; keep the two in sync. `EnterSyncSleep()` drops the internal
+> pull for the sleep itself: the host drives SYNC high the whole time, so the pull would only draw about
+> 80 µA at 3.3 V from the host's SYNC driver. On PCBA Rev D and later, R5 still pulls SYNC low and wakes
+> the module if the host releases the line; on an earlier PCBA a host that releases SYNC (hi-Z) during
+> sleep leaves the line floating, so drive it low to wake the module.
 
 ## Repo ↔ container layout
 

@@ -223,9 +223,14 @@ void ADSBee::EnterSyncSleep() {
     // hardware does not support level-triggered GPIO interrupts, so an edge is the only option. The
     // lost-edge race (host drops SYNC between the GPIO_read below and entering STANDBY) is closed by the
     // re-check loop: with the interrupt enabled, the edge latches as a pending NVIC interrupt, the
-    // policy's WFI returns immediately, and the loop re-reads LOW and exits. Keep the fail-safe pull-down,
-    // and clear any stale latched edge before enabling (EVFLAGS is not cleared by setConfig/enableInt).
-    GPIO_setConfig(bsp.kSyncPin, GPIO_CFG_INPUT_INTERNAL | GPIO_CFG_IN_INT_FALLING | GPIO_CFG_PULL_DOWN_INTERNAL);
+    // policy's WFI returns immediately, and the loop re-reads LOW and exits. Clear any stale latched edge
+    // before enabling (EVFLAGS is not cleared by setConfig/enableInt).
+    //
+    // No internal pull while asleep: the host holds SYNC high for the whole sleep, and the internal
+    // pull-down (about 80 uA at 3.3 V) only drains the host's SYNC driver. R5 (120k to GND, PCBA rev D and
+    // later) still pulls SYNC low and wakes the module if the host releases the line. The wake path below
+    // restores the fail-safe pull-down for the awake state.
+    GPIO_setConfig(bsp.kSyncPin, GPIO_CFG_INPUT_INTERNAL | GPIO_CFG_IN_INT_FALLING | GPIO_CFG_PULL_NONE_INTERNAL);
     GPIO_setCallback(bsp.kSyncPin, SyncLineCallback);
     GPIO_clearInt(bsp.kSyncPin);
     GPIO_enableInt(bsp.kSyncPin);
@@ -325,7 +330,7 @@ void ADSBee::EnterSyncSleep() {
         Power_disablePolicy();
     }
 
-    // SYNC is now low: swap the wake interrupt back to the rising-edge sleep-request config (keeping the
+    // SYNC is now low: swap the wake interrupt back to the rising-edge sleep-request config (restoring the
     // fail-safe pull-down), clear the request flag, then re-initialize the receiver to resume where we
     // left off. If SYNC bounces high during the re-init, the re-armed ISR re-tristates and sets the flag
     // again, the config aborts, and the main loop re-enters sync sleep.
