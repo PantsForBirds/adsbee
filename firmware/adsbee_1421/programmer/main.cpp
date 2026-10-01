@@ -8,6 +8,9 @@
 // transparent USB-CDC serial adapter (see bridge.cc for the modem-control-line emulation
 // contract).
 //
+// If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0
+// disabled the backdoor), it skips the image check and enters pass-through with a warning.
+//
 // Hold BOOTSEL at power-up to force a reflash; tap BOOTSEL during pass-through to rerun the
 // check (also the recovery for in-band AT+REBOOT / AT+BAUD_RATE desyncs). Hold BOOTSEL for 3 s --
 // at any point, including while the Programmer is stuck reporting a dead console -- to arm a settings
@@ -99,8 +102,9 @@ static bool EnterBootloader(Cc13x4Bootloader& bl) {
 }
 
 // After a full entry failure, work out whether the module is alive at all and record a
-// human-readable diagnosis (report-only; never auto-erases the app).
-static void DiagnoseEntryFailure() {
+// human-readable diagnosis (report-only; never auto-erases the app). Returns the baud rate the
+// application console answered at, or 0 if it didn't answer.
+static uint32_t DiagnoseEntryFailure() {
     TargetResetIntoApp();
     IdleMs(kBootWaitMs);
     // Sweep the whitelist: a device with a non-default saved baud must not misdiagnose as dead.
@@ -124,6 +128,7 @@ static void DiagnoseEntryFailure() {
                  rx_idle_high ? "" : " (module TX not driving - power/wiring?)");
     }
     CdcPrintf("%s\r\n", last_diagnosis);
+    return app_baud;
 }
 
 // Brings the console up after a reset into the app: wait out the boot, then find the device by
@@ -202,7 +207,28 @@ int main() {
                     StatusSet(Status::kWaitingForDevice);
                 }
                 if (!EnterBootloader(bl)) {
-                    DiagnoseEntryFailure();
+                    if (DiagnoseEntryFailure() != 0) {
+                        // The application runs but the ROM bootloader can't be entered, most likely
+                        // because AT+BOOTLOADER_PIN=0 turned the backdoor off. Bridge the console
+                        // anyway, so the user can still reach the module (and send
+                        // AT+BOOTLOADER_PIN=1), instead of retrying entry forever.
+                        CdcPrintf("WARNING: ROM bootloader entry failed but the application console answers. "
+                                  "Entering pass-through WITHOUT checking the image against the baked %s. If "
+                                  "the bootloader backdoor is disabled (AT+BOOTLOADER_PIN? answers 0), "
+                                  "AT+BOOTLOADER_PIN=1 enables it again; tap BOOTSEL afterwards to rerun the "
+                                  "check.\r\n",
+                                  kFirmwareVersionStr);
+                        if (force_flash || erase_settings_armed) {
+                            CdcPrintf("The %s needs the bootloader and did not run.%s\r\n",
+                                      force_flash ? "forced reflash" : "settings erase",
+                                      erase_settings_armed ? " The settings erase stays armed." : "");
+                        }
+                        force_flash = false;
+                        negotiate_baud = kConsoleBaud;
+                        print_version = true;
+                        state = State::kNegotiate;
+                        break;
+                    }
                     // Retry forever (the module may be attached later), repeating the last
                     // diagnosis every few seconds for late-attached terminals.
                     next_diag_print = delayed_by_ms(get_absolute_time(), 5000);

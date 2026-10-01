@@ -21,6 +21,11 @@ At power-up the Programmer:
    at its saved console baud, persisted via `AT+SETTINGS=SAVE`), drives its live rate to 1 M if
    it answered elsewhere, and becomes a USB-CDC ↔ UART pass-through.
 
+If the bootloader can't be entered but the application console answers (for example after
+`AT+BOOTLOADER_PIN=0` turned the backdoor off), the Programmer prints a warning, skips steps 1 and
+2, and enters pass-through anyway, so the console stays reachable. A forced reflash or an armed
+settings erase can't run in that state; the settings erase stays armed.
+
 The ROM bootloader leg always runs at 1 M (the ROM auto-bauds to it; ceiling ~1.2 M). The
 Programmer only moves the console's *live* rate. It never issues `AT+SETTINGS=SAVE`, so the
 module's persisted baud setting is untouched. If no module responds, the Programmer retries forever (attach a
@@ -155,7 +160,8 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 | `SBL sync at <baud>` | Bootloader entry works; that rate is reused for the session. |
 | `... failed (timed out ...); no late bytes` | Silence from the module: reset, UART, or SYNC not reaching it. |
 | `... failed (unexpected byte ...)` / `late bytes: ...` | The module answered with garbage: baud/framing issue on the link. |
-| `App console responds at <baud> ... SBL entry fails` | Reset + UART wiring are good. Check SYNC (GP27 → module pin 28) and that the module firmware has the CCFG backdoor enabled (`AT+BOOTLOADER_PIN?` answers `BOOTLOADER_PIN=1`). |
+| `App console responds at <baud> ... SBL entry fails` | Reset + UART wiring are good. Check SYNC (GP27 → module pin 28) and that the module firmware has the CCFG backdoor enabled (`AT+BOOTLOADER_PIN?` answers `BOOTLOADER_PIN=1`). The Programmer then enters pass-through without the image check (next row). |
+| `WARNING: ROM bootloader entry failed but the application console answers ...` | Pass-through without the image check: the module runs whatever it has, which may differ from the baked image. If the backdoor is off, send `AT+BOOTLOADER_PIN=1`, then tap BOOTSEL to rerun the check. |
 | `No response ... RESET_N(GP26)=LOW (stuck in reset ...)` | Something is holding reset low with the Programmer's driver released: a wiring short or a drive conflict on ~SRST. |
 | `No response ... UART RX(GP29)=LOW (module TX not driving ...)` | Module unpowered, held in reset, or SUTX wiring wrong (RX should idle high when the module runs). |
 | `No response ... RESET_N=high, UART RX=high (link plausible)` | Lines look electrically sane; suspect TX leg (GP28 → SURX) or module-side UART config. |
@@ -164,8 +170,9 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 
 Modules running pre-backdoor firmware can't be entered via SYNC at all: flash them once via
 JTAG. A module whose backdoor was turned off with `AT+BOOTLOADER_PIN=0` behaves the same way, and
-the Programmer won't reach pass-through with it: connect a console directly and send
-`AT+BOOTLOADER_PIN=1`, then reconnect the Programmer, or use JTAG. See
+the Programmer enters pass-through without the image check (`WARNING: ROM bootloader entry failed
+but the application console answers ...`). Send `AT+BOOTLOADER_PIN=1` through it, then tap BOOTSEL
+to rerun the check. See
 [Turning the backdoor off](../README.md#turning-the-backdoor-off-atbootloader_pin).
 
 ## Limitations

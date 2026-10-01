@@ -216,11 +216,14 @@ The change takes effect at the next reset and persists across power cycles and
 > flash. If the firmware's console stops answering while the backdoor is off, only JTAG can
 > recover the module.
 >
-> The ADSBee 1421 Programmer enters pass-through only after a successful bootloader check. With
-> the backdoor off it keeps retrying the bootloader entry and printing `App console responds at
-> <baud> baud ... SBL entry fails`, and never bridges the console. To re-enable the backdoor on
-> a module behind the Programmer, connect a USB-UART adapter to SURX/SUTX (module pins 20/21) in
-> place of the Programmer and send `AT+BOOTLOADER_PIN=1`, or use JTAG.
+> Behind the ADSBee 1421 Programmer, a module with the backdoor off can't be checked against the
+> Programmer's baked image or reflashed. When bootloader entry fails but the application console
+> answers, the Programmer prints a warning and enters pass-through without the image check, so
+> `AT+BOOTLOADER_PIN=1` can still be sent through it; tap BOOTSEL afterwards to rerun the check.
+> Programmer images from 0.3.11-rc3 and earlier don't have this fallback: they keep retrying the
+> bootloader entry and never bridge the console. With those, connect a USB-UART adapter to
+> SURX/SUTX (module pins 20/21) in place of the Programmer and send `AT+BOOTLOADER_PIN=1`, or use
+> JTAG.
 
 What the command writes, per the CC13x4 Technical Reference Manual and TI driverlib:
 
