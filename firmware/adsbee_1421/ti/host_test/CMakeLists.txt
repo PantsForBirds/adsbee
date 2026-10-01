@@ -38,7 +38,6 @@ target_sources(host_test PRIVATE
     ${ADSBEE_COMMON_DIR}/utils/crc/crc.cpp  # crc32_ieee_802_3, for Settings::IsValid().
     test_lr2021_ook_adsb.cc
     test_lr2021_status_tracker.cc
-    test_mode_s_single_bit_filter.cc
     test_settings.cc
 )
 
@@ -46,7 +45,6 @@ target_include_directories(host_test PRIVATE
     ${ADSBEE_MODULES_DIR}/googletest/googletest/include
     ${ADSBEE_1421_TI_DIR}/lr2021
     ${ADSBEE_1421_TI_DIR}/settings
-    ${ADSBEE_1421_TI_DIR}/utils
     ${ADSBEE_COMMON_DIR}/utils
     ${ADSBEE_COMMON_DIR}/utils/crc
     .  # comms.hh: console logging for host tests
