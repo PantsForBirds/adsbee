@@ -248,7 +248,15 @@ bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManage
 
     if (any_locally_decoded_active && all_locally_decoded_done &&
         timestamp_ms - last_locally_decoded_report_timestamp_ms_ >= kCSBeeReportingIntervalMs) {
-        last_locally_decoded_report_timestamp_ms_ = timestamp_ms;
+        // Rounds start on reporting ticks (every kRawReportingCheckIntervalMs or slower), so a round usually starts a
+        // little after its interval is up. Advance the schedule by one interval rather than to the current time so that
+        // lateness doesn't accumulate and the MAVLink and GDL90 heartbeats keep an average rate of 1 Hz. If the schedule
+        // fell a whole interval behind (a long round, a stalled main loop), restart it from now instead of sending
+        // rounds back to back to catch up.
+        last_locally_decoded_report_timestamp_ms_ += kCSBeeReportingIntervalMs;
+        if (timestamp_ms - last_locally_decoded_report_timestamp_ms_ >= kCSBeeReportingIntervalMs) {
+            last_locally_decoded_report_timestamp_ms_ = timestamp_ms;
+        }
         csbee_overrun_reported_ = false;
         mavlink1_overrun_reported_ = false;
         mavlink2_overrun_reported_ = false;
@@ -633,12 +641,7 @@ bool CommsManager::ReportMAVLINK(ReportSink* sinks, uint16_t num_sinks, uint8_t 
 
     // Send the HEARTBEAT once at the start of each round.
     if (uid_index == 0) {
-        mavlink_heartbeat_t heartbeat_msg = {.custom_mode = 0,
-                                             .type = MAV_TYPE_ADSB,
-                                             .autopilot = MAV_AUTOPILOT_INVALID,
-                                             .base_mode = 0,
-                                             .system_status = MAV_STATE_ACTIVE,
-                                             .mavlink_version = mavlink_version};
+        mavlink_heartbeat_t heartbeat_msg = MAVLINKHeartbeatMessage();
         for (uint16_t i = 0; i < num_sinks; i++) {
             mavlink_msg_heartbeat_send_struct(static_cast<mavlink_channel_t>(sinks[i]), &heartbeat_msg);
         }

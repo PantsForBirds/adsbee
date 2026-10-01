@@ -56,6 +56,16 @@ uint8_t AircraftCategoryToMAVLINKEmitterType(ADSBTypes::EmitterCategory emitter_
     return UINT8_MAX;
 }
 
+mavlink_heartbeat_t MAVLINKHeartbeatMessage() {
+    // mavlink_msg_heartbeat_send_struct sends these bytes as they are, so mavlink_version must be set here.
+    return mavlink_heartbeat_t{.custom_mode = 0,
+                               .type = MAV_TYPE_ADSB,
+                               .autopilot = MAV_AUTOPILOT_INVALID,
+                               .base_mode = 0,
+                               .system_status = MAV_STATE_ACTIVE,
+                               .mavlink_version = kMAVLINKHeartbeatMavlinkVersion};
+}
+
 mavlink_adsb_vehicle_t ModeSAircraftToMAVLINKADSBVehicleMessage(const ModeSAircraft &aircraft) {
     // Set MAVLINK flags.
     uint16_t flags = 0;
