@@ -36,6 +36,7 @@
 #include <cstdint>
 
 #include "lr2021_ook_adsb.hh"  // Mode S detector patterns and AGC settings.
+#include "lr2021_status_tracker.hh"  // Which command a Stat word reports on.
 #include "settings.hh"         // For SettingsManager::R1090PreambleMode.
 
 class LR2021 {
@@ -1260,14 +1261,22 @@ class LR2021 {
     const Stat& last_stat() const { return last_stat_; }
 
     /**
-     * Opcode of the command whose status last_stat() reports, for error logs. The Stat word of a command frame
-     * reports the PREVIOUS command ("Returns CMD_PERR in the status of the next command", LR20xx datasheet), so
-     * a command rejected with CMD_PERR shows up in the frame of the command after it; the data frame of a read
-     * (opcode 0x0000) reports the read itself. Tracks frames sent through SPITransfer() only.
+     * Opcode of the command whose status last_stat() reports (LR2021StatusTracker): the Stat word of a command
+     * frame reports the command frame before it, and a read's data frame reports the read. 0 when that is no
+     * command since the last reset.
      */
-    uint16_t status_command_opcode() const {
-        return last_frame_was_command_ ? previous_command_opcode_ : last_command_opcode_;
-    }
+    uint16_t status_command_opcode() const { return status_tracker_.status_opcode(); }
+
+    /** Name of an LR2021 opcode, for logs ("SetOokDetector"); "none" for 0 and "unknown" for anything else. */
+    static const char* OpcodeName(uint16_t opcode);
+
+    /**
+     * Checks the status of the last command sent, which only arrives with the frame after it: one GetStatus frame
+     * (2 bytes; its Stat word reports the command before it, and no second frame is needed after a command that is
+     * not a read). Call at the end of a command sequence. Logs and returns false on CMD_PERR or CMD_FAIL.
+     * @param[in] observer  Function name for the log.
+     */
+    bool CheckLastCommandStatus(const char* observer);
 
 #ifdef HARDWARE_UNIT_TESTS
     // Target tests only: the next test_detector_len_override_count calls of SetOokADSB() use this detector
@@ -1501,9 +1510,24 @@ class LR2021 {
     // Set from the SYNC ISR via RequestAbort(); checked in WaitUntilReady(); cleared in Init().
     volatile bool abort_requested_ = false;
     Stat last_stat_;
-    uint16_t last_command_opcode_ = 0;      // Opcode of the last command frame (status_command_opcode()).
-    uint16_t previous_command_opcode_ = 0;  // The command frame before it.
-    bool last_frame_was_command_ = false;   // False after a read's data frame (opcode 0x0000).
+    LR2021StatusTracker status_tracker_;  // Which command each Stat word reports on (status_command_opcode()).
+
+    /**
+     * Logs a status other than CMD_OK / CMD_DAT, naming the command it belongs to (status_command_opcode()), which
+     * is the command before the frame that read it when that frame was a command.
+     * @param[in] observer  Function whose frame read the Stat word.
+     */
+    void LogCommandStatus(const char* observer);
+    /**
+     * Logs why a command sequence (SetOokADSB, StartCwTone, ...) stopped, and returns false. A bad status names the
+     * command it belongs to, which is usually the step before `step`: a command's status arrives with the next
+     * frame. Otherwise the step itself got no valid answer (SPI transfer, BUSY).
+     * @param[in] sequence  Function name of the sequence, for the log.
+     * @param[in] step      The step that saw the failure.
+     */
+    bool SequenceStepFailed(const char* sequence, const char* step);
+    // First two bytes of a frame: its opcode, or 0 for a frame with no command (nullptr or zeros).
+    static uint16_t FrameOpcode(const uint8_t* tx_buf, size_t length);
 
     // Async RX drain state. The tx/rx buffers and transaction must be persistent: DMA reads/writes them
     // after ServiceRxDrain() returns. One extra 2-byte slot ahead of the payload holds the ReadRxFifo

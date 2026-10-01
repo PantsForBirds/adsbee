@@ -4,6 +4,8 @@
 // functions' own cost.
 #include <ti/drivers/dpl/HwiP.h>
 
+#include <cstring>
+
 #include "adsbee.hh"
 #include "crc.hh"
 #include "cycle_counter.hh"
@@ -199,6 +201,10 @@ UTEST(ReceiverConfig, RejectedConfigStaysDownInErrorUntilAConfigApplies) {
     EXPECT_EQ(static_cast<int>(adsbee.GetR1090PreambleMode()),
               static_cast<int>(SettingsManager::kR1090PreambleModeModeS));
     EXPECT_EQ(ADSBeeTestAccessor::RejectedBackoffMs(), ADSBeeTestAccessor::BackoffMinMs());
+    // The rejected command is named: the detector, whose CMD_PERR arrived in the status of the command after it.
+    EXPECT_EQ(adsbee.lr2021.status_command_opcode(), 0x0288);
+    EXPECT_STREQ(LR2021::OpcodeName(adsbee.lr2021.status_command_opcode()), "SetOokDetector");
+    EXPECT_EQ(adsbee.lr2021.last_stat().command_status, LR2021::CommandStatus::kPErr);
 
     // The health ladder's retry of the same config, rejected again: one try, still down, still MODE_S, backing
     // off further.
@@ -234,4 +240,36 @@ UTEST(ReceiverConfig, RejectedConfigStaysDownInErrorUntilAConfigApplies) {
     EXPECT_EQ(adsbee.lr2021.last_stat().chip_mode, LR2021::ChipMode::kRx);
 
     adsbee.SetR1090PreambleMode(old_mode);  // Back to what the device ran before the test.
+}
+
+// The last command of a sequence only gets its status from a frame sent after it: CheckLastCommandStatus is that
+// frame. A detector the chip rejects, sent last, is caught and named; one it accepts passes. Also the cost of one
+// receiver config that applies (a full reset and config, the unit of the PERR retries).
+UTEST(ReceiverConfig, LastCommandStatusIsCheckedAndNamed) {
+    LR2021& lr = adsbee.lr2021;
+    lr.DeInit();
+    ASSERT_TRUE(lr.Init());
+    EXPECT_EQ(lr.status_command_opcode(), 0);  // Nothing sent since the reset.
+    ASSERT_TRUE(lr.SetPacketType(LR2021::PacketType::kPktOok));
+
+    // An odd pattern length: CMD_PERR. The detector's own frame reports SetPacketType, so it looks fine...
+    EXPECT_TRUE(lr.SetOokDetector(LR2021OokAdsb::kModeSPattern, 11 - 1, 0, false,
+                                  LR2021::OokSfdKind::kOokSfdKindFallingEdge, 0));
+    // ...and the check after it catches it, naming the detector.
+    EXPECT_FALSE(lr.CheckLastCommandStatus("ReceiverConfig.LastCommandStatusIsCheckedAndNamed"));
+    EXPECT_EQ(lr.last_stat().command_status, LR2021::CommandStatus::kPErr);
+    EXPECT_EQ(lr.status_command_opcode(), 0x0288);
+    EXPECT_STREQ(LR2021::OpcodeName(lr.status_command_opcode()), "SetOokDetector");
+
+    // An even length is accepted.
+    EXPECT_TRUE(lr.SetOokDetector(LR2021OokAdsb::kModeSPattern, LR2021OokAdsb::kModeSPatternLenChips - 1, 0, false,
+                                  LR2021::OokSfdKind::kOokSfdKindFallingEdge, 0));
+    EXPECT_TRUE(lr.CheckLastCommandStatus("ReceiverConfig.LastCommandStatusIsCheckedAndNamed"));
+
+    // Back to the receiver as configured, and what one config costs.
+    const uint64_t start_us = get_time_since_boot_us();
+    EXPECT_TRUE(ADSBeeTestAccessor::ApplyReceiverConfig());
+    CONSOLE_PRINTF("RXCFG one receiver config (reset + config + status check): %lu us\r\n",
+                   (unsigned long)(get_time_since_boot_us() - start_us));
+    EXPECT_EQ(lr.last_stat().chip_mode, LR2021::ChipMode::kRx);
 }

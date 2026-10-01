@@ -54,8 +54,7 @@ bool LR2021::WriteRegMem32(uint32_t addr, const uint32_t* data, size_t num_words
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::WriteRegMem32", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::WriteRegMem32");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -101,8 +100,7 @@ bool LR2021::WriteRegMemMask32(uint32_t addr, uint32_t mask, uint32_t data) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::WriteRegMemMask32", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::WriteRegMemMask32");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -194,8 +192,7 @@ bool LR2021::ReadRegMem32(uint32_t addr, uint32_t* data, size_t num_words) {
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
 
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::ReadRegMem32", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::ReadRegMem32");
             return false;
         }
 
