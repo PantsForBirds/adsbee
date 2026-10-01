@@ -35,6 +35,7 @@ target_link_libraries(host_test PRIVATE libgtest Threads::Threads)
 
 target_sources(host_test PRIVATE
     ${ADSBEE_1421_TI_DIR}/settings/settings_strs.cpp
+    ${ADSBEE_COMMON_DIR}/utils/crc/crc.cpp  # crc32_ieee_802_3, for Settings::IsValid().
     test_lr2021_ook_adsb.cc
     test_mode_s_single_bit_filter.cc
     test_settings.cc
@@ -47,6 +48,7 @@ target_include_directories(host_test PRIVATE
     ${ADSBEE_1421_TI_DIR}/utils
     ${ADSBEE_COMMON_DIR}/utils
     ${ADSBEE_COMMON_DIR}/utils/crc
+    .  # comms.hh: console logging for host tests
 )
 
 # Make test runnable with "make test".

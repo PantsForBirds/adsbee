@@ -143,7 +143,9 @@ static constexpr uint32_t kOokDetectThresholdShift = 20;
 // MODE_S_STRONG threshold (about -70 dB by the driver's formula). The short strong-signal pattern
 // matches noise at the chip threshold (about 40 triggers/s with no signal, enough to trip the validity
 // watchdog), and right after a -20 dBm packet the reduced AGC gain let noise trigger about three more
-// captures. With this threshold both go to zero while packets from -50 dBm up decode as before.
+// captures. With this threshold both go to zero while packets from -50 to -20 dBm decode as before.
+// MODE_S_STRONG decodes 98-100 % from -50 to -20 dBm, 18 % at -15 dBm and none from -10 to 0 dBm
+// (measured on a devkit, about 3 dB desensed by its 1090/978 combiner; levels uncalibrated).
 static constexpr uint8_t kOokDetectThresholdStrong = 0x04;
 
 constexpr uint32_t OokDetectThresholdRegValue(uint8_t threshold) {

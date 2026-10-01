@@ -14,7 +14,9 @@
 #include "pico/rand.h"
 #endif
 
-static constexpr uint32_t kSettingsVersion = 3;  // Change this when settings format changes!
+// Change this when settings format changes! A blob with another version fails IsValid() on boot, and Load()
+// resets every setting to its factory default. 4: R1090PreambleMode renumbered (0.3.11-rc4).
+static constexpr uint32_t kSettingsVersion = 4;
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 // Leading word of a valid settings blob. Deliberately not 0x00000000 or 0xFFFFFFFF so that blank,
@@ -73,39 +75,19 @@ class SettingsManager {
     };
     static const char kSubGHzModeStrs[kNumSubGHzRadioModes][kSubGHzModeStrMaxLen];
 
-    // Receiver mode of the 1090MHz Mode S receiver (how the LR2021 detects packets). The values are
-    // flash-persisted, so they never change; a removed mode keeps its value as a placeholder.
-    //
-    // Stored values and the modes they load as (R1090PreambleModeFromStored):
-    //   0 = MODE_S_PREAMBLE (up to 0.3.11-rc3, removed): loads as MODE_S. It used the standard preamble
-    //       with the hardware CRC selected, but the LR2021 CRC filter was never enabled (0xF30844).
-    //   1 = DF17: unchanged.
-    //   2 = MODE_S_SW_CRC (up to 0.3.11-rc3): loads as MODE_S, the same detector with the raised AGC
-    //       trigger.
-    //   3 = MODE_S_STRONG: new in 0.3.11-rc4.
-    //   4 = MODE_S_WEAK (0.3.11-rc4 development builds only, removed; the standard preamble with the
-    //       chip-default AGC trigger): loads as the factory default, DF17.
-    //   Any other value (settings from newer firmware): loads as the factory default, DF17.
+    // Receiver mode of the 1090MHz Mode S receiver (how the LR2021 detects packets). The values are stored
+    // in flash; renumbering them needs a kSettingsVersion bump (settings version 4 renumbered them when
+    // MODE_S_PREAMBLE, MODE_S_SW_CRC and MODE_S_WEAK were removed). Bench windows quoted below were measured
+    // on a 1421 devkit, whose 1090/978 combiner costs about 3 dB against the module; levels uncalibrated.
     enum R1090PreambleMode : uint8_t {
-        kR1090PreambleModeRemovedModeSPreamble = 0,  // Placeholder for the removed MODE_S_PREAMBLE.
-        kR1090PreambleModeDF17 = 1,   // Preamble chips 8-15 + DF17 header bits: DF17 frames only.
-        kR1090PreambleModeModeS = 2,  // Standard preamble, raised AGC trigger: every downlink format,
-                                      // weak signals up to about -45 dBm.
-        kR1090PreambleModeModeSStrong = 3,  // Preamble chips 6-15, raised OOK threshold: strong signals (about
-                                            // -50 dBm and up), where the LR2021 AGC blanks the preamble start.
-        kR1090PreambleModeRemovedModeSWeak = 4,  // Placeholder for the removed MODE_S_WEAK.
+        kR1090PreambleModeDF17 = 0,    // Preamble chips 8-15 + DF17 header bits: DF17 frames only. Factory default.
+        kR1090PreambleModeModeS = 1,   // Standard preamble, raised AGC trigger: every downlink format,
+                                       // weak signals up to about -45 dBm.
+        kR1090PreambleModeModeSStrong = 2,  // Preamble chips 6-15, raised OOK threshold: strong signals, about
+                                            // -50 to -20 dBm, where the LR2021 AGC blanks the preamble start.
+                                            // Signals above about -15 dBm are not decoded.
         kNumR1090PreambleModes
     };
-    // Mode to run for a stored (flash or AT) value, following the table above.
-    static constexpr R1090PreambleMode R1090PreambleModeFromStored(uint8_t stored) {
-        if (stored == kR1090PreambleModeRemovedModeSPreamble) {
-            return kR1090PreambleModeModeS;
-        }
-        if (stored == kR1090PreambleModeRemovedModeSWeak || stored >= kNumR1090PreambleModes) {
-            return kR1090PreambleModeDF17;
-        }
-        return static_cast<R1090PreambleMode>(stored);
-    }
     static constexpr uint16_t kR1090PreambleModeStrMaxLen = 30;
     static const char kR1090PreambleModeStrs[kNumR1090PreambleModes][kR1090PreambleModeStrMaxLen];
 
