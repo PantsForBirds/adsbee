@@ -110,6 +110,8 @@ CCFG.enableBootloaderBackdoor = true;
 CCFG.dioBootloaderBackdoor    = 5;
 CCFG.levelBootloaderBackdoor  = "Active high";
 
+/* Not-in-use pin configs (applied while SPI is closed: LR2021 held in reset, AT+LR_ENABLE=0, SYNC
+ * sleep) are pulled inputs so none of them floats. The LR2021 drives MISO only while NSS is low. */
 SPI1.$name                    = "COPRO_SPI";
 SPI1.defaultTxBufferValue     = "0x00";
 SPI1.dmaInterruptPriority     = "5";
@@ -123,6 +125,7 @@ SPI1.sclkPinInstance.$name    = "COPRO_SPI_SCLK";
 SPI1.sclkPinInstance.mode     = "Input";
 SPI1.sclkPinInstance.pull     = "Pull Down";
 SPI1.pociPinInstance.$name    = "COPRO_SPI_POCI";
+SPI1.pociPinInstance.pull     = "Pull Down";
 SPI1.picoPinInstance.$name    = "COPRO_SPI_PICO";
 SPI1.picoPinInstance.mode     = "Input";
 SPI1.picoPinInstance.pull     = "Pull Down";
