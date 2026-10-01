@@ -6,6 +6,7 @@
 #include <ti/devices/cc13x4_cc26x4/driverlib/watchdog.h>
 #include <ti/drivers/GPIO.h>
 #include <ti/drivers/Power.h>
+#include <ti/drivers/dpl/ClockP.h>
 #include <ti/drivers/power/PowerCC26XX.h>
 
 #include "buffer_utils.hh"
@@ -42,6 +43,11 @@ static void SyncLineCallback(uint_least8_t /*index*/) {
         adsbee.lr2021.TristateInterface();  // Release NSS/ENABLE/SCLK/PICO to the host immediately.
     }
 }
+
+// Periodic wake during sync sleep so EnterSyncSleep() can feed the watchdog. Nothing to do here: the
+// wake itself makes PowerCC26XX_standbyPolicy() return, and the sleep loop feeds after every return.
+static ClockP_Struct sync_sleep_wake_clock_struct;
+static void SyncSleepWakeCallback(uintptr_t /*arg*/) {}
 
 // LR2021 IRQ line (LR2021 DIO6 -> LR_IRQ pin) rising edge: the RX FIFO crossed its high threshold.
 // Kicks the ISR-paced drain chain (lr2021_irq_drain.cpp). GPIO HWI context; all GPIO callbacks share
@@ -243,6 +249,23 @@ void ADSBee::EnterSyncSleep() {
     bool policy_was_enabled = Power_disablePolicy();
     Power_enablePolicy();
 
+    // The watchdog keeps counting through STANDBY (WatchdogCC26X4.h: "Once started, the Watchdog will
+    // keep running in Active, Idle and Standby mode"), and with no ClockP event pending the policy stays
+    // in STANDBY until SYNC drops, for up to ClockP's ~9 hour maximum skip. A watchdog reset with SYNC
+    // high starts the ROM bootloader, so wake at half the configured timeout to feed it. Each wake costs
+    // well under 1 ms of active time. With AT+WATCHDOG=0 after the watchdog was started, the hardware
+    // keeps the old reload value, so fall back to a 500 ms period.
+    ClockP_Handle wake_clock_handle = nullptr;
+    if (WatchdogRunning()) {
+        uint32_t wake_period_ms = watchdog_timeout_sec_ > 0 ? watchdog_timeout_sec_ * 500 : 500;
+        ClockP_Params wake_clock_params;
+        ClockP_Params_init(&wake_clock_params);
+        wake_clock_params.period = wake_period_ms * 1000 / ClockP_getSystemTickPeriod();
+        wake_clock_params.startFlag = true;
+        wake_clock_handle = ClockP_construct(&sync_sleep_wake_clock_struct, SyncSleepWakeCallback,
+                                             wake_clock_params.period, &wake_clock_params);
+    }
+
     // Re-check SYNC in a loop because the policy can return from a plain WFI/IDLE (e.g. a pending ClockP
     // tick) without having reached STANDBY, or while a power constraint is still momentarily held (e.g. a
     // UART/SPI transfer draining). The caller must have quiesced the persistent constraint holders (the
@@ -284,6 +307,10 @@ void ADSBee::EnterSyncSleep() {
         FeedWatchdog();
     }
 
+    if (wake_clock_handle != nullptr) {
+        ClockP_stop(wake_clock_handle);
+        ClockP_destruct(&sync_sleep_wake_clock_struct);
+    }
     if (!policy_was_enabled) {
         Power_disablePolicy();
     }

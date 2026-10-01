@@ -150,8 +150,9 @@ restores the bus (`RestoreInterface()`) and re-runs `ApplyReceiverConfig()` to r
 LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` restart the console and UAT RX.
 
 > **SYNC is also the bootloader backdoor pin:** the boot ROM samples it at every reset, and SYNC
-> high at reset (including a watchdog reset during a long sleep) starts the ROM serial bootloader,
-> so this firmware doesn't run. Drive SYNC low before resetting the module; see
+> high at reset (including a watchdog reset) starts the ROM serial bootloader, so this firmware
+> doesn't run. The watchdog keeps counting in STANDBY, so `EnterSyncSleep()` runs a periodic ClockP
+> at half the watchdog timeout to wake and feed it. Drive SYNC low before resetting the module; see
 > [SYNC and sleep](README.md#sync-and-sleep).
 
 > **LR2021 bus handoff:** during sleep the CC1314 releases every LR2021 interface pin it normally

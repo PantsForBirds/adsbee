@@ -172,9 +172,10 @@ external MCU (see [SYNC low-power sleep](AGENTS.md#sync-low-power-sleep)). As a 
 
 - Return SYNC low after flashing. Otherwise the next reset lands back in the bootloader, and a
   running application treats SYNC high as a sleep request.
-- Any reset while SYNC is high enters the bootloader, including a watchdog reset. If the module
-  sleeps for longer than the watchdog timeout (10 s by default) and the watchdog fires, the
-  module wakes up in the bootloader. For long sleeps, disable the watchdog with `AT+WATCHDOG=0`.
+- Any reset while SYNC is high enters the bootloader, including a watchdog reset. The watchdog
+  keeps counting in STANDBY, so the firmware wakes for well under a millisecond at half the
+  watchdog timeout (every 5 s by default) to feed it, and a long sleep alone doesn't reset the
+  module.
 - On a plain adapter, closing the port can put the module to sleep. On Linux and macOS, closing
   a serial port with HUPCL set (the default) deasserts RTS and DTR. RTS deasserted is SYNC high,
   so the module sleeps until something drives SYNC low again. To keep the lines as they are after
