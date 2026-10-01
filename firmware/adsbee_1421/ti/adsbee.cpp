@@ -283,6 +283,11 @@ void ADSBee::EnterSyncSleep() {
     static constexpr uint32_t kConstraintRepeatMs = 1000;
     uint32_t unblocked_timestamp_ms = get_time_since_boot_ms();
     uint32_t next_warning_timestamp_ms = unblocked_timestamp_ms + kConstraintGraceMs;
+    // Sleep length and policy return count, reported on wake. A sleep that reaches STANDBY returns about
+    // once per watchdog wake period; thousands of returns per second mean something keeps the policy
+    // in IDLE (a frequent ClockP or a wake source firing).
+    uint32_t sleep_start_timestamp_ms = unblocked_timestamp_ms;
+    uint32_t policy_returns = 0;
     while (GPIO_read(bsp.kSyncPin) == 1) {
         uint32_t constraint_mask = Power_getConstraintMask();
         uint32_t timestamp_ms = get_time_since_boot_ms();
@@ -306,6 +311,7 @@ void ADSBee::EnterSyncSleep() {
             comms_manager.DrainConsoleTx();
         }
         PowerCC26XX_standbyPolicy();
+        policy_returns++;
         // The CC13x4 watchdog keeps counting (on SCLK_LF) through STANDBY, so feed it on every policy
         // return or a long enough sleep watchdog-resets the MCU mid-sleep.
         FeedWatchdog();
@@ -330,7 +336,8 @@ void ADSBee::EnterSyncSleep() {
     GPIO_enableInt(bsp.kSyncPin);
     FeedWatchdog();
 
-    CONSOLE_INFO("ADSBee::EnterSyncSleep", "SYNC released; re-initializing LR2021.");
+    CONSOLE_INFO("ADSBee::EnterSyncSleep", "SYNC released after %lums and %lu policy returns; re-initializing LR2021.",
+                 (unsigned long)(get_time_since_boot_ms() - sleep_start_timestamp_ms), (unsigned long)policy_returns);
     // ApplyReceiverConfigInner() re-drives NSS/ENABLE via RestoreInterface() before Init()'s GPIO
     // writes — unless AT+LR_ENABLE=0, in which case it re-parks the bus without ever driving it
     // (calling RestoreInterface() here unconditionally would glitch RESET/NSS high on wake).
