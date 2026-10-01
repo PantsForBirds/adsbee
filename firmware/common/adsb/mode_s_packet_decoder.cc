@@ -4,6 +4,7 @@
 
 #include "comms.hh"
 #include "crc.hh"
+#include "mode_s_single_bit_filter.hh"
 
 // Uncomment the line below to allow duplicate packets (e.g. for testing).
 // #define DISABLE_DUPLICATE_FILTER
@@ -87,8 +88,11 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
             // Only extended squitters received as DF=17/18 are corrected, and never by flipping a bit in the DF field:
             // a DF=17/18 is only accepted if its first five bits say so (DO-260B 2.2.4.3.4.7.3.a). Correcting other
             // formats (or the DF field) turns noise and non-ADS-B formats (e.g. DF=19, DF=24) into ADS-B packets.
-            int16_t bit_flip_index = crc24_find_single_bit_error(
-                decoded_packet.crc_syndrome, decoded_packet.raw.buffer_len_bytes * kBitsPerByte);
+            // The prefilter answers "no single-bit error" for most syndromes without the 112-entry search.
+            int16_t bit_flip_index = ModeSSingleBitFilter::kFilter.MayMatch(decoded_packet.crc_syndrome)
+                                         ? crc24_find_single_bit_error(decoded_packet.crc_syndrome,
+                                                                       RawModeSPacket::kExtendedSquitterPacketLenBits)
+                                         : -1;
             if (bit_flip_index >= DecodedModeSPacket::kDFNumBits) {
                 // Found a single bit error: flip it and push the corrected packet to the output queue.
                 flip_bit(decoded_packet.raw.buffer, bit_flip_index);
