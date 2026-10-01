@@ -29,10 +29,11 @@ CPP_AT_CALLBACK(ATTestCallback) {
         if (!adsbee.EndDirectLR2021Access()) {
             CPP_AT_ERROR("Failed to restore the receiver config after the tests.");
         }
-        if (ret >= 0) {
+        // utest_main returns the number of failed tests.
+        if (ret == 0) {
             CPP_AT_SUCCESS();
         } else {
-            CPP_AT_ERROR("utest_main returned code %d", ret);
+            CPP_AT_ERROR("%d hardware unit test(s) failed.", ret);
         }
     }
 
