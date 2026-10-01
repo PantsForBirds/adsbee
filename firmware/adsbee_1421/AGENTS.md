@@ -142,12 +142,14 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 An external host can force the CC1314 into **STANDBY** (deep sleep, SRAM retained) by driving the
 **SYNC line (DIO_5)** HIGH; driving it LOW wakes the MCU. The super-loop in
 [`main.cpp`](ti/main.cpp) polls SYNC at the top of each iteration and, when
-asserted, calls `SubGHzRadio::Suspend()` and `CommsManager::Suspend()` (release the RF core's and
+asserted, calls `LEDs::Suspend()` (stops the LED ClockP, whose frequent events keep the power
+policy in IDLE), `SubGHzRadio::Suspend()` and `CommsManager::Suspend()` (release the RF core's and
 the console UART's STANDBY power constraints), then `ADSBee::EnterSyncSleep()`, which powers the
 LR2021 down, **tri-states the shared LR2021 bus** (`LR2021::TristateInterface()` — see below), arms
 SYNC as a falling-edge wake source, enters STANDBY via `PowerCC26XX_standbyPolicy()`, and on wake
 restores the bus (`RestoreInterface()`) and re-runs `ApplyReceiverConfig()` to re-initialize the
-LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` restart the console and UAT RX.
+LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` / `LEDs::Resume()` restart the
+console, UAT RX and the LED clock.
 
 > **SYNC is also the bootloader backdoor pin:** the boot ROM samples it at every reset, and SYNC
 > high at reset (including a watchdog reset) starts the ROM serial bootloader, so this firmware

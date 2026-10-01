@@ -72,8 +72,9 @@ class ADSBee {
     // and blocks until the host drives SYNC LOW. The SYNC ISR has usually already tri-stated the shared
     // LR2021 bus within microseconds of the edge; this finishes the job (SPI teardown, wake-interrupt
     // swap, STANDBY loop) and re-runs the full receiver re-init on wake. The caller must quiesce the
-    // SubGHz RF core (SubGHzRadio::Suspend()) before calling this, otherwise its power constraint
-    // prevents the MCU from reaching STANDBY.
+    // SubGHz RF core (SubGHzRadio::Suspend()) and the console UART RX (CommsManager::Suspend()) before
+    // calling this, otherwise their power constraints prevent the MCU from reaching STANDBY, and must
+    // stop the LED clock (LEDs::Suspend()), whose frequent ClockP events keep the policy in IDLE.
     void EnterSyncSleep();
 
     LR2021 lr2021;

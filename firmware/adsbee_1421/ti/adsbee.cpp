@@ -269,7 +269,11 @@ void ADSBee::EnterSyncSleep() {
     // Re-check SYNC in a loop because the policy can return from a plain WFI/IDLE (e.g. a pending ClockP
     // tick) without having reached STANDBY, or while a power constraint is still momentarily held (e.g. a
     // UART/SPI transfer draining). The caller must have quiesced the persistent constraint holders (the
-    // SubGHz RF core and the console UART RX) first, or the policy will never descend to STANDBY.
+    // SubGHz RF core and the console UART RX) first, or the policy will never descend to STANDBY. It must
+    // also have stopped every ClockP that fires more often than every ~1 ms (the LED clock): the policy
+    // only enters STANDBY when the next ClockP event is more than Power_getTransitionLatency(STANDBY)
+    // away, and falls back to IDLE otherwise. That case holds no constraint, so the warning below
+    // never reports it.
     //
     // Constraint diagnostics: a briefly-held constraint (the CONSOLE_INFO above draining, an SPI transfer
     // finishing) clears on its own and is not worth reporting, so only start complaining once STANDBY has

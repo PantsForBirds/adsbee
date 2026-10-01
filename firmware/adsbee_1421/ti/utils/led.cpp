@@ -26,6 +26,16 @@ void LEDs::DeInit() {
     }
 }
 
+void LEDs::Suspend() {
+    ClockP_stop(clock_handle_);
+    for (uint16_t i = 0; i < config_.num_leds; i++) {
+        GPIO_write(config_.pins[i], 0);
+        led_on_[i] = false;
+    }
+}
+
+void LEDs::Resume() { ClockP_start(clock_handle_); }
+
 void LEDs::Update() {
     uint32_t now_ms = get_time_since_boot_ms();
     for (uint16_t i = 0; i < config_.num_leds; i++) {
