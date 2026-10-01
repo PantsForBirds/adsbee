@@ -41,12 +41,15 @@ class Pico : public SPICoprocessorMasterInterface {
     /**
      * Helper function used by callbacks to set the handshake pin high or low on the ESP32.
      * Located in IRAM for performance improvements when called from ISR.
+     * @param[in] level True to raise the handshake line (only for transactions that solicit a transfer from the
+     * master, see kSolicitTransfer), false to lower it.
      */
-    inline void IRAM_ATTR SetSPIHandshakePinLevel(bool level) {
-        // Only set the handshake pin HI when we know we want to solicit a response and not block + wait.
-        // Handshake pin can always be set LO.
-        gpio_set_level(config_.spi_handshake_pin, level && use_handshake_pin_);
-    }
+    inline void IRAM_ATTR SetSPIHandshakePinLevel(bool level) { gpio_set_level(config_.spi_handshake_pin, level); }
+
+    // Value of spi_slave_transaction_t::user for transactions that solicit a transfer from the master. The flag has to
+    // travel with the transaction: a receive queued behind a response is armed by the SPI ISR after the SPI receive
+    // task has already moved on, so a shared "use handshake" flag would be stale by then.
+    static constexpr uintptr_t kSolicitTransfer = 1;
 
     inline void SPIUseHandshakePin(bool level) { use_handshake_pin_ = level; }
 
@@ -156,6 +159,18 @@ class Pico : public SPICoprocessorMasterInterface {
     // SPI peripheral needs to operate on special buffers that are 32-bit word aligned and in DMA accessible memory.
     uint8_t *spi_rx_buf_ = nullptr;
     uint8_t *spi_tx_buf_ = nullptr;
+
+    // Transactions stay queued in the SPI slave driver after SPIWriteReadBlocking() returns (see rx_prequeued_), so
+    // they can't live on the stack.
+    spi_slave_transaction_t spi_tx_trans_ = {};
+    spi_slave_transaction_t spi_rx_trans_ = {};
+    // True while a full-length receive is queued behind the last response. The RP2040 starts its next transaction
+    // kSPIPostTransmitLockoutUs (2 ms) after it finishes reading a response. Queuing the receive together with the
+    // response lets the SPI ISR re-arm the slave as soon as the response completes, instead of waiting for this task to
+    // be scheduled again. Without it, a busy core 1 (e.g. the W5500 Ethernet RX task, priority 15) could delay the
+    // re-arm past 2 ms; the RP2040's next packet was then lost or cut short and it waited 100 ms for a handshake
+    // before retrying.
+    bool rx_prequeued_ = false;
 
     bool spi_receive_task_should_exit_ = false;  // Flag used to tell SPI receive task to exit.
     TickType_t network_led_turn_on_timestamp_ticks_ = 0;

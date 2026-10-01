@@ -1,7 +1,10 @@
 #include "pico.hh"
 
-// Called after a transaction is queued and ready for pickup by master. We use this to set the handshake line high.
-void IRAM_ATTR esp_spi_post_setup_cb(spi_slave_transaction_t *trans) { pico_ll.SetSPIHandshakePinLevel(1); }
+// Called after a transaction is loaded and ready for pickup by master. Raise the handshake line if the transaction
+// solicits a transfer from the master.
+void IRAM_ATTR esp_spi_post_setup_cb(spi_slave_transaction_t *trans) {
+    pico_ll.SetSPIHandshakePinLevel(reinterpret_cast<uintptr_t>(trans->user) == Pico::kSolicitTransfer);
+}
 
 // Called after transaction is sent/received. We use this to set the handshake line low.
 void IRAM_ATTR esp_spi_post_trans_cb(spi_slave_transaction_t *trans) { pico_ll.SetSPIHandshakePinLevel(0); }
@@ -82,24 +85,62 @@ bool Pico::DeInit() {
 }
 
 int Pico::SPIWriteReadBlocking(uint8_t *tx_buf, uint8_t *rx_buf, uint16_t len_bytes, bool end_transaction) {
-    int bytes_written = 0;
+    esp_err_t status = ESP_OK;
+    spi_slave_transaction_t *done_trans = nullptr;
 
-    spi_slave_transaction_t t;
-    memset(&t, 0, sizeof(t));
-
-    t.length = len_bytes * kBitsPerByte;  // Transaction length is in bits
-    t.tx_buffer = tx_buf == nullptr ? nullptr : spi_tx_buf_;
-    t.rx_buffer = rx_buf == nullptr ? nullptr : spi_rx_buf_;
-
-    if (tx_buf != nullptr) {
-        memcpy(spi_tx_buf_, tx_buf, len_bytes);
-    }
-
-    /** Send a write packet from slave -> master via handshake. **/
-    // Wait for a transaction to complete. Allow this task to block if no SPI transaction is received until max
+    // Wait for transactions to complete. Allow this task to block if no SPI transaction is received until max
     // delay. Currently, setting the delay here to anything other than portMAX_DELAY (which allows blocking
     // indefinitely) causes an error in spi_slave.c due to extra transactions getting stuck in the SPI peripheral queue.
-    esp_err_t status = spi_slave_transmit(config_.spi_handle, &t, portMAX_DELAY /*kSPITransactionTimeoutTicks*/);
+    if (tx_buf == nullptr && rx_prequeued_ && len_bytes == SPICoprocessorPacket::kSPITransactionMaxLenBytes) {
+        // Full-length receive that was already queued behind the last response: just collect it.
+        rx_prequeued_ = false;
+        status = spi_slave_get_trans_result(config_.spi_handle, &done_trans, portMAX_DELAY);
+    } else {
+        if (rx_prequeued_) {
+            // Only SPICoprocessor::Update()'s full-length receive is expected after a response. Anything else would
+            // queue up behind the pending receive, so let the master complete that one first.
+            CONSOLE_ERROR("Pico::SPIWriteReadBlocking",
+                          "Unexpected %d Byte %s while a receive is queued; waiting for the queued receive first.",
+                          len_bytes, tx_buf ? "write" : "read");
+            rx_prequeued_ = false;
+            status = spi_slave_get_trans_result(config_.spi_handle, &done_trans, portMAX_DELAY);
+            if (status != ESP_OK) {
+                CONSOLE_ERROR("Pico::SPIWriteReadBlocking", "Queued receive failed with code 0x%x.", status);
+                return kErrorGeneric;
+            }
+        }
+        spi_slave_transaction_t &t = tx_buf != nullptr ? spi_tx_trans_ : spi_rx_trans_;
+        memset(&t, 0, sizeof(t));
+        t.length = len_bytes * kBitsPerByte;  // Transaction length is in bits
+        t.tx_buffer = tx_buf == nullptr ? nullptr : spi_tx_buf_;
+        t.rx_buffer = rx_buf == nullptr ? nullptr : spi_rx_buf_;
+        t.user = reinterpret_cast<void *>(use_handshake_pin_ ? kSolicitTransfer : 0);
+        if (tx_buf != nullptr) {
+            memcpy(spi_tx_buf_, tx_buf, len_bytes);
+        }
+        if (tx_buf != nullptr && rx_buf == nullptr) {
+            // Response to the master. Queue the next receive right behind it (see rx_prequeued_). The master can
+            // read a short response within microseconds of the handshake, so queue both with the scheduler suspended:
+            // if this task were preempted in between, the receive would be queued late. The queue is empty here
+            // (this task owns every transaction), so no waiting is needed.
+            memset(&spi_rx_trans_, 0, sizeof(spi_rx_trans_));
+            spi_rx_trans_.length = SPICoprocessorPacket::kSPITransactionMaxLenBytes * kBitsPerByte;
+            spi_rx_trans_.rx_buffer = spi_rx_buf_;
+            spi_rx_trans_.user = nullptr;  // Wait for the master; don't solicit a transfer.
+            vTaskSuspendAll();
+            status = spi_slave_queue_trans(config_.spi_handle, &t, 0);
+            rx_prequeued_ = status == ESP_OK && spi_slave_queue_trans(config_.spi_handle, &spi_rx_trans_, 0) == ESP_OK;
+            xTaskResumeAll();
+            if (status == ESP_ERR_TIMEOUT) {
+                status = spi_slave_queue_trans(config_.spi_handle, &t, portMAX_DELAY);  // Queue unexpectedly full.
+            }
+        } else {
+            status = spi_slave_queue_trans(config_.spi_handle, &t, portMAX_DELAY);
+        }
+        if (status == ESP_OK) {
+            status = spi_slave_get_trans_result(config_.spi_handle, &done_trans, portMAX_DELAY);
+        }
+    }
 
     if (status != ESP_OK) {
         if (status == ESP_ERR_TIMEOUT) {
@@ -109,7 +150,7 @@ int Pico::SPIWriteReadBlocking(uint8_t *tx_buf, uint8_t *rx_buf, uint16_t len_by
                       status);
         return kErrorGeneric;
     }
-    bytes_written = CeilBitsToBytes(t.trans_len);
+    int bytes_written = CeilBitsToBytes(done_trans->trans_len);
     if (rx_buf != nullptr) {
         memcpy(rx_buf, spi_rx_buf_, len_bytes);
     }

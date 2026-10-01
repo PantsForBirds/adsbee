@@ -15,6 +15,8 @@
 #include "task_priorities.hh"
 
 static const uint32_t kTCPSocketReconnectIntervalMs = 10000;
+// How long a non-blocking feed connect may stay pending before it is abandoned (see ConnectFeedSocket()).
+static const uint32_t kTCPSocketConnectTimeoutMs = 5000;
 
 // Heap threshold for back-pressure. If free heap drops below this, safe_send will block.
 // Set high enough to leave room for WebSocket allocations (~2KB) and other system needs.
@@ -276,7 +278,7 @@ void CommsManager::IPWANTask(void* pvParameters) {
             // feed_is_active[] flags.
             if (!settings_manager.settings.feeds_enabled || !settings_manager.settings.feed_is_active[i]) {
                 // Feed is not active, ensure socket is closed.
-                if (feed_sock_is_connected_[i]) {
+                if (feed_sock_is_connected_[i] || feed_sock_is_connecting_[i]) {
                     // Need to close the socket connection.
                     CloseFeedSocket(i);
                 }
@@ -335,10 +337,14 @@ void CommsManager::CloseFeedSocket(uint16_t feed_index) {
     // Need to close the socket connection.
     close(feed_sock_[feed_index]);
     feed_sock_is_connected_[feed_index] = false;
+    feed_sock_is_connecting_[feed_index] = false;
     CONSOLE_INFO("CommsManager::IPWANTask", "Closed socket for feed %d.", feed_index);
 }
 
 bool CommsManager::ConnectFeedSocket(uint16_t feed_index) {
+    if (feed_sock_is_connecting_[feed_index]) {
+        return PollFeedSocketConnect(feed_index);
+    }
     // Meter reconnect attempt interval.
     uint32_t timestamp_ms = get_time_since_boot_ms();
     if (timestamp_ms - feed_sock_last_connect_timestamp_ms_[feed_index] <= kTCPSocketReconnectIntervalMs) {
@@ -389,7 +395,16 @@ bool CommsManager::ConnectFeedSocket(uint16_t feed_index) {
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_port = htons(settings_manager.settings.feed_ports[feed_index]);
 
+    // Connect without blocking. This task serves every feed, and a blocking connect() to an unreachable host held it
+    // for the whole TCP connect timeout (~18 s per attempt) while the WAN queue overflowed and all feeds lost frames.
+    // The connect finishes in PollFeedSocketConnect() on later passes of IPWANTask.
+    int flags = fcntl(feed_sock_[feed_index], F_GETFL, 0);
+    fcntl(feed_sock_[feed_index], F_SETFL, flags | O_NONBLOCK);
     int err = connect(feed_sock_[feed_index], (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+    if (err != 0 && errno == EINPROGRESS) {
+        feed_sock_is_connecting_[feed_index] = true;
+        return PollFeedSocketConnect(feed_index);
+    }
     if (err != 0) {
         CONSOLE_ERROR("CommsManager::IPWANTask", "Socket unable to connect to URI %s:%d for feed %d: errno %d (%s)",
                       settings_manager.settings.feed_uris[feed_index], settings_manager.settings.feed_ports[feed_index],
@@ -397,6 +412,41 @@ bool CommsManager::ConnectFeedSocket(uint16_t feed_index) {
         CloseFeedSocket(feed_index);
         return false;
     }
+    return FinishFeedSocketConnect(feed_index);
+}
+
+bool CommsManager::PollFeedSocketConnect(uint16_t feed_index) {
+    int sock = feed_sock_[feed_index];
+    fd_set write_set;
+    FD_ZERO(&write_set);
+    FD_SET(sock, &write_set);
+    struct timeval no_wait = {.tv_sec = 0, .tv_usec = 0};
+    int res = select(sock + 1, NULL, &write_set, NULL, &no_wait);
+    if (res == 0) {
+        // Still connecting.
+        if (get_time_since_boot_ms() - feed_sock_last_connect_timestamp_ms_[feed_index] > kTCPSocketConnectTimeoutMs) {
+            CONSOLE_ERROR("CommsManager::IPWANTask", "Timed out after %lu ms connecting to URI %s:%d for feed %d.",
+                          kTCPSocketConnectTimeoutMs, settings_manager.settings.feed_uris[feed_index],
+                          settings_manager.settings.feed_ports[feed_index], feed_index);
+            CloseFeedSocket(feed_index);
+        }
+        return false;
+    }
+    int so_error = 0;
+    socklen_t so_error_len = sizeof(so_error);
+    if (res < 0 || getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) != 0 || so_error != 0) {
+        int error_code = so_error != 0 ? so_error : errno;
+        CONSOLE_ERROR("CommsManager::IPWANTask", "Socket unable to connect to URI %s:%d for feed %d: errno %d (%s)",
+                      settings_manager.settings.feed_uris[feed_index], settings_manager.settings.feed_ports[feed_index],
+                      feed_index, error_code, strerror(error_code));
+        CloseFeedSocket(feed_index);
+        return false;
+    }
+    feed_sock_is_connecting_[feed_index] = false;
+    return FinishFeedSocketConnect(feed_index);
+}
+
+bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
     CONSOLE_INFO("CommsManager::IPWANTask", "Successfully connected to %s",
                  settings_manager.settings.feed_uris[feed_index]);
     feed_sock_is_connected_[feed_index] = true;
