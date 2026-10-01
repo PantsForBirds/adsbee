@@ -24,6 +24,7 @@ const uint32_t kSquitterLastWordIngestionMask = 0xFFFFFF00;
 const uint32_t kSquitterLastWordPopCount = 24;
 
 #include "crc.hh"
+#include "mode_s_single_bit_filter.hh"
 
 /** DecodedModeSPacket **/
 
@@ -177,6 +178,35 @@ uint32_t DecodedModeSPacket::CalculateCRC24(uint16_t packet_len_bits) const {
     WordBufferToByteBuffer(raw.buffer, raw_buffer, packet_len_bytes);
     // Feed the byte buffer to the table-based CRC calculator.
     return crc24(raw_buffer, packet_len_bytes - 3);  // Don't include the CRC itself.
+}
+
+bool DecodedModeSPacket::IsSingleBitCorrectable() const {
+    return !is_valid && raw.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
+           (downlink_format == kDownlinkFormatExtendedSquitter ||
+            downlink_format == kDownlinkFormatExtendedSquitterNonTransponder);
+}
+
+int16_t DecodedModeSPacket::CorrectSingleBitError() {
+    if (!IsSingleBitCorrectable()) {
+        return -1;
+    }
+    // The syndrome was already calculated while constructing the packet. The prefilter answers "no single-bit error"
+    // for most syndromes without the 112-entry search.
+    if (!ModeSSingleBitFilter::kFilter.MayMatch(crc_syndrome)) {
+        return -1;
+    }
+    int16_t bit_flip_index = crc24_find_single_bit_error(crc_syndrome, RawModeSPacket::kExtendedSquitterPacketLenBits);
+    if (bit_flip_index < kDFNumBits) {
+        return -1;  // No single-bit error (-1), or one in the DF field, which must not be corrected.
+    }
+    RawModeSPacket corrected_raw = raw;
+    flip_bit(corrected_raw.buffer, bit_flip_index);
+    DecodedModeSPacket corrected_packet(corrected_raw);
+    if (!corrected_packet.is_valid) {
+        return -1;
+    }
+    *this = corrected_packet;
+    return bit_flip_index;
 }
 
 void DecodedModeSPacket::ConstructModeSPacket() {

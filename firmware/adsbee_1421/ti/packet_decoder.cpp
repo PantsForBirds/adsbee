@@ -1,13 +1,16 @@
 #include "packet_decoder.hh"
 
-#include "adsbee.hh"
-#include "bsp.hh"
 #include "buffer_utils.hh"
 #include "comms.hh"
-#include "crc.hh"
+#include "settings.hh"
+
+// The host tests (host_test) build DecodeOne() without the SDK, so Update() and its includes are left out there.
+#ifndef ON_HOST
+#include "adsbee.hh"
+#include "bsp.hh"
 #include "cycle_counter.hh"
-#include "mode_s_single_bit_filter.hh"
 #include "led.hh"
+#endif
 
 PacketDecoder::PacketDecoder()
     : raw_mode_s_packet_queue({
@@ -23,6 +26,7 @@ PacketDecoder::PacketDecoder()
           .is_thread_safe = false,
       }) {}
 
+#ifndef ON_HOST
 bool PacketDecoder::Update() {
     // In DF17 sync mode the detector consumes the first 4 DF bits (1000), so every reconstructed
     // frame decodes as DF17 or DF16 -- and only DF17 is wanted (DF16/ACAS remains receivable in the
@@ -37,6 +41,7 @@ bool PacketDecoder::Update() {
     }
     return true;
 }
+#endif
 
 void PacketDecoder::DecodeOne(RawModeSPacket& raw_packet, bool df17_mode) {
     // The LR2021 always captures 112-bit (extended squitter length) frames, so a 56-bit squitter
@@ -81,24 +86,11 @@ void PacketDecoder::DecodeOne(RawModeSPacket& raw_packet, bool df17_mode) {
         // the recovered ICAO matches an aircraft it already tracks.
         decoded_mode_s_packet_out_queue.Enqueue(decoded_packet);
         // leds.FlashLED(bsp.k1090LEDPin, 10);
-    } else if (decoded_packet.raw.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes) {
-        // Extended squitter with a failed CRC: attempt single-bit error correction. The syndrome
-        // maps to a unique flip position for any single-bit error; a successful flip re-decodes to
-        // a frame whose CRC checks out. Capped at one bit to bound false corrections. The syndrome is the
-        // one the decode above already computed over the same 112 bits (no second CRC per failed frame).
-        // The prefilter answers "no single-bit error" for most failed frames without the 112-entry search.
-        int16_t bit_flip_index =
-            ModeSSingleBitFilter::kFilter.MayMatch(decoded_packet.crc_syndrome)
-                ? crc24_find_single_bit_error(decoded_packet.crc_syndrome,
-                                              RawModeSPacket::kExtendedSquitterPacketLenBits)
-                : -1;
-        if (bit_flip_index > 0) {
-            flip_bit(decoded_packet.raw.buffer, bit_flip_index);
-            DecodedModeSPacket corrected_packet(decoded_packet.raw);
-            if (corrected_packet.is_valid) {
-                bitflips_fixed_count++;
-                decoded_mode_s_packet_out_queue.Enqueue(corrected_packet);
-            }
-        }
+    } else if (decoded_packet.CorrectSingleBitError() >= 0) {
+        // Single-bit error correction, shared with the ADSBee 1090 decoder (DecodedModeSPacket::CorrectSingleBitError):
+        // only extended squitters received as DF=17/18, never a bit in the DF field (DO-260B 2.2.4.3.4.7.3.a). It
+        // reuses the syndrome the decode above already computed. Always on, as on the ADSBee 1090.
+        bitflips_fixed_count++;
+        decoded_mode_s_packet_out_queue.Enqueue(decoded_packet);
     }
 }
