@@ -57,10 +57,35 @@ static void LRIrqLineCallback(uint_least8_t /*index*/) { adsbee.lr2021.HandleIrq
 // LR_BUSY falling edge ("chip ready"): armed only while the drain chain has a frame pending; posts it.
 static void LRBusyLineCallback(uint_least8_t /*index*/) { adsbee.lr2021.HandleBusyFall(); }
 
+uint32_t ADSBee::SyncPinConfig(bool asleep) const {
+    return GPIO_CFG_INPUT_INTERNAL | (asleep ? GPIO_CFG_IN_INT_FALLING : GPIO_CFG_IN_INT_RISING) |
+           (board_has_sync_pull_down_ ? GPIO_CFG_PULL_NONE_INTERNAL : GPIO_CFG_PULL_DOWN_INTERNAL);
+}
+
+void ADSBee::DetectBoardSyncPullDown() {
+    SettingsManager::DeviceInfo device_info;
+    settings_manager.GetDeviceInfo(device_info);
+    board_has_sync_pull_down_ = device_info.IsPartAtLeastRev(SettingsManager::DeviceInfo::kPNADSBeem1421, 'D');
+
+    // Part number + revision letter, printable characters only (erased flash reads 0xFF).
+    char part[SettingsManager::DeviceInfo::kPartCodePartNumberLen + 2] = {0};
+    for (uint16_t i = 0; i < sizeof(part) - 1; i++) {
+        char c = device_info.part_code[i];
+        part[i] = (c >= 0x20 && c < 0x7F) ? c : '?';
+    }
+    CONSOLE_INFO("ADSBee::Init", "Part %s: %s.", part,
+                 board_has_sync_pull_down_ ? "m1421 rev D or later, SYNC internal pull-down off (board pull-down R5)"
+                                           : "not an m1421 rev D or later, SYNC internal pull-down on");
+}
+
 bool ADSBee::Init() {
-    // Arm the SYNC rising-edge interrupt (the SysConfig default pin config) before touching the LR2021,
-    // so a host asserting SYNC mid-init still gets the bus handed off promptly. Clear any stale latched
-    // edge first: neither GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
+    // Decide the SYNC pull from the board revision before arming SYNC, then apply it over the SysConfig
+    // default (rising edge, internal pull-down) that Board_init() set.
+    DetectBoardSyncPullDown();
+    GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(false));
+    // Arm the SYNC rising-edge interrupt before touching the LR2021, so a host asserting SYNC mid-init
+    // still gets the bus handed off promptly. Clear any stale latched edge first: neither
+    // GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
     GPIO_setCallback(bsp.kSyncPin, SyncLineCallback);
     GPIO_clearInt(bsp.kSyncPin);
     GPIO_enableInt(bsp.kSyncPin);
@@ -224,13 +249,10 @@ void ADSBee::EnterSyncSleep() {
     // lost-edge race (host drops SYNC between the GPIO_read below and entering STANDBY) is closed by the
     // re-check loop: with the interrupt enabled, the edge latches as a pending NVIC interrupt, the
     // policy's WFI returns immediately, and the loop re-reads LOW and exits. Clear any stale latched edge
-    // before enabling (EVFLAGS is not cleared by setConfig/enableInt).
-    //
-    // No internal pull while asleep: the host holds SYNC high for the whole sleep, and the internal
-    // pull-down (about 80 uA at 3.3 V) only drains the host's SYNC driver. R5 (120k to GND, PCBA rev D and
-    // later) still pulls SYNC low and wakes the module if the host releases the line. The wake path below
-    // restores the fail-safe pull-down for the awake state.
-    GPIO_setConfig(bsp.kSyncPin, GPIO_CFG_INPUT_INTERNAL | GPIO_CFG_IN_INT_FALLING | GPIO_CFG_PULL_NONE_INTERNAL);
+    // before enabling (EVFLAGS is not cleared by setConfig/enableInt). The pull follows the board
+    // revision (SyncPinConfig()): off on m1421 rev D and later, where R5 pulls SYNC low and wakes the
+    // module if the host releases the line; the internal pull-down on every other board.
+    GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(true));
     GPIO_setCallback(bsp.kSyncPin, SyncLineCallback);
     GPIO_clearInt(bsp.kSyncPin);
     GPIO_enableInt(bsp.kSyncPin);
@@ -330,13 +352,13 @@ void ADSBee::EnterSyncSleep() {
         Power_disablePolicy();
     }
 
-    // SYNC is now low: swap the wake interrupt back to the rising-edge sleep-request config (restoring the
-    // fail-safe pull-down), clear the request flag, then re-initialize the receiver to resume where we
-    // left off. If SYNC bounces high during the re-init, the re-armed ISR re-tristates and sets the flag
-    // again, the config aborts, and the main loop re-enters sync sleep.
+    // SYNC is now low: swap the wake interrupt back to the rising-edge sleep-request config, clear the
+    // request flag, then re-initialize the receiver to resume where we left off. If SYNC bounces high
+    // during the re-init, the re-armed ISR re-tristates and sets the flag again, the config aborts, and
+    // the main loop re-enters sync sleep.
     GPIO_disableInt(bsp.kSyncPin);
     sync_sleep_requested_ = false;
-    GPIO_setConfig(bsp.kSyncPin, GPIO_CFG_INPUT_INTERNAL | GPIO_CFG_IN_INT_RISING | GPIO_CFG_PULL_DOWN_INTERNAL);
+    GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(false));
     GPIO_clearInt(bsp.kSyncPin);
     GPIO_enableInt(bsp.kSyncPin);
     FeedWatchdog();

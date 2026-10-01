@@ -77,6 +77,12 @@ class ADSBee {
     // stop the LED clock (LEDs::Suspend()), whose frequent ClockP events keep the policy in IDLE.
     void EnterSyncSleep();
 
+    // True when the part code in the device info flash names an ADSBee m1421 at PCBA rev D or later,
+    // which has an external pull-down on SYNC (R5, 120k to GND), so the CC1314's internal SYNC pull-down
+    // is off in every state. False (unknown, blank, unparseable or older board) keeps the internal
+    // pull-down in every state. Decided once, at the start of Init().
+    bool BoardHasSyncPullDown() const { return board_has_sync_pull_down_; }
+
     LR2021 lr2021;
     AircraftDictionary aircraft_dictionary;
 
@@ -126,7 +132,16 @@ class ADSBee {
     // (Re)applies the current receiver configuration (sync mode, gain, CRC filter) to the LR2021.
     bool ApplyReceiverConfig();
 
+    // GPIO config for the SYNC pin: falling-edge wake interrupt while in sync sleep, rising-edge
+    // sleep-request interrupt while awake, with the pull chosen by BoardHasSyncPullDown(). Every SYNC
+    // GPIO_setConfig goes through here so the board-revision decision lives in one place.
+    uint32_t SyncPinConfig(bool asleep) const;
+    // Reads the part code from the device info flash and sets board_has_sync_pull_down_.
+    void DetectBoardSyncPullDown();
+
     ADSBeeConfig config_;
+
+    bool board_has_sync_pull_down_ = false;  // Fail-safe default: keep the internal pull-down.
 
     // Matches the settings default (r1090_rx_enabled = true) and the actual boot behavior: Init() ->
     // ApplyReceiverConfig() arms RX before SettingsManager::Apply() runs, which then disables if the

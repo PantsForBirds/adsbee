@@ -118,6 +118,9 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
 #else
             CPP_AT_PRINTF("CC1314R10 Firmware Build: Release\r\n");
 #endif
+            // Board revision decision from the part code above (see ADSBee::BoardHasSyncPullDown()).
+            CPP_AT_PRINTF("CC1314R10 SYNC Pull-Down: %s\r\n",
+                          adsbee.BoardHasSyncPullDown() ? "Board (m1421 rev D or later)" : "Internal");
 
             for (uint16_t i = 0; i < SettingsManager::DeviceInfo::kNumOTAKeys; i++) {
                 CPP_AT_PRINTF("OTA Key %d: %s\r\n", i, device_info.ota_keys[i]);

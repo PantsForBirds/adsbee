@@ -176,15 +176,21 @@ console, UAT RX and the LED clock.
 > policy: the CC13x4's VDDR recharge in STANDBY (TI's standby path enables the recharge comparator),
 > part of the datasheet STANDBY current and under 1 µA on average.
 
-> **SYNC pull-down note:** while awake, SYNC/DIO_5 is configured with an internal **pull-down**
-> (fail-safe: a floating/disconnected host reads LOW = the device stays awake). This is **redundant with
-> the external 120 kΩ pull present on ADSBee m1421 PCBA Rev D and later** and is retained to protect
-> earlier PCBAs. The setting lives in [`adsbee_1421.syscfg`](ti/syscfg/adsbee_1421.syscfg) (`GPIO7.pull`)
-> and the generated `ti_drivers_config.c`; keep the two in sync. `EnterSyncSleep()` drops the internal
-> pull for the sleep itself: the host drives SYNC high the whole time, so the pull would only draw about
-> 80 µA at 3.3 V from the host's SYNC driver. On PCBA Rev D and later, R5 still pulls SYNC low and wakes
-> the module if the host releases the line; on an earlier PCBA a host that releases SYNC (hi-Z) during
-> sleep leaves the line floating, so drive it low to wake the module.
+> **SYNC pull-down note:** the SYNC/DIO_5 pull follows the board revision. At the start of
+> `ADSBee::Init()` the firmware reads the part code from the device info flash (`AT+DEVICE_INFO?`
+> prints it, format `NNNNNNNNNR-YYYYMMDD-VVXXXX`: 9-digit part number, revision letter, date, serial).
+> If it names an ADSBee m1421 (`010260002`) at PCBA Rev D or later, the board has R5 (120 kΩ to GND),
+> so the internal pull-down is off in every state: awake, during sync sleep, and after wake. On every
+> other part code (blank or erased flash, malformed, another part number, or Rev A to C) the internal
+> pull-down stays on in every state, as a fail-safe: a floating or disconnected host reads LOW, so the
+> device stays awake. `ADSBee::SyncPinConfig()` is the one place that picks the pull; the boot log
+> (INFO) and the `CC1314R10 SYNC Pull-Down:` line of `AT+DEVICE_INFO?` show the decision. The SysConfig
+> default ([`adsbee_1421.syscfg`](ti/syscfg/adsbee_1421.syscfg) `GPIO7.pull`, and the generated
+> `ti_drivers_config.c`; keep the two in sync) keeps the pull-down for the short window between
+> `Board_init()` and `ADSBee::Init()`. During sync sleep the host drives SYNC high, so an internal
+> pull-down draws about 80 µA at 3.3 V from the host's SYNC driver; Rev D and later boards avoid that.
+> On a Rev D or later board R5 pulls SYNC low and wakes the module if the host releases the line
+> (hi-Z); on an earlier board the internal pull-down does the same.
 
 ## Repo ↔ container layout
 

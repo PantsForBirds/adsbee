@@ -51,7 +51,7 @@ CRC32 over flash, erase 2 KB sectors, and program flash.
 |---|---|---|---|---|---|
 | 20 | SURX | DIO_2 (UART RX) | ROM bootloader RX | TX | GP28 |
 | 21 | SUTX | DIO_3 (UART TX) | ROM bootloader TX | RX | GP29 |
-| 28 | SYNC | DIO_5 | Backdoor, **active high**, sampled at reset. Internal pull-down while awake (plus an external 120 kΩ pull on PCBA Rev D and later), so it idles low | RTS | GP27 (push-pull) |
+| 28 | SYNC | DIO_5 | Backdoor, **active high**, sampled at reset. Idles low: external 120 kΩ pull-down on PCBA Rev D and later (internal pull-down off), internal pull-down on earlier or unidentified boards (chosen from the part code at boot) | RTS | GP27 (push-pull) |
 | 17 | ~SRST | RESET_N | Reset, **active low**. Module pull-up | DTR | GP26 (open-drain) |
 | — | GND | GND | | GND | GND |
 
