@@ -293,6 +293,14 @@ jobs:
           echo "::error::AT+TX_CW found in the Release image; it must only be built into Debug images."
           exit 1
         fi
+    - name: Run host tests
+      working-directory: firmware/adsbee_1421/ti
+      # Includes a check of the built image's CCFG against the AT+BOOTLOADER_PIN erase path.
+      run: |
+        arm-none-eabi-objcopy -O binary -j .ccfg build/Release/adsbee_1421.elf build/Release/ccfg.bin
+        cmake -S host_test -B build/host_test -DADSBEE_1421_CCFG_BIN=$PWD/build/Release/ccfg.bin
+        cmake --build build/host_test
+        cd build/host_test && ctest --output-on-failure
     - name: Extract firmware version
       id: fwver
       working-directory: firmware/adsbee_1421/ti

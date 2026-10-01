@@ -116,17 +116,14 @@ module there:
   the check. On an adapter that wires DTR to RESET_N but leaves RTS unwired, its reset
   pulse restarts the module, which lands back in the bootloader as long as SYNC is
   still held high.
-- `AT+BOOT_UART_BOOTLOADER=1DEADBEE` in the terminal, when SYNC is unreachable or the
-  firmware predates the backdoor. It erases the vector table (flash sector 0 only;
-  settings survive), so the device stays in the bootloader until it is reflashed. Then
-  press **Enter bootloader**. Any reset its line changes cause lands back in the
-  bootloader, because the ROM finds no valid image to boot.
 
 The firmware's CCFG must enable the bootloader backdoor, which
 `firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg` does (DIO_5, active high; every
-release since `adsbee_1421-0.3.7`). The baud rate does not need to match anything: the
-ROM locks onto whatever rate the page sends its sync bytes at, so the page never
-reopens the port while the device is in the bootloader.
+release since `adsbee_1421-0.3.7`), unless `AT+BOOTLOADER_PIN=0` turned it off on that
+module; `AT+BOOTLOADER_PIN?` shows the setting and `AT+BOOTLOADER_PIN=1` turns it back on.
+The baud rate does not need to match anything: the ROM locks onto whatever rate the page
+sends its sync bytes at, so the page never reopens the port while the device is in the
+bootloader.
 
 Connecting resets the module. When a serial port opens, the operating system
 asserts DTR and RTS. Behind the ADSBee 1421 Programmer that is a DTR edge, so the

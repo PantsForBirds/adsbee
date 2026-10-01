@@ -13,6 +13,6 @@ FlashResult FlashBakedImage(Cc13x4Bootloader& bl);  // Erase + program + CRC ver
 // magic/CRC check, and rewrites defaults (see ti/settings/settings.cpp Load()).
 //
 // This is the only supported way back from a persisted settings blob that stops the console coming
-// up, since AT+SETTINGS=RESET and AT+BOOT_UART_BOOTLOADER both need a console that already answers.
+// up, since AT+SETTINGS=RESET needs a console that already answers.
 // Destructive by design, so it is never triggered automatically -- see the BOOTSEL gesture in main.cpp.
 FlashResult EraseSettingsRegion(Cc13x4Bootloader& bl);

@@ -2053,10 +2053,9 @@
                     <li>Press <strong>Enter bootloader</strong> below.</li>
                 </ol>
                 <p class="firmware-modal-note">The baud rate does not need to match: the ROM locks onto whatever rate
-                    this page sends its sync bytes at. If the SYNC pin is unreachable, running
-                    <span class="pin">AT+BOOT_UART_BOOTLOADER=1DEADBEE</span> in the console also enters the
-                    bootloader, but it erases the vector table, so the device stays there until it is reflashed.
-                    Then press <strong>Enter bootloader</strong>.</p>
+                    this page sends its sync bytes at. If the module boots its application with SYNC held
+                    high, its bootloader backdoor may be turned off: <span class="pin">AT+BOOTLOADER_PIN?</span>
+                    answers 0, and <span class="pin">AT+BOOTLOADER_PIN=1</span> turns it back on.</p>
                 <p id="firmware-check-result"></p>
             </div>
             <div class="progress-container" id="firmware-progress-row" style="display:none; margin: 12px 0 8px;">
@@ -4696,11 +4695,10 @@ function makeRxEnableEntry() {
         //    adapter wired that way. It makes a single attempt that takes a few seconds. If
         //    the ROM doesn't answer, it puts SYNC back low so a running module isn't left
         //    asleep.
-        //  - By hand (SYNC jumpered high, then a reset) or AT+BOOT_UART_BOOTLOADER, for
-        //    adapters without RTS/DTR wired to the module. The user then presses Enter
-        //    bootloader as well: with the lines unwired its toggles do nothing, and with DTR
-        //    wired the reset lands back in the bootloader (SYNC is still high, or the AT
-        //    command erased the vector table so the ROM has no valid image to boot).
+        //  - By hand (SYNC jumpered high, then a reset), for adapters without RTS/DTR wired
+        //    to the module. The user then presses Enter bootloader as well: with the lines
+        //    unwired its toggles do nothing, and with DTR wired the reset lands back in the
+        //    bootloader because SYNC is still high.
         // Either way verifyBootloader() proves the ROM is actually answering before anything
         // is erased, and every exit from the bootloader drives SYNC low first.
         const flashController = {
@@ -4975,8 +4973,9 @@ function makeRxEnableEntry() {
                     this.setVerified(false,
                         `The device answered as its application firmware at ${appBaud} baud, so it did not ` +
                         'enter the bootloader. Either the adapter\'s RTS and DTR are not wired to SYNC and ' +
-                        'RESET_N (use the manual steps), or the firmware predates the SYNC backdoor ' +
-                        '(before 0.3.7: run AT+BOOT_UART_BOOTLOADER=1DEADBEE).',
+                        'RESET_N (use the manual steps), the backdoor is turned off (AT+BOOTLOADER_PIN? ' +
+                        'answers 0; AT+BOOTLOADER_PIN=1 turns it on), or the firmware predates the SYNC ' +
+                        'backdoor (before 0.3.7: flash it over JTAG).',
                         'fail');
                 } else if (appBaud !== null) {
                     this.setVerified(false,

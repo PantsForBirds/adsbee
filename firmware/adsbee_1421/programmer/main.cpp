@@ -38,7 +38,7 @@ static char last_diagnosis[192] = "";
 // Set by a BOOTSEL long press; consumed by State::kCheck once the ROM bootloader is up. Going
 // through the bootloader is what makes this work when the app console is dead, which is the case it
 // exists for: a persisted settings blob that stops the console coming up cannot be cleared with
-// AT+SETTINGS=RESET or AT+BOOT_UART_BOOTLOADER, since both need a console that already answers.
+// AT+SETTINGS=RESET, since it needs a console that already answers.
 static bool erase_settings_armed = false;
 
 // Arms the settings erase and tells the user. Idempotent, so repeated long presses are harmless.

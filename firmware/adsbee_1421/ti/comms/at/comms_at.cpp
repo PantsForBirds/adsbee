@@ -5,6 +5,7 @@
 #include <iostream>  // for AT command ingestion
 
 #include "adsbee.hh"
+#include "ccfg_bootloader_flash.hh"
 #include "comms.hh"
 #include "object_dictionary.hh"
 #include "packet_decoder.hh"
@@ -483,21 +484,72 @@ CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
     CPP_AT_PRINTF("\tAT+PROTOCOL_OUT?\r\n\tPROTOCOL_OUT=<iface>,<protocol>\r\n\t...\r\n");
 }
 
-CPP_AT_CALLBACK(CommsManager::ATBootUARTBootloaderCallback) {
+CPP_AT_CALLBACK(CommsManager::ATBootloaderPinCallback) {
     switch (op) {
-        case '?':
-            CPP_AT_PRINTF(
-                "AT+BOOT_UART_BOOTLOADER=1DEADBEE enters the CC1314 ROM UART bootloader (DIO2/DIO3) for "
-                "reflashing. Erases the app image; the device stays in the bootloader until reflashed.\r\n");
+        case '?': {
+            // Read from the CCFG flash sector: the value the boot ROM uses at the next reset.
+            uint32_t bl_config = CcfgBootloader::ReadBlConfig();
+            CPP_AT_CMD_PRINTF("=%d", CcfgBootloader::BackdoorEnabled(bl_config));
+            CPP_AT_PRINTF("BL_CONFIG=0x%08lX: ROM bootloader %s, backdoor %s on DIO_%u (active %s)\r\n",
+                          (unsigned long)bl_config,
+                          CcfgBootloader::RomBootloaderEnabled(bl_config) ? "enabled" : "disabled",
+                          CcfgBootloader::BackdoorEnabled(bl_config) ? "enabled" : "disabled",
+                          CcfgBootloader::BlPinNumberField(bl_config),
+                          CcfgBootloader::BlLevelField(bl_config) ? "high" : "low");
             CPP_AT_SILENT_SUCCESS();
             break;
-        case '=':
-            if (!CPP_AT_HAS_ARG(0) || args[0].compare("1DEADBEE") != 0) {
-                CPP_AT_ERROR("Must confirm with AT+BOOT_UART_BOOTLOADER=1DEADBEE.");
+        }
+        case '=': {
+            if (!CPP_AT_HAS_ARG(0) || (args[0].compare("0") != 0 && args[0].compare("1") != 0)) {
+                CPP_AT_ERROR("Requires an argument: AT+BOOTLOADER_PIN=<enabled [1,0]>[,DRYRUN].");
             }
-            adsbee.EnterUARTBootloader();  // Does not return.
-            CPP_AT_ERROR("Failed to enter bootloader.");
+            bool enable = args[0].compare("1") == 0;
+            bool dry_run = false;
+            if (CPP_AT_HAS_ARG(1)) {
+                if (args[1].compare("DRYRUN") != 0) {
+                    CPP_AT_ERROR("Unknown option, expected DRYRUN.");
+                }
+                dry_run = true;
+            }
+
+            CcfgBootloader::Plan plan = CcfgBootloader::Prepare(enable);
+            if (plan.method == CcfgBootloader::Method::kRefused) {
+                CPP_AT_ERROR("Not writing CCFG: %s.", plan.error);
+            }
+            CPP_AT_PRINTF("BL_CONFIG 0x%08lX -> 0x%08lX: %s\r\n", (unsigned long)plan.old_bl_config,
+                          (unsigned long)plan.new_bl_config, CcfgBootloader::MethodStr(plan.method));
+            if (dry_run) {
+                CPP_AT_PRINTF("Dry run: new CCFG image computed and checked in RAM, flash not written.\r\n");
+                CPP_AT_SUCCESS();
+            }
+            if (plan.method == CcfgBootloader::Method::kNoChange) {
+                CPP_AT_SUCCESS();
+            }
+
+            // Interrupts are masked for the write (an erase takes milliseconds): get queued output out first.
+            DrainConsoleTx();
+            const char* error = nullptr;
+            bool restored = false;
+            if (!CcfgBootloader::Apply(plan, error, restored)) {
+                if (plan.method == CcfgBootloader::Method::kEraseAndProgram && !restored) {
+                    CPP_AT_ERROR(
+                        "CCFG write failed (%s) and the original CCFG could not be restored. Retry "
+                        "AT+BOOTLOADER_PIN=%d before resetting. If the module resets first, it may start in the ROM "
+                        "UART bootloader, where a reflash restores the CCFG.",
+                        error, enable);
+                }
+                CPP_AT_ERROR("CCFG write failed (%s)%s.", error, restored ? "; original CCFG restored" : "");
+            }
+            CPP_AT_PRINTF("Bootloader backdoor %s; takes effect at the next reset.\r\n",
+                          enable ? "enabled" : "disabled");
+            if (!enable) {
+                CPP_AT_PRINTF(
+                    "SYNC no longer enters the ROM bootloader, so the ADSBee 1421 Programmer and other SYNC-based "
+                    "tools can't reflash this module. Re-enable with AT+BOOTLOADER_PIN=1 (or use JTAG).\r\n");
+            }
+            CPP_AT_SUCCESS();
             break;
+        }
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
@@ -1187,12 +1239,18 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "Boot default is 1000000; AT+SETTINGS=RESET restores it.\r\n\t"
                     "AT+BAUD_RATE?\r\n\tQuery the current console baud rate.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBaudRateCallback, comms_manager)},
-    {.command = "BOOT_UART_BOOTLOADER",
-     .min_args = 1,
-     .max_args = 1,
-     .help_string = "AT+BOOT_UART_BOOTLOADER=1DEADBEE\r\n\tErase the app image and enter the ROM UART "
-                    "bootloader (DIO2/DIO3) for reflashing.",
-     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBootUARTBootloaderCallback, comms_manager)},
+    {.command = "BOOTLOADER_PIN",
+     .min_args = 0,
+     .max_args = 2,
+     .help_string =
+         "AT+BOOTLOADER_PIN=<enabled [1,0]>[,DRYRUN]\r\n\tEnable (1, factory default) or disable (0) the ROM "
+         "bootloader backdoor in the CCFG flash: SYNC high while RESET_N is pulsed low starts the CC1314 ROM UART "
+         "bootloader. Takes effect at the next reset and persists across power cycles. WARNING: with 0, the "
+         "ADSBee 1421 Programmer and other SYNC-based tools can no longer enter the bootloader to reflash the "
+         "module; the only ways back are AT+BOOTLOADER_PIN=1 from the running firmware, or JTAG. Flashing an "
+         "image writes that image's CCFG (enabled in every release). DRYRUN shows the change without writing "
+         "flash.\r\n\tAT+BOOTLOADER_PIN?\r\n\tQuery the live CCFG setting.\r\n\tBOOTLOADER_PIN=<enabled>",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBootloaderPinCallback, comms_manager)},
     {.command = "DEVICE_INFO",
      .min_args = 0,
      .max_args = 5,  // TODO: check this value.

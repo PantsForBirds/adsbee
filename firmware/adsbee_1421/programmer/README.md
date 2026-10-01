@@ -38,9 +38,9 @@ module any time) and reports a diagnosis on the CDC port every few seconds.
 
 The module's firmware must have the CCFG bootloader backdoor enabled: every adsbee_1421 build
 from this repository does (release `adsbee_1421-0.3.7` onward; it is set in
-`firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg`). Older boards need one JTAG flash or the
-`AT+BOOT_UART_BOOTLOADER=1DEADBEE` fallback first. The backdoor itself, its wiring convention and
-the SYNC sleep interaction are documented in
+`firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg`), unless `AT+BOOTLOADER_PIN=0` turned it
+off on that module. Older boards need one JTAG flash first. The backdoor itself, its wiring
+convention, `AT+BOOTLOADER_PIN` and the SYNC sleep interaction are documented in
 [`../README.md`](../README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
 ## Build
@@ -82,8 +82,7 @@ To bake a different image, pass `-DADSBEE_1421_HEX=<path>` to CMake.
   This is the escape hatch for a device whose saved settings stop the console coming up. It can
   be armed from the wait loops as well as from pass-through, so it works while the Programmer is
   stuck reporting `Device console not responding at any whitelisted baud rate`. In that state
-  `AT+SETTINGS=RESET` and `AT+BOOT_UART_BOOTLOADER` are unavailable, because both need a console
-  that already answers. It is never triggered automatically, because it discards the user's
+  `AT+SETTINGS=RESET` is unavailable, because it needs a console that already answers. It is never triggered automatically, because it discards the user's
   settings.
 
 ## LED legend (WS2812)
@@ -156,7 +155,7 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 | `SBL sync at <baud>` | Bootloader entry works; that rate is reused for the session. |
 | `... failed (timed out ...); no late bytes` | Silence from the module: reset, UART, or SYNC not reaching it. |
 | `... failed (unexpected byte ...)` / `late bytes: ...` | The module answered with garbage: baud/framing issue on the link. |
-| `App console responds at <baud> ... SBL entry fails` | Reset + UART wiring are good. Check SYNC (GP27 → module pin 28) and that the module firmware has the CCFG backdoor enabled. |
+| `App console responds at <baud> ... SBL entry fails` | Reset + UART wiring are good. Check SYNC (GP27 → module pin 28) and that the module firmware has the CCFG backdoor enabled (`AT+BOOTLOADER_PIN?` answers `BOOTLOADER_PIN=1`). |
 | `No response ... RESET_N(GP26)=LOW (stuck in reset ...)` | Something is holding reset low with the Programmer's driver released: a wiring short or a drive conflict on ~SRST. |
 | `No response ... UART RX(GP29)=LOW (module TX not driving ...)` | Module unpowered, held in reset, or SUTX wiring wrong (RX should idle high when the module runs). |
 | `No response ... RESET_N=high, UART RX=high (link plausible)` | Lines look electrically sane; suspect TX leg (GP28 → SURX) or module-side UART config. |
@@ -164,10 +163,10 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 | `Settings erase ARMED` / `Settings erased; ...` | A BOOTSEL long press was registered, and the Settings sectors were erased at the next bootloader entry. The device now boots with factory defaults. |
 
 Modules running pre-backdoor firmware can't be entered via SYNC at all: flash them once via
-JTAG, or connect a console directly (the Programmer won't reach pass-through with such a module) and
-send `AT+BOOT_UART_BOOTLOADER=1DEADBEE`. It erases only flash sector 0 (the vector table), so
-the module stays in the ROM bootloader, and Settings and Device Info survive. The Programmer then
-flashes it on the next check. See [Prerequisites](../README.md#prerequisites).
+JTAG. A module whose backdoor was turned off with `AT+BOOTLOADER_PIN=0` behaves the same way, and
+the Programmer won't reach pass-through with it: connect a console directly and send
+`AT+BOOTLOADER_PIN=1`, then reconnect the Programmer, or use JTAG. See
+[Turning the backdoor off](../README.md#turning-the-backdoor-off-atbootloader_pin).
 
 ## Limitations
 
