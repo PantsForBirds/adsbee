@@ -11,13 +11,11 @@
 #define BITS_PER_WORD_32  32
 #define BYTES_PER_WORD_24 3
 #define BITS_PER_WORD_24  24
-#define BITS_PER_WORD_25  25
 #define BITS_PER_BYTE     8
 #define NIBBLES_PER_BYTE  2
 #define BITS_PER_NIBBLE   4
 
 #define MASK_MSBIT_WORD24 (0b1 << (BITS_PER_WORD_24 - 1))
-#define MASK_MSBIT_WORD25 (0b1 << BITS_PER_WORD_24)
 #define MASK_WORD24       0xFFFFFF
 
 const uint32_t kExtendedSquitterLastWordIngestionMask = 0xFFFF0000;
@@ -25,13 +23,7 @@ const uint32_t kExtendedSquitterLastWordPopCount = 16;
 const uint32_t kSquitterLastWordIngestionMask = 0xFFFFFF00;
 const uint32_t kSquitterLastWordPopCount = 24;
 
-#define CRC24_USE_TABLE
-#ifndef CRC24_USE_TABLE
-const uint32_t kCRC24Generator = 0x1FFF409;
-const uint16_t kCRC24GeneratorNumBits = 25;
-#else
 #include "crc.hh"
-#endif
 
 /** DecodedModeSPacket **/
 
@@ -179,35 +171,12 @@ uint16_t DecodedModeSPacket::DumpPacketBuffer(uint8_t to_buffer[kMaxPacketLenWor
 }
 
 uint32_t DecodedModeSPacket::CalculateCRC24(uint16_t packet_len_bits) const {
-#ifndef CRC24_USE_TABLE
-    // CRC calculation algorithm from https://mode-s.org/decode/book-the_1090mhz_riddle-junzi_sun.pdf pg. 91.
-    // Must be called on buffer that does not have extra bit ingested at end and has all words left-aligned.
-    uint32_t crc_buffer[kMaxPacketLenWords32];
-    for (uint16_t i = 0; i < kMaxPacketLenWords32; i++) {
-        crc_buffer[i] = raw.buffer[i];
-    }
-
-    // Overwrite 24-bit parity word with zeros.
-    SetNBitsInWordBuffer(BITS_PER_WORD_24, 0x0, packet_len_bits - BITS_PER_WORD_24, crc_buffer);
-
-    // CRC is a conditional convolve operation using the 25-bit generator word.
-    for (uint16_t i = 0; i < packet_len_bits - BITS_PER_WORD_24; i++) {
-        uint32_t word = GetNBitsFromWordBuffer(BITS_PER_WORD_25, i, crc_buffer);
-        if (word & MASK_MSBIT_WORD25) {
-            // Most significant bit is a 1. XOR with generator!
-            SetNBitsInWordBuffer(BITS_PER_WORD_25, word ^ kCRC24Generator, i, crc_buffer);
-        }
-    }
-
-    return GetNBitsFromWordBuffer(BITS_PER_WORD_24, packet_len_bits - BITS_PER_WORD_24, crc_buffer);
-#else
     // Digest the 32-bit word packet buffer into a byte buffer.
     uint16_t packet_len_bytes = packet_len_bits / kBitsPerByte;
     uint8_t raw_buffer[packet_len_bytes];
     WordBufferToByteBuffer(raw.buffer, raw_buffer, packet_len_bytes);
     // Feed the byte buffer to the table-based CRC calculator.
     return crc24(raw_buffer, packet_len_bytes - 3);  // Don't include the CRC itself.
-#endif
 }
 
 void DecodedModeSPacket::ConstructModeSPacket() {
