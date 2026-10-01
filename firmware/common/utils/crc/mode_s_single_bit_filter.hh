@@ -14,10 +14,11 @@
 
 #include <cstdint>
 
+#include "crc.hh"  // kCRC24Generator.
+
 namespace ModeSSingleBitFilter {
 
 static constexpr uint16_t kFrameLenBits = 112;
-static constexpr uint32_t kCrcGenerator = 0x1FFF409;  // x^24 + 0xFFF409.
 
 struct BitSyndromes {
     uint32_t v[kFrameLenBits];
@@ -28,7 +29,7 @@ constexpr BitSyndromes MakeBitSyndromes() {
     for (int i = kFrameLenBits - 1; i >= 0; i--) {
         s.v[i] = r;
         r <<= 1;
-        if (r & 0x1000000u) r ^= kCrcGenerator;
+        if (r & 0x1000000u) r ^= 0x1000000u | kCRC24Generator;
     }
     return s;
 }

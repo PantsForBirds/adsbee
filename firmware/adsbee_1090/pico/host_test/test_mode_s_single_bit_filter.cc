@@ -16,7 +16,7 @@ static uint32_t Crc24(const uint8_t* buf, uint16_t len) {
     uint32_t r = 0;
     for (uint16_t i = 0; i < len; i++) {
         r ^= static_cast<uint32_t>(buf[i]) << 16;
-        for (int b = 0; b < 8; b++) r = (r & 0x800000) ? ((r << 1) ^ 0xFFF409) : (r << 1);
+        for (int b = 0; b < 8; b++) r = (r & 0x800000) ? ((r << 1) ^ kCRC24Generator) : (r << 1);
     }
     return r & 0xFFFFFF;
 }

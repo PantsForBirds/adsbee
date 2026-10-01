@@ -143,7 +143,7 @@ def generate_crc_tables_hh():
     Generate the crc_tables.hh file.
     """
 
-    CRC24_GENERATOR = 0xFFF409 # Mode S CRC-24 generator.
+    CRC24_GENERATOR = 0xFFF409 # Mode S CRC-24 generator, kCRC24Generator in crc.hh.
     CRC24_INITIAL_VALUE = 0
 
     start_file()
@@ -152,7 +152,6 @@ def generate_crc_tables_hh():
     add_table_to_file("byte_reflection_table", byte_reflection_table)
 
     crc24_table = generate_crc_table(CRC24_GENERATOR, 24)
-    add_generator_to_file("crc24_generator", CRC24_GENERATOR)
     add_table_to_file("crc24_table", crc24_table)
 
     # Extended Squitter packets are 112 bits and include the CRC in the last 24 bits.
