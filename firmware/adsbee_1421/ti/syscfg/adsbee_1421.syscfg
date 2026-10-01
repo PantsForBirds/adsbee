@@ -64,7 +64,10 @@ GPIO4.mode               = "Output";
 GPIO4.initialOutputState = "High";
 GPIO4.gpioPin.$assign    = "DIO_15";
 
+/* DIO_1 is unused by the firmware and has no connection on the ADSBee m1421 (U2 pin 6). Pull it down
+ * so the enabled input buffer never floats, including in STANDBY, where pin configs stay latched. */
 GPIO5.$name           = "RSUBG_LED";
+GPIO5.pull            = "Pull Down";
 GPIO5.gpioPin.$assign = "DIO_1";
 
 GPIO6.$name           = "SUBG_DIO27";
