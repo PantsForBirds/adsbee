@@ -120,7 +120,9 @@ jobs:
         else
           gh api "repos/$GH_REPO/releases/$draft_id" --jq '.body // ""' > old_body.md
           python3 ci/release/release.py body "$TAG" "$run_url" "$GITHUB_SHA" dist old_body.md > body.md
-          gh api --method PATCH "repos/$GH_REPO/releases/$draft_id" -F body=@body.md --jq .html_url
+          # tag_name is required here: a draft edited without it loses its tag (becomes "untagged-...").
+          gh api --method PATCH "repos/$GH_REPO/releases/$draft_id" -f tag_name="$TAG" -F body=@body.md \
+            --jq .html_url
           for asset in "${release_assets[@]}"; do
             for old_id in $(gh api "repos/$GH_REPO/releases/$draft_id/assets" \
                               --jq ".[] | select(.name == \"$asset\") | .id"); do
