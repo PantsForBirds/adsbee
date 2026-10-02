@@ -173,9 +173,13 @@ saved rate.
 
 - `AT+REBOOT` holds the host's data, and 100 ms later the Programmer resets the module itself and
   locks (the module's own reboot doesn't give it the trigger).
+- **The module answers at once.** The Programmer holds host data for 10 ms after the retune,
+  while the module reopens its UART at the new rate (it discards what it receives meanwhile).
 - **Safety net:** if the console's rate changes without the Programmer seeing the command (a
-  command it doesn't parse, another module plugged in), the framing errors that follow (8 within
-  200 ms) make it find the console with a wake lock, at most once every 3 s.
+  command it doesn't parse, another module plugged in, a module power-cycled back to its saved
+  rate), the Programmer finds it with a wake lock, at most once every 3 s, when either gives it
+  away: framing errors (8 within 200 ms, the module talks at another rate), or silence (an `AT`
+  command line got no console output at all within 2 s, because the module received garbage).
 - Send `AT+BAUD_RATE=CONSOLE,<n>` once earlier commands are answered. The Programmer retunes on
   the first `OK` after the command, so an `OK` still owed to an earlier command makes it retune
   early, and the command's own `OK` reaches the host garbled (the rate itself ends up right).
@@ -260,8 +264,8 @@ to rerun the check. See
 ## Limitations
 
 - The rate tracking relies on the module's `OK` (see [Baud rate](#baud-rate)). A rate change the
-  Programmer misses is caught by the framing-error check once the module sends something; reopening
-  the port or tapping BOOTSEL also recovers.
+  Programmer misses is caught by the safety net once the module sends something or the host sends a
+  command; reopening the port or tapping BOOTSEL also recovers.
 - With the ROM bootloader backdoor turned off (`AT+BOOTLOADER_PIN=0,DEADBEE`), a reset with SYNC
   high starts the application, while the Programmer's UART stays at the bootloader's 1 M until the
   next reset with SYNC low.

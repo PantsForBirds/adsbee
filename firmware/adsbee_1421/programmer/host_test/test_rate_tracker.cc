@@ -98,6 +98,9 @@ struct Sim {
     bool answer = true;          // The module answers at all (false: the OK is lost).
     std::string module_line;
     std::string module_got;  // Every byte the module received.
+    // After a switch the module reopens its UART and flushes RX: bytes arriving until then are lost.
+    uint32_t module_deaf_until = 0;
+    int module_lost = 0;
 
     // Programmer.
     uint32_t uart = 1000000;
@@ -133,6 +136,7 @@ struct Sim {
             }
             if (answer) ModuleOut("OK\r\n");
             console = baud;
+            module_deaf_until = now + 3;
         } else if (cmd == "AT+BAUD_RATE?") {
             ModuleOut("BAUD_RATE=CONSOLE," + std::to_string(console) + "\r\n");
         } else if (cmd == "AT+SETTINGS=SAVE") {
@@ -141,6 +145,7 @@ struct Sim {
         } else if (cmd == "AT+SETTINGS=RESET") {
             ModuleOut("OK\r\n");
             console = saved = 1000000;
+            module_deaf_until = now + 3;
         } else if (cmd == "AT+REBOOT") {
             console = saved;  // Reboots; its boot output is lost in the reset the bridge does.
         } else if (cmd.compare(0, 3, "AT+") == 0 && isupper((unsigned char)cmd[3])) {
@@ -150,6 +155,10 @@ struct Sim {
         }
     }
     void ModuleReceive(char c, uint32_t rate) {
+        if (now < module_deaf_until) {
+            module_lost++;
+            return;
+        }
         if (rate != console) c = '\x01';
         module_got += c;
         if (c == '\n') {
@@ -226,7 +235,10 @@ struct Sim {
     }
     void Host(const std::string& text) { host_in += text; }
     bool InSync() const { return uart == console && t.console_baud() == console; }
-    bool Clean() const { return host_out.find('~') == std::string::npos && module_got.find('\x01') == std::string::npos; }
+    bool Clean() const {
+        return host_out.find('~') == std::string::npos && module_got.find('\x01') == std::string::npos &&
+               module_lost == 0;
+    }
 };
 
 }  // namespace
@@ -260,14 +272,18 @@ TEST(RateTracker, ReportsAroundSwitch) {
         expected += report;
         if (i == 5) s.Host("AT+BAUD_RATE=CONSOLE,57600\r\nAT+X\r\n");
         s.Run(3);
-        if (i == 5) {
-            expected += "OK\r\nOK\r\n";
-        }
     }
-    s.Run(10);
+    s.Run(20);
     EXPECT_TRUE(s.InSync());
     EXPECT_TRUE(s.Clean());
-    EXPECT_EQ(s.host_out, expected);
+    // Every report, in order; the two OKs fall between them wherever the module sent them.
+    std::string reports = s.host_out;
+    for (int i = 0; i < 2; i++) {
+        size_t ok = reports.find("OK\r\n");
+        ASSERT_NE(ok, std::string::npos);
+        reports.erase(ok, 4);
+    }
+    EXPECT_EQ(reports, expected);
 }
 
 // A human typing the command one key at a time, with CR and LF in separate writes.
@@ -303,8 +319,14 @@ TEST(RateTracker, OkSplitAcrossReads) {
     EXPECT_EQ(step.kind, RateTracker::Step::kRetune);
     EXPECT_EQ(step.baud, 115200u);
     t.OnRetuned(4);
-    EXPECT_FALSE(t.HoldHostData());
     EXPECT_EQ(t.console_baud(), 115200u);
+    // The module is still reopening its UART.
+    EXPECT_TRUE(t.HoldHostData());
+    EXPECT_EQ(t.OnHostBytes((const uint8_t*)"AT+X\r\n", 6, 4), 0u);
+    EXPECT_EQ(t.Poll(4 + RateTracker::kSwitchSettleMs - 1, false).kind, RateTracker::Step::kNone);
+    EXPECT_TRUE(t.HoldHostData());
+    EXPECT_EQ(t.Poll(4 + RateTracker::kSwitchSettleMs, false).kind, RateTracker::Step::kNone);
+    EXPECT_FALSE(t.HoldHostData());
 }
 
 // A rate the console refuses: ERROR, no retune, host data flows again.
@@ -326,25 +348,137 @@ TEST(RateTracker, IgnoredCommands) {
     for (const char* cmd : {"AT+BAUD_RATE=CONSOLE,1200", "AT+BAUD_RATE=CONSOLE,4000000", "at+baud_rate=console,57600",
                             "AT+BAUD_RATE=CONSOLE,57600x", "AT+BAUD_RATE=CONSOLE,", "AT+BAUD_RATE=GNSS,57600",
                             "AT+BAUD_RATE?", "AT+SETTINGS=SAVE", "AT+SETTINGS=LOAD", "AT+REBOOTX",
-                            "AT+BAUD_RATE=CONSOLE,99999999999999999999",
-                            "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX AT+BAUD_RATE=CONSOLE,57600"}) {
+                            "AT+BAUD_RATE=CONSOLE,99999999999999999999", "overlong"}) {
         RateTracker t;
         t.Start(1000000, 0);
-        std::string line = std::string(cmd) + "\r\n";
+        // Longer than the module's AT line buffer: it drops the line, and so does the tracker.
+        std::string line = strcmp(cmd, "overlong") == 0 ? std::string(1000, 'X') + "AT+BAUD_RATE=CONSOLE,57600\r\n"
+                                                         : std::string(cmd) + "\r\n";
         EXPECT_EQ(t.OnHostBytes((const uint8_t*)line.data(), line.size(), 1), line.size()) << cmd;
         EXPECT_FALSE(t.HoldHostData()) << cmd;
         EXPECT_EQ(t.Poll(100000, false).kind, RateTracker::Step::kNone) << cmd;
     }
 }
 
-// Garbage ahead of the command on the same line (a NUL from a held-low line, a stray CR): the module still runs it,
-// so the tracker does too.
+// Forms the module's parser (cppAT) also runs: whitespace and '+' around the number, repeated operator characters,
+// several commands on one line (a terminal that ends lines with CR alone), any operator after REBOOT.
+TEST(RateTracker, CommandFormsTheModuleAccepts) {
+    struct Case {
+        const char* line;
+        uint32_t target;  // 0: AT+REBOOT.
+    };
+    for (Case c : {Case{"AT+BAUD_RATE=CONSOLE, 57600 ", 57600}, Case{"AT+BAUD_RATE=CONSOLE,+57600", 57600},
+                   Case{"AT+BAUD_RATE==CONSOLE,57600", 57600}, Case{"AT+BAUD_RATE=CONSOLE,0057600", 57600},
+                   Case{"AT+UPTIME?\rAT+BAUD_RATE=CONSOLE,19200\r", 19200}, Case{"  AT+BAUD_RATE=CONSOLE,9600", 9600},
+                   Case{"AT+SETTINGS=RESET", 1000000}, Case{"AT+REBOOT", 0}, Case{"AT+REBOOT?", 0},
+                   Case{"AT+REBOOT=", 0}}) {
+        RateTracker t;
+        t.Start(115200, 0);
+        std::string line = std::string(c.line) + "\n";
+        t.OnHostBytes((const uint8_t*)line.data(), line.size(), 1);
+        EXPECT_TRUE(t.HoldHostData()) << c.line;
+        if (c.target == 0) {
+            EXPECT_EQ(t.Poll(1 + RateTracker::kRebootSettleMs, false).kind, RateTracker::Step::kResetAndLock) << c.line;
+        } else {
+            EXPECT_EQ(t.OnConsoleBytes((const uint8_t*)"OK\r\n", 4, 2), 4u);
+            RateTracker::Step step = t.Poll(2, false);
+            EXPECT_EQ(step.kind, RateTracker::Step::kRetune) << c.line;
+            EXPECT_EQ(step.baud, c.target) << c.line;
+        }
+    }
+    // And forms it refuses (ERROR, or not a command at all).
+    for (const char* cmd : {"AT+BAUD_RATE =CONSOLE,57600", "AT+BAUD_RATE=CONSOLE ,57600", "AT+BAUD_RATE=CONSOLE,57600,1",
+                            "AT+BAUD_RATE=CONSOLE,-57600", "AT+BAUD_RATE=CONSOLE,5 7600", "AT+REBOOT=1",
+                            "AT+SETTINGS=RESET2", "AT+SETTINGS?", "AT+BAUD_RATEX=CONSOLE,57600"}) {
+        RateTracker t;
+        t.Start(115200, 0);
+        std::string line = std::string(cmd) + "\r\n";
+        t.OnHostBytes((const uint8_t*)line.data(), line.size(), 1);
+        EXPECT_FALSE(t.HoldHostData()) << cmd;
+    }
+}
+
+// Garbage ahead of the command on the same line (a wrong-rate byte, a stray CR): the module still runs it, so the
+// tracker does too. After a NUL (a held-low line) the module sees nothing more of the line, and neither does the
+// tracker.
 TEST(RateTracker, GarbageBeforeCommand) {
     RateTracker t;
     t.Start(1000000, 0);
-    const uint8_t line[] = "\0\0\rAT+BAUD_RATE=CONSOLE,19200\r\n";
+    const uint8_t line[] = "\x01\xfe\rAT+BAUD_RATE=CONSOLE,19200\r\n";
     EXPECT_EQ(t.OnHostBytes(line, sizeof(line) - 1, 1), sizeof(line) - 1);
     EXPECT_TRUE(t.HoldHostData());
+    RateTracker n;
+    n.Start(1000000, 0);
+    const uint8_t nul[] = "\0\rAT+BAUD_RATE=CONSOLE,19200\r\n";
+    EXPECT_EQ(n.OnHostBytes(nul, sizeof(nul) - 1, 1), sizeof(nul) - 1);
+    EXPECT_FALSE(n.HoldHostData());
+    // A long line of junk ahead of it too.
+    RateTracker u;
+    u.Start(1000000, 0);
+    std::string junk = std::string(900, 'X') + "AT+BAUD_RATE=CONSOLE,19200\r\n";
+    EXPECT_EQ(u.OnHostBytes((const uint8_t*)junk.data(), junk.size(), 1), junk.size());
+    EXPECT_TRUE(u.HoldHostData());
+}
+
+// The console's rate moved without the tracker seeing it and the module is quiet (no framing errors): the host's next
+// command reaches it as garbage, nothing comes back, and the silence asks for a wake lock.
+TEST(RateTracker, SilenceRelocks) {
+    Sim s;
+    s.Start();
+    s.Run(RateTracker::kRelockIntervalMs);
+    s.console = 57600;  // E.g. a module power-cycled back to its saved rate.
+    s.Host("AT+BAUD_RATE?\r\n");
+    s.Run(RateTracker::kNoReplyMs - 10);
+    EXPECT_EQ(s.wake_locks, 0);
+    s.Run(20);
+    EXPECT_EQ(s.wake_locks, 1);
+    EXPECT_TRUE(s.InSync());
+    s.host_out.clear();
+    s.module_got.clear();
+    s.Host("AT+BAUD_RATE?\r\n");
+    s.Run(10);
+    EXPECT_EQ(s.host_out, "BAUD_RATE=CONSOLE,57600\r\n");
+}
+
+// Silence doesn't relock while SYNC is high (the module may be asleep), for lines that aren't AT commands, or when the
+// console answers.
+TEST(RateTracker, SilenceExceptions) {
+    {
+        RateTracker t;
+        t.Start(1000000, 0);
+        uint32_t now = RateTracker::kRelockIntervalMs;
+        t.OnHostBytes((const uint8_t*)"AT+UPTIME?\n", 11, now);
+        EXPECT_EQ(t.Poll(now + 100, true).kind, RateTracker::Step::kNone);
+        t.Poll(now + 5000, false);
+        EXPECT_EQ(t.Poll(now + 5000, false).kind, RateTracker::Step::kNone);
+    }
+    {
+        RateTracker t;
+        t.Start(1000000, 0);
+        uint32_t now = RateTracker::kRelockIntervalMs;
+        t.OnHostBytes((const uint8_t*)"hello\n\n", 7, now);
+        t.Poll(now + 5000, false);
+        EXPECT_EQ(t.Poll(now + 5000, false).kind, RateTracker::Step::kNone);
+    }
+    {
+        RateTracker t;
+        t.Start(1000000, 0);
+        uint32_t now = RateTracker::kRelockIntervalMs;
+        t.OnHostBytes((const uint8_t*)"AT+UPTIME?\n", 11, now);
+        t.OnConsoleBytes((const uint8_t*)"UPTIME=5\r\n", 10, now + 3);
+        t.Poll(now + 5000, false);
+        EXPECT_EQ(t.Poll(now + 5000, false).kind, RateTracker::Step::kNone);
+    }
+    {
+        // Right after a lock: waits out the rate limit, then relocks if the console is still silent.
+        RateTracker t;
+        t.Start(1000000, 0);
+        t.OnHostBytes((const uint8_t*)"AT+UPTIME?\n", 11, 10);
+        t.Poll(RateTracker::kNoReplyMs + 10, false);
+        EXPECT_EQ(t.Poll(RateTracker::kNoReplyMs + 10, false).kind, RateTracker::Step::kNone);
+        t.Poll(RateTracker::kRelockIntervalMs, false);
+        EXPECT_EQ(t.Poll(RateTracker::kRelockIntervalMs, false).kind, RateTracker::Step::kWakeLock);
+    }
 }
 
 // The OK never comes (lost, or an image that doesn't answer): after the timeout the console is found with a wake lock,

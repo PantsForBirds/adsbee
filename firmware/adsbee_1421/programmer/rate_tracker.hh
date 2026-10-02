@@ -16,7 +16,8 @@
 //      including that '\n' and holds everything after it in the CDC FIFO.
 //   2. The module answers "OK" at the old rate, drains it and switches. OnConsoleBytes() forwards the console output up
 //      to the end of that "OK\r\n" and Poll() returns kRetune: the bridge retunes its UART to n at once and drops what
-//      came in after the OK (sent at the new rate, so garbled at the old one). Host data flows again.
+//      came in after the OK (sent at the new rate, so garbled at the old one). Host data flows again kSwitchSettleMs
+//      later: the module reopens its UART after the OK and discards what it received meanwhile.
 //   3. "ERROR" (a refused rate) ends the hold without a retune.
 //   4. No answer within the timeout: Poll() returns kWakeLock (find the console with the trigger on a SYNC wake, which
 //      keeps its live settings). The host data waits for that too.
@@ -25,8 +26,11 @@
 // rate. Nothing here sends AT+SETTINGS=SAVE; the host decides whether a new rate persists.
 //
 // Safety net: the console's rate can still move without the tracker seeing it (a command it doesn't parse, another
-// module plugged in). Framing errors on the UART are what that looks like, so a burst of them asks for a wake lock,
-// at most once every kRelockIntervalMs.
+// module plugged in, a module power-cycled back to its saved rate). Two things give that away, and either asks for a
+// wake lock, at most once every kRelockIntervalMs:
+//   - framing errors on the UART (the module talks at another rate): kRelockErrors within kErrorWindowMs;
+//   - silence: the host sent an AT command line and nothing at all came back within kNoReplyMs (the module got
+//     garbage, so it didn't see a command).
 //
 // After a reset with SYNC high (the ROM bootloader, which auto-bauds to whatever rate the UART sends at) the tracker
 // stands aside until the next reset with SYNC low: bytes pass both ways untouched and the UART stays at the
@@ -36,6 +40,8 @@ class RateTracker {
     static constexpr uint32_t kFactoryConsoleBaud = 1000000;
     // AT+REBOOT: time for the module to take the command before the bridge resets it.
     static constexpr uint32_t kRebootSettleMs = 100;
+    // After a retune: time for the module to reopen its UART at the new rate (it flushes RX after reopening).
+    static constexpr uint32_t kSwitchSettleMs = 10;
     // How long the module's OK may take: it queues behind up to 8 kB of console output, which takes 8.5 s at 9600.
     static constexpr uint32_t kReplyBaseMs = 500;
     static constexpr uint32_t kReplyMaxMs = 10000;
@@ -43,6 +49,8 @@ class RateTracker {
     static constexpr uint32_t kRelockErrors = 8;
     static constexpr uint32_t kErrorWindowMs = 200;
     static constexpr uint32_t kRelockIntervalMs = 3000;
+    // Every AT command answers (OK, ERROR or its reply) well within this.
+    static constexpr uint32_t kNoReplyMs = 2000;
 
     struct Step {
         enum Kind {
@@ -89,12 +97,14 @@ class RateTracker {
         kIdle,           // Pass-through at console_baud_.
         kAwaitReply,     // Switch command sent; waiting for OK / ERROR.
         kRetunePending,  // OK seen; the bridge retunes next.
+        kSettling,       // Retuned; the module is still reopening its UART.
         kRebootPending,  // AT+REBOOT sent.
         kLost,           // Needs a wake lock.
         kRomBootloader,  // Hands off until the next reset with SYNC low.
     };
 
     void OnHostLine(uint32_t now_ms);
+    void StartSwitch(uint32_t target, uint32_t now_ms);
     uint32_t ReplyTimeoutMs() const;
     void Idle();
 
@@ -107,8 +117,12 @@ class RateTracker {
     uint32_t error_count_ = 0;  // Framing errors in the window starting at error_window_ms_.
     uint32_t error_window_ms_ = 0;
 
-    // Current host -> module line; overlong lines are dropped.
-    static constexpr size_t kLineMax = 40;
+    // An AT line went out at awaiting_reply_ms_ and the console has sent nothing since.
+    bool awaiting_reply_ = false;
+    uint32_t awaiting_reply_ms_ = 0;
+
+    // Current host -> module line; overlong lines are dropped, as the module drops them (kATCommandBufMaxLen).
+    static constexpr size_t kLineMax = 1000;
     char line_[kLineMax + 1] = {};
     size_t line_len_ = 0;
     bool line_overflow_ = false;

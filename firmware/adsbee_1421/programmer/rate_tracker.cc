@@ -10,6 +10,7 @@ void RateTracker::Idle() {
     ok_matched_ = 0;
     error_matched_ = 0;
     error_count_ = 0;
+    awaiting_reply_ = false;
 }
 
 void RateTracker::Start(uint32_t console_baud, uint32_t now_ms) {
@@ -46,6 +47,7 @@ void RateTracker::OnLocked(uint32_t console_baud, uint32_t now_ms) {
 void RateTracker::OnRetuned(uint32_t now_ms) {
     console_baud_ = target_baud_;
     Idle();
+    state_ = State::kSettling;
     since_ms_ = now_ms;
     last_lock_ms_ = now_ms;
 }
@@ -65,7 +67,9 @@ size_t RateTracker::OnHostBytes(const uint8_t* data, size_t len, uint32_t now_ms
             line_overflow_ = false;
             if (HoldHostData()) return i + 1;  // A switch starts: the rest waits for it.
         } else if (line_len_ < kLineMax) {
-            line_[line_len_++] = c == '\0' ? '?' : c;  // Garbage NULs must not end the string early.
+            // The module parses its line buffer as a C string, so it never sees what follows a NUL (garbage from a
+            // held-low line or a wrong rate); the NUL ends this copy the same way.
+            line_[line_len_++] = c;
         } else {
             line_overflow_ = true;
         }
@@ -73,37 +77,107 @@ size_t RateTracker::OnHostBytes(const uint8_t* data, size_t len, uint32_t now_ms
     return len;
 }
 
-void RateTracker::OnHostLine(uint32_t now_ms) {
-    // Like cppAT, the command starts at the first "AT" in the line; the module is case sensitive, so is this.
-    const char* command = strstr(line_, "AT");
-    if (command == nullptr) return;
-    size_t command_len = strlen(command);
-    while (command_len > 0 && command[command_len - 1] == '\r') command_len--;
+// The module's AT parser (cppAT, firmware/modules/cppAT/src/cpp_at.cc) as far as it decides which commands run with
+// which arguments, so the tracker reads a line the way the module does.
+namespace {
 
-    uint32_t target = 0;
-    static const char kBaudPrefix[] = "AT+BAUD_RATE=CONSOLE,";
-    static const char kSettingsReset[] = "AT+SETTINGS=RESET";
-    static const char kReboot[] = "AT+REBOOT";
-    if (command_len > sizeof(kBaudPrefix) - 1 && strncmp(command, kBaudPrefix, sizeof(kBaudPrefix) - 1) == 0) {
-        uint32_t baud = 0;
-        for (size_t i = sizeof(kBaudPrefix) - 1; i < command_len; i++) {
-            char c = command[i];
-            if (c < '0' || c > '9' || baud > (UINT32_MAX - 9) / 10) return;  // Not a rate the console accepts.
-            baud = baud * 10 + (uint32_t)(c - '0');
-        }
-        // The console answers ERROR to anything else and stays where it is.
-        if (!ConsoleBaud::IsSupported(baud)) return;
-        target = baud;
-    } else if (command_len == sizeof(kSettingsReset) - 1 && strncmp(command, kSettingsReset, command_len) == 0) {
-        // Factory defaults, applied live after the OK.
-        target = kFactoryConsoleBaud;
-    } else if (command_len == sizeof(kReboot) - 1 && strncmp(command, kReboot, command_len) == 0) {
-        state_ = State::kRebootPending;
-        since_ms_ = now_ms;
-        return;
-    } else {
-        return;
+struct Span {
+    const char* p;
+    size_t n;
+    bool Is(const char* text) const { return strlen(text) == n && strncmp(p, text, n) == 0; }
+};
+
+bool IsAlnum(char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+bool IsSpace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'; }
+
+// CppAT::ArgToNum() for an unsigned value: strtoul() with surrounding whitespace. Returns false for anything else.
+bool ArgToUint(Span arg, uint32_t& out) {
+    size_t i = 0;
+    while (i < arg.n && IsSpace(arg.p[i])) i++;
+    if (i < arg.n && arg.p[i] == '+') i++;
+    size_t digits = i;
+    uint64_t value = 0;
+    while (i < arg.n && arg.p[i] >= '0' && arg.p[i] <= '9') {
+        value = value * 10 + (uint64_t)(arg.p[i] - '0');
+        if (value > UINT32_MAX) value = UINT32_MAX;  // strtoul saturates (32-bit unsigned long on the CC1314).
+        i++;
     }
+    if (i == digits) return false;
+    while (i < arg.n && IsSpace(arg.p[i])) i++;
+    if (i != arg.n) return false;
+    out = (uint32_t)value;
+    return true;
+}
+
+}  // namespace
+
+void RateTracker::OnHostLine(uint32_t now_ms) {
+    // CppAT::ParseMessage(): every "AT+" command in the line, in order, until one fails.
+    const char* message = line_;
+    const char* start = strstr(message, "AT+");
+    if (start != nullptr && !awaiting_reply_) {
+        awaiting_reply_ = true;
+        awaiting_reply_ms_ = now_ms;
+    }
+    while (start != nullptr) {
+        start += 3;
+        Span command = {start, strcspn(start, "? =\r\n")};
+        if (command.n == 0) return;
+        start += command.n;
+        char op = '\0';
+        if (*start != '\0') {
+            if (*start != '\r' && *start != '\n') op = *start;
+            while (*start != '\0' && !IsAlnum(*start) && *start != ',' && *start != '-') start++;
+        }
+        // Arguments: up to the line end, split at commas.
+        Span args_text = {start, strcspn(start, "\r\n")};
+        Span args[3];
+        size_t num_args = 0;
+        bool too_many = false;
+        for (size_t pos = 0; args_text.n > 0;) {
+            const char* comma = (const char*)memchr(args_text.p + pos, ',', args_text.n - pos);
+            size_t end = comma != nullptr ? (size_t)(comma - args_text.p) : args_text.n;
+            if (num_args == 3) {
+                too_many = true;
+                break;
+            }
+            args[num_args++] = {args_text.p + pos, end - pos};
+            if (comma == nullptr) break;
+            pos = end + 1;
+            if (pos == args_text.n) {  // Trailing comma: a blank last argument.
+                if (num_args == 3) {
+                    too_many = true;
+                } else {
+                    args[num_args++] = {args_text.p + pos, 0};
+                }
+                break;
+            }
+        }
+
+        if (command.Is("BAUD_RATE") && op == '=') {
+            uint32_t baud;
+            // The console answers ERROR to anything else and stays where it is, which ends the line too.
+            if (too_many || num_args != 2 || !args[0].Is("CONSOLE") || !ArgToUint(args[1], baud) ||
+                !ConsoleBaud::IsSupported(baud)) {
+                return;
+            }
+            StartSwitch(baud, now_ms);
+            return;
+        }
+        if (command.Is("SETTINGS") && op == '=' && !too_many && num_args > 0 && args[0].Is("RESET")) {
+            StartSwitch(kFactoryConsoleBaud, now_ms);  // Factory defaults, applied live after the OK.
+            return;
+        }
+        if (command.Is("REBOOT") && num_args == 0 && !too_many) {
+            state_ = State::kRebootPending;
+            since_ms_ = now_ms;
+            return;
+        }
+        start = strstr(start, "AT+");
+    }
+}
+
+void RateTracker::StartSwitch(uint32_t target, uint32_t now_ms) {
     state_ = State::kAwaitReply;
     target_baud_ = target;
     since_ms_ = now_ms;
@@ -112,6 +186,7 @@ void RateTracker::OnHostLine(uint32_t now_ms) {
 }
 
 size_t RateTracker::OnConsoleBytes(const uint8_t* data, size_t len, uint32_t now_ms) {
+    if (len > 0) awaiting_reply_ = false;
     if (state_ == State::kRetunePending) return 0;  // Anything after the OK is at the new rate.
     if (state_ != State::kAwaitReply) return len;
     static const char kOk[] = "OK\r\n";
@@ -162,10 +237,25 @@ RateTracker::Step RateTracker::Poll(uint32_t now_ms, bool sync_high) {
     uint32_t elapsed = now_ms - since_ms_;  // Unsigned: wrap-safe.
     switch (state_) {
         case State::kIdle:
+            if (sync_high) {
+                awaiting_reply_ = false;  // A sleeping module doesn't answer.
+            } else if (awaiting_reply_ && now_ms - awaiting_reply_ms_ >= kNoReplyMs &&
+                       now_ms - last_lock_ms_ >= kRelockIntervalMs) {
+                state_ = State::kLost;
+                since_ms_ = now_ms;
+                awaiting_reply_ = false;
+            }
+            break;
         case State::kRomBootloader:
             break;
         case State::kRetunePending:
             step = {Step::kRetune, target_baud_};
+            break;
+        case State::kSettling:
+            if (elapsed >= kSwitchSettleMs) {
+                state_ = State::kIdle;
+                since_ms_ = now_ms;
+            }
             break;
         case State::kAwaitReply:
             if (elapsed >= ReplyTimeoutMs()) {
