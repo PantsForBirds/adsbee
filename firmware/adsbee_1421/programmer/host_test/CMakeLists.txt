@@ -33,6 +33,7 @@ target_link_libraries(host_test PRIVATE libgtest Threads::Threads)
 
 target_sources(host_test PRIVATE
     ../modem_lines.cc
+    test_cdc_text.cc
     test_host_line_coding.cc
     test_modem_lines.cc
 )

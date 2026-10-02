@@ -6,21 +6,14 @@ UTEST_STATE();
 // them here for each file.
 #include "test_spi_coprocessor.cpp"
 
-static bool utest_main_called = false;
 bool RunHardwareUnitTests() {
-    if (!utest_main_called) {
-        int argc = 0;
-        char* argv[1] = {nullptr};
-        int ret = utest_main(argc, argv);
-        utest_main_called = true;
-        if (ret >= 0) {
-            return true;
-        } else {
-            CONSOLE_ERROR("RunHardwareUnitTests", "utest_main returned code %d", ret);
-            return false;
-        }
+    int argc = 0;
+    char* argv[1] = {nullptr};
+    // utest_main returns the number of failed tests.
+    int ret = utest_main(argc, argv);
+    if (ret == 0) {
+        return true;
     }
-
-    CONSOLE_ERROR("RunHardwareUnitTests", "Can't run utest_main multiple times because it'll break (janky af).");
+    CONSOLE_ERROR("RunHardwareUnitTests", "%d hardware unit test(s) failed.", ret);
     return false;
 }

@@ -58,7 +58,6 @@ static constexpr uint16_t kDemodulatorParkSpinLimit = 256;
 #define MLAT_SYSTEM_CLOCK_RATIO      48 / 125
 // Scales 125MHz system clock into a 48MHz counter.
 static const uint32_t kMLATWrapCounterIncrement = (1 << 24) * MLAT_SYSTEM_CLOCK_RATIO;
-static constexpr float kMLATSystemClockDiv = 125.0f / 48.0f;  // Ratio of 48MHz MLAT clock to 125MHz system clock.
 
 constexpr float kPreambleDetectorFreqHz = 48e6;    // Running at 48MHz (24 clock cycles per half bit).
 constexpr float kMessageDemodulatorFreqHz = 48e6;  // Run at 48 MHz to demodulate bits at 1Mbps.
@@ -473,8 +472,11 @@ void __time_critical_func(ADSBee::OnDemodComplete)() {
         // since it's from a 16-bit PWM peripheral.
         uint16_t& a = mlat_jitter_counts_on_fifo_pull_[sm_index];
         uint16_t& b = mlat_jitter_counts_on_demod_begin_[sm_index];
-        uint16_t mlat_jitter_correction = b >= a ? b - a : (0xFFFF - a) + b;
-        rx_packet_[sm_index].mlat_48mhz_64bit_counts -= mlat_jitter_correction;
+        // The jitter counter counts the system clock: convert to 48MHz MLAT counts. Unsigned 16-bit subtraction
+        // handles a wrap of the counter between the two captures.
+        uint16_t mlat_jitter_correction_sys_clk_counts = b - a;
+        rx_packet_[sm_index].mlat_48mhz_64bit_counts -=
+            MLATJitterCountsTo48MHzCounts(mlat_jitter_correction_sys_clk_counts);
 
         // Clear the transponder packet buffer.
         memset((void*)rx_packet_[sm_index].buffer, 0xFF, RawModeSPacket::kMaxPacketLenWords32 * sizeof(uint32_t));
@@ -619,7 +621,7 @@ void __time_critical_func(ADSBee::OnDemodComplete)() {
     }
 
 #ifdef DEBUG_ISR_TIMING
-    // 16-bit counter at 48MHz wraps every ~1.4ms, far longer than any ISR execution.
+    // 16-bit counter at 125MHz wraps every ~524us, far longer than any ISR execution.
     uint16_t isr_duration_counts = GetMLATJitterPWMSliceCounts() - isr_start_counts;
     if (isr_duration_counts > isr_duration_max_counts_) {
         isr_duration_max_counts_ = isr_duration_counts;
@@ -795,8 +797,14 @@ void ADSBee::MLATCounterInit() {
 
     // PWM slice 5 is used for LEVEL_PWM, anything else is fine to use for the MLAT jitter counter.
     mlat_jitter_pwm_slice_ = pwm_gpio_to_slice_num(bsp.r1090_pulses_pin);  // Use pulses pin for slice 1.
+    // The slice counts the system clock (no divider). The PWM divider is 8.4 fixed point and can't hold 125/48: the
+    // SDK truncates it to 41/16 = 2.5625, which made a 48.78MHz count that was 1.6% fast against the 48MHz MLAT
+    // counter. Counting clk_sys and scaling with MLATJitterCountsTo48MHzCounts() is exact, like the SysTick scaling in
+    // GetMLAT48MHzCounts(). The 16-bit counter wraps every 65536 / 125MHz = 524us; the jitter corrections measured on
+    // hardware stay under 30us (the time from the demodulator's first FIFO pull to OnDemodBegin()), so a correction
+    // never spans a full wrap.
     pwm_config config = pwm_get_default_config();
-    pwm_config_set_clkdiv(&config, kMLATSystemClockDiv);
+    pwm_config_set_clkdiv_int_frac(&config, 1, 0);
     pwm_config_set_wrap(&config, 0xFFFF);             // Use the full 16-bit span.
     pwm_init(mlat_jitter_pwm_slice_, &config, true);  // Start immediately.
 
@@ -965,7 +973,7 @@ void ADSBee::PruneAircraftDictionary() {
         last_aircraft_dictionary_update_timestamp_ms_ = timestamp_ms;
 
 #ifdef DEBUG_ISR_TIMING
-        // Snapshot and reset the ISR timing accumulators. Counts are at 48MHz.
+        // Snapshot and reset the ISR timing accumulators. Counts are system clock cycles (125MHz).
         uint32_t isr_count = isr_count_;
         uint32_t isr_sum_counts = isr_duration_sum_counts_;
         uint16_t isr_max_counts = isr_duration_max_counts_;
@@ -973,7 +981,7 @@ void ADSBee::PruneAircraftDictionary() {
         isr_duration_sum_counts_ = 0;
         isr_duration_max_counts_ = 0;
         CONSOLE_WARNING("ADSBee::PruneAircraftDictionary", "OnDemodComplete: %lu calls, avg %lu us, max %u us.",
-                        isr_count, isr_count > 0 ? isr_sum_counts / isr_count / 48 : 0, isr_max_counts / 48);
+                        isr_count, isr_count > 0 ? isr_sum_counts / isr_count / 125 : 0, isr_max_counts / 125);
 #endif
     }
 }

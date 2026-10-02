@@ -141,6 +141,8 @@ static constexpr uint32_t kSettingsVersion = N;
 Release tags are named `<product>-M.m.p-rcN` for release candidates and `<product>-M.m.p` for
 stable releases (`kFirmwareVersionReleaseCandidate = 0`), e.g. `adsbee_1090-0.9.1-rc3`,
 `adsbee_1421-0.3.10`.
+Pushing a release tag runs `.github/workflows/release.yml`, which builds that product from the
+tagged commit and creates a draft GitHub release (see "Releases" in [README.md](README.md#releases)).
 
 ### Automated enforcement
 These rules are checked automatically by `scripts/check_version_sync.sh` (covers both products).

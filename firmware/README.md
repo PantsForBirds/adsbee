@@ -163,6 +163,39 @@ for reflashing over UART through the SYNC bootloader backdoor (no debugger neede
 
 ---
 
+## Releases
+
+Releases are drafted by CI from release tags (`.github/workflows/release.yml`):
+
+1. Merge the version bump to `main`, then tag the merge commit on `main` with the product and the
+   version in its source, and push the tag:
+   ```bash
+   git tag adsbee_1421-0.3.11-rc4 origin/main
+   git push origin adsbee_1421-0.3.11-rc4
+   ```
+   Tags are `<product>-M.m.p-rcN` for release candidates and `<product>-M.m.p` for stable releases
+   (see [AGENTS.md](AGENTS.md#rules)).
+2. The workflow checks the tag against the firmware version in the source (for adsbee_1421, also the
+   version the ADSBee 1421 Programmer bakes in) and fails before building if they differ. It then builds
+   only that product with `firmware.yml`, including its host tests, and creates a **draft** release:
+
+   | Product | Release name | Assets |
+   |---|---|---|
+   | adsbee_1090 | `ADSBee 1090 Firmware 0.9.1 Release Candidate 4` | `adsbee_1090.ota`, `combined.uf2` |
+   | adsbee_1421 | `ADSBee 1421 Firmware Version 0.3.11 Release Candidate 3` | `adsbee_1421-<version>.hex`, `adsbee_1421-<version>.elf`, `adsbee_1421_programmer-fw<version>.uf2` |
+
+   Stable releases drop the "Release Candidate N" suffix. The body is a stub with placeholders for
+   the release notes, followed by a CI block with the run link, the commit and each asset's SHA-256.
+   Before uploading, the workflow checks that the UF2 files are well formed and that the 1421 ELF
+   (with debug info, for symbolizing crash addresses) holds exactly the contents of the `.hex`.
+3. Write the release notes in the draft on GitHub and publish it.
+
+Re-running the workflow (or deleting and re-pushing the tag) while the release is still a draft
+replaces the draft's assets and its CI block and keeps the hand-written notes. A published release
+is never modified: the run fails instead.
+
+---
+
 ## Interactive Shell
 
 To open a shell inside a container for debugging or manual builds:

@@ -1,0 +1,136 @@
+name: Draft Release
+
+# Pushing a release tag (adsbee_1090-M.m.p[-rcN] or adsbee_1421-M.m.p[-rcN]) builds that product
+# from the tagged commit with firmware.yml and creates a draft GitHub release with its assets.
+# Release notes are written by hand in the draft before it is published. Re-running the workflow
+# for a tag whose release is still a draft replaces the draft's assets and the CI block of its
+# body; a published release is never modified. See the "Releases" section of firmware/README.md.
+
+on:
+  push:
+    tags:
+      - 'adsbee_1090-*'
+      - 'adsbee_1421-*'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Explicit, so steps run with -o pipefail (the implicit default shell doesn't set it).
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Fails before anything is built if the tag isn't a release tag or its version doesn't match the
+  # source (and, for adsbee_1421, the version the ADSBee 1421 Programmer bakes in).
+  check_tag:
+    runs-on: ubuntu-latest
+    outputs:
+      product: ${{ steps.info.outputs.product }}
+      version: ${{ steps.info.outputs.version }}
+      name: ${{ steps.info.outputs.name }}
+      assets: ${{ steps.info.outputs.assets }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Check the tag against the source version
+      id: info
+      run: |
+        python3 ci/release/release.py info "$GITHUB_REF_NAME" > info.txt
+        cat info.txt
+        cat info.txt >> "$GITHUB_OUTPUT"
+    - name: Check that the tagged commit is on main
+      run: |
+        if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          echo "::warning::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main. Release tags are normally created on main after the squash-merge."
+        fi
+
+  build:
+    needs: check_tag
+    uses: ./.github/workflows/firmware.yml
+    with:
+      product: ${{ needs.check_tag.outputs.product }}
+
+  release:
+    needs:
+      - check_tag
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      PRODUCT: ${{ needs.check_tag.outputs.product }}
+      VERSION: ${{ needs.check_tag.outputs.version }}
+      NAME: ${{ needs.check_tag.outputs.name }}
+      ASSETS: ${{ needs.check_tag.outputs.assets }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+    - name: Collect release assets
+      run: |
+        mkdir dist
+        if [ "$PRODUCT" = adsbee_1090 ]; then
+          cp artifacts/firmware/adsbee_1090.ota artifacts/firmware/combined.uf2 dist/
+        else
+          cp "artifacts/adsbee_1421-$VERSION.hex/adsbee_1421-$VERSION.hex" dist/
+          cp "artifacts/adsbee_1421-$VERSION.elf/adsbee_1421-$VERSION.elf" dist/
+          cp "artifacts/adsbee_1421_programmer-fw$VERSION.uf2/adsbee_1421_programmer.uf2" \
+             "dist/adsbee_1421_programmer-fw$VERSION.uf2"
+          # Only used to check the baked firmware version; the Programmer ELF isn't released.
+          mkdir check
+          cp "artifacts/adsbee_1421_programmer-fw$VERSION.elf/adsbee_1421_programmer.elf" \
+             "check/adsbee_1421_programmer-fw$VERSION.elf"
+        fi
+        ls -l dist
+    - name: Verify release assets
+      run: |
+        if [ -d check ]; then cp check/* dist/; fi
+        python3 ci/release/release.py verify "$TAG" dist
+        rm -f dist/adsbee_1421_programmer-fw*.elf
+    - name: Create or update the draft release
+      run: |
+        run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        read -ra release_assets <<< "$ASSETS"
+        # Drafts aren't returned by the releases/tags endpoint, so look the tag up in the list.
+        releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+          --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"")
+        if grep -q ' false$' <<< "$releases"; then
+          echo "::error::$TAG already has a published release; it is left as is."
+          exit 1
+        fi
+        draft_id=$(head -n1 <<< "$releases" | cut -d' ' -f1)
+        if [ -z "$draft_id" ]; then
+          python3 ci/release/release.py body "$TAG" "$run_url" "$GITHUB_SHA" dist > body.md
+          gh release create "$TAG" --draft --verify-tag --title "$NAME" --notes-file body.md \
+            "${release_assets[@]/#/dist/}"
+          echo "Created draft release \"$NAME\" for $TAG."
+        else
+          gh api "repos/$GH_REPO/releases/$draft_id" --jq '.body // ""' > old_body.md
+          python3 ci/release/release.py body "$TAG" "$run_url" "$GITHUB_SHA" dist old_body.md > body.md
+          # tag_name is required here: a draft edited without it loses its tag (becomes "untagged-...").
+          gh api --method PATCH "repos/$GH_REPO/releases/$draft_id" -f tag_name="$TAG" -F body=@body.md \
+            --jq .html_url
+          for asset in "${release_assets[@]}"; do
+            for old_id in $(gh api "repos/$GH_REPO/releases/$draft_id/assets" \
+                              --jq ".[] | select(.name == \"$asset\") | .id"); do
+              gh api --method DELETE "repos/$GH_REPO/releases/assets/$old_id"
+            done
+            gh api --method POST \
+              "https://uploads.github.com/repos/$GH_REPO/releases/$draft_id/assets?name=$asset" \
+              -H "Content-Type: application/octet-stream" --input "dist/$asset" --jq .name
+          done
+          echo "Updated the assets of the existing draft release for $TAG."
+        fi
