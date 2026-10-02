@@ -1,0 +1,94 @@
+# Builds the ADSBee docs (mkdocs.yml, docs/) and publishes them with mike to the gh-pages branch.
+#
+# gh-pages layout (served under https://adsbee.aero/wiki/):
+#   versions.json       version list read by the version selector
+#   index.html          redirect to the default version (latest)
+#   main/               docs from the main branch
+#   latest/             alias of main (a full copy, see alias_type in mkdocs.yml)
+#   1090-0.9.1/ ...     one directory per final firmware release tag
+#
+# Versions:
+#   push to main that touches the docs -> version "main", alias "latest" (the default version)
+#   tag adsbee_1090-X.Y.Z / adsbee_1421-X.Y.Z -> version "1090-X.Y.Z" / "1421-X.Y.Z"
+#   release candidate tags (-rcN) are skipped
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+    # Path filters don't apply to tag pushes.
+    tags:
+      - "adsbee_1090-*"
+      - "adsbee_1421-*"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - run: pip install -r docs/requirements.txt
+      - name: Build (strict)
+        run: mkdocs build --strict
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # One deploy at a time: each one commits to gh-pages.
+    concurrency:
+      group: docs-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - run: pip install -r docs/requirements.txt
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # mike commits on top of the existing gh-pages branch (absent before the first deploy).
+          git fetch origin gh-pages --depth=1 || true
+      - name: Deploy
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            if [[ "$REF_NAME" =~ ^adsbee_(1090|1421)-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              version="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+              echo "Publishing docs version $version for tag $REF_NAME"
+              mike deploy --push "$version"
+            else
+              echo "Tag $REF_NAME is not a final release; no docs version is published."
+            fi
+          elif [ "$REF_NAME" = "main" ]; then
+            mike deploy --push --update-aliases --title "latest (main)" main latest
+            mike set-default --push latest
+          else
+            echo "Only main publishes the main/latest docs; nothing to do for $REF_NAME."
+          fi

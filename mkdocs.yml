@@ -1,0 +1,81 @@
+# ADSBee documentation ("the wiki"), built with MkDocs + Material and versioned with mike.
+# Preview locally: pip install -r docs/requirements.txt && mkdocs serve
+# Published from the gh-pages branch under https://adsbee.aero/wiki/<version>/ (see .github/workflows/docs.yml).
+site_name: ADSBee Docs
+site_description: Documentation for ADSBee open source ADS-B receivers.
+site_url: https://adsbee.aero/wiki/
+repo_url: https://github.com/PantsForBirds/adsbee
+repo_name: PantsForBirds/adsbee
+edit_uri: edit/main/docs/
+# Fail the build (including mike deploy) on broken links, missing files, and other warnings.
+strict: true
+copyright: ADSBee source code and schematics are licensed under the GNU GPL v3.
+
+theme:
+  name: material
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mike:
+      # Every version points search engines at the same page in "latest".
+      canonical_version: latest
+      # Aliases (latest) are full copies, so the gh-pages branch can be served by any static file server.
+      alias_type: copy
+
+extra:
+  version:
+    provider: mike
+    default: latest
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: getting-started/quick-start.md
+  - ADSBee 1090:
+      - adsbee-1090/index.md
+      - ADSBee Winglet: adsbee-1090/winglet.md
+  - ADSBee 1421:
+      - adsbee-1421/index.md
+      - ADSBee m1421 Module: adsbee-1421/m1421.md
+  - Guides:
+      - Update Firmware: guides/update-firmware.md
+      - Modify the Enclosure: guides/modify-enclosure.md
+  - Community: community.md
+  - Contributing to these docs: contributing.md
