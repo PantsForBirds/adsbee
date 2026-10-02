@@ -103,7 +103,7 @@ jobs:
     - name: Create or update the draft release
       run: |
         run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-        read -ra assets <<< "$ASSETS"
+        read -ra release_assets <<< "$ASSETS"
         # Drafts aren't returned by the releases/tags endpoint, so look the tag up in the list.
         releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
           --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"")
@@ -115,13 +115,13 @@ jobs:
         if [ -z "$draft_id" ]; then
           python3 ci/release/release.py body "$TAG" "$run_url" "$GITHUB_SHA" dist > body.md
           gh release create "$TAG" --draft --verify-tag --title "$NAME" --notes-file body.md \
-            "${assets[@]/#/dist/}"
+            "${release_assets[@]/#/dist/}"
           echo "Created draft release \"$NAME\" for $TAG."
         else
           gh api "repos/$GH_REPO/releases/$draft_id" --jq '.body // ""' > old_body.md
           python3 ci/release/release.py body "$TAG" "$run_url" "$GITHUB_SHA" dist old_body.md > body.md
           gh api --method PATCH "repos/$GH_REPO/releases/$draft_id" -F body=@body.md --jq .html_url
-          for asset in "${assets[@]}"; do
+          for asset in "${release_assets[@]}"; do
             for old_id in $(gh api "repos/$GH_REPO/releases/$draft_id/assets" \
                               --jq ".[] | select(.name == \"$asset\") | .id"); do
               gh api --method DELETE "repos/$GH_REPO/releases/assets/$old_id"
