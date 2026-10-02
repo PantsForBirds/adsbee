@@ -15,16 +15,14 @@
 // lines, leaves the device awake (see modem_lines.hh).
 //
 // The USB CDC baud rate is virtual: the host may open the port at any rate. The Programmer's UART runs at the module
-// console's rate (found with the autobaud lock after every reset) and follows the console when the host changes its
-// rate with AT+BAUD_RATE=CONSOLE,<n> or AT+SETTINGS=RESET, so the host keeps talking without reopening the port. In
-// the ROM bootloader (after a reset with SYNC high) the UART runs at kBootloaderBaud. See rate_tracker.hh.
+// console's rate and follows it when it changes (the module announces every change with "UU"; rate_watch.hh), so the
+// host keeps talking without reopening the port. In the ROM bootloader (after a reset with SYNC high) the UART runs at
+// kBootloaderBaud.
 
 enum class BridgeExit {
     kRecheck,        // BOOTSEL tapped: rerun the full CRC check / flash cycle.
     kEraseSettings,  // BOOTSEL held: erase the settings sectors on the way through the check cycle.
 };
 
+// Pass-through, starting at the UART's current rate (NegotiateConsole() in main.cpp locked onto the console).
 BridgeExit BridgeRun();
-
-// Rate the console was found at (NegotiateConsole() in main.cpp); pass-through starts from it.
-void BridgeSetExpectedConsoleBaud(uint32_t baud);

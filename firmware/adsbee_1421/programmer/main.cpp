@@ -6,7 +6,7 @@
 // confirmed up to date it resets it into the app, finds the console's baud rate with the autobaud
 // trigger (the app boots at its saved console baud; factory default 1 M; see console_lock.hh), and
 // becomes a transparent USB-CDC serial adapter (see bridge.hh for the modem-control-line emulation
-// contract and rate_tracker.hh for the virtual USB baud rate).
+// contract and rate_watch.hh for the virtual USB baud rate).
 //
 // If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0,DEADBEE
 // disabled the backdoor), it skips the image check and enters pass-through with a warning.
@@ -106,11 +106,9 @@ static bool EnterBootloader(Cc13x4Bootloader& bl) {
 // human-readable diagnosis (report-only; never auto-erases the app). Returns the baud rate the
 // application console answered at, or 0 if it didn't answer.
 static uint32_t DiagnoseEntryFailure() {
-    TargetResetIntoApp();
-    IdleMs(kBootWaitMs);
-    // Any saved baud (autobaud trigger on a SYNC wake): a device with a non-default saved baud must not misdiagnose as
+    // Any saved baud (the boot "UU", or a break's): a device with a non-default saved baud must not misdiagnose as
     // dead.
-    uint32_t app_baud = ConsoleLock(ConsoleTrigger::kSyncWake);
+    uint32_t app_baud = ConsoleLock();
     if (app_baud != 0) {
         snprintf(last_diagnosis, sizeof(last_diagnosis),
                  "App console responds at %lu baud - reset+UART wiring OK, but SBL entry "
@@ -133,26 +131,28 @@ static uint32_t DiagnoseEntryFailure() {
     return app_baud;
 }
 
-// Resets the device into the app and finds its console with the autobaud lock (it boots at its saved console baud;
-// factory default 1 M). Pass-through runs at that rate whatever rate the host opened the USB port at (the USB baud is
-// virtual, bridge.hh). The Programmer never changes the console's rate or sends AT+SETTINGS=SAVE.
+// Resets the device into the app and locks onto its console (it boots at its saved console baud, factory default 1 M,
+// and announces it with "UU"; console_lock.hh). Pass-through runs at that rate whatever rate the host opened the USB
+// port at (the USB baud is virtual, bridge.hh). The Programmer never changes the console's rate or sends
+// AT+SETTINGS=SAVE.
+//
+// Module firmware 0.3.11-rc3 and earlier never says "UU", so the lock fails on it. It never gets here with such an
+// image, though: State::kCheck compares the module's flash with the baked image first and reflashes it on any
+// mismatch. Only a module whose bootloader backdoor is off (#242's pass-through fallback) skips that check.
 static bool NegotiateConsole(bool print_version) {
     StatusSet(Status::kNegotiating);
-    uint32_t found_baud = ConsoleLock(ConsoleTrigger::kReset);
-    const ConsoleLockInfo& lock = LastConsoleLock();
+    uint32_t found_baud = ConsoleLock();
+    const RateWatch::LockInfo& lock = ConsoleWatch().last_lock();
     if (found_baud == 0) {
-        CdcPrintf("Device console not responding%s. If this persists with a CRC-verified image, the saved settings "
-                  "may be the cause: hold BOOTSEL for 3 s to erase them and boot with factory defaults.\r\n",
-                  lock.measured_baud != 0 ? "" : " (no autobaud answer, no answer at the legacy rates)");
+        CdcPrintf("Device console not responding (no \"UU\" at boot or after %lu breaks). If this persists with a "
+                  "CRC-verified image, the saved settings may be the cause: hold BOOTSEL for 3 s to erase them and "
+                  "boot with factory defaults.\r\n",
+                  (unsigned long)RateWatch::kMaxAsks);
         return false;
     }
-    if (lock.measured_baud != 0) {
-        CdcPrintf("Console locked at %lu baud (measured %lu) in %lu ms.\r\n", (unsigned long)found_baud,
-                  (unsigned long)lock.measured_baud, (unsigned long)lock.elapsed_ms);
-    } else {
-        CdcPrintf("Console found at %lu baud by the legacy probe in %lu ms (no autobaud answer).\r\n",
-                  (unsigned long)found_baud, (unsigned long)lock.elapsed_ms);
-    }
+    CdcPrintf("Console locked at %lu baud (measured %lu) in %lu ms%s.\r\n", (unsigned long)found_baud,
+              (unsigned long)lock.measured_baud, (unsigned long)(lock.elapsed_us / 1000),
+              lock.asks != 0 ? " (asked with a break)" : "");
 
     if (print_version) {
         char version[32];
@@ -163,7 +163,6 @@ static bool NegotiateConsole(bool print_version) {
     }
 
     CdcPrintf("Console up at %lu baud; entering pass-through.\r\n", (unsigned long)found_baud);
-    BridgeSetExpectedConsoleBaud(found_baud);
     return true;
 }
 
@@ -171,6 +170,7 @@ int main() {
     StatusInit();
     TargetCtlInit();
     TargetUartInit(kConsoleBaud);
+    ConsoleWatchInit();
     tusb_init();
 
     bool force_flash = GetBootselButton();

@@ -3,29 +3,20 @@
 #include <stdint.h>
 
 #include "at_client.hh"
+#include "rate_watch.hh"
 
-// Finds the ADSBee 1421 console's baud rate with the autobaud trigger (README "Console baud rate"): the Programmer
-// holds the module's console RX line (its UART TX, GP28) low through a reset or a SYNC wake and releases it, and module
-// firmware that supports the trigger answers with "UU" at its console rate once the console is ready. A PIO state
-// machine timestamps the edges on the Programmer's RX pin (autobaud_edges.pio) and Autobaud::Measure() computes the
-// rate. One AT+BAUD_RATE? probe at the measured rate confirms it and reads the exact nominal rate.
-//
-// Module firmware without the trigger (0.3.11-rc3 and earlier) sends nothing; the Programmer then probes the five rates
-// those images accept (kLegacyConsoleBauds), once each.
+// Finds and follows the ADSBee 1421 console's baud rate (rate_watch.hh): the RateWatch that bridge.cc polls during
+// pass-through, the glue that carries out its actions on the UART, and blocking locks for the states around it.
 
-enum class ConsoleTrigger {
-    kReset,     // Reset into the application (SYNC low). The console comes back at its saved rate.
-    kSyncWake,  // Pulse SYNC high (a sleep request) and release it. Keeps the module's live settings.
-};
+// Starts the edge capture. Call once after TargetUartInit().
+void ConsoleWatchInit();
 
-// Brings the module through `trigger` and finds the console. Leaves the Programmer's UART at the console's rate and
-// returns it, or returns 0 if the console wasn't found or abort() returned true (abort is polled while waiting).
-uint32_t ConsoleLock(ConsoleTrigger trigger, AtAbortFn abort = nullptr);
+RateWatch& ConsoleWatch();
 
-// Details of the last ConsoleLock(), for status messages.
-struct ConsoleLockInfo {
-    uint32_t measured_baud = 0;  // From the "UU" (0: no "UU" seen; the legacy probe pass ran).
-    uint32_t console_baud = 0;   // As confirmed by the console (0: not found).
-    uint32_t elapsed_ms = 0;     // From the start of the trigger.
-};
-const ConsoleLockInfo& LastConsoleLock();
+// Carries out a RateWatch action on the UART.
+void ConsoleWatchApply(const RateWatch::Action& action);
+
+// Resets the module into the application and locks onto its boot "UU" (asking with a break if it doesn't come).
+// Leaves the Programmer's UART at the console's rate and returns it, or returns 0 if the console wasn't found (the asks
+// ran out) or abort() returned true (abort is polled while waiting). Console output received meanwhile is dropped.
+uint32_t ConsoleLock(AtAbortFn abort = nullptr);

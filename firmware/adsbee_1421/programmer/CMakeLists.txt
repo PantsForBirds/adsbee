@@ -50,7 +50,8 @@ add_executable(adsbee_1421_programmer
     flasher.cc
     at_client.cc
     autobaud.cc
-    rate_tracker.cc
+    rate_watch.cc
+    edge_capture.cc
     console_lock.cc
     bridge.cc
     modem_lines.cc
@@ -71,9 +72,9 @@ target_link_libraries(adsbee_1421_programmer
     pico_stdlib
 
     hardware_uart    # UART0 to the CC1314 console / ROM bootloader
-    hardware_dma     # Console autobaud edge capture (console_lock.cc)
+    hardware_dma     # Console edge capture ring (edge_capture.cc)
     hardware_irq     # UART RX interrupt
-    hardware_pio     # WS2812 status LED, console autobaud edge timer
+    hardware_pio     # WS2812 status LED, console edge timer
     hardware_structs # QSPI pads (BOOTSEL read)
     hardware_sync    # save_and_disable_interrupts() around the BOOTSEL read
 

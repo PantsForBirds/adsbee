@@ -17,6 +17,12 @@ uint32_t TargetUartGetBaud();          // Rate last requested with TargetUartIni
 void TargetUartHoldTxLow(bool hold);
 
 size_t TargetUartRead(uint8_t* buf, size_t max_len);  // Nonblocking, from the RX ring.
+// Moves what the RX FIFO holds into the RX ring now. The RX interrupt fires at half full or after 32 bit times of
+// quiet; the bridge calls this every loop so a byte's arrival time is when it came off the wire.
+void TargetUartPollRx();
+// Free-running counts of the bytes put into the RX ring and taken out of it (read or flushed).
+uint32_t TargetUartRxReceived();
+uint32_t TargetUartRxConsumed();
 // Blocks up to timeout_ms for one byte, servicing USB (tud_task) and the status LED while
 // waiting; returns -1 on timeout. The wait keeps USB alive through multi-second erase commands.
 int TargetUartReadByteTimeout(uint32_t timeout_ms);

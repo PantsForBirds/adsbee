@@ -1,6 +1,6 @@
-// Host tests for the console autobaud measurement (autobaud.hh). A cycle-level model of autobaud_edges.pio samples
-// generated UART waveforms ("UU" from the module, at the rate its PL011 actually generates), and the pushed counter
-// values go through CountsToCycles() and Measure() as on the Programmer.
+// Host tests for the edge-timing analysis (autobaud.hh). A cycle-level model of autobaud_edges.pio samples generated
+// UART waveforms ("UU" from the module, at the rate its PL011 actually generates), and the pushed counter values go
+// through CountToCycles() and MeasureNewest() as on the Programmer.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +15,7 @@
 
 
 static constexpr uint32_t kClockHz = 125000000;  // The Programmer's clk_sys.
-static constexpr size_t kMaxEdges = 64;          // console_lock.cc's capture buffer.
+static constexpr size_t kMaxEdges = 64;
 
 namespace {
 
@@ -88,13 +88,22 @@ static std::vector<uint32_t> RunPio(const std::vector<Edge>& edges, uint32_t max
     return pushed;
 }
 
-static Autobaud::Measurement MeasureCounts(const std::vector<uint32_t>& counts, bool first_falling = true) {
+static std::vector<uint32_t> Cycles(const std::vector<uint32_t>& counts) {
     std::vector<uint32_t> cycles(counts.size());
-    if (!counts.empty()) Autobaud::CountsToCycles(counts.data(), counts.size(), cycles.data());
-    return Autobaud::Measure(cycles.data(), cycles.size(), first_falling, kClockHz);
+    for (size_t n = 0; n < counts.size(); n++) cycles[n] = Autobaud::CountToCycles(counts[n], n);
+    return cycles;
 }
 
-static Autobaud::Measurement MeasureWave(const std::vector<Edge>& edges) { return MeasureCounts(RunPio(edges)); }
+static Autobaud::Measurement MeasureCounts(const std::vector<uint32_t>& counts, bool first_falling = true,
+                                           size_t min_intervals = Autobaud::kMinIntervalsUU) {
+    std::vector<uint32_t> cycles = Cycles(counts);
+    return Autobaud::MeasureNewest(cycles.data(), cycles.size(), first_falling, kClockHz, min_intervals);
+}
+
+static Autobaud::Measurement MeasureWave(const std::vector<Edge>& edges,
+                                         size_t min_intervals = Autobaud::kMinIntervalsUU) {
+    return MeasureCounts(RunPio(edges), true, min_intervals);
+}
 
 static uint32_t ErrorPpm(double actual, uint32_t measured) {
     double e = (measured - actual) / actual;
@@ -110,10 +119,9 @@ TEST(Autobaud, CounterModel) {
     for (int i = 0; i < 20; i++) edges.push_back({1000.0 + 100.0 * i, i % 2 == 1});
     std::vector<uint32_t> counts = RunPio(edges);
     EXPECT_EQ(counts.size(), 20u);
-    std::vector<uint32_t> cycles(counts.size());
-    Autobaud::CountsToCycles(counts.data(), counts.size(), cycles.data());
+    std::vector<uint32_t> cycles = Cycles(counts);
     for (size_t n = 0; n < cycles.size(); n++) {
-        int32_t err = (int32_t)cycles[n] - (int32_t)(100 * n);
+        int32_t err = (int32_t)(cycles[n] - cycles[0]) - (int32_t)(100 * n);
         EXPECT_TRUE(err >= -2 && err <= 2);
     }
 }
@@ -143,13 +151,30 @@ TEST(Autobaud, Rates) {
     printf("  worst error %u ppm (at %u baud)\n", (unsigned)worst, (unsigned)worst_baud);
 }
 
-// One 'U' is enough.
+// One 'U' measures when asked to (min_intervals 9), and is ignored when a "UU" is required.
 TEST(Autobaud, SingleU) {
     for (uint32_t nominal : {9600u, 115200u, 1000000u, 3000000u}) {
         double actual = ConsoleBaud::CC1314ActualBaud(nominal);
-        Autobaud::Measurement m = MeasureWave(Uart({'U'}, actual));
+        Autobaud::Measurement m = MeasureWave(Uart({'U'}, actual), 9);
         EXPECT_EQ(m.bits, 8u);
         EXPECT_TRUE(ErrorPpm(actual, m.baud) < 8000);
+        EXPECT_EQ(MeasureWave(Uart({'U'}, actual)).baud, 0u);
+        EXPECT_EQ(MeasureWave(Uart({'U', 'A', 'U'}, actual)).baud, 0u);
+    }
+}
+
+// The newest "UU" wins: an older one at another rate (before a rate change) is ignored.
+TEST(Autobaud, Newest) {
+    for (uint32_t from : {9600u, 115200u, 1000000u, 3000000u}) {
+        for (uint32_t to : {9600u, 57600u, 115200u, 921600u, 3000000u}) {
+            double a = ConsoleBaud::CC1314ActualBaud(from), b = ConsoleBaud::CC1314ActualBaud(to);
+            std::vector<Edge> edges = Uart({'U', 'U', 'O', 'K', '\r', '\n'}, a);
+            double t = edges.back().t + 200 * kClockHz / 1e6;  // The module reopens its UART.
+            for (Edge e : Uart({'U', 'U', 'A', 'T'}, b, 0)) edges.push_back({e.t + t, e.level});
+            Autobaud::Measurement m = MeasureCounts(RunPio(edges, 4096));
+            EXPECT_TRUE(ErrorPpm(b, m.baud) < 4000) << from << " -> " << to;
+            EXPECT_GE(m.bits, 18u);  // 'A' after "UU" continues the square wave for a few bits.
+        }
     }
 }
 
@@ -189,12 +214,12 @@ TEST(Autobaud, Glitches) {
         Autobaud::Measurement m = MeasureWave(edges);
         EXPECT_TRUE(m.first_edge == 2 && m.bits == 18);
         EXPECT_TRUE(ErrorPpm(actual, m.baud) < 4000);
-        // A glitch inside the first 'U' (in a high bit): the second one still measures.
+        // A glitch inside the first 'U' (in a high bit): what follows it still measures.
         if (bit > 60) {
             edges = Uart(kUU, actual);
             double t = (edges[1].t + edges[2].t) / 2;
             edges.insert(edges.begin() + 2, {{t, false}, {t + 12, true}});
-            m = MeasureWave(edges);
+            m = MeasureWave(edges, 9);
             EXPECT_TRUE(m.baud != 0 && m.first_edge >= 4);
             EXPECT_TRUE(ErrorPpm(actual, m.baud) < 8000);
         }
@@ -208,11 +233,14 @@ TEST(Autobaud, Glitches) {
 
 // Other traffic can't give a wrong rate: a run of alternating one-bit intervals in UART frames is either part of a 0x55
 // or crosses a frame boundary (stop bit 1, start bit 0) at the true bit time, and runs of longer intervals can't line
-// up with the frame boundaries for nine intervals. Such a run gives the right rate (the AT+BAUD_RATE? probe that
-// follows a lock catches anything else), so the test allows "no lock" or "the true rate".
+// up with the frame boundaries for nine intervals. Such a run gives the right rate, so the test allows "no lock" or
+// "the true rate", for single 'U' runs (9 intervals) as well as "UU".
 static bool NoneOrTrue(const std::vector<Edge>& edges, double baud) {
-    Autobaud::Measurement m = MeasureWave(edges);
-    return m.baud == 0 || ErrorPpm(baud, m.baud) < 4000;
+    for (size_t min_intervals : {(size_t)9, Autobaud::kMinIntervalsUU}) {
+        Autobaud::Measurement m = MeasureWave(edges, min_intervals);
+        if (m.baud != 0 && ErrorPpm(baud, m.baud) >= 4000) return false;
+    }
+    return true;
 }
 
 // Other bytes, noise and out-of-range square waves never give a wrong rate.
@@ -233,7 +261,8 @@ TEST(Autobaud, WrongPatterns) {
             }
             for (Edge& e : edges) e.t += 1000;
             EXPECT_TRUE(NoneOrTrue(edges, baud));
-            locks += MeasureWave(Uart(bytes, baud)).baud != 0;
+            locks += MeasureWave(Uart(bytes, baud), 9).baud != 0;
+            EXPECT_EQ(MeasureWave(Uart(bytes, baud)).baud, 0u);  // No "UU" in any of them.
         }
         // At the true rate: "T\r" and 0x54 0xD5 hold nine one-bit intervals across the byte boundary.
         EXPECT_TRUE(locks <= 2);
@@ -253,7 +282,7 @@ TEST(Autobaud, WrongPatterns) {
     std::vector<uint32_t> few = RunPio(Uart(kUU, 115200), 9);
     EXPECT_EQ(MeasureCounts(few).baud, 0u);
     // The wrong polarity: a run must start with a start bit.
-    EXPECT_EQ(MeasureCounts(RunPio(Uart({'U'}, 115200u)), false).baud, 0u);
+    EXPECT_EQ(MeasureCounts(RunPio(Uart({'U'}, 115200u)), false, 9).baud, 0u);
 }
 
 // Capture that starts on a low line.
@@ -275,7 +304,8 @@ TEST(Autobaud, Snap) {
     }
     EXPECT_EQ(Autobaud::SnapToConsoleRate(2005348), 2000000u);
     EXPECT_EQ(Autobaud::SnapToConsoleRate(0), 0u);
-    EXPECT_EQ(Autobaud::SnapToConsoleRate(3100000), 3100000u);  // No divisor that fast: unchanged.
+    EXPECT_EQ(Autobaud::SnapToConsoleRate(3100000), 3000000u);  // Clamped to the console range.
+    EXPECT_EQ(Autobaud::SnapToConsoleRate(9300), ConsoleBaud::CC1314ActualBaud(9600));
     // Below 250 kbaud the snap moves the measurement by under 0.1%, and an actual rate maps to itself.
     for (uint32_t baud = ConsoleBaud::kMin; baud <= ConsoleBaud::kMax; baud += 1009) {
         uint32_t actual = ConsoleBaud::CC1314ActualBaud(baud);
@@ -287,3 +317,42 @@ TEST(Autobaud, Snap) {
     }
 }
 
+
+// MatchesRate(): within the measurement's resolution of the console's actual rate.
+TEST(Autobaud, MatchesRate) {
+    // A "UU" (18 bits) at 115200: 19,500 cycles.
+    EXPECT_TRUE(Autobaud::MatchesRate(115176, 19533, 115200));
+    EXPECT_TRUE(Autobaud::MatchesRate(115700, 19533, 115200));
+    EXPECT_FALSE(Autobaud::MatchesRate(117647, 19533, 115200));
+    EXPECT_FALSE(Autobaud::MatchesRate(57600, 39000, 115200));
+    // At 3 M the neighboring console rate (2,953,846, 1.5% off) is told apart from a "UU".
+    EXPECT_TRUE(Autobaud::MatchesRate(3008021, 750, 3000000));
+    EXPECT_FALSE(Autobaud::MatchesRate(2953846, 762, 3000000));
+    EXPECT_FALSE(Autobaud::MatchesRate(0, 750, 3000000));
+}
+
+// CountShortIntervals() and FitsRate() on data at, above and below the UART's rate.
+TEST(Autobaud, ShortIntervalsAndFit) {
+    std::vector<uint8_t> text = {'O', 'K', '\r', '\n', 'A', 'T', '+', 0x00, 0xFF, 'U', 'U', 0x13, 0x37, 'R', 'X', '_', 'S', 'T'};
+    for (uint32_t baud : {9600u, 57600u, 115200u, 1000000u, 2000000u, 3000000u}) {
+        double actual = ConsoleBaud::CC1314ActualBaud(baud);
+        std::vector<uint32_t> cycles = Cycles(RunPio(Uart(text, actual), 4096));
+        EXPECT_EQ(Autobaud::CountShortIntervals(cycles.data(), cycles.size(), baud, kClockHz), 0u) << baud;
+        EXPECT_TRUE(Autobaud::FitsRate(cycles.data(), cycles.size(), true, baud, kClockHz)) << baud;
+        for (uint32_t other : {9600u, 57600u, 115200u, 1000000u, 2000000u, 3000000u}) {
+            if (other == baud) continue;
+            // Faster data than the UART: short intervals. Data at any other rate doesn't fit.
+            if (baud > other * 1.2) {
+                EXPECT_GE(Autobaud::CountShortIntervals(cycles.data(), cycles.size(), other, kClockHz), 2u)
+                    << baud << " at " << other;
+            }
+            EXPECT_FALSE(Autobaud::FitsRate(cycles.data(), cycles.size(), true, other, kClockHz)) << baud << " at " << other;
+        }
+    }
+    // Glitches don't count as short intervals.
+    std::vector<uint32_t> glitch = {1000, 1008, 2000, 2006};
+    EXPECT_EQ(Autobaud::CountShortIntervals(glitch.data(), glitch.size(), 1000000, kClockHz), 0u);
+    // Too little evidence fits anything.
+    std::vector<uint32_t> few = {0, 13021, 32000};  // 1 and 1.46 bits at 9600.
+    EXPECT_TRUE(Autobaud::FitsRate(few.data(), few.size(), true, 9600, kClockHz));
+}

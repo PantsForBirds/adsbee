@@ -3,6 +3,7 @@
 #include "board.hh"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 #include "hardware/uart.h"
 #include "pico/stdlib.h"
 #include "status.hh"
@@ -18,7 +19,7 @@ static uint8_t rx_ring[kRxRingSize];
 static volatile uint32_t rx_head = 0;  // Written by IRQ.
 static volatile uint32_t rx_tail = 0;  // Written by consumer.
 static volatile uint32_t rx_drops = 0;
-static volatile uint32_t rx_errors = 0;  // Framing and break errors (RateTracker's relock check).
+static volatile uint32_t rx_errors = 0;  // Framing and break errors (RateWatch's hint).
 
 static uint32_t current_baud = 0;
 
@@ -85,6 +86,16 @@ size_t TargetUartRead(uint8_t* buf, size_t max_len) {
     }
     return count;
 }
+
+void TargetUartPollRx() {
+    uint32_t interrupts = save_and_disable_interrupts();
+    OnUartRx();
+    restore_interrupts(interrupts);
+}
+
+uint32_t TargetUartRxReceived() { return rx_head; }
+
+uint32_t TargetUartRxConsumed() { return rx_tail; }
 
 int TargetUartReadByteTimeout(uint32_t timeout_ms) {
     absolute_time_t deadline = delayed_by_ms(get_absolute_time(), timeout_ms);

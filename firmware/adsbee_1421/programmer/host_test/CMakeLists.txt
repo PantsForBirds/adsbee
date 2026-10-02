@@ -33,16 +33,18 @@ target_link_libraries(host_test PRIVATE libgtest Threads::Threads)
 
 target_sources(host_test PRIVATE
     ../autobaud.cc
-    ../rate_tracker.cc
+    ../rate_watch.cc
     ../modem_lines.cc
     test_autobaud.cc
-    test_rate_tracker.cc
+    test_console_baud.cc
+    test_rate_watch.cc
     test_cdc_text.cc
     test_host_line_coding.cc
     test_modem_lines.cc
 )
 
-# console_baud.hh (the console baud range) is shared with the module firmware.
+# console_baud.hh (the console baud range) and console_autobaud.hh (the module's "UU" answers, run in
+# test_rate_watch.cc's model of the module) are shared with the module firmware.
 target_include_directories(host_test PRIVATE
     ${ADSBEE_MODULES_DIR}/googletest/googletest/include
     ..

@@ -9,7 +9,7 @@
 // tud_cdc_line_coding_cb().
 //
 // The USB CDC baud rate is virtual: the Programmer's UART runs at the module console's rate whatever rate the host
-// opened the port at (rate_tracker.hh), and at the ROM bootloader's rate in the bootloader. Only the magic baud below
+// opened the port at (rate_watch.hh), and at the ROM bootloader's rate in the bootloader. Only the magic baud below
 // does anything.
 
 // Host baud that reboots the Programmer's own RP2040 into its USB bootloader (RPI-RP2), so the Programmer can be
