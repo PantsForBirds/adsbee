@@ -173,7 +173,12 @@ void RateTracker::OnHostLine(uint32_t now_ms) {
             since_ms_ = now_ms;
             return;
         }
-        start = strstr(start, "AT+");
+        // cppAT looks for the next command from the start of these arguments. If they contain one (a query's empty
+        // arguments run on past a CR to the next command), whether it runs depends on how many arguments this
+        // command takes, which only the module knows. Leave that line to the safety net.
+        const char* next = strstr(start, "AT+");
+        if (next != nullptr && next < args_text.p + args_text.n) return;
+        start = next;
     }
 }
 

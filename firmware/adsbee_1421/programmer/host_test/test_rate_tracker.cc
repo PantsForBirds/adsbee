@@ -369,7 +369,8 @@ TEST(RateTracker, CommandFormsTheModuleAccepts) {
     };
     for (Case c : {Case{"AT+BAUD_RATE=CONSOLE, 57600 ", 57600}, Case{"AT+BAUD_RATE=CONSOLE,+57600", 57600},
                    Case{"AT+BAUD_RATE==CONSOLE,57600", 57600}, Case{"AT+BAUD_RATE=CONSOLE,0057600", 57600},
-                   Case{"AT+UPTIME?\rAT+BAUD_RATE=CONSOLE,19200\r", 19200}, Case{"  AT+BAUD_RATE=CONSOLE,9600", 9600},
+                   Case{"AT+LOG_LEVEL=WARNINGS\rAT+BAUD_RATE=CONSOLE,19200\r", 19200},
+                   Case{"  AT+BAUD_RATE=CONSOLE,9600", 9600},
                    Case{"AT+SETTINGS=RESET", 1000000}, Case{"AT+REBOOT", 0}, Case{"AT+REBOOT?", 0},
                    Case{"AT+REBOOT=", 0}}) {
         RateTracker t;
@@ -389,7 +390,9 @@ TEST(RateTracker, CommandFormsTheModuleAccepts) {
     // And forms it refuses (ERROR, or not a command at all).
     for (const char* cmd : {"AT+BAUD_RATE =CONSOLE,57600", "AT+BAUD_RATE=CONSOLE ,57600", "AT+BAUD_RATE=CONSOLE,57600,1",
                             "AT+BAUD_RATE=CONSOLE,-57600", "AT+BAUD_RATE=CONSOLE,5 7600", "AT+REBOOT=1",
-                            "AT+SETTINGS=RESET2", "AT+SETTINGS?", "AT+BAUD_RATEX=CONSOLE,57600"}) {
+                            "AT+SETTINGS=RESET2", "AT+SETTINGS?", "AT+BAUD_RATEX=CONSOLE,57600",
+                            // cppAT reads the second command as UPTIME's arguments, and UPTIME takes none.
+                            "AT+UPTIME?\rAT+BAUD_RATE=CONSOLE,19200"}) {
         RateTracker t;
         t.Start(115200, 0);
         std::string line = std::string(cmd) + "\r\n";
