@@ -341,7 +341,8 @@ def main(argv):
             sys.stderr.write(__doc__)
             return 2
     except ReleaseError as e:
-        print("::error::{}".format(e))
+        # stderr, so the message stays out of $GITHUB_OUTPUT (GitHub reads workflow commands on both).
+        sys.stderr.write("::error::{}\n".format(e))
         return 1
     return 0
 
