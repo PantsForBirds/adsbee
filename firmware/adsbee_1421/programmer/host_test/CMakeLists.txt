@@ -33,10 +33,10 @@ target_link_libraries(host_test PRIVATE libgtest Threads::Threads)
 
 target_sources(host_test PRIVATE
     ../autobaud.cc
-    ../baud_follower.cc
+    ../rate_tracker.cc
     ../modem_lines.cc
     test_autobaud.cc
-    test_baud_follower.cc
+    test_rate_tracker.cc
     test_cdc_text.cc
     test_host_line_coding.cc
     test_modem_lines.cc

@@ -28,3 +28,5 @@ size_t TargetUartTxFree();     // Space left in the software TX ring.
 
 void TargetUartFlushInput();
 uint32_t TargetUartRxDropCount();
+// Framing and break errors received since the last call (a wrong rate shows up as these).
+uint32_t TargetUartTakeRxErrors();

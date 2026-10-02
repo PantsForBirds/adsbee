@@ -18,6 +18,7 @@ static uint8_t rx_ring[kRxRingSize];
 static volatile uint32_t rx_head = 0;  // Written by IRQ.
 static volatile uint32_t rx_tail = 0;  // Written by consumer.
 static volatile uint32_t rx_drops = 0;
+static volatile uint32_t rx_errors = 0;  // Framing and break errors (RateTracker's relock check).
 
 static uint32_t current_baud = 0;
 
@@ -27,7 +28,9 @@ static uint32_t tx_tail = 0;
 
 static void OnUartRx() {
     while (uart_is_readable(kUart)) {
-        uint8_t byte = uart_getc(kUart);
+        uint32_t data = uart_get_hw(kUart)->dr;
+        if (data & (UART_UARTDR_FE_BITS | UART_UARTDR_BE_BITS)) rx_errors = rx_errors + 1;
+        uint8_t byte = (uint8_t)data;
         uint32_t head = rx_head;
         if (head - rx_tail >= kRxRingSize) {
             rx_drops = rx_drops + 1;  // Ring full: drop newest.
@@ -127,3 +130,11 @@ void TargetUartFlushInput() {
 }
 
 uint32_t TargetUartRxDropCount() { return rx_drops; }
+
+uint32_t TargetUartTakeRxErrors() {
+    static uint32_t taken = 0;  // The IRQ only increments rx_errors, so the difference is exact.
+    uint32_t total = rx_errors;
+    uint32_t count = total - taken;
+    taken = total;
+    return count;
+}

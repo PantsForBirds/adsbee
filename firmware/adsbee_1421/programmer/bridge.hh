@@ -14,10 +14,10 @@
 // DTR is asserted (port open) or around a DTR-edge reset, so closing the port, which drops both
 // lines, leaves the device awake (see modem_lines.hh).
 //
-// Host line-coding baud changes move the module console to the host's rate (AT+BAUD_RATE, then the
-// Programmer's UART follows), so a tool that opens the port at its own rate reads the console at that rate. In the
-// ROM bootloader (after a reset with SYNC high) and for rates the console doesn't accept, the host's rate is applied
-// to the UART directly. See baud_follower.hh.
+// The USB CDC baud rate is virtual: the host may open the port at any rate. The Programmer's UART runs at the module
+// console's rate (found with the autobaud lock after every reset) and follows the console when the host changes its
+// rate with AT+BAUD_RATE=CONSOLE,<n> or AT+SETTINGS=RESET, so the host keeps talking without reopening the port. In
+// the ROM bootloader (after a reset with SYNC high) the UART runs at kBootloaderBaud. See rate_tracker.hh.
 
 enum class BridgeExit {
     kRecheck,        // BOOTSEL tapped: rerun the full CRC check / flash cycle.
@@ -25,7 +25,6 @@ enum class BridgeExit {
 };
 
 BridgeExit BridgeRun();
-uint32_t BridgeHostBaud();  // Most recent host line-coding baud (0 if the host never set one).
 
-// Rate the device console was last negotiated to (see NegotiateConsole); pass-through starts from it.
+// Rate the console was found at (NegotiateConsole() in main.cpp); pass-through starts from it.
 void BridgeSetExpectedConsoleBaud(uint32_t baud);

@@ -29,10 +29,3 @@ struct ConsoleLockInfo {
     uint32_t elapsed_ms = 0;     // From the start of the trigger.
 };
 const ConsoleLockInfo& LastConsoleLock();
-
-// Moves the console to target_baud (0: only find it) and leaves the Programmer's UART at the console's rate. `likely`
-// lists where the console probably is (0s are skipped); each gets one AT exchange. If none answers, the console is
-// found with ConsoleLock(kSyncWake). Returns the console's rate afterwards: target_baud on success, another rate if
-// the console was found but would not move, 0 if it wasn't found (or abort() returned true), in which case the UART is
-// left at target_baud (if nonzero).
-uint32_t ConsoleRenegotiate(uint32_t target_baud, const uint32_t* likely, size_t num_likely, AtAbortFn abort = nullptr);

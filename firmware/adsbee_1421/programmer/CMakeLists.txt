@@ -50,7 +50,7 @@ add_executable(adsbee_1421_programmer
     flasher.cc
     at_client.cc
     autobaud.cc
-    baud_follower.cc
+    rate_tracker.cc
     console_lock.cc
     bridge.cc
     modem_lines.cc

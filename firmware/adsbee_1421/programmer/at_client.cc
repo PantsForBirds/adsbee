@@ -80,14 +80,3 @@ bool AtQueryVersion(char* version_out, size_t max_len) {
     version_out[out] = '\0';
     return out > 0;
 }
-
-bool AtSetConsoleBaud(uint32_t baud) {
-    char command[48];
-    snprintf(command, sizeof(command), "AT+BAUD_RATE=CONSOLE,%lu\r\n", (unsigned long)baud);
-    SendCommand(command);
-    // The OK queues behind report output already in the console's 8 kB TX ring, which takes a while to drain at low
-    // rates. "OK\r\n" rather than "OK" so binary report data (MAVLink) is unlikely to fake it; a false match is caught
-    // by the probe at the new rate anyway. A console that misses the 1 s is found again (ConsoleRenegotiate()).
-    uint32_t timeout_ms = 300 + BytesToMs(8192, TargetUartGetBaud());
-    return WaitForToken("OK\r\n", timeout_ms < 1000 ? timeout_ms : 1000);
-}

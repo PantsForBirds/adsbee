@@ -352,9 +352,11 @@ class Adsbee1421(Receiver):
     ROM bootloader backdoor armed), DTR assert edge -> reset pulse. Hence:
 
     * HUPCL is cleared so DTR/RTS stay asserted after close (else every close sleeps the module).
-    * The Programmer copies the host's line coding to the UART, so the host must open at the console's
-      live baud: 1 000 000 at factory default, else one of the firmware's whitelisted rates.
-      Never send AT+BAUD_RATE=CONSOLE,... through the Programmer.
+    * The Programmer's USB baud is virtual: its UART runs at the console's rate whatever the host opens
+      at, and follows AT+BAUD_RATE=CONSOLE,<n> on the fly. Programmer images 0.3.11-rc3 and earlier
+      copy the host's line coding to the UART instead, so the host opens at the console's likely
+      rates in turn, and AT+BAUD_RATE=CONSOLE,... is refused (it would desync those images, and a
+      bench run must not leave a module at another rate).
     * The AT parser rejects a bare "AT"; AT+UPTIME? is the probe.
 
     Module firmware (.hex) goes through the CC13x4 ROM serial bootloader using an external flasher

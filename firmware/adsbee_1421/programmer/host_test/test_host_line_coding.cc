@@ -1,5 +1,5 @@
 // ClassifyHostBaud(): which host line-coding bauds reboot the ADSBee 1421 Programmer into BOOTSEL, which are
-// forwarded to the target UART, and that the magic baud is the ADSBee 1090's.
+// ignored (the USB baud rate is virtual), and that the magic baud is the ADSBee 1090's.
 #include "gtest/gtest.h"
 #include "host_line_coding.hh"
 
@@ -14,23 +14,18 @@ TEST(HostLineCoding, MagicBaudMatchesAdsbee1090) {
     EXPECT_EQ(ClassifyHostBaud(ADSBEE_1090_RESET_MAGIC_BAUD_RATE), HostBaudAction::kRebootToBootsel);
 }
 
-TEST(HostLineCoding, BaudZeroIsIgnored) { EXPECT_EQ(ClassifyHostBaud(0), HostBaudAction::kIgnore); }
-
-// pico-sdk's default magic baud; pymavlink and friends open ports at it. It must not reboot the Programmer.
-TEST(HostLineCoding, Baud1200IsForwarded) { EXPECT_EQ(ClassifyHostBaud(1200), HostBaudAction::kApply); }
-
-TEST(HostLineCoding, ConsoleAndCommonRatesAreForwarded) {
-    // kConsoleBaud and kBootloaderBaud (board.hh, which needs the SDK; bridge.cc static_asserts them too),
-    // plus rates terminals commonly default to.
-    const uint32_t rates[] = {1000000, 921600, 460800, 230400, 115200, 57600, 38400, 19200, 9600, 300, 3000000};
+// Every other rate is virtual: the Programmer's UART runs at the module's rate whatever the host asks for.
+TEST(HostLineCoding, EveryOtherRateIsIgnored) {
+    // pico-sdk's default magic baud, which pymavlink and friends open ports at, must not reboot the Programmer.
+    const uint32_t rates[] = {0, 300, 1200, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 3000000};
     for (uint32_t baud : rates) {
-        EXPECT_EQ(ClassifyHostBaud(baud), HostBaudAction::kApply) << "baud " << baud;
+        EXPECT_EQ(ClassifyHostBaud(baud), HostBaudAction::kIgnore) << "baud " << baud;
     }
 }
 
 // Only the exact magic baud reboots.
-TEST(HostLineCoding, NeighborsAreForwarded) {
-    EXPECT_EQ(ClassifyHostBaud(kRebootToBootselBaud - 1), HostBaudAction::kApply);
-    EXPECT_EQ(ClassifyHostBaud(kRebootToBootselBaud + 1), HostBaudAction::kApply);
-    EXPECT_EQ(ClassifyHostBaud(0xFFFFFFFFu), HostBaudAction::kApply);
+TEST(HostLineCoding, NeighborsAreIgnored) {
+    EXPECT_EQ(ClassifyHostBaud(kRebootToBootselBaud - 1), HostBaudAction::kIgnore);
+    EXPECT_EQ(ClassifyHostBaud(kRebootToBootselBaud + 1), HostBaudAction::kIgnore);
+    EXPECT_EQ(ClassifyHostBaud(0xFFFFFFFFu), HostBaudAction::kIgnore);
 }

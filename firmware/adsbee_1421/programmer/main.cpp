@@ -5,8 +5,8 @@
 // command; on any mismatch (or a blank device) it reflashes and verifies. Once the device is
 // confirmed up to date it resets it into the app, finds the console's baud rate with the autobaud
 // trigger (the app boots at its saved console baud; factory default 1 M; see console_lock.hh), and
-// becomes a transparent USB-CDC serial adapter (see bridge.cc for the modem-control-line emulation
-// contract and baud_follower.hh for how the console follows the host's baud).
+// becomes a transparent USB-CDC serial adapter (see bridge.hh for the modem-control-line emulation
+// contract and rate_tracker.hh for the virtual USB baud rate).
 //
 // If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0,DEADBEE
 // disabled the backdoor), it skips the image check and enters pass-through with a warning.
@@ -27,7 +27,6 @@
 #include "console_lock.hh"
 #include "firmware_image.hh"
 #include "flasher.hh"
-#include "host_line_coding.hh"
 #include "pico/stdlib.h"
 #include "status.hh"
 #include "target_ctl.hh"
@@ -134,14 +133,11 @@ static uint32_t DiagnoseEntryFailure() {
     return app_baud;
 }
 
-// Resets the device into the app and brings the console up: find its rate with the autobaud lock (it boots at its
-// saved console baud; factory default 1 M), and move it to the host's line-coding rate if the console accepts that,
-// else to `target_baud` (kConsoleBaud). Only the live rate is moved; the Programmer never issues AT+SETTINGS=SAVE, so
-// the device's persisted baud is untouched.
-static bool NegotiateConsole(uint32_t target_baud, bool print_version) {
+// Resets the device into the app and finds its console with the autobaud lock (it boots at its saved console baud;
+// factory default 1 M). Pass-through runs at that rate whatever rate the host opened the USB port at (the USB baud is
+// virtual, bridge.hh). The Programmer never changes the console's rate or sends AT+SETTINGS=SAVE.
+static bool NegotiateConsole(bool print_version) {
     StatusSet(Status::kNegotiating);
-    if (IsRenegotiableBaud(BridgeHostBaud())) target_baud = BridgeHostBaud();
-
     uint32_t found_baud = ConsoleLock(ConsoleTrigger::kReset);
     const ConsoleLockInfo& lock = LastConsoleLock();
     if (found_baud == 0) {
@@ -166,23 +162,8 @@ static bool NegotiateConsole(uint32_t target_baud, bool print_version) {
         }
     }
 
-    if (target_baud != found_baud) {
-        CdcPrintf("Moving the console to %lu baud.\r\n", (unsigned long)target_baud);
-        if (!AtSetConsoleBaud(target_baud)) {
-            CdcPrintf("AT+BAUD_RATE=CONSOLE,%lu not acknowledged.\r\n",
-                      (unsigned long)target_baud);
-            return false;
-        }
-        sleep_ms(50);  // Let the device finish switching.
-        TargetUartSetBaud(target_baud);
-        if (!AtProbeAlive() && !AtProbeAlive()) {
-            CdcPrintf("Device unresponsive at %lu baud.\r\n", (unsigned long)target_baud);
-            return false;
-        }
-    }
-
-    CdcPrintf("Console up at %lu baud; entering pass-through.\r\n", (unsigned long)target_baud);
-    BridgeSetExpectedConsoleBaud(target_baud);
+    CdcPrintf("Console up at %lu baud; entering pass-through.\r\n", (unsigned long)found_baud);
+    BridgeSetExpectedConsoleBaud(found_baud);
     return true;
 }
 
@@ -197,7 +178,6 @@ int main() {
 
     Cc13x4Bootloader bl;
     State state = State::kCheck;
-    uint32_t negotiate_baud = kConsoleBaud;
     bool print_version = true;
     absolute_time_t next_diag_print = get_absolute_time();
 
@@ -230,7 +210,6 @@ int main() {
                                       erase_settings_armed ? " The settings erase stays armed." : "");
                         }
                         force_flash = false;
-                        negotiate_baud = kConsoleBaud;
                         print_version = true;
                         state = State::kNegotiate;
                         break;
@@ -267,7 +246,6 @@ int main() {
                 StatusSet(Status::kCrcCheck);
                 if (BakedImageMatches(bl)) {
                     CdcPrintf("Firmware up to date (version %s).\r\n", kFirmwareVersionStr);
-                    negotiate_baud = kConsoleBaud;
                     print_version = true;
                     state = State::kNegotiate;
                 } else {
@@ -283,7 +261,6 @@ int main() {
                 FlashResult result = FlashBakedImage(bl);
                 if (result == FlashResult::kOk) {
                     force_flash = false;
-                    negotiate_baud = kConsoleBaud;
                     print_version = true;
                     state = State::kNegotiate;
                 } else {
@@ -296,7 +273,7 @@ int main() {
             }
 
             case State::kNegotiate: {
-                if (NegotiateConsole(negotiate_baud, print_version)) {
+                if (NegotiateConsole(print_version)) {
                     state = State::kPassthrough;
                 } else {
                     StatusSet(Status::kError);
@@ -308,11 +285,10 @@ int main() {
             }
 
             case State::kPassthrough: {
-                // Host baud changes and host-driven resets are handled inside the bridge; it only returns for
+                // Console rate changes and host-driven resets are handled inside the bridge; it only returns for
                 // BOOTSEL.
                 if (BridgeRun() == BridgeExit::kEraseSettings) ArmSettingsErase();
                 force_flash = false;
-                negotiate_baud = kConsoleBaud;
                 state = State::kCheck;
                 break;
             }

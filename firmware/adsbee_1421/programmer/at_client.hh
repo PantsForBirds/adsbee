@@ -3,9 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Minimal AT-command client for the adsbee_1421 console: liveness probe, optional version readout, and console baud
-// negotiation. Finding the console's rate is console_lock.hh's job; the Programmer's UART is retuned with
-// TargetUartSetBaud() as needed.
+// Minimal AT-command client for the adsbee_1421 console: baud probe and version readout. Finding the console's rate is
+// console_lock.hh's job. The Programmer never changes the console's rate or settings itself.
 
 // Optional abort check, polled while waiting (e.g. the host asked for a reset meanwhile). nullptr: never abort.
 typedef bool (*AtAbortFn)();
@@ -19,9 +18,3 @@ inline bool AtProbeAlive() { return AtProbeConsoleBaud() != 0; }
 // AT+DEVICE_INFO? is a silent-success query (no OK): output is collected until a quiet period,
 // then scanned for "CC1314R10 Firmware Version: <ver>". Status prints only.
 bool AtQueryVersion(char* version_out, size_t max_len);
-
-// Sends AT+BAUD_RATE=CONSOLE,<baud> and waits up to 1 s for the OK (sent at the old baud, after any output already
-// queued). On success the device has already switched; the caller must retune the Programmer's UART. The change is
-// live-only: on any device reset the console returns to its saved rate (the Programmer never issues
-// AT+SETTINGS=SAVE, so it never alters the persisted setting).
-bool AtSetConsoleBaud(uint32_t baud);

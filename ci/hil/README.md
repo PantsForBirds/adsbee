@@ -126,10 +126,12 @@ a USB↔UART bridge whose modem-control lines drive the module:
   clears HUPCL so DTR and RTS stay asserted after it closes the port. A tool that closes the port
   with HUPCL set (plain pyserial, miniterm, screen) puts the module to sleep until the next open.
   That next open resets it, which is harmless.
-- **The baud rate:** the Programmer moves the module console to the host's line coding (any rate from
-  9600 to 3 000 000; see "Baud rate" in the Programmer's README). The driver opens at 1 000 000 baud
-  (the factory default) and falls back to 921600, 460800, 230400 and 115200. It refuses
-  `AT+BAUD_RATE=CONSOLE,...`, which leaves the link garbled until the host changes its line coding.
+- **The baud rate is virtual:** the Programmer's UART runs at the module console's rate whatever
+  rate the host opens the port at, and follows `AT+BAUD_RATE=CONSOLE,<n>` on the fly (see "Baud
+  rate" in the Programmer's README). The driver opens at 1 000 000 baud and falls back to 921600,
+  460800, 230400 and 115200, which older Programmer images (0.3.11-rc3 and earlier copy the host's
+  rate onto the UART) need. It refuses `AT+BAUD_RATE=CONSOLE,...`, so a bench run never leaves a
+  module at another rate, and older Programmer images don't desync.
 - **There is no bare `AT`:** the parser rejects it. The driver probes with `AT+UPTIME?`.
 - **`AT+RX_CW` runs until it gets a key.** The driver stops it after `-T`, so the next command
   isn't swallowed. `AT+TX_CW` transmits and is refused unless `--allow-tx` is given.

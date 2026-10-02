@@ -2115,6 +2115,12 @@
         const CONSOLE_BAUD_MAX = 3000000;
         const isConsoleBaud = n => Number.isInteger(n) && n >= CONSOLE_BAUD_MIN && n <= CONSOLE_BAUD_MAX;
         const BAUD_CANDIDATES = [1000000, 921600, 460800, 230400, 115200, 57600];
+        // Rates offered in the Settings tab; any other rate in range is a custom one.
+        const CONSOLE_BAUD_PRESETS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 2000000, 3000000];
+        // Settings form values for a console rate, and back.
+        const consoleBaudValues = baud => Number.isInteger(baud)
+            ? { preset: CONSOLE_BAUD_PRESETS.includes(baud) ? String(baud) : 'CUSTOM', custom: baud } : null;
+        const consoleBaudFromValues = v => v.preset === 'CUSTOM' ? parseInt(v.custom, 10) : parseInt(v.preset, 10);
         const FACTORY_BAUD = BAUD_CANDIDATES[0];
         const LAST_BAUD_KEY = 'adsbee1421LastBaud';
 
@@ -2350,7 +2356,8 @@
                     // Commands that change (or may change) the console baud need follow-up
                     // so a hand-typed command cannot desync the link:
                     // - AT+BAUD_RATE=CONSOLE,<n>: OK arrives at the old rate, then the
-                    //   device switches — reopen at <n> (fall back to a sweep on failure).
+                    //   device switches. Behind the ADSBee 1421 Programmer the link follows;
+                    //   otherwise reopen at <n> (fall back to a sweep on failure).
                     // - AT+REBOOT: the device comes back at its saved rate — re-sweep
                     //   (near-instant when the rate is unchanged, the common case).
                     // - AT+SETTINGS=RESET: applies the default baud after printing OK.
@@ -2358,7 +2365,7 @@
                     const baudMatch = /^AT\+BAUD_RATE=CONSOLE,(\d+)\s*$/i.exec(cmd);
                     if (baudMatch) {
                         const baud = parseInt(baudMatch[1], 10);
-                        if (isConsoleBaud(baud) && baud !== serial.currentBaud) {
+                        if (isConsoleBaud(baud)) {
                             setTimeout(() => connectionUI.followManualBaudChange(baud), 750);
                         }
                     } else if (/^AT\+REBOOT\b/i.test(cmd)) {
@@ -4453,24 +4460,37 @@ function makeRxEnableEntry() {
             // ── Serial ──
             {
                 cmd: 'BAUD_RATE', label: 'Console Baud Rate', group: 'Serial', disconnects: true,
-                help: `Any rate from ${CONSOLE_BAUD_MIN} to ${CONSOLE_BAUD_MAX} (e.g. 57600, 115200, 1000000). ` +
-                    'Takes effect immediately; the page follows the link to the new rate.',
-                fields: [{
-                    id: 'baud', label: 'Baud', type: 'int', min: CONSOLE_BAUD_MIN, max: CONSOLE_BAUD_MAX,
-                }],
+                help: `A common rate or any rate from ${CONSOLE_BAUD_MIN} to ${CONSOLE_BAUD_MAX}. Takes effect ` +
+                    'immediately. Behind the ADSBee 1421 Programmer the link keeps working on the open port; ' +
+                    'over a plain USB-serial adapter the page reopens the port at the new rate. Save persists ' +
+                    'it (AT+SETTINGS=SAVE), so the module keeps the rate on any host; until then a reboot ' +
+                    'returns it to its saved rate.',
+                fields: [
+                    {
+                        id: 'preset', label: 'Baud', type: 'enum',
+                        options: [...CONSOLE_BAUD_PRESETS.map(String), { value: 'CUSTOM', label: 'Custom…' }],
+                    },
+                    {
+                        id: 'custom', label: 'Custom baud', type: 'int', min: CONSOLE_BAUD_MIN, max: CONSOLE_BAUD_MAX,
+                        visibleIf: v => v.preset === 'CUSTOM',
+                    },
+                ],
                 parse(lines) {
                     const m = lines[0] && lines[0].match(/^BAUD_RATE=CONSOLE,(\d+)/);
-                    return m ? { baud: m[1] } : null;
+                    return m ? consoleBaudValues(parseInt(m[1], 10)) : null;
                 },
-                build(v) { return [`AT+BAUD_RATE=CONSOLE,${v.baud}`]; },
-                // The device switches rate right after acknowledging, so the port has to be
-                // reopened before AT+SETTINGS=SAVE can persist the new rate.
+                parseJson(raw) {
+                    const baud = Array.isArray(raw) ? raw[0] : raw;
+                    return consoleBaudValues(typeof baud === 'number' ? baud : parseInt(baud, 10));
+                },
+                build(v) { return [`AT+BAUD_RATE=CONSOLE,${consoleBaudFromValues(v)}`]; },
+                // The device switches right after its OK; AT+SETTINGS=SAVE (and everything after) must
+                // reach it at the new rate.
                 async afterWrite(v) {
-                    const baud = parseInt(v.baud, 10);
-                    if (baud === serial.currentBaud) return;
-                    await new Promise(r => setTimeout(r, 750));
-                    await connectionUI.followManualBaudChange(baud);
-                    if (serial.currentBaud !== baud) throw new Error('Link lost after baud change.');
+                    const baud = consoleBaudFromValues(v);
+                    if (!(await connectionUI.followManualBaudChange(baud))) {
+                        throw new Error('Link lost after baud change.');
+                    }
                 },
             },
             // ── System ──
@@ -5611,7 +5631,7 @@ function makeRxEnableEntry() {
                 } else {
                     tabController.notice(
                         `Console link up: device console at ${deviceBaud} baud ` +
-                        `(host port opened at ${serial.currentBaud} — a bridge is retuning the device independently).`);
+                        `(host port opened at ${serial.currentBaud}; the ADSBee 1421 Programmer's USB baud rate is virtual).`);
                 }
             },
 
@@ -5665,26 +5685,46 @@ function makeRxEnableEntry() {
                 } catch (_) { }
             },
 
-            // Follow a hand-typed AT+BAUD_RATE=CONSOLE,<n>: the device has already
-            // switched by the time this runs; reopen at the announced rate and fall back
-            // to a full sweep if it doesn't answer there.
+            // Follow AT+BAUD_RATE=CONSOLE,<n> (typed, or from the Settings tab): the device
+            // has already switched by the time this runs. Behind the ADSBee 1421 Programmer
+            // the USB baud rate is virtual and the Programmer follows the console, so the
+            // device answers at <n> on the open port. Over a plain USB-serial adapter it
+            // doesn't: reopen at <n>, and fall back to a full sweep if it doesn't answer
+            // there. Resolves to true when the link is back.
             followManualBaudChange(baud) {
-                if (!serial.connected) return Promise.resolve();
+                if (!serial.connected) return Promise.resolve(false);
                 return this._exclusive(async () => {
-                    if (!serial.connected) return;
+                    if (!serial.connected) return false;
                     try {
+                        // Twice: at low rates the Programmer may still be waiting for the OK.
+                        for (let i = 0; i < 2; i++) {
+                            if (await this._queryDeviceBaud() === baud) {
+                                this._announceLink(baud);
+                                this._setConnectedIndicators();
+                                return true;
+                            }
+                        }
                         await this._reopenWithSink(baud);
-                        const found = await this.probe();
+                        let found = await this.probe();
                         if (found !== null) {
                             if (found === serial.currentBaud) {
                                 try { localStorage.setItem(LAST_BAUD_KEY, String(found)); } catch (_) { }
                             }
                             this._announceLink(found);
                         } else {
-                            await this._negotiateImpl();
+                            found = await this.sweep();
+                            if (found === null) {
+                                tabController.notice(
+                                    `No response from the device at any probed baud rate (${BAUD_CANDIDATES.join(', ')}). Is it connected and running?`);
+                            } else {
+                                this._announceLink(found);
+                            }
                         }
                         this._setConnectedIndicators();
-                    } catch (_) { }
+                        return found === baud;
+                    } catch (_) {
+                        return false;
+                    }
                 });
             },
 

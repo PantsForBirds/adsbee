@@ -1,11 +1,11 @@
 #include "bridge.hh"
 
-#include "baud_follower.hh"
 #include "board.hh"
 #include "bootsel.hh"
 #include "console_lock.hh"
 #include "host_line_coding.hh"
 #include "modem_lines.hh"
+#include "rate_tracker.hh"
 #include "pico/bootrom.h"
 #include "pico/stdlib.h"
 #include "status.hh"
@@ -13,35 +13,29 @@
 #include "target_uart.hh"
 #include "tusb.h"
 
-// Only touched from the main loop and the tud_task() callbacks it runs (the bridge loop, and the AT client's waits
-// during a renegotiation), never from interrupts.
+// Only touched from the main loop and the tud_task() callbacks it runs (the bridge loop, and the waits inside a lock),
+// never from interrupts.
 static bool bridge_active = false;
-static uint32_t host_baud = 0;
 static uint32_t expected_console_baud = kConsoleBaud;
 static ModemLines lines;
-static BaudFollower follower;
+static RateTracker tracker;
+
+// Host bytes read from the CDC FIFO that the tracker held back (they follow a command that switches the console's
+// rate); they go first once the switch is done.
+static uint8_t host_pending[64];
+static size_t host_pending_len = 0;
+static size_t host_pending_off = 0;
 
 static uint32_t NowMs() { return to_ms_since_boot(get_absolute_time()); }
 
-static_assert(kRebootToBootselBaud != kBootloaderBaud && !IsRenegotiableBaud(kRebootToBootselBaud),
-              "The reboot-to-BOOTSEL baud must not be a rate pass-through tools use");
-static_assert(IsRenegotiableBaud(kConsoleBaud), "The factory console rate must be renegotiable");
+static_assert(kRebootToBootselBaud != kBootloaderBaud && !ConsoleBaud::IsSupported(kRebootToBootselBaud),
+              "The reboot-to-BOOTSEL baud must not be a rate the module uses");
 
 extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* coding) {
     (void)itf;
-    switch (ClassifyHostBaud(coding->bit_rate)) {
-        case HostBaudAction::kIgnore:
-            return;
-        case HostBaudAction::kRebootToBootsel:
-            // Checked in every Programmer state, including while it flashes the module: an interrupted flash is redone
-            // by the CRC check on the next boot. Does not return, so the magic baud never reaches host_baud or the UART.
-            reset_usb_boot(0, 0);
-            return;
-        case HostBaudAction::kApply:
-            host_baud = coding->bit_rate;
-            if (bridge_active) follower.OnHostBaud(host_baud, NowMs());
-            return;
-    }
+    // The USB baud is virtual (rate_tracker.hh): only the magic baud does anything. Checked in every Programmer
+    // state, including while it flashes the module: an interrupted flash is redone by the CRC check on the next boot.
+    if (ClassifyHostBaud(coding->bit_rate) == HostBaudAction::kRebootToBootsel) reset_usb_boot(0, 0);
 }
 
 extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
@@ -54,46 +48,31 @@ extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
     TargetSetSync(lines.SyncHigh(NowMs()));
 }
 
-uint32_t BridgeHostBaud() { return host_baud; }
-
 void BridgeSetExpectedConsoleBaud(uint32_t baud) { expected_console_baud = baud; }
 
-// A reset requested by the host outranks a renegotiation in progress: a ROM bootloader client syncs right after it.
-static bool RenegotiationAborted() { return lines.reset_pending(); }
+// A reset requested by the host outranks a lock in progress: a ROM bootloader client syncs right after it.
+static bool LockAborted() { return lines.reset_pending(); }
 
-// Carries out a BaudFollower::Step::kRenegotiate. Host data stays in the CDC FIFO meanwhile (HoldHostData()); console
-// output read during it is consumed by the AT client.
-static void Renegotiate(uint32_t target_baud) {
+// Finds the console with the autobaud trigger. On failure the UART goes to fallback_baud and the host gets one line
+// saying so (the console may be gone: unplugged, or a module without the trigger at a rate the legacy probe misses).
+static void Lock(ConsoleTrigger trigger, uint32_t fallback_baud) {
     StatusSet(Status::kNegotiating);
-    uint32_t likely[] = {follower.hinted_baud(), follower.console_baud(), TargetUartGetBaud()};
-    uint32_t found = ConsoleRenegotiate(target_baud, likely, sizeof(likely) / sizeof(likely[0]), RenegotiationAborted);
-    follower.OnRenegotiated(found);
-    if (found != target_baud && !RenegotiationAborted()) {
-        // Pass-through carries on either way. The CDC baud is virtual, so a host reading the console at another rate
-        // still gets clean data; the warning says why the rate didn't follow.
-        if (found == 0) {
-            CdcPrintf("\r\n[ADSBee 1421 Programmer] Console not found; UART set to %lu baud without it.\r\n",
-                      (unsigned long)target_baud);
-        } else {
-            CdcPrintf("\r\n[ADSBee 1421 Programmer] Console stays at %lu baud: AT+BAUD_RATE=CONSOLE,%lu failed.\r\n",
-                      (unsigned long)found, (unsigned long)target_baud);
-        }
+    uint32_t found = ConsoleLock(trigger, LockAborted);
+    if (found == 0 && !LockAborted()) {
+        if (fallback_baud != 0) TargetUartSetBaud(fallback_baud);
+        CdcPrintf("\r\n[ADSBee 1421 Programmer] Console not found; UART left at %lu baud.\r\n",
+                  (unsigned long)TargetUartGetBaud());
     }
-    StatusSet(Status::kPassthrough);
-}
-
-// Resets the module into the application (SYNC low) and finds its console with the autobaud lock.
-static void ResetAndLock() {
-    StatusSet(Status::kNegotiating);
-    uint32_t found = ConsoleLock(ConsoleTrigger::kReset, RenegotiationAborted);
-    follower.OnReset(false, found);
+    (void)TargetUartTakeRxErrors();  // The trigger and the probes leave errors behind.
+    tracker.OnLocked(found, NowMs());
     StatusSet(Status::kPassthrough);
 }
 
 BridgeExit BridgeRun() {
     StatusSet(Status::kPassthrough);
     lines.Start();
-    follower.Start(expected_console_baud, host_baud, NowMs());
+    tracker.Start(expected_console_baud, NowMs());
+    (void)TargetUartTakeRxErrors();
     bridge_active = true;
 
     absolute_time_t next_bootsel_poll = get_absolute_time();
@@ -105,15 +84,21 @@ BridgeExit BridgeRun() {
         TargetUartPumpTx();
 
         if (lines.reset_pending()) {
-            // SYNC high: the ROM bootloader, which takes the host's rate as it is. SYNC low: the application, whose
-            // console comes back at its saved rate; the follower retunes, or renegotiates to the host's rate.
+            // SYNC high: the ROM bootloader, which auto-bauds to the rate it is sent at, so the UART goes to the
+            // bootloader rate whatever the host's line coding. SYNC low: the application, whose console comes back at
+            // its saved rate; lock onto it.
             if (lines.reset_sync_high()) {
                 TargetPulseReset();  // SYNC already holds the level latched at the DTR edge.
                 lines.OnResetDone(NowMs());
-                follower.OnReset(true, 0);
+                if (TargetUartGetBaud() != kBootloaderBaud) TargetUartSetBaud(kBootloaderBaud);
+                tracker.OnReset(true, 0, NowMs());
             } else {
                 lines.OnResetDone(NowMs());
-                ResetAndLock();  // Restarts if the host asks for another reset meanwhile.
+                StatusSet(Status::kNegotiating);
+                uint32_t found = ConsoleLock(ConsoleTrigger::kReset, LockAborted);
+                (void)TargetUartTakeRxErrors();
+                tracker.OnReset(false, found, NowMs());  // Restarts if the host asks for another reset meanwhile.
+                StatusSet(Status::kPassthrough);
             }
             continue;
         }
@@ -121,18 +106,30 @@ BridgeExit BridgeRun() {
         bool sync_high = lines.SyncHigh(NowMs());
         TargetSetSync(sync_high);  // Ends the post-reset backdoor hold.
 
-        BaudFollower::Step step = follower.Poll(NowMs(), sync_high);
-        if (step.kind == BaudFollower::Step::kApplyDirect) {
-            if (step.baud != TargetUartGetBaud()) TargetUartSetBaud(step.baud);
-        } else if (step.kind == BaudFollower::Step::kRenegotiate) {
-            Renegotiate(step.baud);
-        } else if (step.kind == BaudFollower::Step::kReset) {
-            ResetAndLock();
+        uint32_t errors = TargetUartTakeRxErrors();
+        if (!sync_high) tracker.OnRxErrors(errors, NowMs());  // A sleeping module's line says nothing about the rate.
+
+        RateTracker::Step step = tracker.Poll(NowMs(), sync_high);
+        if (step.kind == RateTracker::Step::kWakeLock) {
+            Lock(ConsoleTrigger::kSyncWake, step.baud);
+            continue;
+        } else if (step.kind == RateTracker::Step::kResetAndLock) {
+            Lock(ConsoleTrigger::kReset, step.baud);
+            continue;
         }
 
         // Device -> host.
         size_t len = TargetUartRead(buf, sizeof(buf));
         if (len > 0) {
+            // Ends at the console's OK when a rate switch is acknowledged: what came after it is at the new rate.
+            len = tracker.OnConsoleBytes(buf, len, NowMs());
+            step = tracker.Poll(NowMs(), sync_high);
+            if (step.kind == RateTracker::Step::kRetune) {
+                // At once, before the console's next byte at the new rate. Also drops what was received meanwhile.
+                TargetUartSetBaud(step.baud);
+                (void)TargetUartTakeRxErrors();
+                tracker.OnRetuned(NowMs());
+            }
             size_t written = 0;
             while (written < len) {
                 written += tud_cdc_write(buf + written, (uint32_t)(len - written));
@@ -143,15 +140,20 @@ BridgeExit BridgeRun() {
             tud_cdc_write_flush();
         }
 
-        // Host -> device. Only take what the UART TX ring can hold so the CDC FIFO provides
-        // natural backpressure to the host.
-        size_t tx_free = TargetUartTxFree();
-        if (tx_free > 0 && tud_cdc_available() && !follower.HoldHostData(sync_high)) {
-            uint32_t take = (uint32_t)(tx_free < sizeof(buf) ? tx_free : sizeof(buf));
-            uint32_t got = tud_cdc_read(buf, take);
-            if (got > 0) {
-                follower.OnHostBytes(buf, got, NowMs());
-                TargetUartWriteNonblocking(buf, got);
+        // Host -> device. Only take what the UART TX ring can hold so the CDC FIFO provides natural backpressure to
+        // the host. Held while the console switches rates.
+        if (!tracker.HoldHostData()) {
+            if (host_pending_off == host_pending_len && tud_cdc_available()) {
+                host_pending_len = tud_cdc_read(host_pending, sizeof(host_pending));
+                host_pending_off = 0;
+            }
+            size_t avail = host_pending_len - host_pending_off;
+            size_t tx_free = TargetUartTxFree();
+            size_t take = avail < tx_free ? avail : tx_free;
+            if (take > 0) {
+                size_t send = tracker.OnHostBytes(host_pending + host_pending_off, take, NowMs());
+                TargetUartWriteNonblocking(host_pending + host_pending_off, send);
+                host_pending_off += send;
             }
         }
 
