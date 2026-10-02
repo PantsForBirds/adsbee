@@ -68,7 +68,13 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
   stays clean. A console baud change is followed automatically before
   `AT+SETTINGS=SAVE` is sent, so the new rate persists: behind the ADSBee 1421
   Programmer the page checks that the device answers at the new rate on the open
-  port, and over a plain USB-serial adapter it reopens the port at the new rate. Entering the tab from the Live Map tab first restores the persisted
+  port, and over a plain USB-serial adapter it reopens the port at the new rate.
+  Reopening a port asserts DTR, so an adapter wired DTR → RESET_N resets the module
+  back to its saved rate; in that case the page sends the switch and
+  `AT+SETTINGS=SAVE` on one CR-separated line (the firmware runs every command on a
+  line, so the save runs at the new rate) and then reopens. A hand-typed
+  `AT+BAUD_RATE=CONSOLE,<n>` isn't saved, so over such an adapter the page reports
+  that the device came back at its saved rate. Entering the tab from the Live Map tab first restores the persisted
   `PROTOCOL_OUT`/`LOG_LEVEL` so the form shows saved values, not the map stream's
   overrides.
   - The form renderer, dirty tracking, and save/refresh logic (`SettingsEngine`) are

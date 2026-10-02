@@ -4488,7 +4488,10 @@ function makeRxEnableEntry() {
                 // reach it at the new rate.
                 async afterWrite(v) {
                     const baud = consoleBaudFromValues(v);
-                    if (!(await connectionUI.followManualBaudChange(baud))) {
+                    if (await connectionUI.followManualBaudChange(baud, false)) return;
+                    // An adapter whose DTR resets the module (reopening the port pulses it) brought it
+                    // back at its saved rate before the save: switch and save in one go instead.
+                    if (!(await connectionUI.switchAndSaveBaud(baud))) {
                         throw new Error('Link lost after baud change.');
                     }
                 },
@@ -5690,8 +5693,9 @@ function makeRxEnableEntry() {
             // the USB baud rate is virtual and the Programmer follows the console, so the
             // device answers at <n> on the open port. Over a plain USB-serial adapter it
             // doesn't: reopen at <n>, and fall back to a full sweep if it doesn't answer
-            // there. Resolves to true when the link is back.
-            followManualBaudChange(baud) {
+            // there. Resolves to true when the link is back. notifyLost: say so when the
+            // reopen reset the device back to its saved rate.
+            followManualBaudChange(baud, notifyLost = true) {
                 if (!serial.connected) return Promise.resolve(false);
                 return this._exclusive(async () => {
                     if (!serial.connected) return false;
@@ -5720,6 +5724,39 @@ function makeRxEnableEntry() {
                                 this._announceLink(found);
                             }
                         }
+                        if (notifyLost && found !== null && found !== baud) {
+                            tabController.notice(
+                                `The device is back at ${found} baud: reopening the port reset it to its saved rate, ` +
+                                `so the unsaved ${baud} baud was lost. Change it from the Settings tab, which saves it.`);
+                        }
+                        this._setConnectedIndicators();
+                        return found === baud;
+                    } catch (_) {
+                        return false;
+                    }
+                });
+            },
+
+            // For an adapter that resets the module when the port reopens (DTR wired to
+            // RESET_N): the rate has to be saved before the reopen, but after the switch the
+            // page can't reach the device until it reopens. The firmware runs every command
+            // on a line (CR-separated), so AT+SETTINGS=SAVE runs right after the switch and
+            // persists the new rate; its OK comes at the new rate. Resolves to true when the
+            // link is back at `baud`.
+            switchAndSaveBaud(baud) {
+                if (!serial.connected) return Promise.resolve(false);
+                return this._exclusive(async () => {
+                    try {
+                        await atQueue.send(`AT+BAUD_RATE=CONSOLE,${baud}\rAT+SETTINGS=SAVE\r\n`,
+                            { terminator: 'quiet', quietMs: 300, timeoutMs: 2000 }).catch(() => { });
+                        await sleep(500);   // The flash write.
+                        await this._reopenWithSink(baud);
+                        const found = await this.probe();
+                        if (found === null) return false;
+                        if (found === serial.currentBaud) {
+                            try { localStorage.setItem(LAST_BAUD_KEY, String(found)); } catch (_) { }
+                        }
+                        this._announceLink(found);
                         this._setConnectedIndicators();
                         return found === baud;
                     } catch (_) {
