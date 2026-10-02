@@ -18,21 +18,37 @@ Developer Kit.
 ## Console autobaud
 
 The console runs at its saved baud rate (`AT+BAUD_RATE=CONSOLE,<baud>`, then `AT+SETTINGS=SAVE`):
-any rate from 9600 to 3,000,000, factory default 1,000,000. A host that doesn't know the rate can
-ask for it. Hold the console RX line (SURX, pin 20) low through a reset or a SYNC wake, then
-release it. The firmware checks SURX early in its boot and when it wakes from SYNC sleep. If the
-line has been low for 5 ms, it waits up to 250 ms for the host to release it, then sends `UU`
-(0x55 0x55) at the console rate as soon as the console takes AT commands: about 50 ms after
-RESET_N is released, or right away after a wake. Every bit of a `U` ends in an edge, so the host
-can measure the bit time. If the host doesn't release the line, the firmware sends nothing.
+any rate from 9600 to 3,000,000, factory default 1,000,000. It says `UU` (0x55 0x55) at its current
+rate:
 
-- Hold SURX low until at least 15 ms after RESET_N is released (the check, including the 5 ms
-  debounce, ends 12 to 15 ms after it), or until at least 20 ms after SYNC drops for a wake. The
-  [ADSBee 1421 Programmer](programmer/README.md#finding-the-console) holds it for 30 ms and 40 ms.
-- In normal operation nothing changes. An idle or unconnected SURX reads high (internal pull-up),
-  and console traffic never stays low for 5 ms (a NUL byte at 9600 baud is 0.94 ms). A host that
-  holds a break of 5 ms or longer through a reset or a wake gets a `UU`.
-- Firmware 0.3.11-rc3 and earlier doesn't answer.
+- **after every rate change**, right after the switch: `AT+BAUD_RATE=CONSOLE,<n>` (the `OK` still
+  goes out at the old rate, then the console switches and says `UU` at `<n>`), `AT+SETTINGS=RESET`,
+  and the saved rate applied at boot;
+- **at every boot**, once the saved rate is applied (about 45 ms after RESET_N is released);
+- **in answer to a break** on its RX line (SURX, pin 20): the line held low for longer than a frame
+  at the console's rate. The main loop notices within one iteration (0.1 to 0.35 ms on an idle
+  module) and drops the console output it still had queued, since a host that sends a break
+  doesn't know the rate. A host that holds SURX low through a SYNC sleep gets `UU` on wake.
+
+A `U` framed 8N1 is a square wave with an edge at every bit (start 0, data 1 0 1 0 1 0 1 0, stop
+1), and `UU` back to back is 20 bits of it, so a host times the edges and has the rate. This is how
+a LIN bus slave finds the master's rate (a break, then a 0x55 sync field), and how many
+microcontroller UARTs auto-baud. The [ADSBee 1421 Programmer](programmer/README.md#finding-the-console)
+follows the console this way.
+
+- The console ignores NUL bytes. Each break leaves one in the input, and the AT parser would end a
+  line there. No AT command takes binary input.
+- A break that follows another with no character in between reaches the CC1314's UART as a plain
+  NUL, with neither its break nor its framing error flag set, and goes unanswered. A host that may
+  send breaks back to back sends a character (a NUL) after each answer and before the next break.
+- Wait for the `OK` of `AT+BAUD_RATE=CONSOLE,<n>` before sending the next command: the console
+  reopens its UART at the new rate and drops what it received meanwhile.
+- `UU` after a rate change or at boot also reaches a host connected directly; a terminal shows it
+  as text.
+- In normal operation nothing changes: an idle or unconnected SURX reads high (internal pull-up),
+  and checking for a break costs one register read per main loop iteration. UART2CC26X2 never
+  enables the PL011's break interrupt, so the firmware reads its raw interrupt status.
+- Firmware 0.3.11-rc3 and earlier doesn't say `UU`.
 
 ## Reflashing over UART: the SYNC bootloader backdoor
 
@@ -117,8 +133,9 @@ serial port through to the module, emulating a TTL USB-UART adapter wired as abo
 - **DTR assert edge → 50 ms RESET_N pulse**, with SYNC taken from RTS at the edge and held for
   250 ms after the pulse so the ROM samples it. The reset is edge-triggered, so a terminal that
   holds DTR asserted doesn't hold the module in reset.
-- The host's baud rate is applied to the Programmer's UART, so a host tool can run the
-  bootloader protocol through the Programmer at whatever rate it likes.
+- The host's baud rate is virtual: in the ROM bootloader the Programmer's UART runs at 1 M, and the
+  ROM auto-bauds to it, so a host tool can run the bootloader protocol through the Programmer at
+  whatever rate it opened the port at.
 
 Any host tool that can set RTS and DTR can therefore put the module into the bootloader and
 reflash it through the Programmer remotely, with no buttons or jumpers. The Programmer ignores

@@ -137,13 +137,17 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 > ([`programmer/`](programmer/)) does this automatically, and any host tool that drives
 > RTS → SYNC and DTR → RESET_N can do it through the Programmer. See [Reflashing over UART: the SYNC bootloader backdoor](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
-## Console autobaud trigger
+## Console autobaud
 
-`CommsManager::Init()` (boot) and `CommsManager::Resume()` (SYNC wake) check the console RX line
-(SURX, DIO_2). If a host has held it low for 5 ms, the firmware waits up to 250 ms for the release
-and sends `UU` at the console rate: at boot once `SettingsManager::Apply()` has set the saved rate
-(`main.cpp`), on a wake right away. With the line high the check is one pin read. See
-[Console autobaud](README.md#console-autobaud).
+`comms/console_autobaud.hh` (shared with the ADSBee 1421 Programmer's host tests) has the answer and
+the input rule. The console says `UU` at its current rate: `CommsManager::SetBaudRate()` right
+after every reopen, `main.cpp` at boot once `SettingsManager::Apply()` has set the saved rate
+(`AnnounceBootRate()`, unless `Apply()` switched and said it already), and
+`CommsManager::AnswerConsoleBreak()` (drops the queued TX first) for a break: `Update()` reads the
+PL011's raw interrupt status every loop (UART2CC26X2 never enables the break interrupt), and
+`iface_getc()` checks it again when a NUL arrives. `Resume()` answers a SYNC wake with SURX held
+low. The console ignores NUL bytes. A break right after another, with no character in between,
+arrives as an unflagged NUL on the CC1314. See [Console autobaud](README.md#console-autobaud).
 
 ## SYNC low-power sleep
 
