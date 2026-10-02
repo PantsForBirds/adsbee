@@ -1,8 +1,12 @@
+#include <algorithm>
+
 #include "adsbee.hh"
 #include "aircraft_dictionary.hh"
 #include "hardware_unit_tests.hh"
 #include "mode_s_packet.hh"
 
+// Times the ingest of an odd packet that completes a CPR pair, which runs the position decode (and the CPR filter when
+// it's enabled).
 uint64_t TimeDictionaryPacketIngestUs() {
     DecodedModeSPacket odd_packet = DecodedModeSPacket((const char*)"8D48C22D60AB00DEABC5DB78FCD6");  // odd
     odd_packet.raw.mlat_48mhz_64bit_counts = 1'000 * 48'000;
@@ -24,21 +28,34 @@ uint64_t TimeDictionaryPacketIngestUs() {
     adsbee.aircraft_dictionary.IngestDecodedModeSPacket(odd_packet);
     uint64_t end_timestamp_us = get_time_since_boot_us();
 
-    uint64_t time_elapsed_us = end_timestamp_us - start_timestamp_us;
+    return end_timestamp_us - start_timestamp_us;
+}
 
-    printf("Aircraft dictionary took %llu us to ingest a packet with the CPR filter %s.\n", time_elapsed_us,
-           (adsbee.aircraft_dictionary.CPRPositionFilterIsEnabled() ? "enabled" : "disabled"));
-
-    return time_elapsed_us;
+// Returns the median of several timed ingests. Interrupt handlers (USB, timers) that fire during an ingest land in a
+// single sample and pushed it over the limit now and then; the median measures the ingest itself.
+uint64_t MedianDictionaryPacketIngestUs() {
+    static const uint16_t kNumSamples = 11;
+    uint64_t samples_us[kNumSamples];
+    for (uint16_t i = 0; i < kNumSamples; i++) {
+        samples_us[i] = TimeDictionaryPacketIngestUs();
+    }
+    std::sort(samples_us, samples_us + kNumSamples);
+    uint64_t median_us = samples_us[kNumSamples / 2];
+    printf(
+        "Aircraft dictionary took %llu us (median of %u, min %llu, max %llu) to ingest a packet with the CPR filter "
+        "%s.\n",
+        median_us, kNumSamples, samples_us[0], samples_us[kNumSamples - 1],
+        (adsbee.aircraft_dictionary.CPRPositionFilterIsEnabled() ? "enabled" : "disabled"));
+    return median_us;
 }
 
 UTEST(Dictionary, TestCPRFilterTiming) {
     bool original_cpr_filter_setting = adsbee.aircraft_dictionary.CPRPositionFilterIsEnabled();
     adsbee.aircraft_dictionary.SetCPRPositionFilterEnabled(false);
-    EXPECT_LE(TimeDictionaryPacketIngestUs(), 100);
+    EXPECT_LE(MedianDictionaryPacketIngestUs(), 100);
 
     adsbee.aircraft_dictionary.SetCPRPositionFilterEnabled(true);
-    EXPECT_LE(TimeDictionaryPacketIngestUs(), 100);
+    EXPECT_LE(MedianDictionaryPacketIngestUs(), 100);
 
     adsbee.aircraft_dictionary.SetCPRPositionFilterEnabled(original_cpr_filter_setting);
 }

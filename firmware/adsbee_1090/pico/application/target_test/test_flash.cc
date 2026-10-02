@@ -42,5 +42,14 @@ UTEST(Flash, CRC32AsymmetricWordAligned) {
 }
 
 // NOTE: Self verify does NOT work unless the firmware image was flashed from a .OTA file, since the application.bin
-// used for checksum calculation differs from the result of the combined linking process.
-UTEST(Flash, VerifyOwnPartition) { ASSERT_TRUE(FirmwareUpdateManager::VerifyFlashPartition(own_partition)); }
+// used for checksum calculation differs from the result of the combined linking process. The combined image
+// (combined.uf2 or combined.elf) is linked separately from app0.bin, and its partition 0 header carries app0.bin's
+// length and CRC with the status forced to VALID so that the bootloader skips the check. Install the .ota file to run
+// this test.
+UTEST(Flash, VerifyOwnPartition) {
+#ifdef COMBINED_IMAGE
+    UTEST_SKIP("Running the combined image, whose partition header describes app0.bin. Install the .ota file to run.");
+#else
+    ASSERT_TRUE(FirmwareUpdateManager::VerifyFlashPartition(own_partition));
+#endif
+}
