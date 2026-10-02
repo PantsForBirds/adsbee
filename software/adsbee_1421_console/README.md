@@ -3,35 +3,33 @@
 A single-file, self-contained web console for the ADSBee m1421 (TI CC1314R10) that
 mimics the ADSBee 1090 ESP32 web interface, but talks to the device over the
 **Web Serial API** instead of WebSockets. Open `adsbee_1421_console.html` directly in
-Chrome or Edge (works from `file://`, no server needed) and click **Connect**
-(the page probes common baud rates to find the device — see below).
+Chrome or Edge (works from `file://`, no server needed), connect the module through
+the ADSBee 1421 Programmer (`firmware/adsbee_1421/programmer/`) and click **Connect**.
 
 ## Features
 
-- **Baud auto-detection** — the device boots at its saved console baud
-  (`AT+BAUD_RATE` + `AT+SETTINGS=SAVE`; factory default 1,000,000), which may be
-  any rate from 9600 to 3,000,000. On connect the page sweeps {1000000, 921600,
-  460800, 230400, 115200, 57600}, trying last session's rate (any supported rate)
-  first, and locks onto whatever rate answers. Each probe is `AT+BAUD_RATE?`, repeated for ~2.7 s per rate
-  before moving on (opening the port asserts DTR, which resets the device, so it
-  is usually still booting when the first probe goes out), and the rate shown is
-  the one the device itself reports. Behind the ADSBee 1421 Programmer
-  (`firmware/adsbee_1421/programmer/`) the host baud is virtual: the Programmer's
-  UART runs at the device's rate whatever rate the page opened the port at (see its
-  README), so the first rate answers, and the page reports both rates when they
-  differ. After `AT+REBOOT`,
-  `AT+SETTINGS=RESET`, or a firmware flash the page re-sweeps automatically, and
-  a hand-typed `AT+BAUD_RATE=CONSOLE,<n>` is followed to the new rate instead of
-  desyncing the link: behind the Programmer the open port keeps working, and over a
-  plain USB-serial adapter the page reopens the port at `<n>`. Disconnecting leaves the device at its current rate.
+- **Console baud rate** — the page talks to the module through the ADSBee 1421
+  Programmer, whose USB baud rate is virtual: the Programmer's UART runs at the
+  module console's rate, whatever rate the page opened the port at. The module boots
+  at its saved console rate (`AT+BAUD_RATE=CONSOLE,<n>` + `AT+SETTINGS=SAVE`; any rate
+  from 9600 to 3,000,000, factory default 1,000,000), and the Programmer locks onto it
+  after every reset. The page opens the port at 1,000,000 and asks `AT+BAUD_RATE?`
+  until the device answers (opening the port asserts DTR, which makes the Programmer
+  reset the module, so it is usually still booting when the first query goes out);
+  the rate shown is the one the device reports. A console rate change
+  (`AT+BAUD_RATE=CONSOLE,<n>` typed or from the Settings tab, `AT+SETTINGS=RESET`, a
+  reboot back to the saved rate) needs nothing from the page: the Programmer follows
+  it on the open port. As on any serial link, wait for the `OK` of
+  `AT+BAUD_RATE=CONSOLE,<n>` before sending the next command. Disconnecting leaves
+  the device at its current rate.
 - **Console tab** — interactive AT command terminal (line editing, history, ANSI
   colors), a Receiver Statistics panel, a Device Status card, and firmware upload.
   - Statistics update whenever an `RX_STATS=` response appears — type
     `AT+RX_STATS?` yourself or click **Refresh**. There is no background polling,
     so the console stream stays clean.
   - An **uptime** card sits alongside the statistics, fed by `AT+UPTIME?`. It is read
-    quietly on connect and after anything that reboots the device (`AT+REBOOT`,
-    `AT+SETTINGS=RESET`, a firmware flash), and refreshed by the same **Refresh**
+    quietly on connect and after anything that reboots the device (`AT+REBOOT`, a
+    firmware flash), and refreshed by the same **Refresh**
     button — or by typing `AT+UPTIME?` yourself.
   - Device info (`AT+DEVICE_INFO?`) is queried once per connect.
   - All protocol output (CSBee, raw aircraft JSON, etc.) prints in the terminal.
@@ -65,16 +63,9 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
   edits. Reads happen in one round trip via `AT+SETTINGS?JSON` (a single-line JSON
   dump keyed by AT command). A dump that arrives incomplete is retried; only firmware
   that answers it with `ERROR` (predating the command) is read with per-command queries. All settings traffic runs through the hidden AT queue, so the terminal
-  stays clean. A console baud change is followed automatically before
-  `AT+SETTINGS=SAVE` is sent, so the new rate persists: behind the ADSBee 1421
-  Programmer the page checks that the device answers at the new rate on the open
-  port, and over a plain USB-serial adapter it reopens the port at the new rate.
-  Reopening a port asserts DTR, so an adapter wired DTR → RESET_N resets the module
-  back to its saved rate; in that case the page sends the switch and
-  `AT+SETTINGS=SAVE` on one CR-separated line (the firmware runs every command on a
-  line, so the save runs at the new rate) and then reopens. A hand-typed
-  `AT+BAUD_RATE=CONSOLE,<n>` isn't saved, so over such an adapter the page reports
-  that the device came back at its saved rate. Entering the tab from the Live Map tab first restores the persisted
+  stays clean. A console baud change takes effect as soon as it is sent, and the
+  ADSBee 1421 Programmer follows it on the open port; **Save** persists it like any
+  other setting. Entering the tab from the Live Map tab first restores the persisted
   `PROTOCOL_OUT`/`LOG_LEVEL` so the form shows saved values, not the map stream's
   overrides.
   - The form renderer, dirty tracking, and save/refresh logic (`SettingsEngine`) are
