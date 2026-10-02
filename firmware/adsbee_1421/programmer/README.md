@@ -209,10 +209,10 @@ Measured on a module behind the Programmer:
 | Step | Time |
 |---|---|
 | Reset into the application to lock (startup, port open, DTR edge, `AT+REBOOT`) | 43 ms after RESET_N is released (the boot `UU`) |
-| `AT+BAUD_RATE=CONSOLE,<n>`: `OK` drained to `UU` on the line (the module reopens its UART) | 0.16 to 1 ms |
+| `AT+BAUD_RATE=CONSOLE,<n>`: `OK` drained to `UU` on the line (the module reopens its UART) | 0.14 to 1 ms |
 | `UU` start to retune | the `UU` (174 µs at 115200, 2.1 ms at 9600) plus up to 0.2 ms |
-| Break to the module's first `UU` edge, idle module | 0.08 to 0.35 ms (1.2 ms at 9600, where a break takes a 1.04 ms frame to detect) |
-| Ask to lock (NUL, idle, break, `UU`), idle module | 1.3 to 1.8 ms (5.6 ms at 9600) |
+| Break to the module's first `UU` edge, idle module | 0.06 to 0.45 ms (1.1 to 1.3 ms at 9600, where a break takes a 1.04 ms frame to detect); 3.4 to 5.6 ms at 115200 with MAVLink and INFO logs streaming |
+| Ask to lock (NUL, idle, break, `UU`), idle module | 1.2 to 2.1 ms (5.4 to 5.6 ms at 9600) |
 
 Module firmware 0.3.11-rc3 and earlier never says `UU`, and the Programmer doesn't look for those
 images' consoles. It never has to: at startup it compares the module's flash with its baked image

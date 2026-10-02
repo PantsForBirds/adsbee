@@ -26,9 +26,11 @@ rate:
   and the saved rate applied at boot;
 - **at every boot**, once the saved rate is applied (about 45 ms after RESET_N is released);
 - **in answer to a break** on its RX line (SURX, pin 20): the line held low for longer than a frame
-  at the console's rate. The main loop notices within one iteration (0.1 to 0.35 ms on an idle
-  module) and drops the console output it still had queued, since a host that sends a break
-  doesn't know the rate. A host that holds SURX low through a SYNC sleep gets `UU` on wake.
+  at the console's rate. The main loop notices it and drops the console output it still had
+  queued, since a host that sends a break doesn't know the rate. The `UU` starts 0.06 to 0.45 ms
+  after the break on an idle module (1.1 to 1.3 ms at 9600, where the UART needs a whole frame to
+  see a break), and a few ms later when the main loop is busy sending reports. A host that holds
+  SURX low through a SYNC sleep gets `UU` on wake.
 
 A `U` framed 8N1 is a square wave with an edge at every bit (start 0, data 1 0 1 0 1 0 1 0, stop
 1), and `UU` back to back is 20 bits of it, so a host times the edges and has the rate. This is how
