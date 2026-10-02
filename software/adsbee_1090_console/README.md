@@ -85,7 +85,8 @@ re-copy the marked block:
   (between its `BEGIN/END SHARED SETTINGS ENGINE` markers) into this page's
   `BEGIN/END VENDORED ADSBee settings engine` markers. The
   `SETTINGS_SCHEMA_1090` table and `Settings1090Transport` are copied from the
-  same file below the shared block.
+  same file below the shared block. `firmware/adsbee_1090/esp/main/server/web/test/settings_drift.test.js`
+  fails when any of these copies differs from `settings.js`.
 - **Page CSS**: `style.css` is embedded in full, followed by a marked block of
   standalone-console additions (connection controls, browser banner,
   `.metrics-unavailable` notes).

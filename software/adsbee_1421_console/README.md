@@ -61,8 +61,8 @@ Chrome or Edge (works from `file://`, no server needed) and click **Connect**
   single **Save** button, which sends only the changed `AT+<CMD>=` commands and then
   `AT+SETTINGS=SAVE`; **Refresh** re-reads everything from the device and discards
   edits. Reads happen in one round trip via `AT+SETTINGS?JSON` (a single-line JSON
-  dump keyed by AT command), falling back automatically to per-command queries on
-  firmware that predates it. All settings traffic runs through the hidden AT queue, so the terminal
+  dump keyed by AT command). A dump that arrives incomplete is retried; only firmware
+  that answers it with `ERROR` (predating the command) is read with per-command queries. All settings traffic runs through the hidden AT queue, so the terminal
   stays clean. A console baud change is followed automatically (the port is
   reopened at the new rate before `AT+SETTINGS=SAVE` is sent, so the new rate
   persists). Entering the tab from the Live Map tab first restores the persisted

@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 
-// Status text formatting for CdcPrintf() (status.cc). Pure so it can be host-tested (host_test/cdc_text_test.cc).
+// Status text formatting for CdcPrintf() (status.cc). Pure so it can be host-tested (host_test/test_cdc_text.cc).
 
 // CdcPrintf() formats into a fixed stack buffer of this size. Keep each message well below it; split long ones
 // across calls.

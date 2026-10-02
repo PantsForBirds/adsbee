@@ -1,23 +1,47 @@
-# Host unit tests for the ADSBee 1421 Programmer's SDK-independent logic. Standalone (not part of the pico build):
-#   cmake -S firmware/adsbee_1421/programmer/host_test -B /tmp/jig_host_test
-#   cmake --build /tmp/jig_host_test && ctest --test-dir /tmp/jig_host_test --output-on-failure
+# Host unit tests for the ADSBee 1421 Programmer's SDK-independent logic, run with googletest like the ADSBee 1090
+# host tests (firmware/adsbee_1090/pico/host_test). Standalone (not part of the pico build). Build googletest
+# (firmware/modules/googletest) first, as CI does:
+#   cd firmware/modules/googletest && mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make
+# Then:
+#   cmake -S firmware/adsbee_1421/programmer/host_test -B /tmp/adsbee_1421_programmer_host_test
+#   cmake --build /tmp/adsbee_1421_programmer_host_test
+#   ctest --test-dir /tmp/adsbee_1421_programmer_host_test --output-on-failure
 cmake_minimum_required(VERSION 3.13)
 project(adsbee_1421_programmer_host_test CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_BUILD_TYPE "Debug")
 
-enable_testing()
+set(ADSBEE_MODULES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../modules")
 
-add_executable(modem_lines_test modem_lines_test.cc ../modem_lines.cc)
-target_include_directories(modem_lines_test PRIVATE ..)
-target_compile_options(modem_lines_test PRIVATE -Wall -Wextra -Werror)
-add_test(NAME modem_lines_test COMMAND modem_lines_test)
+find_package(Threads REQUIRED)
 
-add_executable(cdc_text_test cdc_text_test.cc)
-target_include_directories(cdc_text_test PRIVATE ..)
-target_compile_options(cdc_text_test PRIVATE -Wall -Wextra -Werror)
-add_test(NAME cdc_text_test COMMAND cdc_text_test)
+add_compile_options(
+    -Wall                # Include all warnings.
+    -Wextra
+    -Werror
+    -ftrapv # Trap on signed integer overflow (undefined behavior).
+)
+
+add_executable(host_test main.cc)
+
+# Test: Pull in google test library
+add_library(libgtest SHARED IMPORTED)
+set_target_properties(libgtest PROPERTIES IMPORTED_LOCATION ${ADSBEE_MODULES_DIR}/googletest/build/lib/libgtest.so)
+target_link_libraries(host_test PRIVATE libgtest Threads::Threads)
+
+target_sources(host_test PRIVATE
+    ../modem_lines.cc
+    test_cdc_text.cc
+    test_host_line_coding.cc
+    test_modem_lines.cc
+)
+
+target_include_directories(host_test PRIVATE
+    ${ADSBEE_MODULES_DIR}/googletest/googletest/include
+    ..
+)
 
 # The Programmer's reboot-to-BOOTSEL baud must match the ADSBee 1090's PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE.
 set(ADSBEE_1090_PICO_CMAKE "${CMAKE_CURRENT_LIST_DIR}/../../../adsbee_1090/pico/CMakeLists.txt")
@@ -27,9 +51,15 @@ string(REGEX MATCH "PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE=([0-9A-Fa-fXx]+)" _ "${
 if(NOT CMAKE_MATCH_1)
     message(FATAL_ERROR "PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE not found in ${ADSBEE_1090_PICO_CMAKE}")
 endif()
+target_compile_definitions(host_test PRIVATE ADSBEE_1090_RESET_MAGIC_BAUD_RATE=${CMAKE_MATCH_1})
 
-add_executable(host_line_coding_test host_line_coding_test.cc)
-target_include_directories(host_line_coding_test PRIVATE ..)
-target_compile_definitions(host_line_coding_test PRIVATE ADSBEE_1090_RESET_MAGIC_BAUD_RATE=${CMAKE_MATCH_1})
-target_compile_options(host_line_coding_test PRIVATE -Wall -Wextra -Werror)
-add_test(NAME host_line_coding_test COMMAND host_line_coding_test)
+# Make test runnable with "make test".
+enable_testing()
+
+include(GoogleTest)
+gtest_discover_tests(host_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    PROPERTIES
+        TIMEOUT 30
+        DISCOVERY_TIMEOUT 10
+)
