@@ -34,3 +34,9 @@ add_executable(baud_follower_test baud_follower_test.cc ../baud_follower.cc)
 target_include_directories(baud_follower_test PRIVATE .. ../../ti/comms)
 target_compile_options(baud_follower_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME baud_follower_test COMMAND baud_follower_test)
+
+# Console autobaud measurement against a cycle-level model of autobaud_edges.pio.
+add_executable(autobaud_test autobaud_test.cc ../autobaud.cc)
+target_include_directories(autobaud_test PRIVATE .. ../../ti/comms)
+target_compile_options(autobaud_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME autobaud_test COMMAND autobaud_test)

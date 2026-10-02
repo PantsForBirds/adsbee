@@ -3,9 +3,9 @@
 // At power-up the Programmer enters the CC1314's ROM UART bootloader (SYNC backdoor + reset pulse) and
 // compares the on-chip flash against the baked-in adsbee_1421 image using the bootloader's CRC32
 // command; on any mismatch (or a blank device) it reflashes and verifies. Once the device is
-// confirmed up to date it resets it into the app, finds the console by probing likely baud rates
-// (the app boots at its saved console baud; factory default 1 M; see AtFindConsoleBaud), and becomes
-// a transparent USB-CDC serial adapter (see bridge.cc for the modem-control-line emulation
+// confirmed up to date it resets it into the app, finds the console's baud rate with the autobaud
+// trigger (the app boots at its saved console baud; factory default 1 M; see console_lock.hh), and
+// becomes a transparent USB-CDC serial adapter (see bridge.cc for the modem-control-line emulation
 // contract and baud_follower.hh for how the console follows the host's baud).
 //
 // Hold BOOTSEL at power-up to force a reflash; tap BOOTSEL during pass-through to rerun the
@@ -21,6 +21,7 @@
 #include "bootsel.hh"
 #include "bridge.hh"
 #include "cc13x4_bootloader.hh"
+#include "console_lock.hh"
 #include "firmware_image.hh"
 #include "flasher.hh"
 #include "host_line_coding.hh"
@@ -104,8 +105,9 @@ static bool EnterBootloader(Cc13x4Bootloader& bl) {
 static void DiagnoseEntryFailure() {
     TargetResetIntoApp();
     IdleMs(kBootWaitMs);
-    // Probe every likely rate: a device with a non-default saved baud must not misdiagnose as dead.
-    uint32_t app_baud = AtFindConsoleBaud();
+    // Any saved baud (autobaud trigger on a SYNC wake): a device with a non-default saved baud must not misdiagnose as
+    // dead.
+    uint32_t app_baud = ConsoleLock(ConsoleTrigger::kSyncWake);
     if (app_baud != 0) {
         snprintf(last_diagnosis, sizeof(last_diagnosis),
                  "App console responds at %lu baud - reset+UART wiring OK, but SBL entry "
@@ -127,30 +129,29 @@ static void DiagnoseEntryFailure() {
     CdcPrintf("%s\r\n", last_diagnosis);
 }
 
-// Brings the console up after a reset into the app: wait out the boot, then find the device by
-// probing likely rates (it boots at its saved console baud; factory default 1 M), and move it to
-// the host's line-coding rate if the console accepts that, else to `target_baud` (kConsoleBaud).
-// Only the live rate is moved; the Programmer never issues AT+SETTINGS=SAVE, so the device's
-// persisted baud is untouched.
+// Resets the device into the app and brings the console up: find its rate with the autobaud lock (it boots at its
+// saved console baud; factory default 1 M), and move it to the host's line-coding rate if the console accepts that,
+// else to `target_baud` (kConsoleBaud). Only the live rate is moved; the Programmer never issues AT+SETTINGS=SAVE, so
+// the device's persisted baud is untouched.
 static bool NegotiateConsole(uint32_t target_baud, bool print_version) {
     StatusSet(Status::kNegotiating);
-    IdleMs(kBootWaitMs);
     if (IsRenegotiableBaud(BridgeHostBaud())) target_baud = BridgeHostBaud();
 
-    // Generous window: first boot after a flash may rewrite the settings sectors (only when the
-    // settings version changed -- the flash preserves them otherwise) and re-inits radios.
-    // The first pass usually answers at the first rate (the stored boot rate or 1 M).
-    uint32_t found_baud = 0;
-    for (int pass = 0; pass < 3 && !found_baud; pass++) found_baud = AtFindConsoleBaud();
+    uint32_t found_baud = ConsoleLock(ConsoleTrigger::kReset);
+    const ConsoleLockInfo& lock = LastConsoleLock();
     if (found_baud == 0) {
-        CdcPrintf("Device console not responding at any probed baud rate. If this persists with a "
-                  "CRC-verified image, the saved settings may be the cause: hold BOOTSEL for 3 s to erase "
-                  "them and boot with factory defaults.\r\n");
+        CdcPrintf("Device console not responding%s. If this persists with a CRC-verified image, the saved settings "
+                  "may be the cause: hold BOOTSEL for 3 s to erase them and boot with factory defaults.\r\n",
+                  lock.measured_baud != 0 ? "" : " (no autobaud answer, no answer at the legacy rates)");
         return false;
     }
-    // Every caller has just reset the device, so this is the rate it boots at: probed first next time, also after a
-    // power cycle.
-    AtNoteBootBaud(found_baud);
+    if (lock.measured_baud != 0) {
+        CdcPrintf("Console locked at %lu baud (measured %lu) in %lu ms.\r\n", (unsigned long)found_baud,
+                  (unsigned long)lock.measured_baud, (unsigned long)lock.elapsed_ms);
+    } else {
+        CdcPrintf("Console found at %lu baud by the legacy probe in %lu ms (no autobaud answer).\r\n",
+                  (unsigned long)found_baud, (unsigned long)lock.elapsed_ms);
+    }
 
     if (print_version) {
         char version[32];
@@ -161,8 +162,7 @@ static bool NegotiateConsole(uint32_t target_baud, bool print_version) {
     }
 
     if (target_baud != found_baud) {
-        CdcPrintf("Console found at %lu baud; moving to %lu.\r\n", (unsigned long)found_baud,
-                  (unsigned long)target_baud);
+        CdcPrintf("Moving the console to %lu baud.\r\n", (unsigned long)target_baud);
         if (!AtSetConsoleBaud(target_baud)) {
             CdcPrintf("AT+BAUD_RATE=CONSOLE,%lu not acknowledged.\r\n",
                       (unsigned long)target_baud);
@@ -240,7 +240,6 @@ int main() {
                 StatusSet(Status::kCrcCheck);
                 if (BakedImageMatches(bl)) {
                     CdcPrintf("Firmware up to date (version %s).\r\n", kFirmwareVersionStr);
-                    TargetResetIntoApp();
                     negotiate_baud = kConsoleBaud;
                     print_version = true;
                     state = State::kNegotiate;
@@ -257,7 +256,6 @@ int main() {
                 FlashResult result = FlashBakedImage(bl);
                 if (result == FlashResult::kOk) {
                     force_flash = false;
-                    TargetResetIntoApp();
                     negotiate_baud = kConsoleBaud;
                     print_version = true;
                     state = State::kNegotiate;

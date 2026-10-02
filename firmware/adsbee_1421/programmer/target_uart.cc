@@ -62,6 +62,18 @@ void TargetUartSetBaud(uint32_t baud) {
 
 uint32_t TargetUartGetBaud() { return current_baud; }
 
+void TargetUartHoldTxLow(bool hold) {
+    if (hold) {
+        tx_tail = tx_head;
+        uart_tx_wait_blocking(kUart);  // Let the byte on the wire finish.
+        gpio_put(kPinUartTx, 0);
+        gpio_set_dir(kPinUartTx, GPIO_OUT);
+        gpio_set_function(kPinUartTx, GPIO_FUNC_SIO);
+    } else {
+        gpio_set_function(kPinUartTx, GPIO_FUNC_UART);
+    }
+}
+
 size_t TargetUartRead(uint8_t* buf, size_t max_len) {
     size_t count = 0;
     while (count < max_len && rx_tail != rx_head) {

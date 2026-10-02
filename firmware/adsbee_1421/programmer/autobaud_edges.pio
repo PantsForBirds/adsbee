@@ -1,0 +1,22 @@
+;
+; Edge timer for the console autobaud lock (console_lock.cc, autobaud.hh). Reads the UART RX pin through the jmp pin,
+; which works while the UART owns the pin. X counts down once per 2 cycles in both loops; at every edge the state
+; machine pushes X (autopush at 32 bits), which takes one more cycle. Start with X = ~0, at `high` if the line is high,
+; else at `low`.
+;
+
+.program autobaud_edges
+
+rise:
+    in x, 32            ; Rising edge.
+public high:
+    jmp x-- high_pin    ; Both outcomes continue at high_pin: X just counts.
+high_pin:
+    jmp pin high
+    in x, 32            ; Falling edge.
+.wrap_target
+public low:
+    jmp x-- low_pin
+low_pin:
+    jmp pin rise
+.wrap

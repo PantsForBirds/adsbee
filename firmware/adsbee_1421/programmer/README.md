@@ -149,35 +149,64 @@ Host data sent meanwhile stays in the USB buffer and reaches the console at the 
 Programmer only moves the *live* rate; it never sends `AT+SETTINGS=SAVE`.
 
 - **Opening the port resets the module** (DTR edge, SYNC low), and the console comes back at its
-  saved rate. If that is the host's rate, the Programmer just retunes its UART; otherwise it moves
-  the console once it has booted (~0.8 s), so a tool sees its first data about 1 s after opening.
+  saved rate, which the Programmer measures (see [Finding the console](#finding-the-console)). If
+  that is the host's rate, the Programmer just retunes its UART; otherwise it moves the console
+  right away. A tool can talk to the console about 0.1 s after opening.
 - **Rates outside 9600–3,000,000** (the 1200 baud pymavlink opens ports at, 300, 4 M, ...) go to
   the Programmer's UART directly, as does every rate while the module is in the ROM bootloader
   (after a reset with SYNC high, until the next reset with SYNC low).
-- **If the console can't be moved** (it doesn't answer, or runs an image that refuses the rate),
+- **If the console doesn't acknowledge** the move within 1 s, the Programmer finds it again with
+  the autobaud trigger on a SYNC wake, then moves it from there.
+- **If the console can't be moved** (it isn't found, or runs an image that refuses the rate),
   pass-through carries on at the rate the console is at and the Programmer writes one warning line
   (`[ADSBee 1421 Programmer] Console stays at <baud> baud ...`) to the host. The USB rate is
   virtual, so the host still reads clean data. The next rate change tries again.
 - **Commands that move the console** are recognized in the host's traffic:
-  `AT+BAUD_RATE=CONSOLE,<n>` (the next move probes `<n>` first, so a host that sends it and then
-  changes its own rate, like the web console, resyncs at once), `AT+SETTINGS=SAVE` (the live rate
-  becomes the rate the console boots at), `AT+SETTINGS=RESET` (back to 1 M, live and saved) and
-  `AT+REBOOT` (back to the saved rate; the console is moved to the host's rate again after the boot).
+  `AT+BAUD_RATE=CONSOLE,<n>` (the next move tries `<n>` first, so a host that sends it and then
+  changes its own rate, like the web console, resyncs at once), `AT+SETTINGS=RESET` (back to 1 M)
+  and `AT+REBOOT` (back to the saved rate: the Programmer resets the module and locks again, as
+  when the port is opened).
 
 ### Finding the console
 
-After resetting the module into its application, the Programmer probes for the console with
-`AT+BAUD_RATE?` (the module prints nothing at boot, and nothing in reply to bytes sent at the
-wrong rate, so a probe at each candidate is the one method that works whatever the module is doing).
-Candidates, in order: the rate the console last booted at, which the Programmer keeps in the last
-4 KB sector of its own flash (written when it finds the console after a reset, or sees a host's
-`AT+SETTINGS=SAVE` or `AT+SETTINGS=RESET`), then 1 M, 921600, 460800, 230400, 115200, 57600,
-500000, 250000, 38400, 19200, 9600, 76800, 2 M, 1.5 M and 3 M. A module saved at the stored rate
-answers the first probe; a common rate is found within a few seconds. Each probe starts with a
-blank line, which closes any garbage an earlier wrong-rate probe left in the console's line buffer.
-A module saved at an uncommon rate with no record in the Programmer's flash (for example, saved
-through a different adapter) can't be found: hold BOOTSEL for 3 s to erase its settings (see
-[Buttons](#buttons)), or open the port at that rate through another adapter and save a common rate.
+The Programmer measures the console's rate with the module's autobaud trigger (see
+[Console autobaud](../README.md#console-autobaud)): it holds the module's RX line (SURX, GP28)
+low through a reset into the application, releases it 30 ms after the reset, and the module answers
+with `UU` at its console rate once the console is ready (about 50 ms after the reset). A PIO state
+machine (`autobaud_edges.pio`, on PIO1; the LED uses PIO0) timestamps the edges on GP29 at the
+125 MHz system clock while the UART keeps the pin. `autobaud.cc` finds the square wave of the
+`U`s (each bit an edge) among them and averages the bit time over an even number of bits, so a
+duty-cycle distortion of the line cancels. Glitches, other bytes and rates outside the console's
+range are rejected (host tests: `host_test/autobaud_test.cc`, against a cycle-level model of the
+PIO program). In the host tests the measurement is within 0.21% of the rate the module's UART
+generates, at any rate from 9600 to 3,000,000. On the bench it is within 0.05% after a reset, and
+up to 0.5% high after a SYNC wake, when the module still runs on its RC oscillator. The Programmer
+snaps it to the nearest rate the module's
+UART can generate (near 3 M those are 1.5% apart), confirms it with one `AT+BAUD_RATE?`, and then
+uses the exact rate in the answer.
+
+The same trigger on a SYNC wake (SYNC high for 20 ms, RX held low until 40 ms after SYNC drops)
+finds a console that was lost in pass-through without resetting the module, so its live settings
+stay.
+
+Module firmware without the trigger (0.3.11-rc3 and earlier) sends no `UU`. Those images only
+accept 1 M, 921600, 460800, 230400 and 115200, so after 70 ms without an answer the Programmer
+probes each of those once with `AT+BAUD_RATE?`.
+
+Times, measured on a module behind the Programmer (typical) and the bound from the timeouts (worst
+case). A probe (`AT+BAUD_RATE?`) waits up to 0.25 s plus the time for 2 KB at the probed rate, at
+most 1 s; `AT+BAUD_RATE=CONSOLE,<n>` waits up to 1 s for its `OK`.
+
+| Step | Typical | Worst case |
+|---|---|---|
+| Reset and lock (startup, port open, `AT+REBOOT`) | 0.10 s (1 M) to 0.15 s (9600) | 0.15 s without a `UU`, plus the probes below |
+| Then move the console to the host's rate | a few ms + 50 ms switch + one probe | 1 s + 50 ms + 2 probes |
+| Host rate change, console where expected | 0.1 s settle + a few ms + 50 ms + one probe | as above, then the lost-console path |
+| Lost console (no `OK`): lock on a SYNC wake, then move | 1.3 s in total (mostly the 1 s `OK` timeout) | 1 s + 0.11 s + 2 probes + the move |
+| Module firmware without the trigger: legacy probe pass | 0.15 s + the probes up to the saved rate | 0.15 s + 5 probes (1.6 s) |
+
+Each command the Programmer sends starts with a blank line, which closes any garbage the held-low
+line or a wrong-rate byte left in the console's AT line buffer.
 
 ### ROM bootloader through the Programmer
 
@@ -203,7 +232,7 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 | `No response ... RESET_N(GP26)=LOW (stuck in reset ...)` | Something is holding reset low with the Programmer's driver released: a wiring short or a drive conflict on ~SRST. |
 | `No response ... UART RX(GP29)=LOW (module TX not driving ...)` | Module unpowered, held in reset, or SUTX wiring wrong (RX should idle high when the module runs). |
 | `No response ... RESET_N=high, UART RX=high (link plausible)` | Lines look electrically sane; suspect TX leg (GP28 → SURX) or module-side UART config. |
-| `Device console not responding at any probed baud rate` | SBL/flash worked but the app's AT console never answered `AT+BAUD_RATE?` at any probed rate (see [Finding the console](#finding-the-console)) in three passes. If it repeats on every boot with a CRC-verified image, the saved settings are the likely cause: hold BOOTSEL for 3 s to erase them (see [Buttons](#buttons)). |
+| `Device console not responding` | SBL/flash worked but the app's console neither answered the autobaud trigger nor `AT+BAUD_RATE?` at the legacy rates (see [Finding the console](#finding-the-console)). If it repeats on every boot with a CRC-verified image, the saved settings are the likely cause: hold BOOTSEL for 3 s to erase them (see [Buttons](#buttons)). |
 | `Settings erase ARMED` / `Settings erased; ...` | A BOOTSEL long press was registered, and the Settings sectors were erased at the next bootloader entry. The device now boots with factory defaults. |
 
 Modules running pre-backdoor firmware can't be entered via SYNC at all: flash them once via

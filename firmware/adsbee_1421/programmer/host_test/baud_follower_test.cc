@@ -1,5 +1,5 @@
 // Host tests for the console baud range (ti/comms/console_baud.hh), the rates the ADSBee 1421 Programmer renegotiates
-// (host_line_coding.hh), the probe order, and BaudFollower: the line-coding / reset / command sequences real hosts
+// (host_line_coding.hh), and BaudFollower: the line-coding / reset / command sequences real hosts
 // produce, played back against the follower the way bridge.cc drives it.
 #include <stdint.h>
 #include <stdio.h>
@@ -89,34 +89,17 @@ static void TestConsoleRange() {
 
 static void TestRenegotiableRates() {
     printf("renegotiable host rates\n");
-    for (uint32_t baud : kCommonConsoleBauds) EXPECT(IsRenegotiableBaud(baud));
+    for (uint32_t baud : {9600u, 19200u, 57600u, 76800u, 115200u, 123457u, 250000u, 1000000u, 2000000u, 3000000u}) {
+        EXPECT(IsRenegotiableBaud(baud));
+    }
     // pymavlink's 1200 probe, the reboot magic, the ROM-only and out-of-range rates go straight to the UART.
     for (uint32_t baud : {0u, 300u, 1200u, 4800u, 3500000u, kRebootToBootselBaud}) EXPECT(!IsRenegotiableBaud(baud));
 }
 
-static void TestCandidates() {
-    printf("probe order: preferred first, no duplicates, only console rates\n");
-    uint32_t out[32];
-    const uint32_t preferred[] = {76801, 0, 1200, 1000000, 76801, 57600};
-    size_t n = BuildConsoleBaudCandidates(preferred, 6, out, 32);
-    EXPECT(n == 1 + sizeof(kCommonConsoleBauds) / sizeof(kCommonConsoleBauds[0]));
-    EXPECT(out[0] == 76801);
-    EXPECT(out[1] == 1000000);
-    EXPECT(out[2] == 57600);
-    EXPECT(out[3] == 921600);  // Then kCommonConsoleBauds in order, minus the ones already listed.
-    for (size_t i = 0; i < n; i++) {
-        EXPECT(IsRenegotiableBaud(out[i]));
-        for (size_t j = 0; j < i; j++) EXPECT(out[i] != out[j]);
-    }
-    EXPECT(BuildConsoleBaudCandidates(preferred, 6, out, 2) == 2);
-    EXPECT(BuildConsoleBaudCandidates(nullptr, 0, out, 32) ==
-           sizeof(kCommonConsoleBauds) / sizeof(kCommonConsoleBauds[0]));
-    EXPECT(out[0] == 1000000);
-}
-
 // ---- BaudFollower ----
 
-static constexpr uint32_t kBootWaitMs = 800;
+// How long the bridge's reset + autobaud lock takes (ConsoleLock(kReset)).
+static constexpr uint32_t kLockMs = 450;
 
 // Mirrors BridgeRun(): callbacks feed the follower, each loop iteration polls it and carries out the step.
 struct Bridge {
@@ -126,27 +109,31 @@ struct Bridge {
     uint32_t uart = 0;            // Programmer UART rate.
     uint32_t console = 1000000;   // The module console's actual rate.
     uint32_t boot = 1000000;      // The module's saved rate.
-    bool console_up = true;       // Booted and answering.
-    uint32_t boot_done = 0;
+    bool console_up = true;       // Answering (false: no autobaud answer and not at a probed rate either).
     int renegotiations = 0;
+    int resets = 0;
     uint32_t last_target = 0;
     bool accept = true;           // The console accepts AT+BAUD_RATE.
 
     void Start(uint32_t host_baud) {
         uart = console;
-        f.Start(console, boot, host_baud, now);
+        f.Start(console, host_baud, now);
     }
     void HostBaud(uint32_t baud) { f.OnHostBaud(baud, now); }
+    // A host DTR edge: ResetAndLock() (SYNC low) or a plain reset pulse (SYNC high).
     void Reset(bool sync) {
-        f.OnReset(sync, now, kBootWaitMs);
-        if (!sync) {
-            console = boot;
-            console_up = false;
-            boot_done = now + 600;  // Boots a bit faster than the Programmer waits.
+        resets++;
+        if (sync) {
+            f.OnReset(true, 0);
+            return;
         }
+        console = boot;
+        now += kLockMs;
+        uart = console_up ? console : uart;
+        f.OnReset(false, console_up ? console : 0);
     }
-    void Send(const char* text) { f.OnHostBytes((const uint8_t*)text, strlen(text), now, kBootWaitMs); }
-    // What AtRenegotiateConsole() would do against this console.
+    void Send(const char* text) { f.OnHostBytes((const uint8_t*)text, strlen(text), now); }
+    // What ConsoleRenegotiate() would do against this console.
     uint32_t Renegotiate(uint32_t target) {
         renegotiations++;
         last_target = target;
@@ -159,10 +146,10 @@ struct Bridge {
         return console;
     }
     void Loop() {
-        if (!console_up && (int32_t)(now - boot_done) >= 0) console_up = true;
         BaudFollower::Step step = f.Poll(now, sync_high);
         if (step.kind == BaudFollower::Step::kApplyDirect) uart = step.baud;
         if (step.kind == BaudFollower::Step::kRenegotiate) f.OnRenegotiated(Renegotiate(step.baud));
+        if (step.kind == BaudFollower::Step::kReset) Reset(false);
     }
     void Wait(uint32_t ms) {
         for (uint32_t i = 0; i < ms; i++) {
@@ -176,18 +163,16 @@ struct Bridge {
 
 // pymavlink: the kernel open asserts DTR (a reset into the app), then 1200, then the tool's rate.
 static void TestPymavlinkOpen() {
-    printf("pymavlink open at 57600: reset, 1200, 57600 -> one renegotiation after the boot\n");
+    printf("pymavlink open at 57600: reset, 1200, 57600 -> one renegotiation after the lock\n");
     Bridge b;
     b.Start(0);
-    b.Reset(false);
+    // The rates arrive while the bridge locks after the reset (tud_task runs inside ConsoleLock()).
     b.HostBaud(1200);
     b.now++;
     b.HostBaud(57600);
+    b.Reset(false);
     EXPECT(b.Hold());
-    b.Wait(BaudFollower::kSettleMs + 50);
-    EXPECT(b.renegotiations == 0);  // The console is still booting.
-    EXPECT(b.Hold());
-    b.Wait(kBootWaitMs);
+    b.Wait(1);
     EXPECT(b.renegotiations == 1);
     EXPECT(b.last_target == 57600);
     EXPECT(b.console == 57600 && b.InSync());
@@ -252,9 +237,9 @@ static void TestRomBootloaderDirect() {
     b.Loop();
     EXPECT(b.uart == 460800);
     EXPECT(b.renegotiations == 0);
-    // Back to the app, which boots at its saved 1 M: the host is at 460800, so the console is moved once up.
+    // Back to the app, which boots at its saved 1 M: the host is at 460800, so the console is moved once locked.
     b.Reset(false);
-    b.Wait(kBootWaitMs + BaudFollower::kSettleMs);
+    b.Wait(BaudFollower::kSettleMs);
     EXPECT(!b.f.in_rom_bootloader());
     EXPECT(b.renegotiations == 1);
     EXPECT(b.console == 460800 && b.InSync());
@@ -269,8 +254,7 @@ static void TestResetAtBootRate() {
     EXPECT(b.console == 57600 && b.renegotiations == 1);
     // Reopen at 1 M: the open resets the console (it boots at 1 M) before the host sets 1 M.
     b.Reset(false);
-    b.Loop();
-    EXPECT(b.Hold());  // The host still says 57600: a renegotiation is coming after the boot.
+    EXPECT(b.Hold());  // The host still says 57600: a renegotiation is coming unless the rate changes.
     b.HostBaud(1000000);
     b.Wait(BaudFollower::kSettleMs + 1);
     EXPECT(b.uart == 1000000);
@@ -290,15 +274,14 @@ static void TestResetAtBootRate() {
 }
 
 static void TestResetBackToBootRate() {
-    printf("host reset at a non-boot rate -> console moved back to the host's rate after the boot\n");
+    printf("host reset at a non-boot rate -> console moved back to the host's rate after the lock\n");
     Bridge b;
     b.Start(57600);
     b.Wait(BaudFollower::kSettleMs + 1);
     EXPECT(b.console == 57600);
     b.Reset(false);  // Reopen at the same rate: the console comes back at 1 M.
-    b.Wait(kBootWaitMs - 1);
-    EXPECT(b.renegotiations == 1);
-    b.Wait(2);
+    EXPECT(b.uart == 1000000 && b.f.console_baud() == 1000000);
+    b.Wait(1);
     EXPECT(b.renegotiations == 2);
     EXPECT(b.console == 57600 && b.InSync());
 }
@@ -362,15 +345,21 @@ static void TestHostNeverSetRate() {
     EXPECT(b.uart == 1000000);
     b.Wait(2000);
     EXPECT(b.renegotiations == 0);
-    // Boot rate unknown: find the console once it has booted.
+    // Saved at another rate: the lock finds it, the UART follows, no AT traffic.
     Bridge c;
     c.boot = 57600;
-    c.f.Start(1000000, 0, 0, c.now);
-    c.uart = 1000000;
+    c.Start(0);
     c.Reset(false);
-    c.Wait(kBootWaitMs + 1);
-    EXPECT(c.renegotiations == 1 && c.last_target == 0);
+    c.Wait(2000);
+    EXPECT(c.renegotiations == 0);
     EXPECT(c.uart == 57600 && c.f.console_baud() == 57600);
+    // The lock failed (console dead): one attempt to find it, not a loop.
+    Bridge d;
+    d.Start(115200);
+    d.console_up = false;
+    d.Reset(false);
+    d.Wait(5000);
+    EXPECT(d.renegotiations == 1 && d.f.console_baud() == 0);
 }
 
 static void TestStartWithHostRate() {
@@ -401,83 +390,70 @@ static void TestSnoopBaudHint() {
     EXPECT(b.InSync());
 
     BaudFollower f;
-    f.Start(1000000, 1000000, 1000000, 0);
+    f.Start(1000000, 1000000, 0);
     const char* ignored[] = {"AT+BAUD_RATE=CONSOLE,1200\r",  "AT+BAUD_RATE=CONSOLE,57600X\r",
                              "AT+BAUD_RATE=CONSOLE,99999999999\r", "XAT+BAUD_RATE=CONSOLE,57600\r",
                              "AT+BAUD_RATE?\r"};
     for (const char* line : ignored) {
-        f.OnHostBytes((const uint8_t*)line, strlen(line), 0, kBootWaitMs);
+        f.OnHostBytes((const uint8_t*)line, strlen(line), 0);
         EXPECT(f.hinted_baud() == 0);
     }
     const char* lower = "at+baud_rate=console,57600  \n";
-    f.OnHostBytes((const uint8_t*)lower, strlen(lower), 0, kBootWaitMs);
+    f.OnHostBytes((const uint8_t*)lower, strlen(lower), 0);
     EXPECT(f.hinted_baud() == 57600);
     // A line too long to be a command is dropped whole, including a command-like tail.
     BaudFollower g;
-    g.Start(1000000, 1000000, 1000000, 0);
+    g.Start(1000000, 1000000, 0);
     char longline[128];
     memset(longline, 'x', sizeof(longline));
-    g.OnHostBytes((const uint8_t*)longline, sizeof(longline), 0, kBootWaitMs);
+    g.OnHostBytes((const uint8_t*)longline, sizeof(longline), 0);
     const char* tail = "AT+BAUD_RATE=CONSOLE,57600\r";
-    g.OnHostBytes((const uint8_t*)tail, strlen(tail), 0, kBootWaitMs);
+    g.OnHostBytes((const uint8_t*)tail, strlen(tail), 0);
     EXPECT(g.hinted_baud() == 0);
-    g.OnHostBytes((const uint8_t*)tail, strlen(tail), 0, kBootWaitMs);
+    g.OnHostBytes((const uint8_t*)tail, strlen(tail), 0);
     EXPECT(g.hinted_baud() == 57600);
 }
 
-static void TestSnoopSave() {
-    printf("snooped AT+SETTINGS=SAVE makes the live rate the boot rate\n");
-    Bridge b;
-    b.Start(57600);
-    b.Wait(BaudFollower::kSettleMs + 1);
-    EXPECT(b.console == 57600);
-    b.Send("AT+SETTINGS=SAVE\r\n");
-    b.boot = 57600;
-    EXPECT(b.f.boot_baud() == 57600 && b.f.boot_baud_changed());
-    b.f.ClearBootBaudChanged();
-    b.Reset(false);  // Reopen: the console boots at 57600, which is what the host wants.
-    b.Loop();
-    EXPECT(b.uart == 57600);
-    b.Wait(2000);
-    EXPECT(b.renegotiations == 1);
-    EXPECT(b.InSync());
-    // Saving the same rate again changes nothing.
-    b.Send("AT+SETTINGS=SAVE\r\n");
-    EXPECT(!b.f.boot_baud_changed());
-    // An unconfirmed AT+BAUD_RATE makes the saved rate unknown.
-    b.Send("AT+BAUD_RATE=CONSOLE,230400\r\nAT+SETTINGS=SAVE\r\n");
-    EXPECT(b.f.boot_baud() == 0 && !b.f.boot_baud_changed());
-}
-
 static void TestSnoopSettingsReset() {
-    printf("snooped AT+SETTINGS=RESET: the console drops to 1 M, live and saved, and is moved back\n");
+    printf("snooped AT+SETTINGS=RESET: the console drops to 1 M and is moved back\n");
     Bridge b;
     b.Start(57600);
     b.Wait(BaudFollower::kSettleMs + 1);
     b.Send("AT+SETTINGS=RESET\r\n");
     b.console = 1000000;
-    b.boot = 1000000;
-    EXPECT(b.f.boot_baud() == 1000000 && !b.f.boot_baud_changed());  // Already 1 M.
     EXPECT(b.Hold());
+    EXPECT(b.f.hinted_baud() == 1000000);
     b.Wait(BaudFollower::kSettleMs + 1);
     EXPECT(b.renegotiations == 2 && b.last_target == 57600);
     EXPECT(b.console == 57600 && b.InSync());
 }
 
 static void TestSnoopReboot() {
-    printf("snooped AT+REBOOT: back at the boot rate, moved to the host's after the boot\n");
+    printf("snooped AT+REBOOT: reset and lock, then moved to the host's rate\n");
     Bridge b;
     b.Start(230400);
     b.Wait(BaudFollower::kSettleMs + 1);
-    b.Send("AT+REBOOT\r\n");
-    b.console = b.boot;
-    b.console_up = false;
-    b.boot_done = b.now + 600;
-    b.Wait(kBootWaitMs - 1);
     EXPECT(b.renegotiations == 1);
-    b.Wait(2);
+    b.Send("AT+REBOOT\r\n");
+    b.console = b.boot;  // Rebooting at its saved rate.
+    EXPECT(b.Hold());
+    b.Wait(BaudFollower::kSettleMs - 1);
+    EXPECT(b.resets == 0);
+    b.Wait(1);
+    EXPECT(b.resets == 1);
+    b.Wait(1);
     EXPECT(b.renegotiations == 2);
     EXPECT(b.console == 230400 && b.InSync());
+    // Not while SYNC is high (that reset would start the ROM bootloader).
+    Bridge c;
+    c.Start(1000000);
+    c.Send("AT+REBOOT\r\n");
+    c.sync_high = true;
+    c.Wait(1000);
+    EXPECT(c.resets == 0);
+    c.sync_high = false;
+    c.Wait(1);
+    EXPECT(c.resets == 1 && c.InSync());
 }
 
 static void TestClockWrap() {
@@ -485,9 +461,9 @@ static void TestClockWrap() {
     Bridge b;
     b.now = 0xFFFFFF00u;
     b.Start(0);
-    b.Reset(false);
     b.HostBaud(57600);
-    b.Wait(kBootWaitMs + BaudFollower::kSettleMs);
+    b.Reset(false);
+    b.Wait(BaudFollower::kSettleMs);
     EXPECT(b.renegotiations == 1);
     EXPECT(b.console == 57600 && b.InSync());
 }
@@ -496,7 +472,6 @@ int main() {
     TestDividerMatchesDrivers();
     TestConsoleRange();
     TestRenegotiableRates();
-    TestCandidates();
     TestPymavlinkOpen();
     TestRapidChanges();
     TestSameRateNoTraffic();
@@ -510,7 +485,6 @@ int main() {
     TestHostNeverSetRate();
     TestStartWithHostRate();
     TestSnoopBaudHint();
-    TestSnoopSave();
     TestSnoopSettingsReset();
     TestSnoopReboot();
     TestClockWrap();

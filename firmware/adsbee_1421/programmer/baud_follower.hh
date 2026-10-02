@@ -19,14 +19,13 @@
 //     with SYNC low, and without waiting for the line coding to settle;
 //   - for rates the console doesn't accept (the 1200 baud pymavlink opens ports at, anything below 9600 or above 3 M).
 //
-// The follower also remembers the rate the console boots at (its saved rate, "boot rate"): after a reset with SYNC
-// low the console comes back at it, so it is the console's rate until a renegotiation moves it. It watches the host's
-// commands for the ones that move the console's rate behind the Programmer's back: AT+BAUD_RATE=CONSOLE,<n> (n is
-// probed first at the next renegotiation), AT+SETTINGS=SAVE (the live rate becomes the boot rate), AT+SETTINGS=RESET
-// (the console drops to its factory 1 M, live and saved) and AT+REBOOT (back to the boot rate).
+// The bridge finds the console's rate itself after a reset with SYNC low (the autobaud lock, console_lock.hh) and
+// reports it with OnReset(). The follower watches the host's commands for the ones that move the console's rate behind
+// the Programmer's back: AT+BAUD_RATE=CONSOLE,<n> (n is tried first at the next renegotiation), AT+SETTINGS=RESET (the
+// console drops to its factory 1 M) and AT+REBOOT (back to its saved rate, so the bridge resets and locks again).
 class BaudFollower {
    public:
-    // Line coding must be stable this long before a renegotiation starts.
+    // Line coding must be stable this long before a renegotiation starts; snooped commands get as long to take effect.
     static constexpr uint32_t kSettleMs = 100;
     static constexpr uint32_t kFactoryConsoleBaud = 1000000;
 
@@ -36,24 +35,25 @@ class BaudFollower {
             kNone,
             kApplyDirect,  // Retune the Programmer's UART to `baud`; the console is not touched.
             kRenegotiate,  // Move the console to `baud` (0: only find it) and retune; then call OnRenegotiated().
+            kReset,        // Reset the module into the application and lock; then call OnReset().
         };
         Kind kind = kNone;
         uint32_t baud = 0;
     };
 
-    // Start of a pass-through session with the console at console_baud (0 = unknown), boot_baud the console's saved
-    // rate (0 = unknown) and host_baud the host's current line coding (0 = never set).
-    void Start(uint32_t console_baud, uint32_t boot_baud, uint32_t host_baud, uint32_t now_ms);
+    // Start of a pass-through session with the console at console_baud (0 = unknown) and host_baud the host's current
+    // line coding (0 = never set).
+    void Start(uint32_t console_baud, uint32_t host_baud, uint32_t now_ms);
 
     // Host line coding (only rates ClassifyHostBaud() says to apply).
     void OnHostBaud(uint32_t baud, uint32_t now_ms);
 
-    // The bridge pulsed RESET_N; it was released at now_ms with SYNC high (ROM bootloader) or low (application, which
-    // takes boot_wait_ms to bring its console up).
-    void OnReset(bool sync_high, uint32_t now_ms, uint32_t boot_wait_ms);
+    // The bridge reset the module with SYNC high (ROM bootloader), or with SYNC low and found the console at
+    // console_baud (0 = not found).
+    void OnReset(bool sync_high, uint32_t console_baud);
 
-    // Host -> module bytes, as forwarded (command snooping, see above). boot_wait_ms as for OnReset().
-    void OnHostBytes(const uint8_t* data, size_t len, uint32_t now_ms, uint32_t boot_wait_ms);
+    // Host -> module bytes, as forwarded (command snooping, see above).
+    void OnHostBytes(const uint8_t* data, size_t len, uint32_t now_ms);
 
     // Next step at now_ms. sync_high: SYNC is driven high right now (the console may be asleep), which defers
     // renegotiation. Clears the pending work it returns; host changes that arrive while the bridge carries it out
@@ -67,36 +67,25 @@ class BaudFollower {
     bool HoldHostData(bool sync_high) const;
 
     uint32_t console_baud() const { return console_baud_; }
-    uint32_t boot_baud() const { return boot_baud_; }
     // Rate the host's last AT+BAUD_RATE=CONSOLE,<n> asked for, not yet confirmed (0 = none).
     uint32_t hinted_baud() const { return hinted_baud_; }
     bool in_rom_bootloader() const { return rom_bootloader_; }
-
-    // Set when the boot rate changed (from a host's AT+SETTINGS=SAVE or RESET); the bridge stores it in flash and
-    // calls ClearBootBaudChanged().
-    bool boot_baud_changed() const { return boot_baud_changed_; }
-    void ClearBootBaudChanged() { boot_baud_changed_ = false; }
 
    private:
     // The console rate the host wants (its line coding when the console accepts it), or 0.
     uint32_t DesiredBaud() const;
     // Something moved the console or the host's rate: work out the next step at the next Poll().
     void Pend() { pending_ = true; }
-    // Wait for the console (booting, or busy with a command) until now_ms + wait_ms before renegotiating.
-    void WaitForConsole(uint32_t now_ms, uint32_t wait_ms);
-    void OnHostLine(uint32_t now_ms, uint32_t boot_wait_ms);
+    void OnHostLine(uint32_t now_ms);
 
     uint32_t host_baud_ = 0;
     uint32_t console_baud_ = 0;
-    uint32_t boot_baud_ = 0;
     uint32_t hinted_baud_ = 0;
     bool rom_bootloader_ = false;
-    bool boot_baud_changed_ = false;
+    bool reset_wanted_ = false;  // AT+REBOOT seen.
 
     bool pending_ = false;
-    uint32_t host_changed_ms_ = 0;  // Last host line-coding change.
-    bool waiting_for_boot_ = false;
-    uint32_t boot_done_ms_ = 0;  // Renegotiation waits until here (waiting_for_boot_).
+    uint32_t host_changed_ms_ = 0;  // Last host line-coding change or snooped command.
 
     // Current host -> module line, upper-cased; overlong lines are dropped.
     static constexpr size_t kLineMax = 40;
@@ -104,12 +93,3 @@ class BaudFollower {
     size_t line_len_ = 0;
     bool line_overflow_ = false;
 };
-
-// Rates the Programmer probes when it looks for the console (AtFindConsoleBaud): the factory default, the previous
-// whitelist, then other common rates. 76800 and 250000 are common MAVLink telemetry radio rates.
-static constexpr uint32_t kCommonConsoleBauds[] = {1000000, 921600, 460800, 230400, 115200, 57600, 500000, 250000,
-                                                   38400,   19200,  9600,   76800,  2000000, 1500000, 3000000};
-
-// Builds the probe order: the `preferred` rates first (0s and rates the console doesn't accept are skipped), then
-// kCommonConsoleBauds, without duplicates. Returns the number of rates written (at most max_out).
-size_t BuildConsoleBaudCandidates(const uint32_t* preferred, size_t num_preferred, uint32_t* out, size_t max_out);

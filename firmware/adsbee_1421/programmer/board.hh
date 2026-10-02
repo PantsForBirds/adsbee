@@ -25,8 +25,8 @@ static const uint32_t kBootWaitMs   = 800;  // App boot time before the first AT
 
 // The ROM bootloader auto-bauds to 1 M (proven on hardware; ROM ceiling ~1.2 M). The app
 // console boots at its saved baud rate (persisted via AT+SETTINGS=SAVE; factory default 1 M),
-// which may be any rate the firmware accepts (console_baud.hh), so AtFindConsoleBaud() probes
-// for it: the last known boot rate first, then kCommonConsoleBauds (baud_follower.hh).
+// which may be any rate the firmware accepts (console_baud.hh); ConsoleLock() finds it
+// (console_lock.hh).
 static constexpr uint32_t kConsoleBaud = 1000000;  // Factory default / preferred pass-through rate.
 static constexpr uint32_t kBootloaderBaud = 1000000;
 // The host baud that reboots the Programmer into its USB bootloader is kRebootToBootselBaud (host_line_coding.hh).
