@@ -39,6 +39,14 @@ class ADSBee {
     // RX_ENABLE/R1090_* settings are remembered and re-applied on enable.
     bool SetLR2021Enabled(bool enabled);
     bool LR2021IsEnabled() const { return lr2021_enabled_; }
+    // Bracket around code that drives the LR2021 directly, outside the receiver config (the AT+TEST
+    // hardware unit tests reset and re-init the chip, which drops the OOK config and the IRQ routing).
+    // BeginDirectLR2021Access() disarms the LR2021 interrupt lines so no IRQ-paced drain chain runs
+    // underneath the caller. EndDirectLR2021Access() re-applies the receiver config, honoring AT+LR_ENABLE
+    // and AT+RX_ENABLE, so reception resumes exactly as it was. Returns false if the re-apply failed (the
+    // RX health ladder keeps retrying it).
+    void BeginDirectLR2021Access();
+    bool EndDirectLR2021Access();
     // The LR2021 rejected the selected receiver config (CMD_PERR) on every retry; the receiver is down until a
     // config applies. AT+RX_STATS reports it as rx_cfg_error.
     bool ReceiverConfigRejected() const { return receiver_config_rejected_; }

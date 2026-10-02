@@ -6,7 +6,16 @@
 
 UTEST_STATE();
 
-static bool utest_main_called = false;
+static constexpr uint32_t kTestWatchdogDeadlineMs = 60'000;
+static constexpr uint32_t kTestWatchdogFeedIntervalMs = 1000;
+static uint64_t test_watchdog_deadline_us = 0;
+
+static bool FeedWatchdogUntilTestDeadline(repeating_timer_t* timer) {
+    if (time_us_64() < test_watchdog_deadline_us) {
+        adsbee.PokeWatchdog();
+    }
+    return true;  // Keep the timer running; AT+TEST cancels it.
+}
 
 CPP_AT_CALLBACK(ATTestCallback) {
     if (op == '=') {
@@ -43,19 +52,23 @@ CPP_AT_CALLBACK(ATTestCallback) {
         }
     }
 
-    if (!utest_main_called) {
-        int argc = 0;
-        const char* argv[1];
-        int ret = utest_main(argc, argv);
-        utest_main_called = true;
-        if (ret >= 0) {
-            CPP_AT_SUCCESS();
-        } else {
-            CPP_AT_ERROR("utest_main returned code %d", ret);
-        }
+    int argc = 0;
+    const char* argv[1];
+    // The tests block the main loop for about 11 s, longer than the longest RP2040 watchdog timeout (8.3 s). Keep the
+    // watchdog armed and feed it from a timer interrupt, but only up to a deadline, so a hung test still reboots the
+    // board.
+    repeating_timer_t watchdog_feeder;
+    test_watchdog_deadline_us = time_us_64() + kTestWatchdogDeadlineMs * kUsPerMs;
+    add_repeating_timer_ms(kTestWatchdogFeedIntervalMs, FeedWatchdogUntilTestDeadline, nullptr, &watchdog_feeder);
+    // utest_main returns the number of failed tests.
+    int ret = utest_main(argc, argv);
+    cancel_repeating_timer(&watchdog_feeder);
+    adsbee.PokeWatchdog();
+    if (ret == 0) {
+        CPP_AT_SUCCESS();
+    } else {
+        CPP_AT_ERROR("%d hardware unit test(s) failed.", ret);
     }
-
-    CPP_AT_ERROR("Can't run utest_main multiple times because it'll break (janky af).");
 }
 
 CPP_AT_CALLBACK(ATIngestModeSCallback) {

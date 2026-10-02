@@ -1323,7 +1323,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "TEST",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "Run hardware self-tests.",
+     .help_string = "Run hardware self-tests. Reception resumes as configured afterwards. "
+                    "Unavailable while AT+LR_ENABLE=0.",
      .callback = ATTestCallback},
 #ifdef ADSBEE_DEBUG_BUILD
     {.command = "TX_CW",

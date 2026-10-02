@@ -100,6 +100,18 @@ bool ADSBee::SetLR2021Enabled(bool enabled) {
     return success;
 }
 
+void ADSBee::BeginDirectLR2021Access() {
+    GPIO_disableInt(bsp.kLR2021IrqPin);
+    GPIO_disableInt(bsp.kLR2021BusyPin);
+}
+
+bool ADSBee::EndDirectLR2021Access() {
+    // The caller may have left the chip anywhere (reset, StdbyRC, half-configured). A bare SetRxAdv
+    // re-arm from the RX health ladder would put an unconfigured chip into RX, report kRx and count
+    // as healthy while no Mode S frame ever arrives, so run the full bring-up instead.
+    return ApplyReceiverConfig();
+}
+
 bool ADSBee::ApplyReceiverConfig() {
     bool success = ApplyReceiverConfigInner();
     receiver_config_ok_ = success;
