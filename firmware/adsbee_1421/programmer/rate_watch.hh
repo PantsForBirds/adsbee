@@ -63,7 +63,9 @@ class RateWatch {
     static constexpr uint32_t kBootAnswerMs = 150;
     // A hint's "UU": already on the line, or 2.1 ms long at 9600 baud.
     static constexpr uint32_t kResolveMs = 6;
-    static constexpr size_t kHintLookback = 64;  // Edges before the hint that may belong to the "UU".
+    // Edges before the hint that may belong to the "UU": data at exactly half the old rate frames without errors half
+    // the time and fits the old bit grid, so the hint can come a few frames after the "UU".
+    static constexpr size_t kHintLookback = 256;
     static constexpr size_t kMaxAnalyzedEdges = 512;
     // The module prints at its factory rate from reset until it applies its saved rate (about 50 ms after reset). A
     // hint whose edges fit this rate is a module rebooting (AT+REBOOT, a watchdog reset, a power cycle): wait for its
@@ -78,7 +80,10 @@ class RateWatch {
     static constexpr uint32_t kConsoleDelayUs = 1500;
     static constexpr uint32_t kForwardSampleUs = 20;
     static constexpr size_t kForwardSamples = 128;  // 2.56 ms of arrival times: more than kConsoleDelayUs.
-    static constexpr uint32_t kKeepSlackUs = 10;  // Arrival times are as coarse as the bridge loop.
+    // On a retune the Programmer forwards the console bytes that arrived kKeepMarginUs or more before it saw the "UU"
+    // start, and drops the rest. Both are seen by the bridge loop, a few tens of us late; the module is quiet for at
+    // least 0.14 ms (measured) between its OK and the "UU", so the OK's last byte is in.
+    static constexpr uint32_t kKeepMarginUs = 60;
     static constexpr size_t kAnalyzeEvery = 32;
 
     enum class Phase {
@@ -166,9 +171,11 @@ class RateWatch {
     void EndLock(Phase phase);
     bool EdgesHint(uint64_t to);
     bool EdgesFitRate(uint32_t baud);
-    void SampleArrivals(uint32_t received, uint64_t now_us);
+    void SampleArrivals(uint32_t received, uint64_t edges, uint64_t now_us);
     // rx_received at the newest arrival sample taken at or before us (Forwardable() if none is that old).
     uint32_t ReceivedBy(uint64_t us) const;
+    // Time of the oldest arrival sample that had seen edge `index` (now_us if none had).
+    uint64_t EdgeSeenAt(uint64_t index, uint64_t now_us) const;
 
     EdgeSource& edges_;
     uint32_t clock_hz_;
@@ -196,7 +203,8 @@ class RateWatch {
     uint64_t next_ask_us_ = 0;      // kUnknown.
     uint64_t last_resolve_us_ = 0;
     struct ForwardSample {
-        uint32_t received;
+        uint32_t received;  // rx_received
+        uint64_t edges;     // EdgeSource::Count()
         uint64_t us;
     };
     ForwardSample forward_samples_[kForwardSamples] = {};

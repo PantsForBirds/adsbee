@@ -274,7 +274,8 @@ struct Module {
             Announce();
             switch_at = kInf;
         }
-        if (now >= next_loop && boot_at == kInf) {
+        // SetBaudRate() blocks the main loop from the OK until the "UU" is queued.
+        if (now >= next_loop && boot_at == kInf && switch_at == kInf) {
             next_loop = now + kModuleLoopNs;
             if (break_flag) AnswerBreak();
             while (!fifo.empty() && switch_at == kInf) {
@@ -424,12 +425,19 @@ struct Sim {
         programmer.Init(&to_programmer, &to_module);
         programmer.watch.Start(programmer_baud, 0);
     }
+    // The bridge loop takes 5 to 65 us (USB servicing, forwarding), so the Programmer sees edges and bytes late.
+    double next_programmer = 0;
+    uint32_t jitter = 12345;
     void Run(double ms) {
         double end = now + ms * 1e6;
         while (now < end) {
             now += kProgrammerLoopNs;
             module.Step(now);
-            programmer.Step(now);
+            if (now >= next_programmer) {
+                programmer.Step(now);
+                jitter = jitter * 1103515245u + 12345u;
+                next_programmer = now + kProgrammerLoopNs * (1 + (jitter >> 16) % 13);
+            }
         }
     }
     // Runs until `pred` or `ms` passes; returns whether pred came true.

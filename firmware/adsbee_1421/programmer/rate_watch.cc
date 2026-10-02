@@ -102,10 +102,9 @@ bool RateWatch::Analyze(uint64_t now_us, Action* action) {
     uint32_t uu_us = (cycles_[n - 1] - cycles_[m.first_edge]) / cycles_per_us;
     uint64_t uu_start_us = last_edge_us_ > uu_us ? last_edge_us_ - uu_us : 0;
     if (retune) {
-        // Console bytes that arrived before the "UU" started were sent at the old rate: keep them. Bytes the "UU" makes
-        // at the old rate take at least 9 old bit times (to the stop bit) to arrive.
-        uint64_t keep_until_us = uu_start_us + (baud_ != 0 ? 9000000ull / baud_ : 0);
-        action->keep = ReceivedBy(keep_until_us > kKeepSlackUs ? keep_until_us - kKeepSlackUs : 0);
+        // Console bytes that arrived before the "UU" started were sent at the old rate: keep them.
+        uint64_t seen_us = EdgeSeenAt(first + m.first_edge, now_us);
+        action->keep = ReceivedBy(seen_us > kKeepMarginUs ? seen_us - kKeepMarginUs : 0);
         if ((int32_t)(action->keep - forwardable_) > 0) forwardable_ = action->keep;
         baud_ = Autobaud::SnapToConsoleRate(m.baud);
         stats_.retunes++;
@@ -144,9 +143,9 @@ bool RateWatch::EdgesFitRate(uint32_t baud) {
 }
 
 RateWatch::Action RateWatch::Poll(uint64_t now_us, bool sync_high, uint32_t rx_received) {
-    SampleArrivals(rx_received, now_us);
-    sync_high_ = sync_high;
     uint64_t count = edges_.Count();
+    SampleArrivals(rx_received, count, now_us);
+    sync_high_ = sync_high;
     if (count != last_count_) {
         last_count_ = count;
         last_edge_us_ = now_us;
@@ -238,21 +237,31 @@ RateWatch::Action RateWatch::Poll(uint64_t now_us, bool sync_high, uint32_t rx_r
     return action;
 }
 
-void RateWatch::SampleArrivals(uint32_t received, uint64_t now_us) {
+void RateWatch::SampleArrivals(uint32_t received, uint64_t edges, uint64_t now_us) {
     received_ = received;
     if (!forward_started_) {
         forward_started_ = true;
         forwardable_ = received;
-        for (ForwardSample& sample : forward_samples_) sample = {received, now_us};
+        for (ForwardSample& sample : forward_samples_) sample = {received, edges, now_us};
         return;
     }
     if (now_us - forward_samples_[forward_newest_].us >= kForwardSampleUs) {
         forward_newest_ = (forward_newest_ + 1) % kForwardSamples;
-        forward_samples_[forward_newest_] = {received, now_us};
+        forward_samples_[forward_newest_] = {received, edges, now_us};
     }
     if (now_us < kConsoleDelayUs) return;
     uint32_t old_enough = ReceivedBy(now_us - kConsoleDelayUs);
     if ((int32_t)(old_enough - forwardable_) > 0) forwardable_ = old_enough;
+}
+
+uint64_t RateWatch::EdgeSeenAt(uint64_t index, uint64_t now_us) const {
+    uint64_t seen = now_us;
+    for (size_t i = 0; i < kForwardSamples; i++) {
+        const ForwardSample& sample = forward_samples_[(forward_newest_ + kForwardSamples - i) % kForwardSamples];
+        if (sample.edges <= index) break;  // Older samples hadn't seen it either.
+        seen = sample.us;
+    }
+    return seen;
 }
 
 uint32_t RateWatch::ReceivedBy(uint64_t us) const {
