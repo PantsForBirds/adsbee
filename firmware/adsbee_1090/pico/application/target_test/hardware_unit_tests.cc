@@ -43,8 +43,12 @@ CPP_AT_CALLBACK(ATTestCallback) {
 
     int argc = 0;
     const char* argv[1];
+    // The tests block the main loop for longer than the default 10 s watchdog timeout (the clock tests alone take
+    // 10 s), so pause the watchdog while they run.
+    adsbee.DisableWatchdog();
     // utest_main returns the number of failed tests.
     int ret = utest_main(argc, argv);
+    adsbee.EnableWatchdog();
     if (ret == 0) {
         CPP_AT_SUCCESS();
     } else {
