@@ -11,7 +11,6 @@
 #include "buffer_utils.hh"
 #include "comms.hh"
 #include "cycle_counter.hh"
-#include "flash_utils.hh"
 #include "led.hh"
 #include "packet_decoder.hh"
 #include "sub_ghz_radio.hh"
@@ -98,6 +97,18 @@ bool ADSBee::SetLR2021Enabled(bool enabled) {
         }
     }
     return success;
+}
+
+void ADSBee::BeginDirectLR2021Access() {
+    GPIO_disableInt(bsp.kLR2021IrqPin);
+    GPIO_disableInt(bsp.kLR2021BusyPin);
+}
+
+bool ADSBee::EndDirectLR2021Access() {
+    // The caller may have left the chip anywhere (reset, StdbyRC, half-configured). A bare SetRxAdv
+    // re-arm from the RX health ladder would put an unconfigured chip into RX, report kRx and count
+    // as healthy while no Mode S frame ever arrives, so run the full bring-up instead.
+    return ApplyReceiverConfig();
 }
 
 bool ADSBee::ApplyReceiverConfig() {
@@ -504,26 +515,6 @@ void ADSBee::Reboot() {
     comms_manager.DrainConsoleTx();
     lr2021.DeInit();
     SysCtrlSystemReset();
-}
-
-void ADSBee::EnterUARTBootloader() {
-    CONSOLE_INFO("ADSBee::EnterUARTBootloader", "Invalidating image and entering ROM UART bootloader.");
-    // Console output is queued asynchronously; get it (and any pending AT response) onto the wire before the reset.
-    comms_manager.DrainConsoleTx();
-    lr2021.DeInit();
-    // Mask interrupts and keep them masked through the reset: we are about to erase the vector
-    // table sector, so no interrupt may fire afterwards. FlashSectorErase() and
-    // SysCtrlSystemReset() both execute from ROM, so erasing flash sector 0 from here is safe.
-    // Do not add any work between the erase and the reset.
-    FlashUtils::FlashSafe();
-    // Result deliberately ignored: nothing can be reported from here (interrupts are masked and the
-    // console is already drained), and a failed erase simply means the app boots normally instead.
-    (void)FlashUtils::EraseSector(0x0);  // erase the vector-table sector -> invalid reset vector
-    // With CCFG IMAGE_VALID_CONF == 0, the ROM validates the reset vector at flash address 0x0
-    // on boot. With it erased (0xFFFFFFFF) the ROM treats the image as invalid and enters the
-    // serial bootloader on DIO2 (RX) / DIO3 (TX) -- the same pins as SUBG_UART.
-    SysCtrlSystemReset();
-    // Does not return.
 }
 
 /**

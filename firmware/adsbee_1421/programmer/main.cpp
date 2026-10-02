@@ -8,6 +8,9 @@
 // becomes a transparent USB-CDC serial adapter (see bridge.cc for the modem-control-line emulation
 // contract and baud_follower.hh for how the console follows the host's baud).
 //
+// If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0,DEADBEE
+// disabled the backdoor), it skips the image check and enters pass-through with a warning.
+//
 // Hold BOOTSEL at power-up to force a reflash; tap BOOTSEL during pass-through to rerun the
 // check (also the recovery for in-band AT+REBOOT / AT+BAUD_RATE desyncs). Hold BOOTSEL for 3 s --
 // at any point, including while the Programmer is stuck reporting a dead console -- to arm a settings
@@ -40,7 +43,7 @@ static char last_diagnosis[192] = "";
 // Set by a BOOTSEL long press; consumed by State::kCheck once the ROM bootloader is up. Going
 // through the bootloader is what makes this work when the app console is dead, which is the case it
 // exists for: a persisted settings blob that stops the console coming up cannot be cleared with
-// AT+SETTINGS=RESET or AT+BOOT_UART_BOOTLOADER, since both need a console that already answers.
+// AT+SETTINGS=RESET, since it needs a console that already answers.
 static bool erase_settings_armed = false;
 
 // Arms the settings erase and tells the user. Idempotent, so repeated long presses are harmless.
@@ -101,8 +104,9 @@ static bool EnterBootloader(Cc13x4Bootloader& bl) {
 }
 
 // After a full entry failure, work out whether the module is alive at all and record a
-// human-readable diagnosis (report-only; never auto-erases the app).
-static void DiagnoseEntryFailure() {
+// human-readable diagnosis (report-only; never auto-erases the app). Returns the baud rate the
+// application console answered at, or 0 if it didn't answer.
+static uint32_t DiagnoseEntryFailure() {
     TargetResetIntoApp();
     IdleMs(kBootWaitMs);
     // Any saved baud (autobaud trigger on a SYNC wake): a device with a non-default saved baud must not misdiagnose as
@@ -127,6 +131,7 @@ static void DiagnoseEntryFailure() {
                  rx_idle_high ? "" : " (module TX not driving - power/wiring?)");
     }
     CdcPrintf("%s\r\n", last_diagnosis);
+    return app_baud;
 }
 
 // Resets the device into the app and brings the console up: find its rate with the autobaud lock (it boots at its
@@ -207,7 +212,29 @@ int main() {
                     StatusSet(Status::kWaitingForDevice);
                 }
                 if (!EnterBootloader(bl)) {
-                    DiagnoseEntryFailure();
+                    if (DiagnoseEntryFailure() != 0) {
+                        // The application runs but the ROM bootloader can't be entered, most likely
+                        // because AT+BOOTLOADER_PIN=0,DEADBEE turned the backdoor off. Bridge the console
+                        // anyway, so the user can still reach the module (and send
+                        // AT+BOOTLOADER_PIN=1,DEADBEE), instead of retrying entry forever.
+                        // One CdcPrintf per line: each must fit kCdcTextMax (cdc_text.hh).
+                        CdcPrintf("WARNING: ROM bootloader entry failed but the application console answers.\r\n");
+                        CdcPrintf("Entering pass-through WITHOUT checking the image against the baked %s.\r\n",
+                                  kFirmwareVersionStr);
+                        CdcPrintf("If the bootloader backdoor is disabled (AT+BOOTLOADER_PIN? answers 0), "
+                                  "AT+BOOTLOADER_PIN=1,DEADBEE enables it again; tap BOOTSEL afterwards to rerun the "
+                                  "check.\r\n");
+                        if (force_flash || erase_settings_armed) {
+                            CdcPrintf("The %s needs the bootloader and did not run.%s\r\n",
+                                      force_flash ? "forced reflash" : "settings erase",
+                                      erase_settings_armed ? " The settings erase stays armed." : "");
+                        }
+                        force_flash = false;
+                        negotiate_baud = kConsoleBaud;
+                        print_version = true;
+                        state = State::kNegotiate;
+                        break;
+                    }
                     // Retry forever (the module may be attached later), repeating the last
                     // diagnosis every few seconds for late-attached terminals.
                     next_diag_print = delayed_by_ms(get_absolute_time(), 5000);

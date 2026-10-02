@@ -2053,10 +2053,9 @@
                     <li>Press <strong>Enter bootloader</strong> below.</li>
                 </ol>
                 <p class="firmware-modal-note">The baud rate does not need to match: the ROM locks onto whatever rate
-                    this page sends its sync bytes at. If the SYNC pin is unreachable, running
-                    <span class="pin">AT+BOOT_UART_BOOTLOADER=1DEADBEE</span> in the console also enters the
-                    bootloader, but it erases the vector table, so the device stays there until it is reflashed.
-                    Then press <strong>Enter bootloader</strong>.</p>
+                    this page sends its sync bytes at. If the module boots its application with SYNC held
+                    high, its bootloader backdoor may be turned off: <span class="pin">AT+BOOTLOADER_PIN?</span>
+                    answers 0, and <span class="pin">AT+BOOTLOADER_PIN=1,DEADBEE</span> turns it back on.</p>
                 <p id="firmware-check-result"></p>
             </div>
             <div class="progress-container" id="firmware-progress-row" style="display:none; margin: 12px 0 8px;">
@@ -4515,18 +4514,128 @@ function makeRxEnableEntry() {
                         refreshBtn: document.getElementById('settings-refresh-btn'),
                     });
                     this.engine.render();
+                    bootloaderPinCard.render(document.getElementById('settings-form'));
+                    document.getElementById('settings-refresh-btn')
+                        .addEventListener('click', () => bootloaderPinCard.refresh());
                 }
                 if (!serial.connected) {
                     document.getElementById('settings-status').textContent = 'Connect to load settings.';
+                    bootloaderPinCard.show(null, '');
                     return;
                 }
-                this.engine.refresh().catch(e => console.error('Settings refresh error:', e));
+                this.engine.refresh().catch(e => console.error('Settings refresh error:', e))
+                    .then(() => bootloaderPinCard.refresh());
             },
 
             // AtQueue keeps serving the rest of the page; just stop issuing new
             // settings commands so a mid-read tab switch doesn't delay map mode.
             leave() {
                 if (this.engine) this.engine.abort();
+            },
+        };
+
+        // Bootloader pin (AT+BOOTLOADER_PIN): the SYNC backdoor in the module's CCFG flash. Kept out of the
+        // settings schema on purpose: it isn't part of the settings struct (AT+SETTINGS=SAVE doesn't touch it), and
+        // each change is a CCFG flash write the user must confirm by typing the password by hand. The prompt shows
+        // the password but never fills it in.
+        const BOOTLOADER_PIN_PASSWORD = 'DEADBEE';
+        const bootloaderPinCard = {
+            enabled: null,  // true/false from AT+BOOTLOADER_PIN?, null when unknown
+            busy: false,
+            els: null,
+
+            render(formEl) {
+                const group = document.createElement('div');
+                group.className = 'settings-group';
+                group.innerHTML = `
+                    <div class="settings-group-title">Bootloader</div>
+                    <div class="settings-entry" id="settings-entry-BOOTLOADER_PIN">
+                        <div class="settings-entry-header">
+                            <span class="settings-entry-label">Bootloader Pin (SYNC backdoor)</span>
+                            <span class="settings-danger">writes CCFG flash</span>
+                            <span class="settings-entry-status" id="bootloader-pin-status"></span>
+                        </div>
+                        <div class="settings-help">SYNC high during a reset starts the CC1314 ROM bootloader, which
+                            the ADSBee 1421 Programmer and this page use to flash firmware. Disabling it means only
+                            AT+BOOTLOADER_PIN=1,${BOOTLOADER_PIN_PASSWORD} (from the running firmware) or JTAG can
+                            turn it back on. Takes effect at the next reset; not part of Save.</div>
+                        <div class="settings-field">
+                            <span id="bootloader-pin-state">&mdash;</span>
+                            <button id="bootloader-pin-btn" class="tools-button" disabled
+                                style="width:auto; margin:0 0 0 12px; padding:4px 14px;">&hellip;</button>
+                        </div>
+                    </div>`;
+                formEl.appendChild(group);
+                this.els = {
+                    state: group.querySelector('#bootloader-pin-state'),
+                    status: group.querySelector('#bootloader-pin-status'),
+                    btn: group.querySelector('#bootloader-pin-btn'),
+                };
+                this.els.btn.addEventListener('click', () => this.change());
+            },
+
+            show(enabled, status, isError = false) {
+                this.enabled = enabled;
+                if (!this.els) return;
+                this.els.state.textContent = enabled === null ? '\u2014' : (enabled ? 'Enabled' : 'Disabled');
+                this.els.btn.textContent = enabled === false ? 'Enable\u2026' : 'Disable\u2026';
+                this.els.btn.disabled = enabled === null || this.busy || !serial.connected;
+                this.els.status.textContent = status;
+                this.els.status.classList.toggle('error', isError);
+            },
+
+            async refresh() {
+                if (!this.els || this.busy) return;
+                if (!serial.connected) { this.show(null, ''); return; }
+                try {
+                    const lines = await settings1421Transport.sendCommand('AT+BOOTLOADER_PIN?',
+                        { expect: /^BOOTLOADER_PIN=/, terminator: 'ok', timeoutMs: 3000 });
+                    const m = lines.length ? /^BOOTLOADER_PIN=([01])/.exec(lines[0]) : null;
+                    if (!m) throw new Error('No BOOTLOADER_PIN response (firmware before 0.3.11-rc4?)');
+                    this.show(m[1] === '1', '');
+                } catch (e) {
+                    this.show(null, e.message, true);
+                }
+            },
+
+            async change() {
+                if (this.enabled === null || this.busy) return;
+                const target = this.enabled ? 0 : 1;
+                const action = target ? 'ENABLE' : 'DISABLE';
+                const warning = target
+                    ? 'This rewrites the module\'s CCFG flash to turn the SYNC bootloader backdoor back on ' +
+                      '(as in every release image).'
+                    : 'This writes the module\'s CCFG flash to turn the SYNC bootloader backdoor off. ' +
+                      'Afterwards the ADSBee 1421 Programmer and this page can no longer enter the bootloader ' +
+                      'to flash firmware; only AT+BOOTLOADER_PIN=1,' + BOOTLOADER_PIN_PASSWORD +
+                      ' from the running firmware, or JTAG, can turn it back on.';
+                // Empty default: the user types the password, it is never filled in.
+                const typed = window.prompt(`${warning}\n\nTo ${action} the bootloader pin, type the password ` +
+                    `${BOOTLOADER_PIN_PASSWORD} by hand:`, '');
+                if (typed === null) return;  // Cancelled.
+                if (typed !== BOOTLOADER_PIN_PASSWORD) {
+                    this.show(this.enabled, 'Password did not match; nothing was sent.', true);
+                    return;
+                }
+                this.busy = true;
+                this.show(this.enabled, 'writing CCFG\u2026');
+                try {
+                    if (!serial.connected) throw new Error('Not connected.');
+                    // Visible, so the whole response (including any CCFG WRITE FAILED banner) reaches the terminal.
+                    await atQueue.send(`AT+BOOTLOADER_PIN=${target},${typed}\r\n`,
+                        { visible: true, terminator: 'ok', timeoutMs: 5000 });
+                    this.busy = false;
+                    await this.refresh();
+                    this.show(this.enabled, this.enabled === !!target
+                        ? `${target ? 'enabled' : 'disabled'}; takes effect at the next reset`
+                        : 'write reported OK but the read-back differs; see the terminal', this.enabled !== !!target);
+                } catch (e) {
+                    this.busy = false;
+                    await this.refresh();
+                    this.show(this.enabled, `${e.message} (see the terminal)`, true);
+                } finally {
+                    this.busy = false;
+                }
             },
         };
 
@@ -4757,11 +4866,10 @@ function makeRxEnableEntry() {
         //    adapter wired that way. It makes a single attempt that takes a few seconds. If
         //    the ROM doesn't answer, it puts SYNC back low so a running module isn't left
         //    asleep.
-        //  - By hand (SYNC jumpered high, then a reset) or AT+BOOT_UART_BOOTLOADER, for
-        //    adapters without RTS/DTR wired to the module. The user then presses Enter
-        //    bootloader as well: with the lines unwired its toggles do nothing, and with DTR
-        //    wired the reset lands back in the bootloader (SYNC is still high, or the AT
-        //    command erased the vector table so the ROM has no valid image to boot).
+        //  - By hand (SYNC jumpered high, then a reset), for adapters without RTS/DTR wired
+        //    to the module. The user then presses Enter bootloader as well: with the lines
+        //    unwired its toggles do nothing, and with DTR wired the reset lands back in the
+        //    bootloader because SYNC is still high.
         // Either way verifyBootloader() proves the ROM is actually answering before anything
         // is erased, and every exit from the bootloader drives SYNC low first.
         const flashController = {
@@ -5036,8 +5144,9 @@ function makeRxEnableEntry() {
                     this.setVerified(false,
                         `The device answered as its application firmware at ${appBaud} baud, so it did not ` +
                         'enter the bootloader. Either the adapter\'s RTS and DTR are not wired to SYNC and ' +
-                        'RESET_N (use the manual steps), or the firmware predates the SYNC backdoor ' +
-                        '(before 0.3.7: run AT+BOOT_UART_BOOTLOADER=1DEADBEE).',
+                        'RESET_N (use the manual steps), the backdoor is turned off (AT+BOOTLOADER_PIN? ' +
+                        'answers 0; AT+BOOTLOADER_PIN=1,DEADBEE turns it on), or the firmware predates the SYNC ' +
+                        'backdoor (before 0.3.7: flash it over JTAG).',
                         'fail');
                 } else if (appBaud !== null) {
                     this.setVerified(false,
