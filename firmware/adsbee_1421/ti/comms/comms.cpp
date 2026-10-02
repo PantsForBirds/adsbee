@@ -44,23 +44,28 @@ static const uint32_t kTxWaitMarginMs = 5;
 static const uint32_t kTxRingSpaceWaitMaxMs = 250;
 static const uint32_t kTxDrainWaitMaxMs = 2000;
 
-// Console autobaud trigger (AnswerAutobaudTrigger()). The RX line must stay low for kAutobaudLowUs: far longer than any
-// low stretch in console traffic (a NUL byte is 0.94 ms at 9600 baud), and the RX pull-up keeps an unconnected line
-// high. The host then has kAutobaudReleaseUs to release it. Polled with CPUdelay() (4 cycles per loop at 48 MHz),
-// which needs no clock, so the check also works in Init(), before NoRTOS starts.
-static const uint32_t kAutobaudLowUs = 5000;
-static const uint32_t kAutobaudReleaseUs = 250000;
-static const uint32_t kAutobaudPollUs = 100;
-static const char kAutobaudAnswer[] = "UU";
+// SYNC wake trigger (Suspend(), Resume()): a host that holds the console RX line low through a SYNC sleep gets
+// ConsoleAutobaud::kAnswer on wake, as for any other break. The line must stay low for kWakeTriggerLowUs: far longer
+// than any low stretch in console traffic (a NUL byte is 0.94 ms at 9600 baud), and the RX pull-up keeps an
+// unconnected line high. Polled with CPUdelay() (4 cycles per loop at 48 MHz), which needs no clock.
+static const uint32_t kWakeTriggerLowUs = 5000;
+static const uint32_t kWakeTriggerPollUs = 100;
 
-// Polls the console RX line until it reads `level` or timeout_us passes. Returns true if it read `level`.
-static bool WaitForConsoleRx(bool level, uint32_t timeout_us) {
-    for (uint32_t waited_us = 0;; waited_us += kAutobaudPollUs) {
-        if ((GPIO_read(bsp.kSubGUARTRXPin) != 0) == level) return true;
-        if (waited_us >= timeout_us) return false;
-        CPUdelay(kAutobaudPollUs * 48 / 4);
+// True if the console RX line stays low for timeout_us. One pin read when it is high.
+static bool ConsoleRxHeldLow(uint32_t timeout_us) {
+    for (uint32_t waited_us = 0;; waited_us += kWakeTriggerPollUs) {
+        if (GPIO_read(bsp.kSubGUARTRXPin) != 0) return false;
+        if (waited_us >= timeout_us) return true;
+        CPUdelay(kWakeTriggerPollUs * 48 / 4);
     }
 }
+
+// Break detection. UART2CC26X2 never enables the PL011's break interrupt (only receive timeout, and overrun when
+// subscribed), so UART2_EVENT_BREAK never fires on its own, and its RX DMA copies only the data bits of a break's NUL
+// into the RX ring. The raw interrupt status still latches the break whatever the mask, so the main loop reads it:
+// one register read per loop. Clearing writes only the break bit, which the driver's ISR never touches.
+static inline bool ConsoleBreakSeen() { return (HWREG(UART0_BASE + UART_O_RIS) & UART_INT_BE) != 0; }
+static inline void ClearConsoleBreak() { HWREG(UART0_BASE + UART_O_ICR) = UART_INT_BE; }
 
 CommsManager::CommsManager(CommsManagerConfig config)
     : config_(config), at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)) {}
@@ -144,19 +149,30 @@ bool CommsManager::Init() {
         // Programmer.
         SysCtrlSystemReset();
     }
-    autobaud_triggered_ = AutobaudTriggered();
     return true;
 }
 
-bool CommsManager::AutobaudTriggered() { return !WaitForConsoleRx(true, kAutobaudLowUs); }
+void CommsManager::AnnounceConsoleRate() {
+    rate_announced_ = true;
+    iface_write(SettingsManager::SerialInterface::kConsole, ConsoleAutobaud::kAnswer, ConsoleAutobaud::kAnswerLen);
+}
 
-void CommsManager::AnswerAutobaudTrigger() {
-    if (!autobaud_triggered_) return;
-    autobaud_triggered_ = false;
-    if (WaitForConsoleRx(true, kAutobaudReleaseUs)) {
-        UART2_flushRx(uart_handle_);  // The held-low line reads as a break or NUL bytes.
-        iface_write(SettingsManager::SerialInterface::kConsole, kAutobaudAnswer, sizeof(kAutobaudAnswer) - 1);
-    }
+void CommsManager::DropQueuedConsoleTx() {
+    // The write callback retires what already went out, synchronously.
+    if (uart_tx_in_progress_) UART2_writeCancel(uart_handle_);
+    uintptr_t key = HwiP_disable();
+    // Back to the start of the ring when nothing is in flight, so what comes next (the "UU") goes out in one write,
+    // back to back, rather than split at the ring's end.
+    if (!uart_tx_in_progress_) uart_tx_head_ = 0;
+    uart_tx_tail_ = uart_tx_head_;
+    HwiP_restore(key);
+}
+
+void CommsManager::AnswerConsoleBreak() {
+    ClearConsoleBreak();
+    break_filter_.OnBreak();
+    DropQueuedConsoleTx();
+    AnnounceConsoleRate();
 }
 
 bool CommsManager::SetBaudRate(uint32_t baud) {
@@ -195,6 +211,8 @@ bool CommsManager::SetBaudRate(uint32_t baud) {
     }
     // Discard any garbage clocked in at the mismatched rate (e.g. a trailing newline from the host).
     UART2_flushRx(uart_handle_);
+    ClearConsoleBreak();  // Bytes at the old rate can read as a break at a much higher one.
+    AnnounceConsoleRate();
 
     // Mirror the live value so settings queries display it; AT+SETTINGS=SAVE persists it and
     // SettingsManager::Apply() re-applies it at boot.
@@ -236,25 +254,19 @@ bool CommsManager::Suspend() {
     // Release the PowerCC26XX_DISALLOW_STANDBY constraint that UART2_rxEnable() holds while RX is on,
     // so the MCU can reach STANDBY. TX is left intact so console logging still flushes before sleep.
     UART2_rxDisable(uart_handle_);
-    // An autobaud trigger that already holds RX low is answered on wake (Resume()). The host doesn't know the console
-    // rate, so drop the queued output instead of draining it before the sleep, which takes seconds at low rates and
-    // would delay the answer.
-    autobaud_triggered_ = AutobaudTriggered();
-    if (autobaud_triggered_) {
-        // The callback retires what already went out, synchronously.
-        if (uart_tx_in_progress_) UART2_writeCancel(uart_handle_);
-        uintptr_t key = HwiP_disable();
-        uart_tx_tail_ = uart_tx_head_;
-        HwiP_restore(key);
-    }
+    // A host holding RX low through the sleep (the SYNC wake trigger) is answered on wake (Resume()). It doesn't know the
+    // console rate, so drop the queued output instead of draining it before the sleep, which takes seconds at low
+    // rates and would delay the answer.
+    wake_trigger_ = ConsoleRxHeldLow(kWakeTriggerLowUs);
+    if (wake_trigger_) DropQueuedConsoleTx();
     return true;
 }
 
 bool CommsManager::Resume() {
     // Re-arm console UART reception after wake.
     UART2_rxEnable(uart_handle_);
-    if (!autobaud_triggered_) autobaud_triggered_ = AutobaudTriggered();
-    AnswerAutobaudTrigger();
+    if (wake_trigger_ || ConsoleRxHeldLow(kWakeTriggerLowUs)) AnswerConsoleBreak();
+    wake_trigger_ = false;
     return true;
 }
 
@@ -269,6 +281,7 @@ bool CommsManager::Update() {
         HwiP_restore(key);
     }
 
+    if (ConsoleBreakSeen()) AnswerConsoleBreak();
     UpdateAT();
     ReportQueuedRawPackets();
 
@@ -467,15 +480,18 @@ bool CommsManager::iface_getc(SettingsManager::SerialInterface iface, char& c) {
         //     return false;  // No chars to read.
         //     break;
         case SettingsManager::kConsole: {
-            if (UART2_getRxCount(uart_handle_) == 0) {
-                return false;  // No chars to read.
+            while (UART2_getRxCount(uart_handle_) != 0) {
+                size_t bytes_read;
+                int_fast16_t status = UART2_read(uart_handle_, &c, 1, &bytes_read);
+                if (status != UART2_STATUS_SUCCESS || bytes_read != 1) {
+                    return false;  // Failed to read character.
+                }
+                // A break's NUL. The break bit is set before the NUL reaches the RX ring, so a break that Update()
+                // hasn't answered yet is answered here.
+                if (c == '\0' && ConsoleBreakSeen()) AnswerConsoleBreak();
+                if (break_filter_.Accept(c)) return true;
             }
-            size_t bytes_read;
-            int_fast16_t status = UART2_read(uart_handle_, &c, 1, &bytes_read);
-            if (status == UART2_STATUS_SUCCESS && bytes_read == 1) {
-                return true;
-            }
-            return false;  // Failed to read character.
+            return false;  // No chars to read.
             break;
         }
         case SettingsManager::kNumSerialInterfaces:

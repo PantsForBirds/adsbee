@@ -13,6 +13,7 @@ extern "C" {
 #include "aircraft_dictionary_config.hh"
 #include "bsp.hh"
 #include "composite_array.hh"
+#include "console_autobaud.hh"
 #include "console_baud.hh"
 #include "cpp_at.hh"
 #include "settings.hh"
@@ -75,14 +76,16 @@ class CommsManager {
     bool Resume();
 
     /**
-     * Console autobaud trigger: a host that holds the console RX line (SURX) low through a reset or a SYNC wake gets
-     * kAutobaudAnswer ("UU") at the console baud rate once the console is ready, and measures the rate from it (the
-     * ADSBee 1421 Programmer does). Init(), Suspend() and Resume() check the line, which costs one pin read when it is
-     * high. Resume() answers right away; at boot, main() calls this once SettingsManager::Apply() has set the saved
-     * rate. Suspend() drops the queued console output when it sees the trigger, so the sleep starts at once.
-     * Waits up to kAutobaudReleaseUs for the host to release the line, and sends nothing if it doesn't.
+     * Console autobaud (console_autobaud.hh): sends ConsoleAutobaud::kAnswer ("UU") at the console's current rate.
+     * SetBaudRate() calls it right after every switch; main() calls AnnounceBootRate() once SettingsManager::Apply()
+     * has set the saved rate. Update() answers a break on the console RX line, and Resume() a SYNC wake with the line
+     * held low, with it.
      */
-    void AnswerAutobaudTrigger();
+    void AnnounceConsoleRate();
+    // At boot, after SettingsManager::Apply(): announces the rate unless Apply() switched it (and announced) already.
+    void AnnounceBootRate() {
+        if (!rate_announced_) AnnounceConsoleRate();
+    }
 
     /**
      * Blocks until all queued console TX bytes have physically left the wire. Two stages are needed:
@@ -257,8 +260,10 @@ class CommsManager {
     // Opens the console UART at the given baud rate and enables RX. Used by Init() and SetBaudRate().
     bool OpenUART(uint32_t baud);
 
-    // True if the console RX line has been held low for kAutobaudLowUs (AnswerAutobaudTrigger()).
-    static bool AutobaudTriggered();
+    // Drops the console output queued in the TX ring (what the UART is shifting out still goes).
+    void DropQueuedConsoleTx();
+    // Answers a break on the console RX line (or a SYNC wake trigger): drops the queued output and announces the rate.
+    void AnswerConsoleBreak();
 
     /**
      * Starts a UART2 write for the contiguous segment at the head of the TX ring, if the ring is non-empty. Sets
@@ -287,7 +292,9 @@ class CommsManager {
     CppAT at_parser_;
 
     UART2_Handle uart_handle_ = nullptr;
-    bool autobaud_triggered_ = false;  // Seen by Init() or Resume(), not answered yet.
+    bool rate_announced_ = false;  // AnnounceConsoleRate() ran since boot.
+    bool wake_trigger_ = false;    // Suspend() saw RX held low; Resume() answers it.
+    ConsoleAutobaud::BreakFilter break_filter_;
 
     // Software TX ring. Producer: iface_write (main loop) advances uart_tx_tail_. Consumer: KickTx() hands the
     // contiguous segment at uart_tx_head_ to UART2_write; uart_write_callback (HWI context) advances uart_tx_head_ by
