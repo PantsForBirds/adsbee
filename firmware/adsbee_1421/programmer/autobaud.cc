@@ -115,10 +115,12 @@ bool OtherRateHint(const uint32_t* cycles, size_t num_edges, bool first_edge_fal
     for (size_t i = 1; i < num_edges; i++) {
         uint32_t interval = cycles[i] - cycles[i - 1];
         if (interval < kGlitchCycles) continue;
-        bool low = ((i - 1) % 2 == 0) == first_edge_falling;
+        // Only low intervals: they lie inside a frame (a start bit and zero data bits), so they are whole bits. A high
+        // one can include the idle time between two frames, which is any length.
+        if (((i - 1) % 2 == 0) != first_edge_falling) continue;
         uint32_t millibits = Millibits(interval, bit_x16);
-        if (low && millibits > 9700) return true;
-        if (millibits < 700 || millibits > 10500) continue;
+        if (millibits > 9700) return true;
+        if (millibits < 700) continue;
         if (OffGrid(millibits) > 300 && ++misfits >= 3) return true;
     }
     Measurement m = MeasureNewest(cycles, num_edges, first_edge_falling, clock_hz, 9);
@@ -140,7 +142,8 @@ bool FitsRate(const uint32_t* cycles, size_t num_edges, bool first_edge_falling,
         if (millibits > 10500) continue;
         intervals++;
         if (millibits <= 1300) one_bit++;
-        if (OffGrid(millibits) > 300) misfits++;
+        // A high interval can include idle time between frames (see OtherRateHint()).
+        if (low && OffGrid(millibits) > 300) misfits++;
     }
     if (intervals < 4) return true;
     return misfits * 10 <= intervals && (intervals < 16 || one_bit > 0);

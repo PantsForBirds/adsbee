@@ -67,8 +67,8 @@ size_t CountShortIntervals(const uint32_t* cycles, size_t num_edges, uint32_t ba
 
 // The cheap check run over the newest edges: true if they show the console at another rate than `baud`. Any of:
 //   - two intervals shorter than 85% of a bit (faster data),
-//   - three intervals up to 10.5 bits that are more than 0.3 bits off a whole number of bits, or a low stretch longer
-//     than a start bit and 8 data bits (slower data, or a break),
+//   - three low intervals that are more than 0.3 bits off a whole number of bits, or one longer than a start bit and 8
+//     data bits (slower data, or a break). Low intervals lie inside a frame; a high one can include idle time,
 //   - a 'U' (9 alternating one-bit intervals) at a rate MatchesRate() doesn't accept, which also catches a "UU" at a
 //     whole fraction of `baud`: at 921600 baud, "UU" at 115200 is a square wave of exactly 8-bit intervals that frames
 //     without errors.
@@ -76,10 +76,10 @@ bool OtherRateHint(const uint32_t* cycles, size_t num_edges, bool first_edge_fal
                    uint32_t clock_hz);
 
 // True if the edges look like data at `baud`: no interval shorter than 0.7 bits, no low stretch longer than a start
-// bit and 8 data bits (that is a break, or slower data), at least 90% of the intervals up to 10.5 bits within 0.3 bits
-// of a whole number of bits, and, among 16 or more, at least one of about one bit (data at a half or a third of
-// `baud` has none). Fewer than 4 intervals up to 10.5 bits count as a fit (no evidence either way). Edge 0 is falling
-// if first_edge_falling.
+// bit and 8 data bits (that is a break, or slower data), at least 90% of the low intervals within 0.3 bits of a whole
+// number of bits, and, among 16 or more intervals up to 10.5 bits, at least one of about one bit (data at a half or a
+// third of `baud` has none). Fewer than 4 intervals up to 10.5 bits count as a fit (no evidence either way). Edge 0 is
+// falling if first_edge_falling.
 bool FitsRate(const uint32_t* cycles, size_t num_edges, bool first_edge_falling, uint32_t baud, uint32_t clock_hz);
 
 }  // namespace Autobaud

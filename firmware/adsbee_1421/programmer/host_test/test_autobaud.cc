@@ -349,6 +349,19 @@ TEST(Autobaud, ShortIntervalsAndFit) {
             EXPECT_FALSE(Autobaud::FitsRate(cycles.data(), cycles.size(), true, other, kClockHz)) << baud << " at " << other;
         }
     }
+    // Idle gaps of any length between frames (a module's DMA writes) are no hint at the right rate.
+    for (uint32_t baud : {9600u, 115200u, 1000000u}) {
+        std::vector<Edge> edges;
+        double t0 = 1000;
+        srand(3);
+        for (uint8_t byte : text) {
+            for (Edge e : Uart({byte}, baud, 0)) edges.push_back({e.t + t0, e.level});
+            t0 = edges.back().t + (1 + (rand() % 100) / 37.0) * kClockHz / baud;  // Stop bit plus 0 to 2.7 bits idle.
+        }
+        std::vector<uint32_t> cycles = Cycles(RunPio(edges, 4096));
+        EXPECT_FALSE(Autobaud::OtherRateHint(cycles.data(), cycles.size(), true, baud, kClockHz)) << baud;
+        EXPECT_TRUE(Autobaud::FitsRate(cycles.data(), cycles.size(), true, baud, kClockHz)) << baud;
+    }
     // Glitches don't count as short intervals.
     std::vector<uint32_t> glitch = {1000, 1008, 2000, 2006};
     EXPECT_EQ(Autobaud::CountShortIntervals(glitch.data(), glitch.size(), 1000000, kClockHz), 0u);
