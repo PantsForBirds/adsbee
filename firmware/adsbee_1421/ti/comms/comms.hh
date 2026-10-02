@@ -75,6 +75,16 @@ class CommsManager {
     bool Resume();
 
     /**
+     * Console autobaud trigger: a host that holds the console RX line (SURX) low through a reset or a SYNC wake gets
+     * kAutobaudAnswer ("UU") at the console baud rate once the console is ready, and measures the rate from it (the
+     * ADSBee 1421 Programmer does). Init(), Suspend() and Resume() check the line, which costs one pin read when it is
+     * high. Resume() answers right away; at boot, main() calls this once SettingsManager::Apply() has set the saved
+     * rate. Suspend() drops the queued console output when it sees the trigger, so the sleep starts at once.
+     * Waits up to kAutobaudReleaseUs for the host to release the line, and sends nothing if it doesn't.
+     */
+    void AnswerAutobaudTrigger();
+
+    /**
      * Blocks until all queued console TX bytes have physically left the wire. Two stages are needed:
      * first the software TX ring must empty and the last DMA write callback fire, but up to a FIFO's
      * worth of bytes can still be shifting out afterwards. Callers that need the line truly idle -- a
@@ -247,6 +257,9 @@ class CommsManager {
     // Opens the console UART at the given baud rate and enables RX. Used by Init() and SetBaudRate().
     bool OpenUART(uint32_t baud);
 
+    // True if the console RX line has been held low for kAutobaudLowUs (AnswerAutobaudTrigger()).
+    static bool AutobaudTriggered();
+
     /**
      * Starts a UART2 write for the contiguous segment at the head of the TX ring, if the ring is non-empty. Sets
      * uart_tx_in_progress_ accordingly. Must be called either with HWIs disabled (main loop) or from the UART write
@@ -274,6 +287,7 @@ class CommsManager {
     CppAT at_parser_;
 
     UART2_Handle uart_handle_ = nullptr;
+    bool autobaud_triggered_ = false;  // Seen by Init() or Resume(), not answered yet.
 
     // Software TX ring. Producer: iface_write (main loop) advances uart_tx_tail_. Consumer: KickTx() hands the
     // contiguous segment at uart_tx_head_ to UART2_write; uart_write_callback (HWI context) advances uart_tx_head_ by

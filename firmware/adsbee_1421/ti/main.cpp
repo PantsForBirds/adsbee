@@ -129,6 +129,7 @@ int main(void) {
     subg_radio.Init();
     adsbee.FeedWatchdog();
     settings_manager.Apply();
+    comms_manager.AnswerAutobaudTrigger();  // At the saved console rate.
 
     leds.FlashLED(bsp.k1090LEDPin, 100);  // Flash the LED for 100ms.
 

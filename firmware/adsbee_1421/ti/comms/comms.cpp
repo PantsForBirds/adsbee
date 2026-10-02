@@ -15,6 +15,8 @@
 #include DeviceFamily_constructPath(inc/hw_memmap.h)
 #include DeviceFamily_constructPath(driverlib/sys_ctrl.h)
 #include DeviceFamily_constructPath(driverlib/uart.h)
+#include DeviceFamily_constructPath(driverlib/cpu.h)
+#include <ti/drivers/GPIO.h>
 #include <ti/drivers/dpl/HwiP.h>
 /* clang-format on */
 
@@ -41,6 +43,24 @@ static const uint32_t kTxWaitMarginMs = 5;
 // watchdog in DrainConsoleTx(). What doesn't fit is dropped, as it is when the wait times out at any rate.
 static const uint32_t kTxRingSpaceWaitMaxMs = 250;
 static const uint32_t kTxDrainWaitMaxMs = 2000;
+
+// Console autobaud trigger (AnswerAutobaudTrigger()). The RX line must stay low for kAutobaudLowUs: far longer than any
+// low stretch in console traffic (a NUL byte is 0.94 ms at 9600 baud), and the RX pull-up keeps an unconnected line
+// high. The host then has kAutobaudReleaseUs to release it. Polled with CPUdelay() (4 cycles per loop at 48 MHz),
+// which needs no clock, so the check also works in Init(), before NoRTOS starts.
+static const uint32_t kAutobaudLowUs = 5000;
+static const uint32_t kAutobaudReleaseUs = 250000;
+static const uint32_t kAutobaudPollUs = 100;
+static const char kAutobaudAnswer[] = "UU";
+
+// Polls the console RX line until it reads `level` or timeout_us passes. Returns true if it read `level`.
+static bool WaitForConsoleRx(bool level, uint32_t timeout_us) {
+    for (uint32_t waited_us = 0;; waited_us += kAutobaudPollUs) {
+        if ((GPIO_read(bsp.kSubGUARTRXPin) != 0) == level) return true;
+        if (waited_us >= timeout_us) return false;
+        CPUdelay(kAutobaudPollUs * 48 / 4);
+    }
+}
 
 CommsManager::CommsManager(CommsManagerConfig config)
     : config_(config), at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)) {}
@@ -124,7 +144,19 @@ bool CommsManager::Init() {
         // Programmer.
         SysCtrlSystemReset();
     }
+    autobaud_triggered_ = AutobaudTriggered();
     return true;
+}
+
+bool CommsManager::AutobaudTriggered() { return !WaitForConsoleRx(true, kAutobaudLowUs); }
+
+void CommsManager::AnswerAutobaudTrigger() {
+    if (!autobaud_triggered_) return;
+    autobaud_triggered_ = false;
+    if (WaitForConsoleRx(true, kAutobaudReleaseUs)) {
+        UART2_flushRx(uart_handle_);  // The held-low line reads as a break or NUL bytes.
+        iface_write(SettingsManager::SerialInterface::kConsole, kAutobaudAnswer, sizeof(kAutobaudAnswer) - 1);
+    }
 }
 
 bool CommsManager::SetBaudRate(uint32_t baud) {
@@ -204,12 +236,25 @@ bool CommsManager::Suspend() {
     // Release the PowerCC26XX_DISALLOW_STANDBY constraint that UART2_rxEnable() holds while RX is on,
     // so the MCU can reach STANDBY. TX is left intact so console logging still flushes before sleep.
     UART2_rxDisable(uart_handle_);
+    // An autobaud trigger that already holds RX low is answered on wake (Resume()). The host doesn't know the console
+    // rate, so drop the queued output instead of draining it before the sleep, which takes seconds at low rates and
+    // would delay the answer.
+    autobaud_triggered_ = AutobaudTriggered();
+    if (autobaud_triggered_) {
+        // The callback retires what already went out, synchronously.
+        if (uart_tx_in_progress_) UART2_writeCancel(uart_handle_);
+        uintptr_t key = HwiP_disable();
+        uart_tx_tail_ = uart_tx_head_;
+        HwiP_restore(key);
+    }
     return true;
 }
 
 bool CommsManager::Resume() {
     // Re-arm console UART reception after wake.
     UART2_rxEnable(uart_handle_);
+    if (!autobaud_triggered_) autobaud_triggered_ = AutobaudTriggered();
+    AnswerAutobaudTrigger();
     return true;
 }
 

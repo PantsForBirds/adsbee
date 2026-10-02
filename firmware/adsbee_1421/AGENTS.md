@@ -137,6 +137,14 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 > ([`programmer/`](programmer/)) does this automatically, and any host tool that drives
 > RTS → SYNC and DTR → RESET_N can do it through the Programmer. See [Reflashing over UART: the SYNC bootloader backdoor](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
+## Console autobaud trigger
+
+`CommsManager::Init()` (boot) and `CommsManager::Resume()` (SYNC wake) check the console RX line
+(SURX, DIO_2). If a host has held it low for 5 ms, the firmware waits up to 250 ms for the release
+and sends `UU` at the console rate: at boot once `SettingsManager::Apply()` has set the saved rate
+(`main.cpp`), on a wake right away. With the line high the check is one pin read. See
+[Console autobaud](README.md#console-autobaud).
+
 ## SYNC low-power sleep
 
 An external host can force the CC1314 into **STANDBY** (deep sleep, SRAM retained) by driving the

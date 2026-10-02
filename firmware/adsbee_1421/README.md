@@ -15,6 +15,25 @@ Developer Kit.
 - [m1421 datasheet](../../word/exports/datasheet_adsbee_m1421.pdf): pinout and the AT command
   reference.
 
+## Console autobaud
+
+The console runs at its saved baud rate (`AT+BAUD_RATE=CONSOLE,<baud>`, then `AT+SETTINGS=SAVE`):
+any rate from 9600 to 3,000,000, factory default 1,000,000. A host that doesn't know the rate can
+ask for it. Hold the console RX line (SURX, pin 20) low through a reset or a SYNC wake, then
+release it. The firmware checks SURX early in its boot and when it wakes from SYNC sleep. If the
+line has been low for 5 ms, it waits up to 250 ms for the host to release it, then sends `UU`
+(0x55 0x55) at the console rate as soon as the console takes AT commands: about 50 ms after
+RESET_N is released, or right away after a wake. Every bit of a `U` ends in an edge, so the host
+can measure the bit time. If the host doesn't release the line, the firmware sends nothing.
+
+- Hold SURX low until at least 15 ms after RESET_N is released (the check, including the 5 ms
+  debounce, ends 12 to 15 ms after it), or until at least 20 ms after SYNC drops for a wake. The
+  [ADSBee 1421 Programmer](programmer/README.md#finding-the-console) holds it for 30 ms and 40 ms.
+- In normal operation nothing changes. An idle or unconnected SURX reads high (internal pull-up),
+  and console traffic never stays low for 5 ms (a NUL byte at 9600 baud is 0.94 ms). A host that
+  holds a break of 5 ms or longer through a reset or a wake gets a `UU`.
+- Firmware 0.3.11-rc3 and earlier doesn't answer.
+
 ## Reflashing over UART: the SYNC bootloader backdoor
 
 The m1421 can be reflashed over its console UART with no debugger and no button presses. Every
