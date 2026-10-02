@@ -186,6 +186,8 @@ class ADSBee {
     /**
      * Creates a composite timestamp using the current value of the SysTick timer (running at 125MHz) and the SysTick
      * wrap counter to simulate a timer running at 48MHz (which matches the frequency of the preamble detector PIO).
+     * SysTick is a per-core timer: only call this on the core that ran MLATCounterInit(), which is the core that
+     * handles the demodulator ISRs (core 1 with ISRS_ON_CORE1). On the other core it returns the wrap count alone.
      * @param[in] num_bits Number of bits to mask the counter value to. Defaults to full resolution.
      * @retval 48MHz counter value.
      */
@@ -194,7 +196,7 @@ class ADSBee {
     /**
      * Creates a composite timestamp using the current value of the SysTick timer (running at 125MHz) and the SysTick
      * wrap counter to simulate a timer running at 12MHz, which matches existing decoders that use the Mode S Beast
-     * protocol.
+     * protocol. Same per-core restriction as GetMLAT48MHzCounts().
      * @param[in] num_bits Number of bits to mask the counter value to. Defaults to 48 bits (6 Bytes) to match Mode S
      * Beast protocol.
      * @retval 48MHz counter value.

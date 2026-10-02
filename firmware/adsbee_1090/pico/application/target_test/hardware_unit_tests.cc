@@ -2,9 +2,46 @@
 
 #include "adsbee.hh"
 #include "eeprom.hh"
+#include "hardware/sync.h"
+#include "main.hh"  // For ISRS_ON_CORE1.
 #include "spi_coprocessor.hh"
 
 UTEST_STATE();
+
+// Function (and its argument) that core 1 should run next, set by RunOnISRCore() and cleared by core 1 once it ran.
+static void (*volatile core1_test_function)(void*) = nullptr;
+static void* volatile core1_test_function_arg = nullptr;
+
+void RunPendingTestFunctionOnCore1() {
+    void (*function)(void*) = core1_test_function;
+    if (function == nullptr) {
+        return;
+    }
+    __dmb();  // Read the argument after the function pointer that published it.
+    function(core1_test_function_arg);
+    __dmb();  // Finish the function's writes before reporting completion.
+    core1_test_function = nullptr;
+}
+
+bool RunOnISRCore(void (*function)(void*), void* arg, uint32_t timeout_ms) {
+#ifdef ISRS_ON_CORE1
+    core1_test_function_arg = arg;
+    __dmb();  // Publish the argument before the function pointer.
+    core1_test_function = function;
+    uint64_t deadline_us = time_us_64() + timeout_ms * kUsPerMs;
+    while (core1_test_function != nullptr) {
+        if (time_us_64() > deadline_us) {
+            core1_test_function = nullptr;
+            return false;
+        }
+    }
+    __dmb();  // Read the function's results after seeing it complete.
+#else
+    (void)timeout_ms;
+    function(arg);
+#endif
+    return true;
+}
 
 static constexpr uint32_t kTestWatchdogDeadlineMs = 60'000;
 static constexpr uint32_t kTestWatchdogFeedIntervalMs = 1000;
