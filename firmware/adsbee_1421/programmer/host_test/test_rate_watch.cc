@@ -24,17 +24,17 @@ namespace {
 
 constexpr double kInf = std::numeric_limits<double>::infinity();
 constexpr uint32_t kClockHz = 125000000;
-constexpr double kProgrammerLoopNs = 5000;   // Bridge loop iteration.
-constexpr double kModuleLoopNs = 100000;     // Module main loop iteration.
-constexpr double kModuleReopenNs = 150000;   // Module: OK drained -> UART closed, reopened, "UU" queued.
-constexpr double kHostTurnaroundNs = 2e6;    // Host: reply seen -> next command at the Programmer.
+constexpr double kProgrammerLoopNs = 5000;  // Bridge loop iteration.
+constexpr double kModuleLoopNs = 100000;    // Module main loop iteration.
+constexpr double kModuleReopenNs = 150000;  // Module: OK drained -> UART closed, reopened, "UU" queued.
+constexpr double kHostTurnaroundNs = 2e6;   // Host: reply seen -> next command at the Programmer.
 
 double BitNs(double baud) { return 1e9 / baud; }
 
 // One direction of a UART line; idles high.
 struct Wire {
-    std::vector<double> t;     // Level changes, in time order.
-    std::vector<bool> level;   // Level after each change.
+    std::vector<double> t;    // Level changes, in time order.
+    std::vector<bool> level;  // Level after each change.
     bool last = true;
 
     void Set(double when, bool to) {
@@ -100,8 +100,10 @@ struct Receiver {
             }
             double start = wire->LevelAt(scan_from) ? wire->NextChange(scan_from, false) : scan_from;
             if (start + 10 * bit > now) {
-                if (start != kInf) scan_from = start;
-                else if (wire->LevelAt(now)) scan_from = now;
+                if (start != kInf)
+                    scan_from = start;
+                else if (wire->LevelAt(now))
+                    scan_from = now;
                 return;
             }
             if (wire->LevelAt(start + 0.5 * bit)) {  // False start.
@@ -164,9 +166,9 @@ struct Module {
     double next_loop = 0;
     double switch_at = kInf;  // Pending rate switch (after the OK drains).
     uint32_t switch_to = 0;
-    double boot_at = kInf;    // Pending boot steps.
+    double boot_at = kInf;  // Pending boot steps.
     int boot_step = 0;
-    bool silent = false;      // Old firmware: never says "UU".
+    bool silent = false;  // Old firmware: never says "UU".
     bool alive = true;
     double stream_every_ns = 0;  // Report output.
     double next_stream = 0;
@@ -302,9 +304,7 @@ struct Module {
 struct WireEdges : public EdgeSource {
     const Wire* wire = nullptr;
     double now = 0;
-    uint64_t Count() override {
-        return std::upper_bound(wire->t.begin(), wire->t.end(), now) - wire->t.begin();
-    }
+    uint64_t Count() override { return std::upper_bound(wire->t.begin(), wire->t.end(), now) - wire->t.begin(); }
     size_t Read(uint64_t from, uint64_t to, uint32_t* cycles, size_t max_edges, uint64_t* first_index) override {
         uint64_t first = to - from > max_edges ? to - max_edges : from;
         *first_index = first;
@@ -325,7 +325,7 @@ struct Programmer {
     Receiver rx;
     Transmitter tx;
     std::deque<uint8_t> rx_ring;
-    uint32_t rx_received = 0;  // Free-running, as target_uart.cc's ring head.
+    uint32_t rx_received = 0;     // Free-running, as target_uart.cc's ring head.
     std::deque<uint8_t> host_in;  // CDC FIFO.
     std::string host_out;
     uint32_t errors = 0;
@@ -510,8 +510,8 @@ TEST(RateWatch, FollowsRateChange) {
 TEST(RateWatch, EarlierOkOnTheSameLine) {
     for (uint32_t to : {9600u, 115200u, 3000000u}) {
         Sim sim(1000000, 1000000);
-        std::string reply = sim.Command("AT+LOG_LEVEL=INFO\rAT+BAUD_RATE=CONSOLE," + std::to_string(to) + "\r\n",
-                                        "OK\r\nOK\r\n");
+        std::string reply =
+            sim.Command("AT+LOG_LEVEL=INFO\rAT+BAUD_RATE=CONSOLE," + std::to_string(to) + "\r\n", "OK\r\nOK\r\n");
         EXPECT_EQ(reply, "OK\r\nOK\r\n") << to;
         EXPECT_EQ(sim.QueryBaud(), Sim::BaudLine(to)) << to;
     }
@@ -586,14 +586,18 @@ TEST(RateWatch, BreakLock) {
             sim.HostWrite("AT+UPT");
             sim.Run(1);
             sim.programmer.watch.Ask((uint64_t)(sim.now / 1000));
-            ASSERT_TRUE(sim.RunUntil([&] { return sim.programmer.watch.phase() == RateWatch::Phase::kLocked &&
-                                                  !sim.programmer.watch.BreakActive(); },
-                                     100))
+            ASSERT_TRUE(sim.RunUntil(
+                [&] {
+                    return sim.programmer.watch.phase() == RateWatch::Phase::kLocked &&
+                           !sim.programmer.watch.BreakActive();
+                },
+                100))
                 << hidden << " from " << programmer;
             EXPECT_EQ(sim.programmer.baud, ConsoleBaud::CC1314ActualBaud(hidden));
             EXPECT_EQ(sim.programmer.watch.last_lock().asks, 1u);
             EXPECT_LT(sim.programmer.watch.last_lock().elapsed_us, 6000u) << hidden;
-            // The partial line, if it reached the module at its rate, continues; otherwise it is garbage on its own line.
+            // The partial line, if it reached the module at its rate, continues; otherwise it is garbage on its own
+            // line.
             sim.module.line.clear();
             EXPECT_EQ(sim.Command("\r\nAT+UPTIME?\r\n", "\r\n").rfind("UPTIME=", 0), 0u) << hidden;
         }

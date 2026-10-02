@@ -111,9 +111,10 @@ BridgeExit BridgeRun() {
         }
         bool unknown = watch.phase() == RateWatch::Phase::kUnknown;
         if (unknown && !was_unknown) {
-            CdcPrintf("\r\n[ADSBee 1421 Programmer] Console not found; UART left at %lu baud, asking again every "
-                      "%lu s.\r\n",
-                      (unsigned long)TargetUartGetBaud(), (unsigned long)(RateWatch::kUnknownAskIntervalMs / 1000));
+            CdcPrintf(
+                "\r\n[ADSBee 1421 Programmer] Console not found; UART left at %lu baud, asking again every "
+                "%lu s.\r\n",
+                (unsigned long)TargetUartGetBaud(), (unsigned long)(RateWatch::kUnknownAskIntervalMs / 1000));
         }
         was_unknown = unknown;
 
@@ -144,7 +145,7 @@ BridgeExit BridgeRun() {
             BootselEvent event = PollBootsel();
             if (event != BootselEvent::kNone) {
                 while (GetBootselButton()) sleep_ms(20);
-                sleep_ms(50);  // Debounce the release.
+                sleep_ms(50);   // Debounce the release.
                 PollBootsel();  // Consume the release so the next loop's poll sees no stale edge.
                 TargetUartHoldTxLow(false);
                 bridge_active = false;

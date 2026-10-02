@@ -32,9 +32,9 @@ inline uint32_t CountToCycles(uint32_t count, uint64_t edge_index) {
 }
 
 struct Measurement {
-    uint32_t baud = 0;        // 0: no square wave found.
-    uint32_t first_edge = 0;  // Index of its first edge (a falling edge: the start bit).
-    uint32_t bits = 0;        // Number of bit times averaged.
+    uint32_t baud = 0;         // 0: no square wave found.
+    uint32_t first_edge = 0;   // Index of its first edge (a falling edge: the start bit).
+    uint32_t bits = 0;         // Number of bit times averaged.
     uint32_t span_cycles = 0;  // Clock cycles those bits took.
     uint32_t last_edge = 0;    // Index of the run's last edge.
 };
@@ -72,8 +72,7 @@ size_t CountShortIntervals(const uint32_t* cycles, size_t num_edges, uint32_t ba
 //   - a 'U' (9 alternating one-bit intervals) at a rate MatchesRate() doesn't accept, which also catches a "UU" at a
 //     whole fraction of `baud`: at 921600 baud, "UU" at 115200 is a square wave of exactly 8-bit intervals that frames
 //     without errors.
-bool OtherRateHint(const uint32_t* cycles, size_t num_edges, bool first_edge_falling, uint32_t baud,
-                   uint32_t clock_hz);
+bool OtherRateHint(const uint32_t* cycles, size_t num_edges, bool first_edge_falling, uint32_t baud, uint32_t clock_hz);
 
 // True if the edges look like data at `baud`: no interval shorter than 0.7 bits, no low stretch longer than a start
 // bit and 8 data bits (that is a break, or slower data), at least 90% of the low intervals within 0.3 bits of a whole

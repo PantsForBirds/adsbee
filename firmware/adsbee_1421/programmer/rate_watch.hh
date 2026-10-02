@@ -73,7 +73,7 @@ class RateWatch {
     static constexpr uint32_t kFactoryBaud = 1000000;
     // While the rate is unknown, a hint resolves at most this often, and never leads to an ask.
     static constexpr uint32_t kUnknownHintIntervalMs = 100;
-    static constexpr size_t kMaxCheckedEdges = 32;  // Newest edges checked for a hint,
+    static constexpr size_t kMaxCheckedEdges = 32;     // Newest edges checked for a hint,
     static constexpr uint32_t kCheckIntervalUs = 100;  // at most this often (or once the line goes quiet).
     static constexpr uint32_t kQuietUs = 50;  // Analyze after this long without a new edge (or kAnalyzeEvery edges).
     // A 'U' at 9600 baud takes 1.04 ms to show its 10 edges, and a hint check runs every kCheckIntervalUs.
@@ -112,12 +112,12 @@ class RateWatch {
 
     // Statistics (status messages, test builds' timing output).
     struct LockInfo {
-        uint32_t measured_baud = 0;  // From the "UU".
-        uint32_t baud = 0;           // The UART's new rate (the measurement snapped to a console rate).
-        uint32_t elapsed_us = 0;     // From the reset, the first break or the hint.
-        uint32_t asks = 0;           // Breaks sent for it.
-        uint32_t answer_us = 0;      // Last break's start to the first edge after it (0: no break).
-        uint32_t uu_to_lock_us = 0;  // The "UU"'s first edge to the lock.
+        uint32_t measured_baud = 0;       // From the "UU".
+        uint32_t baud = 0;                // The UART's new rate (the measurement snapped to a console rate).
+        uint32_t elapsed_us = 0;          // From the reset, the first break or the hint.
+        uint32_t asks = 0;                // Breaks sent for it.
+        uint32_t answer_us = 0;           // Last break's start to the first edge after it (0: no break).
+        uint32_t uu_to_lock_us = 0;       // The "UU"'s first edge to the lock.
         uint32_t quiet_before_uu_us = 0;  // The line was idle this long before the "UU" (up to 1 s).
         bool retuned = false;
     };
@@ -183,13 +183,13 @@ class RateWatch {
     Phase watch_phase_ = Phase::kUnknown;  // Where a lock returns to when it finds nothing.
     uint32_t baud_ = 0;
     uint32_t pending_errors_ = 0;
-    uint64_t checked_ = 0;          // Count() at the last hint check.
-    uint64_t check_from_ = 0;       // Edges before this (before the last lock) aren't checked.
+    uint64_t checked_ = 0;     // Count() at the last hint check.
+    uint64_t check_from_ = 0;  // Edges before this (before the last lock) aren't checked.
     uint64_t last_check_us_ = 0;
-    uint64_t mark_ = 0;             // First edge the current lock may use.
-    uint64_t analyzed_count_ = 0;   // Count() at the last analysis.
+    uint64_t mark_ = 0;            // First edge the current lock may use.
+    uint64_t analyzed_count_ = 0;  // Count() at the last analysis.
     uint64_t last_count_ = 0;
-    uint64_t last_edge_us_ = 0;     // When Count() last changed.
+    uint64_t last_edge_us_ = 0;  // When Count() last changed.
     uint64_t lock_start_us_ = 0;
     uint64_t deadline_us_ = 0;
     uint64_t break_start_us_ = 0;
@@ -197,10 +197,10 @@ class RateWatch {
     bool break_pending_ = false;  // The NUL went out; the break starts at break_start_us_.
     bool sync_high_ = false;      // As of the last Poll().
     bool break_active_ = false;
-    uint32_t asks_ = 0;             // In the current lock.
+    uint32_t asks_ = 0;  // In the current lock.
     uint64_t ask_start_us_ = 0;
-    uint64_t answer_us_ = 0;        // First edge after the last break (0: none yet).
-    uint64_t next_ask_us_ = 0;      // kUnknown.
+    uint64_t answer_us_ = 0;    // First edge after the last break (0: none yet).
+    uint64_t next_ask_us_ = 0;  // kUnknown.
     uint64_t last_resolve_us_ = 0;
     struct ForwardSample {
         uint32_t received;  // rx_received

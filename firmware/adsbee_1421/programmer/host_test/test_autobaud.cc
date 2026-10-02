@@ -9,10 +9,9 @@
 #include <initializer_list>
 #include <vector>
 
-#include "gtest/gtest.h"
 #include "autobaud.hh"
 #include "console_baud.hh"
-
+#include "gtest/gtest.h"
 
 static constexpr uint32_t kClockHz = 125000000;  // The Programmer's clk_sys.
 static constexpr size_t kMaxEdges = 64;
@@ -29,8 +28,7 @@ struct Edge {
 
 // Builds the 8N1 waveform of `bytes` sent back to back at `baud`, starting after `idle_bits` of idle (high). Every
 // falling edge comes `skew` bit times early and every rising edge `skew` late (duty-cycle distortion: low bits longer).
-static std::vector<Edge> Uart(const std::vector<uint8_t>& bytes, double baud, double idle_bits = 20,
-                              double skew = 0) {
+static std::vector<Edge> Uart(const std::vector<uint8_t>& bytes, double baud, double idle_bits = 20, double skew = 0) {
     std::vector<Edge> edges;
     double bit = kClockHz / baud;
     bool level = true;
@@ -129,8 +127,8 @@ TEST(Autobaud, CounterModel) {
 // "UU" at 9600..3 M (the CC1314's actual rate) measured within 0.4%.
 TEST(Autobaud, Rates) {
     uint32_t worst = 0, worst_baud = 0;
-    std::vector<uint32_t> rates = {9600,   19200,  38400,  57600,   76800,   115200,  123457,  230400, 250000,
-                                   345678, 460800, 500000, 921600,  1000000, 1500000, 2000000, 2500000, 3000000};
+    std::vector<uint32_t> rates = {9600,   19200,  38400,  57600,  76800,   115200,  123457,  230400,  250000,
+                                   345678, 460800, 500000, 921600, 1000000, 1500000, 2000000, 2500000, 3000000};
     for (uint32_t baud = ConsoleBaud::kMin; baud <= ConsoleBaud::kMax; baud += 7919) rates.push_back(baud);
     for (uint32_t nominal : rates) {
         double actual = ConsoleBaud::CC1314ActualBaud(nominal);
@@ -247,9 +245,15 @@ static bool NoneOrTrue(const std::vector<Edge>& edges, double baud) {
 TEST(Autobaud, WrongPatterns) {
     for (uint32_t baud : {9600u, 115200u, 1000000u}) {
         int locks = 0;
-        for (std::vector<uint8_t> bytes : std::initializer_list<std::vector<uint8_t>>{
-                 {'A', 'T', '\r', '\n'}, {0xAA, 0xAA, 0xAA, 0xAA}, {0x00, 0x00, 0x00}, {0xFF, 0xFF}, {0x33, 0x33, 0x33},
-                 {0xCC, 0xCC, 0xCC}, {0x5A, 0xA5, 0x5A}, {0x0F, 0xF0, 0x0F}, {0x55 ^ 0x01, 0x55 ^ 0x80}}) {
+        for (std::vector<uint8_t> bytes : std::initializer_list<std::vector<uint8_t>>{{'A', 'T', '\r', '\n'},
+                                                                                      {0xAA, 0xAA, 0xAA, 0xAA},
+                                                                                      {0x00, 0x00, 0x00},
+                                                                                      {0xFF, 0xFF},
+                                                                                      {0x33, 0x33, 0x33},
+                                                                                      {0xCC, 0xCC, 0xCC},
+                                                                                      {0x5A, 0xA5, 0x5A},
+                                                                                      {0x0F, 0xF0, 0x0F},
+                                                                                      {0x55 ^ 0x01, 0x55 ^ 0x80}}) {
             EXPECT_TRUE(NoneOrTrue(Uart(bytes, baud), baud));
             // With gaps of a fraction of a bit between the bytes too.
             std::vector<Edge> edges;
@@ -317,7 +321,6 @@ TEST(Autobaud, Snap) {
     }
 }
 
-
 // MatchesRate(): within the measurement's resolution of the console's actual rate.
 TEST(Autobaud, MatchesRate) {
     // A "UU" (18 bits) at 115200: 19,500 cycles.
@@ -333,7 +336,8 @@ TEST(Autobaud, MatchesRate) {
 
 // CountShortIntervals() and FitsRate() on data at, above and below the UART's rate.
 TEST(Autobaud, ShortIntervalsAndFit) {
-    std::vector<uint8_t> text = {'O', 'K', '\r', '\n', 'A', 'T', '+', 0x00, 0xFF, 'U', 'U', 0x13, 0x37, 'R', 'X', '_', 'S', 'T'};
+    std::vector<uint8_t> text = {'O', 'K', '\r', '\n', 'A', 'T', '+', 0x00, 0xFF,
+                                 'U', 'U', 0x13, 0x37, 'R', 'X', '_', 'S',  'T'};
     for (uint32_t baud : {9600u, 57600u, 115200u, 1000000u, 2000000u, 3000000u}) {
         double actual = ConsoleBaud::CC1314ActualBaud(baud);
         std::vector<uint32_t> cycles = Cycles(RunPio(Uart(text, actual), 4096));
@@ -346,7 +350,8 @@ TEST(Autobaud, ShortIntervalsAndFit) {
                 EXPECT_GE(Autobaud::CountShortIntervals(cycles.data(), cycles.size(), other, kClockHz), 2u)
                     << baud << " at " << other;
             }
-            EXPECT_FALSE(Autobaud::FitsRate(cycles.data(), cycles.size(), true, other, kClockHz)) << baud << " at " << other;
+            EXPECT_FALSE(Autobaud::FitsRate(cycles.data(), cycles.size(), true, other, kClockHz))
+                << baud << " at " << other;
         }
     }
     // Idle gaps of any length between frames (a module's DMA writes) are no hint at the right rate.

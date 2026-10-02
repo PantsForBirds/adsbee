@@ -254,8 +254,8 @@ bool CommsManager::Suspend() {
     // Release the PowerCC26XX_DISALLOW_STANDBY constraint that UART2_rxEnable() holds while RX is on,
     // so the MCU can reach STANDBY. TX is left intact so console logging still flushes before sleep.
     UART2_rxDisable(uart_handle_);
-    // A host holding RX low through the sleep (the SYNC wake trigger) is answered on wake (Resume()). It doesn't know the
-    // console rate, so drop the queued output instead of draining it before the sleep, which takes seconds at low
+    // A host holding RX low through the sleep (the SYNC wake trigger) is answered on wake (Resume()). It doesn't know
+    // the console rate, so drop the queued output instead of draining it before the sleep, which takes seconds at low
     // rates and would delay the answer.
     wake_trigger_ = ConsoleRxHeldLow(kWakeTriggerLowUs);
     if (wake_trigger_) DropQueuedConsoleTx();

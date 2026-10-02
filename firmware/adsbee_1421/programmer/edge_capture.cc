@@ -6,7 +6,7 @@
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 
-static constexpr uint kRingBits = 14;                      // 16 kB.
+static constexpr uint kRingBits = 14;                          // 16 kB.
 static constexpr size_t kRingEntries = (1u << kRingBits) / 4;  // 4096 edges: 2.7 ms of "UU" at 3 Mbaud.
 // Entries never read: the ones the DMA could overwrite while a copy runs (1024 edges take at least 0.68 ms).
 static constexpr size_t kReadMargin = 1024;
