@@ -5,6 +5,16 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  # release.yml calls this workflow to build one product from a release tag. With a product given,
+  # only that product's jobs run and the version sync check is skipped (it compares a commit with
+  # its parent and would flag the release tag being built). Push and pull_request runs pass no
+  # input and behave as before.
+  workflow_call:
+    inputs:
+      product:
+        description: "Product to build: adsbee_1090 or adsbee_1421"
+        required: true
+        type: string
 
 jobs:
   # Detect which product's files changed so each application is only rebuilt when its own
@@ -14,11 +24,14 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      adsbee_1090: ${{ steps.filter.outputs.adsbee_1090 }}
-      adsbee_1421: ${{ steps.filter.outputs.adsbee_1421 }}
+      # A release build (inputs.product set) selects its product directly; otherwise the path filter decides.
+      adsbee_1090: ${{ inputs.product && (inputs.product == 'adsbee_1090' && 'true' || 'false') || steps.filter.outputs.adsbee_1090 }}
+      adsbee_1421: ${{ inputs.product && (inputs.product == 'adsbee_1421' && 'true' || 'false') || steps.filter.outputs.adsbee_1421 }}
     steps:
     - uses: actions/checkout@v4
+      if: ${{ !inputs.product }}
     - uses: dorny/paths-filter@v3
+      if: ${{ !inputs.product }}
       id: filter
       with:
         filters: |
@@ -407,8 +420,9 @@ jobs:
   version_sync_check:
     # Fail if a product's firmware (or its Settings struct version) changed while its firmware
     # version is already released or lower than its latest release, per the release tags.
-    # See firmware/scripts/check_version_sync.sh.
+    # See firmware/scripts/check_version_sync.sh. Skipped in release builds (see workflow_call above).
     runs-on: ubuntu-latest
+    if: ${{ !inputs.product }}
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
