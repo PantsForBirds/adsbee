@@ -294,7 +294,6 @@ class CommsManager {
     UART2_Handle uart_handle_ = nullptr;
     bool rate_announced_ = false;  // AnnounceConsoleRate() ran since boot.
     bool wake_trigger_ = false;    // Suspend() saw RX held low; Resume() answers it.
-    ConsoleAutobaud::BreakFilter break_filter_;
 
     // Software TX ring. Producer: iface_write (main loop) advances uart_tx_tail_. Consumer: KickTx() hands the
     // contiguous segment at uart_tx_head_ to UART2_write; uart_write_callback (HWI context) advances uart_tx_head_ by

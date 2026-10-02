@@ -21,31 +21,15 @@ namespace ConsoleAutobaud {
 static constexpr char kAnswer[] = "UU";
 static constexpr uint16_t kAnswerLen = sizeof(kAnswer) - 1;
 
-// Keeps the NUL byte a break leaves in the console's input away from the AT parser (cppAT ends a line at a NUL, so it
-// would cut a command the host is in the middle of sending). The PL011 puts one NUL with its break flag set into the
-// RX FIFO per break and raises the break bit in its raw interrupt status at the same time; the UART2 driver's DMA
-// copies only the data bits into its RX ring. CommsManager clears the status bit when it answers the break and calls
-// OnBreak(); the NUL reaches the ring after that.
-class BreakFilter {
-   public:
-    // Caps how many NULs are waiting to be dropped, in case a break never left one (the UART was reopened meanwhile).
-    static constexpr uint8_t kMaxPendingNuls = 4;
-
-    void OnBreak() {
-        if (pending_nuls_ < kMaxPendingNuls) pending_nuls_++;
-    }
-
-    // Returns false if `c` is a break's NUL, which the caller drops.
-    bool Accept(char c) {
-        if (c != '\0' || pending_nuls_ == 0) return true;
-        pending_nuls_--;
-        return false;
-    }
-
-    uint8_t pending_nuls() const { return pending_nuls_; }
-
-   private:
-    uint8_t pending_nuls_ = 0;
-};
+// The console ignores NUL bytes. Each break leaves one in the input (the PL011 receives a break as a NUL with its
+// break flag set; the UART2 driver's DMA copies only the data bits into its RX ring), and cppAT would end a line there,
+// cutting a command the host is in the middle of sending. No AT command takes binary input.
+//
+// A break right after another, with no character in between, reaches the PL011 as a plain NUL with neither the break
+// nor the framing error flag set (measured on the CC1314: the second of two breaks 200 ms apart goes unflagged), so it
+// can't be told from a NUL byte and goes unanswered. Any character between them clears that: a host that may send a
+// break twice sends a character (a NUL, which the console ignores) after the first one's answer, and before the next
+// break. The ADSBee 1421 Programmer does both (programmer/rate_watch.hh).
+inline bool IgnoredConsoleByte(char c) { return c == '\0'; }
 
 }  // namespace ConsoleAutobaud

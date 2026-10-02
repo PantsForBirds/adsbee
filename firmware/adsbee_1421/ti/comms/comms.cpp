@@ -63,7 +63,8 @@ static bool ConsoleRxHeldLow(uint32_t timeout_us) {
 // Break detection. UART2CC26X2 never enables the PL011's break interrupt (only receive timeout, and overrun when
 // subscribed), so UART2_EVENT_BREAK never fires on its own, and its RX DMA copies only the data bits of a break's NUL
 // into the RX ring. The raw interrupt status still latches the break whatever the mask, so the main loop reads it:
-// one register read per loop. Clearing writes only the break bit, which the driver's ISR never touches.
+// one register read per loop. Clearing writes only the break bit, which the driver's ISR never touches (it clears the
+// bits it has enabled). See console_autobaud.hh for the repeated-break case.
 static inline bool ConsoleBreakSeen() { return (HWREG(UART0_BASE + UART_O_RIS) & UART_INT_BE) != 0; }
 static inline void ClearConsoleBreak() { HWREG(UART0_BASE + UART_O_ICR) = UART_INT_BE; }
 
@@ -170,7 +171,6 @@ void CommsManager::DropQueuedConsoleTx() {
 
 void CommsManager::AnswerConsoleBreak() {
     ClearConsoleBreak();
-    break_filter_.OnBreak();
     DropQueuedConsoleTx();
     AnnounceConsoleRate();
 }
@@ -489,7 +489,7 @@ bool CommsManager::iface_getc(SettingsManager::SerialInterface iface, char& c) {
                 // A break's NUL. The break bit is set before the NUL reaches the RX ring, so a break that Update()
                 // hasn't answered yet is answered here.
                 if (c == '\0' && ConsoleBreakSeen()) AnswerConsoleBreak();
-                if (break_filter_.Accept(c)) return true;
+                if (!ConsoleAutobaud::IgnoredConsoleByte(c)) return true;
             }
             return false;  // No chars to read.
             break;
