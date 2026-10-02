@@ -212,12 +212,13 @@ int main() {
                         // because AT+BOOTLOADER_PIN=0 turned the backdoor off. Bridge the console
                         // anyway, so the user can still reach the module (and send
                         // AT+BOOTLOADER_PIN=1), instead of retrying entry forever.
-                        CdcPrintf("WARNING: ROM bootloader entry failed but the application console answers. "
-                                  "Entering pass-through WITHOUT checking the image against the baked %s. If "
-                                  "the bootloader backdoor is disabled (AT+BOOTLOADER_PIN? answers 0), "
-                                  "AT+BOOTLOADER_PIN=1 enables it again; tap BOOTSEL afterwards to rerun the "
-                                  "check.\r\n",
+                        // One CdcPrintf per line: each must fit kCdcTextMax (cdc_text.hh).
+                        CdcPrintf("WARNING: ROM bootloader entry failed but the application console answers.\r\n");
+                        CdcPrintf("Entering pass-through WITHOUT checking the image against the baked %s.\r\n",
                                   kFirmwareVersionStr);
+                        CdcPrintf("If the bootloader backdoor is disabled (AT+BOOTLOADER_PIN? answers 0), "
+                                  "AT+BOOTLOADER_PIN=1 enables it again; tap BOOTSEL afterwards to rerun the "
+                                  "check.\r\n");
                         if (force_flash || erase_settings_armed) {
                             CdcPrintf("The %s needs the bootloader and did not run.%s\r\n",
                                       force_flash ? "forced reflash" : "settings erase",

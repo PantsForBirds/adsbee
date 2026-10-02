@@ -86,9 +86,9 @@ To bake a different image, pass `-DADSBEE_1421_HEX=<path>` to CMake.
 
   This is the escape hatch for a device whose saved settings stop the console coming up. It can
   be armed from the wait loops as well as from pass-through, so it works while the Programmer is
-  stuck reporting `Device console not responding at any whitelisted baud rate`. In that state
-  `AT+SETTINGS=RESET` is unavailable, because it needs a console that already answers. It is never triggered automatically, because it discards the user's
-  settings.
+  stuck reporting `Device console not responding ...`. In that state `AT+SETTINGS=RESET` is
+  unavailable, because it needs a console that already answers. It is never triggered
+  automatically, because it discards the user's settings.
 
 ## LED legend (WS2812)
 

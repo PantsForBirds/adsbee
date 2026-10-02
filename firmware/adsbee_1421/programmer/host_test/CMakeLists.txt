@@ -14,6 +14,11 @@ target_include_directories(modem_lines_test PRIVATE ..)
 target_compile_options(modem_lines_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME modem_lines_test COMMAND modem_lines_test)
 
+add_executable(cdc_text_test cdc_text_test.cc)
+target_include_directories(cdc_text_test PRIVATE ..)
+target_compile_options(cdc_text_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME cdc_text_test COMMAND cdc_text_test)
+
 # The Programmer's reboot-to-BOOTSEL baud must match the ADSBee 1090's PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE.
 set(ADSBEE_1090_PICO_CMAKE "${CMAKE_CURRENT_LIST_DIR}/../../../adsbee_1090/pico/CMakeLists.txt")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ADSBEE_1090_PICO_CMAKE}")
