@@ -59,8 +59,7 @@ bool LR2021::SetOokModulationParams(uint32_t bitrate, OokPulseShape pulse_shape,
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetOokModulationParams", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetOokModulationParams");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -92,8 +91,7 @@ bool LR2021::SetOokModulationParamsAdv(uint32_t bitrate, OokPulseShape pulse_sha
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetOokModulationParamsAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetOokModulationParamsAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -134,8 +132,7 @@ bool LR2021::SetOokPacketParams(uint16_t pre_len_tx, OokAddrComp addr_comp, OokP
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetOokPacketParams", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetOokPacketParams");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -175,8 +172,7 @@ bool LR2021::SetOokCrcParams(uint32_t polynom, uint32_t init) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetOokCrcParams", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetOokCrcParams");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -213,8 +209,7 @@ bool LR2021::SetOokSyncWord(uint32_t syncword, OokBitOrder bit_order, uint8_t nb
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetOokSyncWord", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetOokSyncWord");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -248,8 +243,7 @@ bool LR2021::SetOokAddress(uint8_t addr_node, uint8_t addr_bcast) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetOokAddress", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetOokAddress");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -290,8 +284,7 @@ bool LR2021::SetOokDetector(uint16_t preamble_pattern, uint8_t pattern_length, u
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetOokDetector", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetOokDetector");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -328,8 +321,7 @@ bool LR2021::SetOokWhiteningParams(uint8_t bit_idx, uint16_t polynom, uint16_t i
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetOokWhiteningParams", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetOokWhiteningParams");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -387,8 +379,7 @@ bool LR2021::GetOokRxStats(OokRxStats* stats_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetOokRxStats", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetOokRxStats");
             return false;
         }
 
@@ -449,8 +440,7 @@ bool LR2021::GetOokRxStatsAdv(OokRxStatsAdv* stats_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetOokRxStatsAdv", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetOokRxStatsAdv");
             return false;
         }
 
@@ -517,8 +507,7 @@ bool LR2021::GetOokPacketStatus(OokPacketStatus* status_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetOokPacketStatus", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetOokPacketStatus");
             return false;
         }
 

@@ -34,32 +34,68 @@ jobs:
             - 'firmware/modules/**'
             - '.github/workflows/firmware.yml'
 
+  # Host unit tests for every product, in one job so googletest is built (or restored from the cache)
+  # only once per run. Each product's tests run only when its files changed.
   host_build_and_test:
     runs-on: ubuntu-latest
     container: coolnamesalltaken/pico-docker
     needs: changes
-    if: needs.changes.outputs.adsbee_1090 == 'true'
+    if: needs.changes.outputs.adsbee_1090 == 'true' || needs.changes.outputs.adsbee_1421 == 'true'
+    env:
+      GOOGLETEST_CMAKE_FLAGS: -DBUILD_SHARED_LIBS=ON
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: 'recursive'
-    - name: Build googletest submodule
+    - name: Identify host toolchain
+      id: toolchain
+      # Part of the googletest cache key, so a new compiler or CMake in the container image rebuilds it.
+      run: echo "versions=gcc$(g++ -dumpfullversion)-cmake$(cmake --version | head -n1 | cut -d' ' -f3)" >> "$GITHUB_OUTPUT"
+    - name: Cache googletest build
+      id: googletest_cache
+      uses: actions/cache@v4
+      with:
+        # Only the built libraries are used: the tests take the headers from the googletest sources.
+        path: firmware/modules/googletest/build/lib
+        key: googletest-${{ runner.os }}-pico-docker-${{ steps.toolchain.outputs.versions }}-${{ env.GOOGLETEST_CMAKE_FLAGS }}-${{ hashFiles('firmware/modules/googletest/**') }}
+    - name: Build googletest
+      if: steps.googletest_cache.outputs.cache-hit != 'true'
       working-directory: firmware/modules/googletest
-      run: mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make
-    - name: Create build directory
+      run: mkdir -p build && cd build && cmake $GOOGLETEST_CMAKE_FLAGS .. && make -j"$(nproc)"
+
+    - name: "ADSBee 1090: create build directory"
+      if: needs.changes.outputs.adsbee_1090 == 'true'
       working-directory: firmware/adsbee_1090/pico
       run: mkdir -p build
-    - name: Run cmake with build type "Test"
+    - name: "ADSBee 1090: run cmake with build type \"Test\""
+      if: needs.changes.outputs.adsbee_1090 == 'true'
       working-directory: firmware/adsbee_1090/pico/build
       run: cmake -DCMAKE_BUILD_TYPE=Test -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ ..
-    - name: Build
+    - name: "ADSBee 1090: build"
+      if: needs.changes.outputs.adsbee_1090 == 'true'
       working-directory: firmware/adsbee_1090/pico/build
       run: make
-    - name: Run unit tests
+    - name: "ADSBee 1090: run unit tests"
+      if: needs.changes.outputs.adsbee_1090 == 'true'
       working-directory: firmware/adsbee_1090/pico/build
       run: ctest --verbose
+
+    - name: "ADSBee 1421: run host tests"
+      if: needs.changes.outputs.adsbee_1421 == 'true'
+      working-directory: firmware/adsbee_1421/ti
+      run: |
+        cmake -S host_test -B build/host_test -DCMAKE_CXX_COMPILER=/usr/bin/g++
+        cmake --build build/host_test
+        cd build/host_test && ctest --output-on-failure
+    - name: "ADSBee 1421 Programmer: run host tests"
+      if: needs.changes.outputs.adsbee_1421 == 'true'
+      working-directory: firmware/adsbee_1421/programmer
+      run: |
+        cmake -S host_test -B build/host_test -DCMAKE_CXX_COMPILER=/usr/bin/g++
+        cmake --build build/host_test
+        cd build/host_test && ctest --output-on-failure
 
   web_ui_test:
     # Runs on the plain runner image: the pico-docker container used by host_build_and_test has no Node.js.
@@ -336,12 +372,6 @@ jobs:
       with:
         name: adsbee_1421-${{ needs.adsbee_1421_build.outputs.version }}.hex
         path: firmware/adsbee_1421/ti/build/Release
-    - name: Run host tests
-      working-directory: firmware/adsbee_1421/programmer
-      run: |
-        cmake -S host_test -B build/host_test
-        cmake --build build/host_test
-        cd build/host_test && ctest --output-on-failure
     - name: Create build directory
       working-directory: firmware/adsbee_1421/programmer
       run: mkdir -p build/Release

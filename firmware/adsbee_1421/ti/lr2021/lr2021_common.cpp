@@ -54,8 +54,7 @@ bool LR2021::SetRfFrequency(uint32_t rf_freq) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRfFrequency", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRfFrequency");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -87,8 +86,7 @@ bool LR2021::SetRxPath(RxPath rx_path) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRxPath", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRxPath");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -122,8 +120,7 @@ bool LR2021::SetRxPathAdv(RxPath rx_path, RxBoost rx_boost) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRxPathAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRxPathAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -159,8 +156,7 @@ bool LR2021::SetPaConfig(PaSel pa_sel, PaLfMode pa_lf_mode, uint8_t pa_lf_duty_c
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetPaConfig", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetPaConfig");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -194,8 +190,7 @@ bool LR2021::SetPaConfigAdv(PaSel pa_sel, PaLfMode pa_lf_mode, uint8_t pa_lf_dut
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetPaConfigAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetPaConfigAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -229,8 +224,7 @@ bool LR2021::SetTxParams(int8_t tx_power, RampTime ramp_time) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetTxParams", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetTxParams");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -262,8 +256,7 @@ bool LR2021::SetRxTxFallbackMode(FallbackMode fallback_mode) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRxTxFallbackMode", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRxTxFallbackMode");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -295,8 +288,7 @@ bool LR2021::SetPacketType(PacketType packet_type) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetPacketType", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetPacketType");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -328,8 +320,7 @@ bool LR2021::SetStopTimeout(bool stop_on_preamble) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetStopTimeout", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetStopTimeout");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -357,8 +348,7 @@ bool LR2021::ResetRxStats() {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ResetRxStats", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ResetRxStats");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -381,8 +371,7 @@ bool LR2021::SetRx() {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRx", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRx");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -416,8 +405,7 @@ bool LR2021::SetRxAdv(uint32_t rx_timeout) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRxAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRxAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -440,8 +428,7 @@ bool LR2021::SetTx() {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetTx", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetTx");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -475,8 +462,7 @@ bool LR2021::SetTxAdv(uint32_t tx_timeout) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetTxAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetTxAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -508,8 +494,7 @@ bool LR2021::SetTxTestMode(TxTestMode test_mode) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetTxTestMode", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetTxTestMode");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -541,8 +526,7 @@ bool LR2021::SelPa(PaSel pa_sel) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SelPa", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SelPa");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -582,8 +566,7 @@ bool LR2021::SetRxDutyCycle(uint32_t rx_max_time, uint32_t cycle_time, bool use_
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRxDutyCycle", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRxDutyCycle");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -625,8 +608,7 @@ bool LR2021::SetAutoRxTx(bool clear, AutoTxrxMode auto_txrx_mode, uint32_t timeo
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetAutoRxTx", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetAutoRxTx");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -658,8 +640,7 @@ bool LR2021::SetPowerOffset(uint8_t power_offset) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetPowerOffset", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetPowerOffset");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -697,8 +678,7 @@ bool LR2021::SetDefaultRxTxTimeout(uint32_t rx_timeout, uint32_t tx_timeout) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetDefaultRxTxTimeout", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetDefaultRxTxTimeout");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -731,8 +711,7 @@ bool LR2021::SetTimestampSource(TimestampIndex timestamp_index, TimestampSource 
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetTimestampSource", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetTimestampSource");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -766,8 +745,7 @@ bool LR2021::SetCca(uint32_t duration) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetCca", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetCca");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -797,8 +775,7 @@ bool LR2021::SetCcaAdv(uint32_t duration, uint8_t gain) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetCcaAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetCcaAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -830,8 +807,7 @@ bool LR2021::SetAgcGainManual(uint8_t gain_step) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetAgcGainManual", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetAgcGainManual");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -873,8 +849,7 @@ bool LR2021::SetCadParams(uint32_t cad_timeout, uint8_t threshold, ExitMode exit
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetCadParams", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetCadParams");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -897,8 +872,7 @@ bool LR2021::SetCad() {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetCad", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetCad");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -954,8 +928,7 @@ bool LR2021::GetPacketType(PacketTypeRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetPacketType", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetPacketType");
             return false;
         }
 
@@ -1012,8 +985,7 @@ bool LR2021::GetRssiInst(RssiInstRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetRssiInst", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetRssiInst");
             return false;
         }
 
@@ -1066,8 +1038,7 @@ bool LR2021::GetRxPktLength(RxPktLengthRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetRxPktLength", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetRxPktLength");
             return false;
         }
 
@@ -1124,8 +1095,7 @@ bool LR2021::GetTimestampValue(TimestampIndex timestamp_index, TimestampValueRsp
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetTimestampValue", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetTimestampValue");
             return false;
         }
 
@@ -1186,8 +1156,7 @@ bool LR2021::GetCcaResult(CcaResultRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetCcaResult", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetCcaResult");
             return false;
         }
 

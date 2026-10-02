@@ -3,6 +3,10 @@
 
 #include <cstdint>
 
+// Mode S CRC-24 generator polynomial, x^24 + 0xFFF409 (the x^24 term is implied). The one definition for the firmware;
+// generate_crc_tables.py uses the same value to generate crc_tables.hh.
+static constexpr uint32_t kCRC24Generator = 0xFFF409;
+
 /**
  * Calculates the CRC24 of a buffer. Note that the CRC is calculated over the entire buffer, so buffer_len_bytes should
  * only inclue the payload and not the trailing CRC.

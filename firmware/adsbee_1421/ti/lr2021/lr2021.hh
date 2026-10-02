@@ -35,11 +35,17 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "settings.hh"  // For SettingsManager::R1090PreambleMode.
+#include "lr2021_ook_adsb.hh"  // Mode S detector patterns and AGC settings.
+#include "lr2021_status_tracker.hh"  // Which command a Stat word reports on.
+#include "settings.hh"         // For SettingsManager::R1090PreambleMode.
 
 class LR2021 {
    public:
     static const uint32_t kBootupTimeoutMs = 10;
+    // NRESET low time in Init(). The datasheet asks for at least 100 us (LR20xx datasheet section 4.2, "Reset").
+    // DelayUs() counts ClockP ticks, which are 100 us on this build (main.cpp, clockTickPeriod), so a wait of
+    // N us can end up to one tick early: 300 us guarantees at least 200 us.
+    static constexpr uint32_t kResetPulseUs = 300;
     static const uint32_t kBusyTimeoutMs = 100;
     static constexpr uint16_t kRxFifoMaxDepthBytes = 256;
 
@@ -47,10 +53,10 @@ class LR2021 {
     static constexpr uint16_t kOokADSBPacketCrcLenBytes = 3;  // 24-bit CRC (parity).
 
     // DF17 sync mode: instead of correlating on the full preamble, the detector keys on the tail of
-    // the preamble plus the leading DF=17 data bits. The detector consumes the trailing DF bits of
-    // its pattern, so the captured payload starts mid-byte -- the byte-granular hardware CRC can't
-    // align to that, so DF17 mode runs with the hardware CRC OFF and validates in software over the
-    // reconstructed full frame.
+    // the preamble plus the leading DF=17 data bits (LR2021OokAdsb::kDF17Pattern; lr2021_ook_adsb.hh has
+    // the bench results). The detector consumes the DF bits of its pattern, so the captured payload starts
+    // mid-byte -- the byte-granular hardware CRC can't align to that, so DF17 mode runs with the hardware CRC
+    // OFF and validates in software over the reconstructed full frame.
     //
     // SetOokDetector preamble_pattern is LSB-first (LSB = first chip received) and its 2 LSBs MUST
     // be 01 or 10 (datasheet §16.3.8, p.197). ADS-B chips are inverse-Manchester (1->10, 0->01).
@@ -63,11 +69,11 @@ class LR2021 {
         uint16_t header_bits;      // DF bits consumed by the detector (MSB-first bit values).
         uint16_t header_len_bits;  // Number of DF bits consumed.
     };
-    // 2nd half of the preamble (chips 8-15 = "01000000", one pulse + quiet tail) followed by the
-    // first 4 DF bits "1000" (8 chips "10010101"). 16 chips total -- the hardware max -- for
-    // stronger correlation (datasheet §11.1.3 recommends >=20 bits of detection at osr=4; longer is
-    // better). Capture starts at message bit 4.
-    static constexpr OokDetectorConfig kOokDF17Detector = {0xA902, 16, 0b1000, 4};
+    // Preamble chips 8-15 ("01000000", one pulse + quiet tail) followed by the first 4 DF bits "1000"
+    // (8 chips "10010101"). 16 chips total, the hardware max. Capture starts at message bit 4.
+    static constexpr OokDetectorConfig kOokDF17Detector = {
+        LR2021OokAdsb::kDF17Pattern, LR2021OokAdsb::kDF17PatternLenChips, LR2021OokAdsb::kDF17HeaderBits,
+        LR2021OokAdsb::kDF17HeaderLenBits};
     // Payload bytes captured after the detector pattern in DF17 mode (CRC off, so no CRC bytes
     // appended). 14 bytes = 112 bits covers the message remainder; the last few captured bits
     // (header_len_bits worth) are slop the reconstruction ignores.
@@ -78,9 +84,9 @@ class LR2021 {
         return preamble_mode == SettingsManager::kR1090PreambleModeDF17;
     }
 
-    // Total FIFO bytes per received packet for the given preamble mode. Mode S preamble mode appends
-    // a 3-byte hardware CRC (11 + 3); MODE_S_SW_CRC captures the parity bytes as payload (14); DF17
-    // mode runs CRC-off so its payload bytes are the whole packet (14). All modes come out to 14.
+    // Total FIFO bytes per received packet for the given preamble mode. The standard-preamble modes
+    // capture the 11 message bytes plus the 3 parity bytes (14); DF17 mode captures the message
+    // remainder after its header bits (14). All modes come out to 14.
     static constexpr uint16_t GetOokRxPacketLenBytes(SettingsManager::R1090PreambleMode preamble_mode) {
         return IsOokDF17PreambleMode(preamble_mode) ? kOokDF17PacketRxLenBytes
                                                     : (kOokADSBPacketRxLenBytes + kOokADSBPacketCrcLenBytes);
@@ -1254,6 +1260,31 @@ class LR2021 {
      */
     const Stat& last_stat() const { return last_stat_; }
 
+    /**
+     * Opcode of the command whose status last_stat() reports (LR2021StatusTracker): the Stat word of a command
+     * frame reports the command frame before it, and a read's data frame reports the read. 0 when that is no
+     * command since the last reset.
+     */
+    uint16_t status_command_opcode() const { return status_tracker_.status_opcode(); }
+
+    /** Name of an LR2021 opcode, for logs ("SetOokDetector"); "none" for 0 and "unknown" for anything else. */
+    static const char* OpcodeName(uint16_t opcode);
+
+    /**
+     * Checks the status of the last command sent, which only arrives with the frame after it: one GetStatus frame
+     * (2 bytes; its Stat word reports the command before it, and no second frame is needed after a command that is
+     * not a read). Call at the end of a command sequence. Logs and returns false on CMD_PERR or CMD_FAIL.
+     * @param[in] observer  Function name for the log.
+     */
+    bool CheckLastCommandStatus(const char* observer);
+
+#ifdef HARDWARE_UNIT_TESTS
+    // Target tests only: the next test_detector_len_override_count calls of SetOokADSB() use this detector
+    // pattern length. An odd length makes the chip reject the config with CMD_PERR.
+    uint8_t test_detector_len_override = 0;
+    uint8_t test_detector_len_override_count = 0;
+#endif
+
    private:
     friend class LR2021TestAccessor;
 
@@ -1479,6 +1510,24 @@ class LR2021 {
     // Set from the SYNC ISR via RequestAbort(); checked in WaitUntilReady(); cleared in Init().
     volatile bool abort_requested_ = false;
     Stat last_stat_;
+    LR2021StatusTracker status_tracker_;  // Which command each Stat word reports on (status_command_opcode()).
+
+    /**
+     * Logs a status other than CMD_OK / CMD_DAT, naming the command it belongs to (status_command_opcode()), which
+     * is the command before the frame that read it when that frame was a command.
+     * @param[in] observer  Function whose frame read the Stat word.
+     */
+    void LogCommandStatus(const char* observer);
+    /**
+     * Logs why a command sequence (SetOokADSB, StartCwTone, ...) stopped, and returns false. A bad status names the
+     * command it belongs to, which is usually the step before `step`: a command's status arrives with the next
+     * frame. Otherwise the step itself got no valid answer (SPI transfer, BUSY).
+     * @param[in] sequence  Function name of the sequence, for the log.
+     * @param[in] step      The step that saw the failure.
+     */
+    bool SequenceStepFailed(const char* sequence, const char* step);
+    // First two bytes of a frame: its opcode, or 0 for a frame with no command (nullptr or zeros).
+    static uint16_t FrameOpcode(const uint8_t* tx_buf, size_t length);
 
     // Async RX drain state. The tx/rx buffers and transaction must be persistent: DMA reads/writes them
     // after ServiceRxDrain() returns. One extra 2-byte slot ahead of the payload holds the ReadRxFifo

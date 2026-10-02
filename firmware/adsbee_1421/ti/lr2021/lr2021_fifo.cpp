@@ -61,8 +61,7 @@ bool LR2021::WriteTxFifo(const uint8_t* buffer, size_t len) {
     EndTransaction();
 
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::WriteTxFifo", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::WriteTxFifo");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -103,8 +102,7 @@ bool LR2021::ReadRxFifo(uint8_t* buffer, size_t len) {
     EndTransaction();
 
     if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ReadRxFifo", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ReadRxFifo");
         return false;
     }
     return true;

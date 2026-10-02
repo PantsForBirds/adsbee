@@ -70,8 +70,7 @@ bool LR2021::GetStatus(StatusRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetStatus", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetStatus");
             return false;
         }
 
@@ -124,8 +123,7 @@ bool LR2021::GetVersion(VersionRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetVersion", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetVersion");
             return false;
         }
 
@@ -178,8 +176,7 @@ bool LR2021::GetErrors(ErrorsRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetErrors", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetErrors");
             return false;
         }
 
@@ -231,8 +228,7 @@ bool LR2021::GetAndClearIrq(GetAndClearIrqRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetAndClearIrq", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetAndClearIrq");
             return false;
         }
 
@@ -285,8 +281,7 @@ bool LR2021::GetFifoIrqFlags(FifoIrqFlagsRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetFifoIrqFlags", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetFifoIrqFlags");
             return false;
         }
 
@@ -339,8 +334,7 @@ bool LR2021::GetRxFifoLevel(FifoLevelRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetRxFifoLevel", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetRxFifoLevel");
             return false;
         }
 
@@ -392,8 +386,7 @@ bool LR2021::GetTxFifoLevel(FifoLevelRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetTxFifoLevel", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetTxFifoLevel");
             return false;
         }
 
@@ -453,8 +446,7 @@ bool LR2021::GetVBat(VbatFormat vbat_format, AdcRes adc_res, VBatRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetVBat", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetVBat");
             return false;
         }
 
@@ -519,8 +511,7 @@ bool LR2021::GetTemp(TempSrc temp_src, AdcRes adc_res, TempRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetTemp", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetTemp");
             return false;
         }
 
@@ -577,8 +568,7 @@ bool LR2021::GetRandomNumber(RandomNumberRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetRandomNumber", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetRandomNumber");
             return false;
         }
 
@@ -635,8 +625,7 @@ bool LR2021::GetRandomNumberAdv(uint8_t source, RandomNumberRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetRandomNumberAdv", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetRandomNumberAdv");
             return false;
         }
 
@@ -689,8 +678,7 @@ bool LR2021::GetAndClearFifoIrqFlags(FifoIrqFlagsRsp* rsp_out) {
 
         ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
         if (last_stat_.command_status != CommandStatus::kDat && last_stat_.command_status != CommandStatus::kOk) {
-            CONSOLE_ERROR("LR2021::GetAndClearFifoIrqFlags", "Unexpected command status %s in frame 2.",
-                          LR2021::CommandStatusToString(last_stat_.command_status));
+            LogCommandStatus("LR2021::GetAndClearFifoIrqFlags");
             return false;
         }
 
@@ -725,8 +713,7 @@ bool LR2021::ClearErrors() {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ClearErrors", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ClearErrors");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -761,8 +748,7 @@ bool LR2021::SetDioFunction(DioNum dio_num, DioFunc dio_func, PullDrive pull_dri
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetDioFunction", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetDioFunction");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -797,8 +783,7 @@ bool LR2021::SetDioRfSwitchConfig(DioNum dio_num, bool tx_hf, bool rx_hf, bool t
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetDioRfSwitchConfig", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetDioRfSwitchConfig");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -832,8 +817,7 @@ bool LR2021::ClearFifoIrqFlags(uint8_t rx_flags, uint8_t tx_flags) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ClearFifoIrqFlags", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ClearFifoIrqFlags");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -870,8 +854,7 @@ bool LR2021::SetDioIrqConfig(DioNum dio_num, uint32_t irqs) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetDioIrqConfig", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetDioIrqConfig");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -906,8 +889,7 @@ bool LR2021::ClearIrq(uint32_t irqs) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ClearIrq", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ClearIrq");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -939,8 +921,7 @@ bool LR2021::ConfigLfClock(LfClock lf_clock) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ConfigLfClock", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ConfigLfClock");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -972,8 +953,7 @@ bool LR2021::ConfigClkOutputs(ClkScaling clk_scaling) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ConfigClkOutputs", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ConfigClkOutputs");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1007,8 +987,7 @@ bool LR2021::ConfigFifoIrq(uint8_t rx_irq_enable, uint8_t tx_irq_enable) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ConfigFifoIrq", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ConfigFifoIrq");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1055,8 +1034,7 @@ bool LR2021::ConfigFifoIrqAdv(uint8_t rx_irq_enable, uint8_t tx_irq_enable, uint
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ConfigFifoIrqAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ConfigFifoIrqAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1081,8 +1059,7 @@ bool LR2021::ClearRxFifo() {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ClearRxFifo", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ClearRxFifo");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1107,8 +1084,7 @@ bool LR2021::ClearTxFifo() {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::ClearTxFifo", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::ClearTxFifo");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1140,8 +1116,7 @@ bool LR2021::SetRegMode(SimoUsage simo_usage) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRegMode", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRegMode");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1183,8 +1158,7 @@ bool LR2021::SetRegModeAdv(SimoUsage simo_usage, RampTimeUnit rc2ru_unit, uint8_
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetRegModeAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetRegModeAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1217,8 +1191,7 @@ bool LR2021::Calibrate(bool pa_offset, bool meas_unit, bool aaf, bool pll, bool 
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::Calibrate", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::Calibrate");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1257,8 +1230,7 @@ bool LR2021::CalibFe(uint16_t freq1, uint16_t freq2, uint16_t freq3) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::CalibFe", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::CalibFe");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1290,8 +1262,7 @@ bool LR2021::SetSleep(bool clk_32k_en, uint8_t ret_en) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetSleep", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetSleep");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1328,8 +1299,7 @@ bool LR2021::SetSleepAdv(bool clk_32k_en, uint8_t ret_en, uint32_t sleep_time) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetSleepAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetSleepAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1361,8 +1331,7 @@ bool LR2021::SetStandby(SysStandbyMode standby_mode) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetStandby", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetStandby");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1387,8 +1356,7 @@ bool LR2021::SetFs() {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetFs", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetFs");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1424,8 +1392,7 @@ bool LR2021::SetAdditionalRegToRetain(uint8_t slot, uint32_t addr) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetAdditionalRegToRetain", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetAdditionalRegToRetain");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1457,8 +1424,7 @@ bool LR2021::SetEolConfig(EolTrim eol_trim, bool enable) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetEolConfig", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetEolConfig");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1495,8 +1461,7 @@ bool LR2021::SetTcxoMode(TcxoVoltage tcxo_voltage, uint32_t start_time) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetTcxoMode", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetTcxoMode");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1530,8 +1495,7 @@ bool LR2021::SetXoscCpTrim(uint8_t xta, uint8_t xtb) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetXoscCpTrim", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetXoscCpTrim");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1567,8 +1531,7 @@ bool LR2021::SetXoscCpTrimAdv(uint8_t xta, uint8_t xtb, uint8_t delay_us) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetXoscCpTrimAdv", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetXoscCpTrimAdv");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1600,8 +1563,7 @@ bool LR2021::SetTempCompCfg(bool ntc_en, CompMode comp_mode) {
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetTempCompCfg", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetTempCompCfg");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
@@ -1639,8 +1601,7 @@ bool LR2021::SetNtcParams(uint16_t ntc_r_ratio, uint16_t ntc_beta, uint8_t delay
 
     ParseStat(static_cast<uint16_t>(rx_buf[0] << 8) | rx_buf[1]);
     if (last_stat_.command_status != CommandStatus::kOk) {
-        CONSOLE_ERROR("LR2021::SetNtcParams", "Unexpected command status %s.",
-                      LR2021::CommandStatusToString(last_stat_.command_status));
+        LogCommandStatus("LR2021::SetNtcParams");
     }
     return last_stat_.command_status == CommandStatus::kOk;
 }
