@@ -54,15 +54,31 @@ UTEST(Clocks, Test12MHzMLATCounter) {
     }
 }
 
+// Counts MLAT jitter PWM slice counts over span_us of the 1MHz timer. Runs from RAM with interrupts disabled so that
+// flash cache misses and interrupts don't stretch the span.
+static uint16_t __not_in_flash_func(CountMLATJitterPWMSliceSpan)(uint32_t span_us) {
+    uint32_t interrupts = save_and_disable_interrupts();
+    uint32_t timestamp_us = time_us_32();
+    while (time_us_32() == timestamp_us) {
+        // Start on a timer tick.
+    }
+    uint16_t counts_start = adsbee.GetMLATJitterPWMSliceCounts();
+    timestamp_us = time_us_32();
+    while (time_us_32() - timestamp_us < span_us) {
+    }
+    uint16_t counts_end = adsbee.GetMLATJitterPWMSliceCounts();
+    restore_interrupts(interrupts);
+    return counts_end - counts_start;  // Unsigned subtraction handles a wrap of the 16-bit counter.
+}
+
 UTEST(Clocks, TestMLATJitterPWMSlice) {
-    // Verify that the MLAT jitter PWM slice is running at 48MHz.
+    // OnDemodComplete() subtracts MLAT jitter PWM slice counts, converted with MLATJitterCountsTo48MHzCounts(), from
+    // the 48MHz MLAT timestamp. Verify that a converted span advances at 48MHz.
     static const uint32_t kTestNumRepeats = 10;
+    static const uint32_t kSpanUs = 500;  // Shorter than the 524us wrap of the 16-bit counter at 125MHz.
     for (uint32_t i = 0; i < kTestNumRepeats; i++) {
-        uint16_t mlat_jitter_counts_start = adsbee.GetMLATJitterPWMSliceCounts();
-        sleep_us(10);
-        // Expect MLAT jitter PWM slice to increment by around 480 counts in 10us (48MHz).
-        uint16_t mlat_jitter_counts_end = adsbee.GetMLATJitterPWMSliceCounts();
-        uint16_t mlat_jitter_counts_delta = mlat_jitter_counts_end - mlat_jitter_counts_start;
-        EXPECT_NEAR(480, mlat_jitter_counts_delta, 10);
+        uint32_t mlat_counts = ADSBee::MLATJitterCountsTo48MHzCounts(CountMLATJitterPWMSliceSpan(kSpanUs));
+        // Expect 24000 counts in 500us at 48MHz, within 1us.
+        EXPECT_NEAR(kSpanUs * 48, mlat_counts, 48);
     }
 }
