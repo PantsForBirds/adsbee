@@ -119,8 +119,8 @@ module there:
 
 The firmware's CCFG must enable the bootloader backdoor, which
 `firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg` does (DIO_5, active high; every
-release since `adsbee_1421-0.3.7`), unless `AT+BOOTLOADER_PIN=0` turned it off on that
-module; `AT+BOOTLOADER_PIN?` shows the setting and `AT+BOOTLOADER_PIN=1` turns it back on.
+release since `adsbee_1421-0.3.7`), unless `AT+BOOTLOADER_PIN=0,DEADBEE` turned it off on that
+module; `AT+BOOTLOADER_PIN?` shows the setting and `AT+BOOTLOADER_PIN=1,DEADBEE` turns it back on.
 The baud rate does not need to match anything: the ROM locks onto whatever rate the page
 sends its sync bytes at, so the page never reopens the port while the device is in the
 bootloader.

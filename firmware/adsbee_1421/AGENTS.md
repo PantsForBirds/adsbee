@@ -133,7 +133,7 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 
 > The module can also be reflashed over its console UART through the CC1314 ROM serial
 > bootloader, with no debugger: hold SYNC high through a reset (the CCFG bootloader backdoor,
-> which `AT+BOOTLOADER_PIN=0` turns off and `AT+BOOTLOADER_PIN=1` turns back on). The ADSBee 1421 Programmer
+> which `AT+BOOTLOADER_PIN=0,DEADBEE` turns off and `AT+BOOTLOADER_PIN=1,DEADBEE` turns back on). The ADSBee 1421 Programmer
 > ([`programmer/`](programmer/)) does this automatically, and any host tool that drives
 > RTS → SYNC and DTR → RESET_N can do it through the Programmer. See [Reflashing over UART: the SYNC bootloader backdoor](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
@@ -151,7 +151,7 @@ LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` restart the con
 
 > **SYNC is also the bootloader backdoor pin:** the boot ROM samples it at every reset, and SYNC
 > high at reset (including a watchdog reset during a long sleep) starts the ROM serial bootloader,
-> so this firmware doesn't run (unless `AT+BOOTLOADER_PIN=0` disabled the backdoor). Drive SYNC
+> so this firmware doesn't run (unless `AT+BOOTLOADER_PIN=0,DEADBEE` disabled the backdoor). Drive SYNC
 > low before resetting the module; see
 > [SYNC and sleep](README.md#sync-and-sleep).
 

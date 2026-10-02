@@ -20,7 +20,7 @@ Developer Kit.
 The m1421 can be reflashed over its console UART with no debugger and no button presses. Every
 release build enables this bootloader backdoor on purpose, and it is a supported way to update the
 firmware. A product that must not be reflashable this way can turn the backdoor off per module with
-`AT+BOOTLOADER_PIN=0`; see [Turning the backdoor off](#turning-the-backdoor-off-atbootloader_pin).
+`AT+BOOTLOADER_PIN=0,DEADBEE`; see [Turning the backdoor off](#turning-the-backdoor-off-atbootloader_pin).
 
 ### What it is
 
@@ -201,10 +201,18 @@ reset.
 
 | Command | Effect |
 |---|---|
-| `AT+BOOTLOADER_PIN?` | Reads `BL_CONFIG` from the CCFG flash: `BOOTLOADER_PIN=1` when the backdoor is enabled, `0` when it isn't, followed by the raw word and its fields. This is the value the boot ROM uses at the next reset. |
-| `AT+BOOTLOADER_PIN=0` | Disables the backdoor. SYNC high at reset no longer starts the ROM bootloader; the application boots. |
-| `AT+BOOTLOADER_PIN=1` | Enables the backdoor again on SYNC (DIO_5), active high, as in the release images. |
-| `AT+BOOTLOADER_PIN=<0\|1>,DRYRUN` | Prints the current and new `BL_CONFIG` and the write method, and writes nothing. |
+| `AT+BOOTLOADER_PIN?` | Reads `BL_CONFIG` from the CCFG flash: `BOOTLOADER_PIN=1` when the backdoor is enabled, `0` when it isn't, followed by the raw word and its fields. This is the value the boot ROM uses at the next reset. No password. |
+| `AT+BOOTLOADER_PIN=0,DEADBEE` | Disables the backdoor. SYNC high at reset no longer starts the ROM bootloader; the application boots. |
+| `AT+BOOTLOADER_PIN=1,DEADBEE` | Enables the backdoor again on SYNC (DIO_5), active high, as in the release images. |
+| `AT+BOOTLOADER_PIN=<0\|1>,DEADBEE,DRYRUN` | Prints the current and new `BL_CONFIG` and the write method, and writes nothing. |
+
+Every set form takes the password `DEADBEE` as its second argument, DRYRUN included. It isn't a
+secret; it makes a CCFG write something nobody does by accident (a mistyped `AT+BOOTLOADER_PIN=0`,
+a script sending the wrong line). A missing or wrong password answers `ERROR` and the firmware
+doesn't even read the CCFG. Enabling needs it as well as disabling: enabling is the write that
+erases the CCFG sector, and one rule for every write is easier to get right than two. The web
+console's **Settings** tab has a **Bootloader Pin** card that asks you to type the password by hand
+before it sends the command.
 
 The change takes effect at the next reset and persists across power cycles and
 `AT+SETTINGS=RESET`. It is not one of the saved settings.
@@ -212,17 +220,17 @@ The change takes effect at the next reset and persists across power cycles and
 > [!WARNING]
 > With the backdoor disabled, the ADSBee 1421 Programmer, the web console's **Enter bootloader**
 > and any other SYNC + reset tool can no longer enter the bootloader, so they can't reflash the
-> module. The only ways back are `AT+BOOTLOADER_PIN=1` sent to the running firmware, or a JTAG
+> module. The only ways back are `AT+BOOTLOADER_PIN=1,DEADBEE` sent to the running firmware, or a JTAG
 > flash. If the firmware's console stops answering while the backdoor is off, only JTAG can
 > recover the module.
 >
 > Behind the ADSBee 1421 Programmer, a module with the backdoor off can't be checked against the
 > Programmer's baked image or reflashed. When bootloader entry fails but the application console
 > answers, the Programmer prints a warning and enters pass-through without the image check, so
-> `AT+BOOTLOADER_PIN=1` can still be sent through it; tap BOOTSEL afterwards to rerun the check.
+> `AT+BOOTLOADER_PIN=1,DEADBEE` can still be sent through it; tap BOOTSEL afterwards to rerun the check.
 > Programmer images from 0.3.11-rc3 and earlier don't have this fallback: they keep retrying the
 > bootloader entry and never bridge the console. With those, connect a USB-UART adapter to
-> SURX/SUTX (module pins 20/21) in place of the Programmer and send `AT+BOOTLOADER_PIN=1`, or use
+> SURX/SUTX (module pins 20/21) in place of the Programmer and send `AT+BOOTLOADER_PIN=1,DEADBEE`, or use
 > JTAG.
 
 What the command writes, per the CC13x4 Technical Reference Manual and TI driverlib:
@@ -243,6 +251,21 @@ What the command writes, per the CC13x4 Technical Reference Manual and TI driver
   immediately writes TI's default security fields (ROM bootloader on, backdoor off, debug ports
   on), and `IMAGE_VALID_CONF` stays erased, so even a write that fails completely leaves a module
   that resets into the ROM UART bootloader, where a reflash restores the CCFG.
+- Every write is verified by reading the whole sector back. On success the command prints the
+  read-back `BL_CONFIG` and the CRC32 of the CCFG structure, the same CRC the ROM bootloader's
+  CRC32 command returns for `0x50000000` (`0x66E9858D` for the release images' CCFG).
+- A write that fails prints a `CCFG WRITE FAILED` banner as console errors (also as part of the
+  command's response when `AT+LOG_LEVEL` hides errors) and answers `ERROR`, never `OK`. The banner
+  says what was attempted, what failed, the read-back `BL_CONFIG` and CRC, the resulting state and
+  how to recover:
+  - Disable failed: the sector wasn't erased and only `BL_CONFIG` can differ; the module resets
+    normally. Check with `AT+BOOTLOADER_PIN?` and retry.
+  - Enable failed, original restored: nothing changed; retry.
+  - Enable failed and the restore failed too: the CCFG is in an unknown state. **Don't reset the
+    module.** The firmware keeps the original CCFG in RAM, and the next
+    `AT+BOOTLOADER_PIN=<0|1>,DEADBEE` writes it back before anything else; repeat until it answers
+    `OK`. If the module resets first, it most likely starts in the ROM UART bootloader, where the
+    ADSBee 1421 Programmer (or JTAG) can reflash a complete image.
 - During the write, interrupts are masked and the flash cache is off, as TI requires. An erase
   takes milliseconds; console input that arrives meanwhile is lost.
 - The command refuses to write if `ERASE_CONF_1` write-protects the CCFG sector, or if the CCFG
@@ -256,7 +279,7 @@ console both erase the CCFG sector and program the image's CCFG last, and a JTAG
 
 | Symptom | Likely cause |
 |---|---|
-| The application answers with AT text after the reset, and no bootloader ACK arrives | SYNC wasn't high when RESET_N was released: check the RTS → SYNC wiring and polarity. Otherwise the backdoor is disabled (`AT+BOOTLOADER_PIN?` answers `0`; re-enable it with `AT+BOOTLOADER_PIN=1`) or the firmware predates it (check `AT+DEVICE_INFO?`). The ADSBee 1421 Programmer prints `App console responds at <baud> ... SBL entry fails` for this case. |
+| The application answers with AT text after the reset, and no bootloader ACK arrives | SYNC wasn't high when RESET_N was released: check the RTS → SYNC wiring and polarity. Otherwise the backdoor is disabled (`AT+BOOTLOADER_PIN?` answers `0`; re-enable it with `AT+BOOTLOADER_PIN=1,DEADBEE`) or the firmware predates it (check `AT+DEVICE_INFO?`). The ADSBee 1421 Programmer prints `App console responds at <baud> ... SBL entry fails` for this case. |
 | Nothing at all answers | Reset or UART wiring (TX/RX swapped, no common ground), module unpowered, or (plain adapter) DTR still asserted so the module is held in reset. Behind the Programmer, check that its LED is green: it ignores RTS/DTR until pass-through. |
 | Garbage bytes where `0x00 0xCC` should be | Baud rate above the ROM's ~1.2 M ceiling or beyond what the adapter can do. Retry at 115200. |
 | The new firmware doesn't run after flashing; the module keeps showing up in the bootloader | SYNC is still high. Assert RTS (SYNC low) and reset again. |

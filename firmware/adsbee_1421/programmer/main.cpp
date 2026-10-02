@@ -8,7 +8,7 @@
 // transparent USB-CDC serial adapter (see bridge.cc for the modem-control-line emulation
 // contract).
 //
-// If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0
+// If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0,DEADBEE
 // disabled the backdoor), it skips the image check and enters pass-through with a warning.
 //
 // Hold BOOTSEL at power-up to force a reflash; tap BOOTSEL during pass-through to rerun the
@@ -209,15 +209,15 @@ int main() {
                 if (!EnterBootloader(bl)) {
                     if (DiagnoseEntryFailure() != 0) {
                         // The application runs but the ROM bootloader can't be entered, most likely
-                        // because AT+BOOTLOADER_PIN=0 turned the backdoor off. Bridge the console
+                        // because AT+BOOTLOADER_PIN=0,DEADBEE turned the backdoor off. Bridge the console
                         // anyway, so the user can still reach the module (and send
-                        // AT+BOOTLOADER_PIN=1), instead of retrying entry forever.
+                        // AT+BOOTLOADER_PIN=1,DEADBEE), instead of retrying entry forever.
                         // One CdcPrintf per line: each must fit kCdcTextMax (cdc_text.hh).
                         CdcPrintf("WARNING: ROM bootloader entry failed but the application console answers.\r\n");
                         CdcPrintf("Entering pass-through WITHOUT checking the image against the baked %s.\r\n",
                                   kFirmwareVersionStr);
                         CdcPrintf("If the bootloader backdoor is disabled (AT+BOOTLOADER_PIN? answers 0), "
-                                  "AT+BOOTLOADER_PIN=1 enables it again; tap BOOTSEL afterwards to rerun the "
+                                  "AT+BOOTLOADER_PIN=1,DEADBEE enables it again; tap BOOTSEL afterwards to rerun the "
                                   "check.\r\n");
                         if (force_flash || erase_settings_armed) {
                             CdcPrintf("The %s needs the bootloader and did not run.%s\r\n",
