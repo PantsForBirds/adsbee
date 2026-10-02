@@ -6,6 +6,7 @@
 #include <ti/devices/cc13x4_cc26x4/driverlib/watchdog.h>
 #include <ti/drivers/GPIO.h>
 #include <ti/drivers/Power.h>
+#include <ti/drivers/dpl/ClockP.h>
 #include <ti/drivers/power/PowerCC26XX.h>
 
 #include "buffer_utils.hh"
@@ -43,6 +44,11 @@ static void SyncLineCallback(uint_least8_t /*index*/) {
     }
 }
 
+// Periodic wake during sync sleep so EnterSyncSleep() can feed the watchdog. Nothing to do here: the
+// wake itself makes PowerCC26XX_standbyPolicy() return, and the sleep loop feeds after every return.
+static ClockP_Struct sync_sleep_wake_clock_struct;
+static void SyncSleepWakeCallback(uintptr_t /*arg*/) {}
+
 // LR2021 IRQ line (LR2021 DIO6 -> LR_IRQ pin) rising edge: the RX FIFO crossed its high threshold.
 // Kicks the ISR-paced drain chain (lr2021_irq_drain.cpp). GPIO HWI context; all GPIO callbacks share
 // one HWI vector, so this never races SyncLineCallback or LRBusyLineCallback.
@@ -51,10 +57,35 @@ static void LRIrqLineCallback(uint_least8_t /*index*/) { adsbee.lr2021.HandleIrq
 // LR_BUSY falling edge ("chip ready"): armed only while the drain chain has a frame pending; posts it.
 static void LRBusyLineCallback(uint_least8_t /*index*/) { adsbee.lr2021.HandleBusyFall(); }
 
+uint32_t ADSBee::SyncPinConfig(bool asleep) const {
+    return GPIO_CFG_INPUT_INTERNAL | (asleep ? GPIO_CFG_IN_INT_FALLING : GPIO_CFG_IN_INT_RISING) |
+           (board_has_sync_pull_down_ ? GPIO_CFG_PULL_NONE_INTERNAL : GPIO_CFG_PULL_DOWN_INTERNAL);
+}
+
+void ADSBee::DetectBoardSyncPullDown() {
+    SettingsManager::DeviceInfo device_info;
+    settings_manager.GetDeviceInfo(device_info);
+    board_has_sync_pull_down_ = device_info.IsPartAtLeastRev(SettingsManager::DeviceInfo::kPNADSBeem1421, 'D');
+
+    // Part number + revision letter, printable characters only (erased flash reads 0xFF).
+    char part[SettingsManager::DeviceInfo::kPartCodePartNumberLen + 2] = {0};
+    for (uint16_t i = 0; i < sizeof(part) - 1; i++) {
+        char c = device_info.part_code[i];
+        part[i] = (c >= 0x20 && c < 0x7F) ? c : '?';
+    }
+    CONSOLE_INFO("ADSBee::Init", "Part %s: %s.", part,
+                 board_has_sync_pull_down_ ? "m1421 rev D or later, SYNC internal pull-down off (board pull-down R5)"
+                                           : "not an m1421 rev D or later, SYNC internal pull-down on");
+}
+
 bool ADSBee::Init() {
-    // Arm the SYNC rising-edge interrupt (the SysConfig default pin config) before touching the LR2021,
-    // so a host asserting SYNC mid-init still gets the bus handed off promptly. Clear any stale latched
-    // edge first: neither GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
+    // Decide the SYNC pull from the board revision before arming SYNC, then apply it over the SysConfig
+    // default (rising edge, internal pull-down) that Board_init() set.
+    DetectBoardSyncPullDown();
+    GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(false));
+    // Arm the SYNC rising-edge interrupt before touching the LR2021, so a host asserting SYNC mid-init
+    // still gets the bus handed off promptly. Clear any stale latched edge first: neither
+    // GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
     GPIO_setCallback(bsp.kSyncPin, SyncLineCallback);
     GPIO_clearInt(bsp.kSyncPin);
     GPIO_enableInt(bsp.kSyncPin);
@@ -277,9 +308,11 @@ void ADSBee::EnterSyncSleep() {
     // hardware does not support level-triggered GPIO interrupts, so an edge is the only option. The
     // lost-edge race (host drops SYNC between the GPIO_read below and entering STANDBY) is closed by the
     // re-check loop: with the interrupt enabled, the edge latches as a pending NVIC interrupt, the
-    // policy's WFI returns immediately, and the loop re-reads LOW and exits. Keep the fail-safe pull-down,
-    // and clear any stale latched edge before enabling (EVFLAGS is not cleared by setConfig/enableInt).
-    GPIO_setConfig(bsp.kSyncPin, GPIO_CFG_INPUT_INTERNAL | GPIO_CFG_IN_INT_FALLING | GPIO_CFG_PULL_DOWN_INTERNAL);
+    // policy's WFI returns immediately, and the loop re-reads LOW and exits. Clear any stale latched edge
+    // before enabling (EVFLAGS is not cleared by setConfig/enableInt). The pull follows the board
+    // revision (SyncPinConfig()): off on m1421 rev D and later, where R5 pulls SYNC low and wakes the
+    // module if the host releases the line; the internal pull-down on every other board.
+    GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(true));
     GPIO_setCallback(bsp.kSyncPin, SyncLineCallback);
     GPIO_clearInt(bsp.kSyncPin);
     GPIO_enableInt(bsp.kSyncPin);
@@ -303,10 +336,31 @@ void ADSBee::EnterSyncSleep() {
     bool policy_was_enabled = Power_disablePolicy();
     Power_enablePolicy();
 
+    // The watchdog keeps counting through STANDBY (WatchdogCC26X4.h: "Once started, the Watchdog will
+    // keep running in Active, Idle and Standby mode"), and with no ClockP event pending the policy stays
+    // in STANDBY until SYNC drops, for up to ClockP's ~9 hour maximum skip. A watchdog reset with SYNC
+    // high starts the ROM bootloader, so wake at half the configured timeout to feed it. Each wake costs
+    // well under 1 ms of active time. With AT+WATCHDOG=0 after the watchdog was started, the hardware
+    // keeps the old reload value, so fall back to a 500 ms period.
+    ClockP_Handle wake_clock_handle = nullptr;
+    if (WatchdogRunning()) {
+        uint32_t wake_period_ms = watchdog_timeout_sec_ > 0 ? watchdog_timeout_sec_ * 500 : 500;
+        ClockP_Params wake_clock_params;
+        ClockP_Params_init(&wake_clock_params);
+        wake_clock_params.period = wake_period_ms * 1000 / ClockP_getSystemTickPeriod();
+        wake_clock_params.startFlag = true;
+        wake_clock_handle = ClockP_construct(&sync_sleep_wake_clock_struct, SyncSleepWakeCallback,
+                                             wake_clock_params.period, &wake_clock_params);
+    }
+
     // Re-check SYNC in a loop because the policy can return from a plain WFI/IDLE (e.g. a pending ClockP
     // tick) without having reached STANDBY, or while a power constraint is still momentarily held (e.g. a
     // UART/SPI transfer draining). The caller must have quiesced the persistent constraint holders (the
-    // SubGHz RF core and the console UART RX) first, or the policy will never descend to STANDBY.
+    // SubGHz RF core and the console UART RX) first, or the policy will never descend to STANDBY. It must
+    // also have stopped every ClockP that fires more often than every ~1 ms (the LED clock): the policy
+    // only enters STANDBY when the next ClockP event is more than Power_getTransitionLatency(STANDBY)
+    // away, and falls back to IDLE otherwise. That case holds no constraint, so the warning below
+    // never reports it.
     //
     // Constraint diagnostics: a briefly-held constraint (the CONSOLE_INFO above draining, an SPI transfer
     // finishing) clears on its own and is not worth reporting, so only start complaining once STANDBY has
@@ -316,6 +370,11 @@ void ADSBee::EnterSyncSleep() {
     static constexpr uint32_t kConstraintRepeatMs = 1000;
     uint32_t unblocked_timestamp_ms = get_time_since_boot_ms();
     uint32_t next_warning_timestamp_ms = unblocked_timestamp_ms + kConstraintGraceMs;
+    // Sleep length and policy return count, reported on wake. A sleep that reaches STANDBY returns about
+    // once per watchdog wake period; thousands of returns per second mean something keeps the policy
+    // in IDLE (a frequent ClockP or a wake source firing).
+    uint32_t sleep_start_timestamp_ms = unblocked_timestamp_ms;
+    uint32_t policy_returns = 0;
     while (GPIO_read(bsp.kSyncPin) == 1) {
         uint32_t constraint_mask = Power_getConstraintMask();
         uint32_t timestamp_ms = get_time_since_boot_ms();
@@ -339,27 +398,33 @@ void ADSBee::EnterSyncSleep() {
             comms_manager.DrainConsoleTx();
         }
         PowerCC26XX_standbyPolicy();
+        policy_returns++;
         // The CC13x4 watchdog keeps counting (on SCLK_LF) through STANDBY, so feed it on every policy
         // return or a long enough sleep watchdog-resets the MCU mid-sleep.
         FeedWatchdog();
     }
 
+    if (wake_clock_handle != nullptr) {
+        ClockP_stop(wake_clock_handle);
+        ClockP_destruct(&sync_sleep_wake_clock_struct);
+    }
     if (!policy_was_enabled) {
         Power_disablePolicy();
     }
 
-    // SYNC is now low: swap the wake interrupt back to the rising-edge sleep-request config (keeping the
-    // fail-safe pull-down), clear the request flag, then re-initialize the receiver to resume where we
-    // left off. If SYNC bounces high during the re-init, the re-armed ISR re-tristates and sets the flag
-    // again, the config aborts, and the main loop re-enters sync sleep.
+    // SYNC is now low: swap the wake interrupt back to the rising-edge sleep-request config, clear the
+    // request flag, then re-initialize the receiver to resume where we left off. If SYNC bounces high
+    // during the re-init, the re-armed ISR re-tristates and sets the flag again, the config aborts, and
+    // the main loop re-enters sync sleep.
     GPIO_disableInt(bsp.kSyncPin);
     sync_sleep_requested_ = false;
-    GPIO_setConfig(bsp.kSyncPin, GPIO_CFG_INPUT_INTERNAL | GPIO_CFG_IN_INT_RISING | GPIO_CFG_PULL_DOWN_INTERNAL);
+    GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(false));
     GPIO_clearInt(bsp.kSyncPin);
     GPIO_enableInt(bsp.kSyncPin);
     FeedWatchdog();
 
-    CONSOLE_INFO("ADSBee::EnterSyncSleep", "SYNC released; re-initializing LR2021.");
+    CONSOLE_INFO("ADSBee::EnterSyncSleep", "SYNC released after %lums and %lu policy returns; re-initializing LR2021.",
+                 (unsigned long)(get_time_since_boot_ms() - sleep_start_timestamp_ms), (unsigned long)policy_returns);
     // ApplyReceiverConfigInner() re-drives NSS/ENABLE via RestoreInterface() before Init()'s GPIO
     // writes — unless AT+LR_ENABLE=0, in which case it re-parks the bus without ever driving it
     // (calling RestoreInterface() here unconditionally would glitch RESET/NSS high on wake).

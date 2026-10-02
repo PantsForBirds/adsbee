@@ -239,7 +239,8 @@ class SettingsManager {
             kPNADSBee1090UIndoorPoEFeeder = 40250002,  // ADSBee 1090U Indoor PoE Feeder
             kPNADSBeem1090 = 10250007,                 // ADSBee m1090
             kPNADSBeem1090EvalBoard = 10250013,        // ADSBee m1090 Eval Board
-            kPNGS3MPoE = 40250001                      // GS3M PoE
+            kPNGS3MPoE = 40250001,                     // GS3M PoE
+            kPNADSBeem1421 = 10260002                  // ADSBee m1421
         };
 
         /**
@@ -264,6 +265,28 @@ class SettingsManager {
          * @retval Character representing the part revision.
          */
         char GetPartRev() { return part_code[kPartCodePartNumberLen]; }
+
+        /**
+         * Strict check of the part code against a part number and minimum revision. The part code must start with
+         * exactly kPartCodePartNumberLen decimal digits equal to part_number, then one revision letter 'A'-'Z',
+         * then '-' or the end of the string. Blank (erased flash reads 0xFF), truncated or malformed part codes
+         * return false, so callers can treat false as "unknown board".
+         * @param[in] part_number Part number to match, as an integer (no leading zeros, see ADSBeePartNumber).
+         * @param[in] min_rev Lowest revision letter that matches.
+         * @retval True if the part code names part_number at revision min_rev or later.
+         */
+        bool IsPartAtLeastRev(uint32_t part_number, char min_rev) const {
+            uint32_t pn = 0;
+            for (uint16_t i = 0; i < kPartCodePartNumberLen; i++) {
+                char c = part_code[i];
+                if (c < '0' || c > '9') return false;
+                pn = pn * 10 + static_cast<uint32_t>(c - '0');
+            }
+            char rev = part_code[kPartCodePartNumberLen];
+            char next = part_code[kPartCodePartNumberLen + 1];
+            if (rev < 'A' || rev > 'Z' || (next != '-' && next != '\0')) return false;
+            return pn == part_number && rev >= min_rev;
+        }
     };
 
     /**

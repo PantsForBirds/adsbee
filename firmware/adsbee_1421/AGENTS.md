@@ -142,17 +142,20 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 An external host can force the CC1314 into **STANDBY** (deep sleep, SRAM retained) by driving the
 **SYNC line (DIO_5)** HIGH; driving it LOW wakes the MCU. The super-loop in
 [`main.cpp`](ti/main.cpp) polls SYNC at the top of each iteration and, when
-asserted, calls `SubGHzRadio::Suspend()` and `CommsManager::Suspend()` (release the RF core's and
+asserted, calls `LEDs::Suspend()` (stops the LED ClockP, whose frequent events keep the power
+policy in IDLE), `SubGHzRadio::Suspend()` and `CommsManager::Suspend()` (release the RF core's and
 the console UART's STANDBY power constraints), then `ADSBee::EnterSyncSleep()`, which powers the
 LR2021 down, **tri-states the shared LR2021 bus** (`LR2021::TristateInterface()` — see below), arms
 SYNC as a falling-edge wake source, enters STANDBY via `PowerCC26XX_standbyPolicy()`, and on wake
 restores the bus (`RestoreInterface()`) and re-runs `ApplyReceiverConfig()` to re-initialize the
-LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` restart the console and UAT RX.
+LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` / `LEDs::Resume()` restart the
+console, UAT RX and the LED clock.
 
 > **SYNC is also the bootloader backdoor pin:** the boot ROM samples it at every reset, and SYNC
-> high at reset (including a watchdog reset during a long sleep) starts the ROM serial bootloader,
-> so this firmware doesn't run (unless `AT+BOOTLOADER_PIN=0,DEADBEE` disabled the backdoor). Drive SYNC
-> low before resetting the module; see
+> high at reset (including a watchdog reset) starts the ROM serial bootloader, so this firmware
+> doesn't run (unless `AT+BOOTLOADER_PIN=0,DEADBEE` disabled the backdoor). The watchdog keeps
+> counting in STANDBY, so `EnterSyncSleep()` runs a periodic ClockP at half the watchdog timeout to
+> wake and feed it. Drive SYNC low before resetting the module; see
 > [SYNC and sleep](README.md#sync-and-sleep).
 
 > **LR2021 bus handoff:** during sleep the CC1314 releases every LR2021 interface pin it normally
@@ -162,12 +165,33 @@ LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` restart the con
 > SYNC — the CC1314 re-drives `LR_CS`/`LR_RESET` and re-muxes the SPI pins as soon as it wakes, so
 > overlapping drive would cause bus contention.
 
-> **SYNC pull-down note:** SYNC/DIO_5 is configured with an internal **pull-down** (fail-safe: a
-> floating/disconnected host reads LOW = the device stays awake). This is **redundant with the
-> external 120 kΩ pull present on ADSBee m1421 PCBA Rev D and later and draws extra power** — it is
-> retained only to protect earlier PCBAs. The setting lives in
-> [`adsbee_1421.syscfg`](ti/syscfg/adsbee_1421.syscfg) (`GPIO7.pull`) and the
-> generated `ti_drivers_config.c`; keep the two in sync.
+> **Sleep current:** the LR2021 stays held in reset for the whole sleep, by design: a host taking
+> over the bus receives a reset chip, and `LR_RESET` falling is the handoff signal the module
+> datasheet and schematic note describe. On a PCBA Rev D module at 3.3 V, SYNC sleep draws about
+> 0.70 mA, almost all of it the LR2021 in reset; the CC1314 in STANDBY adds about 1 µA. In reset, the
+> LR2021's DIO6 (`LR_IRQ`) comes back with its default pull-up, so `LR2021::DeInit()` turns the
+> `LR_IRQ` input buffer off (`GPIO_CFG_NO_DIR`) instead of leaving its pull-down to fight it (about
+> 0.35 mA), and `Init()` restores it. This also applies to `AT+LR_ENABLE=0` and to 1090 RX disabled.
+> A supply trace of the sleep shows the watchdog-feed wake at half the watchdog timeout (about
+> 0.5 ms at up to ~4.5 mA) and a shorter pulse about every 0.74 s that doesn't return from the power
+> policy: the CC13x4's VDDR recharge in STANDBY (TI's standby path enables the recharge comparator),
+> part of the datasheet STANDBY current and under 1 µA on average.
+
+> **SYNC pull-down note:** the SYNC/DIO_5 pull follows the board revision. At the start of
+> `ADSBee::Init()` the firmware reads the part code from the device info flash (`AT+DEVICE_INFO?`
+> prints it, format `NNNNNNNNNR-YYYYMMDD-VVXXXX`: 9-digit part number, revision letter, date, serial).
+> If it names an ADSBee m1421 (`010260002`) at PCBA Rev D or later, the board has R5 (120 kΩ to GND),
+> so the internal pull-down is off in every state: awake, during sync sleep, and after wake. On every
+> other part code (blank or erased flash, malformed, another part number, or Rev A to C) the internal
+> pull-down stays on in every state, as a fail-safe: a floating or disconnected host reads LOW, so the
+> device stays awake. `ADSBee::SyncPinConfig()` is the one place that picks the pull; the boot log
+> (INFO) and the `CC1314R10 SYNC Pull-Down:` line of `AT+DEVICE_INFO?` show the decision. The SysConfig
+> default ([`adsbee_1421.syscfg`](ti/syscfg/adsbee_1421.syscfg) `GPIO7.pull`, and the generated
+> `ti_drivers_config.c`; keep the two in sync) keeps the pull-down for the short window between
+> `Board_init()` and `ADSBee::Init()`. During sync sleep the host drives SYNC high, so an internal
+> pull-down draws about 80 µA at 3.3 V from the host's SYNC driver; Rev D and later boards avoid that.
+> On a Rev D or later board R5 pulls SYNC low and wakes the module if the host releases the line
+> (hi-Z); on an earlier board the internal pull-down does the same.
 
 ## Repo ↔ container layout
 

@@ -42,6 +42,8 @@ bool LR2021::Init() {
     PackU16(chain_clear_tx_buf_, kOpcodeGetAndClearFifoIrqFlags);
     PackU16(chain_irq_tx_buf_, kOpcodeGetAndClearIrq);
     CONSOLE_INFO("LR2021::Init", "Initializing.");
+    // Re-enable the IRQ input that DeInit() switched off.
+    GPIO_resetConfig(config_.gpio_irq);
     // Do a proper reboot: a hardware reset on NRESET (the ENABLE line), held for kResetPulseUs.
     SetEnable(false);
     DelayUs(kResetPulseUs);
@@ -81,6 +83,11 @@ bool LR2021::Init() {
 bool LR2021::DeInit() {
     CONSOLE_INFO("LR2021::DeInit", "De-initializing.");
     SetEnable(false);
+    // In reset, DIO6 (LR_IRQ) falls back to its default 40 kOhm pull-up, which fights the LR_IRQ
+    // pull-down for as long as the chip is held in reset (SYNC sleep, AT+LR_ENABLE=0, 1090 RX off):
+    // about 0.35 mA at 3.3 V. Nothing reads the line until the next Init(), so turn its input buffer off
+    // (no pull, no input current at any level); Init() restores the SysConfig config.
+    GPIO_setConfig(config_.gpio_irq, GPIO_CFG_NO_DIR);
     if (spi_handle_ != nullptr) {
         // Never close the handle with a DMA in flight: cancel any async drain transfer first (also
         // covers EnterSyncSleep, which reaches here with a drain possibly mid-sequence).

@@ -52,7 +52,7 @@ CRC32 over flash, erase 2 KB sectors, and program flash.
 |---|---|---|---|---|---|
 | 20 | SURX | DIO_2 (UART RX) | ROM bootloader RX | TX | GP28 |
 | 21 | SUTX | DIO_3 (UART TX) | ROM bootloader TX | RX | GP29 |
-| 28 | SYNC | DIO_5 | Backdoor, **active high**, sampled at reset. Internal pull-down (plus an external 120 kΩ pull on PCBA Rev D and later), so it idles low | RTS | GP27 (push-pull) |
+| 28 | SYNC | DIO_5 | Backdoor, **active high**, sampled at reset. Idles low: external 120 kΩ pull-down on PCBA Rev D and later (internal pull-down off), internal pull-down on earlier or unidentified boards (chosen from the part code at boot) | RTS | GP27 (push-pull) |
 | 17 | ~SRST | RESET_N | Reset, **active low**. Module pull-up | DTR | GP26 (open-drain) |
 | — | GND | GND | | GND | GND |
 
@@ -173,9 +173,10 @@ external MCU (see [SYNC low-power sleep](AGENTS.md#sync-low-power-sleep)). As a 
 
 - Return SYNC low after flashing. Otherwise the next reset lands back in the bootloader, and a
   running application treats SYNC high as a sleep request.
-- Any reset while SYNC is high enters the bootloader, including a watchdog reset. If the module
-  sleeps for longer than the watchdog timeout (10 s by default) and the watchdog fires, the
-  module wakes up in the bootloader. For long sleeps, disable the watchdog with `AT+WATCHDOG=0`.
+- Any reset while SYNC is high enters the bootloader, including a watchdog reset. The watchdog
+  keeps counting in STANDBY, so the firmware wakes for well under a millisecond at half the
+  watchdog timeout (every 5 s by default) to feed it, and a long sleep alone doesn't reset the
+  module.
 - On a plain adapter, closing the port can put the module to sleep. On Linux and macOS, closing
   a serial port with HUPCL set (the default) deasserts RTS and DTR. RTS deasserted is SYNC high,
   so the module sleeps until something drives SYNC low again. To keep the lines as they are after

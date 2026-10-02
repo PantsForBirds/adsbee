@@ -9,13 +9,15 @@ void LEDs::Init() {
     for (uint16_t i = 0; i < config_.num_leds; i++) {
         GPIO_write(config_.pins[i], 0);
     }
-    // Schedule Update() to be called from a 1ms repeating ClockP.
+    // Schedule Update() to be called from a 1ms repeating ClockP. ClockP periods are in system ticks,
+    // which main() sets to 100 us.
+    uint32_t period_ticks = 1000 / ClockP_getSystemTickPeriod();
     ClockP_Params params;
     ClockP_Params_init(&params);
-    params.period = 1;
+    params.period = period_ticks;
     params.arg = reinterpret_cast<uintptr_t>(this);
     params.startFlag = true;
-    clock_handle_ = ClockP_construct(&clock_struct_, TimerCallback, 1, &params);
+    clock_handle_ = ClockP_construct(&clock_struct_, TimerCallback, period_ticks, &params);
 }
 
 void LEDs::DeInit() {
@@ -25,6 +27,16 @@ void LEDs::DeInit() {
         GPIO_write(config_.pins[i], 0);
     }
 }
+
+void LEDs::Suspend() {
+    ClockP_stop(clock_handle_);
+    for (uint16_t i = 0; i < config_.num_leds; i++) {
+        GPIO_write(config_.pins[i], 0);
+        led_on_[i] = false;
+    }
+}
+
+void LEDs::Resume() { ClockP_start(clock_handle_); }
 
 void LEDs::Update() {
     uint32_t now_ms = get_time_since_boot_ms();

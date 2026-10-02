@@ -18,6 +18,12 @@ class LEDs {
     void Init();
     void DeInit();
     void Update();
+    // Stops the Update() clock and turns every LED off for SYNC sleep. A periodic ClockP keeps the
+    // MCU out of STANDBY (the power policy only enters STANDBY when the next ClockP event is more
+    // than ~1 ms away), and GPIO outputs stay latched in STANDBY, so a lit LED would stay lit.
+    void Suspend();
+    // Restarts the Update() clock after SYNC sleep.
+    void Resume();
 
     void FlashLED(uint16_t pin, uint32_t duration_ms);
 

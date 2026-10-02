@@ -158,12 +158,14 @@ int main(void) {
         // and puts the MCU into STANDBY (SRAM retained) until SYNC drops, re-initializing the LR2021 on
         // wake. Resume() restarts UAT reception. Restart the loop cleanly afterward.
         if (adsbee.SyncSleepRequested()) {
+            leds.Suspend();           // stop the periodic LED clock, which would otherwise block STANDBY
             subg_radio.Suspend();     // release the RF core's STANDBY power constraint
             comms_manager.Suspend();  // release the UART RX STANDBY power constraint
             adsbee.EnterSyncSleep();
             comms_manager.Resume();   // re-arm UART RX
             subg_radio.Resume();      // restart UAT reception
             CycleCounter::Enable();   // SysTick doesn't keep its state through STANDBY.
+            leds.Resume();
             continue;
         }
 
