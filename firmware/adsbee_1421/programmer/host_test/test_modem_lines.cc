@@ -1,19 +1,7 @@
-// Host tests for ModemLines: the SET_CONTROL_LINE_STATE sequences real hosts send, played back
-// against the bridge's SYNC / reset logic. Each (dtr, rts) pair is one control request.
-#include <stdint.h>
-#include <stdio.h>
-
+// ModemLines: the SET_CONTROL_LINE_STATE sequences real hosts send, played back against the bridge's
+// SYNC / reset logic. Each (dtr, rts) pair is one control request.
+#include "gtest/gtest.h"
 #include "modem_lines.hh"
-
-static int failures = 0;
-
-#define EXPECT(cond)                                                     \
-    do {                                                                 \
-        if (!(cond)) {                                                   \
-            printf("  FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-            failures++;                                                  \
-        }                                                                \
-    } while (0)
 
 // Mirrors BridgeRun(): the callback updates the lines, the loop performs a pending reset
 // (RESET_N released kResetPulseMs later) and re-evaluates SYNC.
@@ -60,52 +48,48 @@ static void OpenPort(Bridge& b) {
     b.Loop();
 }
 
-static void TestPlainTerminalOpenAndClose() {
-    printf("plain terminal open / close\n");
+TEST(ModemLines, PlainTerminalOpenAndClose) {
     Bridge b;
     b.ClearWatch();
     OpenPort(b);
-    EXPECT(b.resets == 1);
-    EXPECT(!b.last_reset_sync_high);  // App boot.
+    EXPECT_EQ(b.resets, 1);
+    EXPECT_FALSE(b.last_reset_sync_high);  // App boot.
     b.Wait(1000);
     b.Lines(false, false);  // Close with HUPCL: DTR and RTS dropped together.
     b.Wait(5000);
-    EXPECT(!b.sync_ever_high);
-    EXPECT(b.resets == 1);
+    EXPECT_FALSE(b.sync_ever_high);
+    EXPECT_EQ(b.resets, 1);
 }
 
-static void TestCloseDropsIntentionalSleep() {
-    printf("close while intentionally asleep wakes the module\n");
+TEST(ModemLines, CloseDropsIntentionalSleep) {
     Bridge b;
     OpenPort(b);
     b.Lines(true, false);  // RTS deasserted with the port open: sleep.
-    EXPECT(b.Sync());
+    EXPECT_TRUE(b.Sync());
     b.Wait(2000);
-    EXPECT(b.Sync());
+    EXPECT_TRUE(b.Sync());
     b.Lines(false, false);  // Close.
-    EXPECT(!b.Sync());
+    EXPECT_FALSE(b.Sync());
     b.Wait(1000);
-    EXPECT(!b.Sync());
-    EXPECT(b.resets == 1);
+    EXPECT_FALSE(b.Sync());
+    EXPECT_EQ(b.resets, 1);
 }
 
-static void TestIntentionalSleepAndWake() {
-    printf("intentional sleep via RTS on an open port\n");
+TEST(ModemLines, IntentionalSleepAndWake) {
     Bridge b;
     OpenPort(b);
     b.Lines(true, false);
     b.Wait(10000);
-    EXPECT(b.Sync());  // Held for as long as the host keeps it.
+    EXPECT_TRUE(b.Sync());  // Held for as long as the host keeps it.
     b.Lines(true, true);
-    EXPECT(!b.Sync());
-    EXPECT(b.resets == 1);  // Toggling RTS never resets.
+    EXPECT_FALSE(b.Sync());
+    EXPECT_EQ(b.resets, 1);  // Toggling RTS never resets.
 }
 
 // Web console: connect parks the lines at SIGNALS_RUN (RTS asserted, DTR deasserted); Enter
 // bootloader deasserts RTS, then DTR false -> true (50 ms) -> false; after flashing it asserts RTS
 // and sends the ROM RESET command.
-static void TestWebConsoleBootloaderEntry() {
-    printf("web console Enter bootloader\n");
+TEST(ModemLines, WebConsoleBootloaderEntry) {
     Bridge b;
     OpenPort(b);
     b.Lines(false, true);  // SIGNALS_RUN.
@@ -115,135 +99,130 @@ static void TestWebConsoleBootloaderEntry() {
     b.Loop();
     b.Lines(false, false);  // _pulseReset: DTR false (no change).
     b.Loop();
-    EXPECT(!b.sync_ever_high);  // No sleep glitch before the pulse.
+    EXPECT_FALSE(b.sync_ever_high);  // No sleep glitch before the pulse.
     b.Lines(true, false);  // DTR assert edge.
-    EXPECT(b.lines.reset_pending());
-    EXPECT(b.Sync());
+    EXPECT_TRUE(b.lines.reset_pending());
+    EXPECT_TRUE(b.Sync());
     b.Loop();
-    EXPECT(b.resets == 2);
-    EXPECT(b.last_reset_sync_high);  // Backdoor entry.
-    EXPECT(b.Sync());
+    EXPECT_EQ(b.resets, 2);
+    EXPECT_TRUE(b.last_reset_sync_high);  // Backdoor entry.
+    EXPECT_TRUE(b.Sync());
     b.Wait(50 - Bridge::kResetPulseMs + 1);
     b.Lines(false, false);  // DTR released.
-    EXPECT(b.Sync());       // Still in the post-reset hold: the ROM samples SYNC high.
+    EXPECT_TRUE(b.Sync());       // Still in the post-reset hold: the ROM samples SYNC high.
     b.Wait(ModemLines::kBackdoorHoldMs);
-    EXPECT(!b.Sync());  // ROM bootloader running; SYNC no longer matters and returns low.
+    EXPECT_FALSE(b.Sync());  // ROM bootloader running; SYNC no longer matters and returns low.
     b.Wait(30000);      // Flashing.
-    EXPECT(!b.Sync());
+    EXPECT_FALSE(b.Sync());
     b.Lines(false, true);  // _leaveBootloader: SYNC low, then the ROM RESET command.
-    EXPECT(!b.Sync());
-    EXPECT(b.resets == 2);
+    EXPECT_FALSE(b.Sync());
+    EXPECT_EQ(b.resets, 2);
     b.Lines(false, false);  // Close.
     b.Wait(1000);
-    EXPECT(!b.Sync());
+    EXPECT_FALSE(b.Sync());
 }
 
 // Edge and release in the same tud_task() pass, before the loop performs the reset.
-static void TestEdgeAndReleaseBeforeReset() {
-    printf("DTR edge and release before the reset runs\n");
+TEST(ModemLines, EdgeAndReleaseBeforeReset) {
     Bridge b;
     OpenPort(b);
     b.Lines(false, false);
     b.Lines(true, false);
     b.Lines(false, false);
-    EXPECT(b.lines.reset_pending());
-    EXPECT(b.Sync());  // Latched at the edge.
+    EXPECT_TRUE(b.lines.reset_pending());
+    EXPECT_TRUE(b.Sync());  // Latched at the edge.
     b.Loop();
-    EXPECT(b.resets == 2);
-    EXPECT(b.last_reset_sync_high);
-    EXPECT(b.Sync());  // Hold.
+    EXPECT_EQ(b.resets, 2);
+    EXPECT_TRUE(b.last_reset_sync_high);
+    EXPECT_TRUE(b.Sync());  // Hold.
     b.Wait(ModemLines::kBackdoorHoldMs + 1);
-    EXPECT(!b.Sync());
+    EXPECT_FALSE(b.Sync());
 }
 
 // The pyserial snippet in firmware/adsbee_1421/README.md: rts = dtr = False before open. The kernel
 // asserts both on open, pyserial then clears DTR and RTS, and the snippet pulses DTR.
-static void TestPyserialReadmeSequence() {
-    printf("pyserial README snippet\n");
+TEST(ModemLines, PyserialReadmeSequence) {
     Bridge b;
     OpenPort(b);            // Kernel open: reset into the app.
     b.Lines(false, true);   // pyserial _update_dtr_state().
     b.Lines(false, false);  // pyserial _update_rts_state().
     b.Loop();
-    EXPECT(!b.Sync());
+    EXPECT_FALSE(b.Sync());
     b.Wait(100);           // time.sleep(0.1)
     b.Lines(true, false);  // pulse_reset(): dtr = True
     b.Loop();
-    EXPECT(b.resets == 2);
-    EXPECT(b.last_reset_sync_high);  // Into the ROM bootloader.
+    EXPECT_EQ(b.resets, 2);
+    EXPECT_TRUE(b.last_reset_sync_high);  // Into the ROM bootloader.
     b.Wait(50 - Bridge::kResetPulseMs + 1);
     b.Lines(false, false);  // dtr = False
-    EXPECT(b.Sync());
+    EXPECT_TRUE(b.Sync());
     b.Wait(100);
-    EXPECT(b.Sync());
+    EXPECT_TRUE(b.Sync());
     b.Wait(ModemLines::kBackdoorHoldMs);
-    EXPECT(!b.Sync());
+    EXPECT_FALSE(b.Sync());
     b.Wait(20000);  // Program.
     b.Lines(false, true);  // s.rts = True: SYNC low.
     b.Lines(true, true);   // pulse_reset()
     b.Loop();
-    EXPECT(b.resets == 3);
-    EXPECT(!b.last_reset_sync_high);  // Back into the app.
+    EXPECT_EQ(b.resets, 3);
+    EXPECT_FALSE(b.last_reset_sync_high);  // Back into the app.
     b.Wait(50);
     b.Lines(false, true);
     b.Wait(100);
     b.ClearWatch();
     b.Lines(false, false);  // s.close() with HUPCL.
     b.Wait(5000);
-    EXPECT(!b.sync_ever_high);
-    EXPECT(b.resets == 3);
+    EXPECT_FALSE(b.sync_ever_high);
+    EXPECT_EQ(b.resets, 3);
 }
 
 // A second backdoor entry long after the hold expired, RTS still deasserted throughout.
-static void TestRepeatedBackdoorEntry() {
-    printf("repeated backdoor entry\n");
+TEST(ModemLines, RepeatedBackdoorEntry) {
     Bridge b;
     OpenPort(b);
     b.Lines(false, false);
     for (int i = 0; i < 3; i++) {
         b.Wait(5000);
-        EXPECT(!b.Sync());
+        EXPECT_FALSE(b.Sync()) << "entry " << i;
         b.Lines(true, false);
         b.Loop();
-        EXPECT(b.last_reset_sync_high);
+        EXPECT_TRUE(b.last_reset_sync_high) << "entry " << i;
         b.Lines(false, false);
-        EXPECT(b.Sync());
+        EXPECT_TRUE(b.Sync()) << "entry " << i;
     }
-    EXPECT(b.resets == 4);
+    EXPECT_EQ(b.resets, 4);
 }
 
-static void TestRtsAssertEndsHold() {
-    printf("asserting RTS during the hold drops SYNC\n");
+TEST(ModemLines, RtsAssertEndsHold) {
     Bridge b;
     OpenPort(b);
     b.Lines(false, false);
     b.Lines(true, false);
     b.Loop();
     b.Lines(false, false);
-    EXPECT(b.Sync());
+    EXPECT_TRUE(b.Sync());
     b.Lines(false, true);
-    EXPECT(!b.Sync());
+    EXPECT_FALSE(b.Sync());
 }
 
-static void TestLinesBeforePassThrough() {
-    printf("lines set before pass-through are not acted on\n");
+// Lines set before pass-through are not acted on.
+TEST(ModemLines, LinesBeforePassThrough) {
     ModemLines lines;
     lines.Track(true, false);  // Port opened and RTS dropped while the Programmer was still flashing.
     lines.Start();
-    EXPECT(!lines.SyncHigh(0));  // SYNC stays low until the host changes a line.
+    EXPECT_FALSE(lines.SyncHigh(0));  // SYNC stays low until the host changes a line.
     lines.OnLineState(true, false);
-    EXPECT(!lines.reset_pending());  // DTR was already asserted: no edge.
-    EXPECT(lines.SyncHigh(0));
+    EXPECT_FALSE(lines.reset_pending());  // DTR was already asserted: no edge.
+    EXPECT_TRUE(lines.SyncHigh(0));
     lines.Start();  // Next session (BOOTSEL recheck).
-    EXPECT(!lines.SyncHigh(0));
+    EXPECT_FALSE(lines.SyncHigh(0));
     lines.OnLineState(false, false);
     lines.OnLineState(true, true);
-    EXPECT(lines.reset_pending());
-    EXPECT(!lines.reset_sync_high());
+    EXPECT_TRUE(lines.reset_pending());
+    EXPECT_FALSE(lines.reset_sync_high());
 }
 
-static void TestHoldAcrossCounterWrap() {
-    printf("hold across the ms counter wrap\n");
+TEST(ModemLines, HoldAcrossCounterWrap) {
     ModemLines lines;
     lines.Start();
     lines.OnLineState(false, false);
@@ -251,27 +230,8 @@ static void TestHoldAcrossCounterWrap() {
     uint32_t t = UINT32_MAX - 100;
     lines.OnResetDone(t);
     lines.OnLineState(false, false);
-    EXPECT(lines.SyncHigh(t + 50));
-    EXPECT(lines.SyncHigh(t + ModemLines::kBackdoorHoldMs - 1));  // Wrapped past zero.
-    EXPECT(!lines.SyncHigh(t + ModemLines::kBackdoorHoldMs));
-    EXPECT(!lines.SyncHigh(t + 50));  // Expired holds stay expired.
-}
-
-int main() {
-    TestPlainTerminalOpenAndClose();
-    TestCloseDropsIntentionalSleep();
-    TestIntentionalSleepAndWake();
-    TestWebConsoleBootloaderEntry();
-    TestEdgeAndReleaseBeforeReset();
-    TestPyserialReadmeSequence();
-    TestRepeatedBackdoorEntry();
-    TestRtsAssertEndsHold();
-    TestLinesBeforePassThrough();
-    TestHoldAcrossCounterWrap();
-    if (failures) {
-        printf("%d failure(s)\n", failures);
-        return 1;
-    }
-    printf("all passed\n");
-    return 0;
+    EXPECT_TRUE(lines.SyncHigh(t + 50));
+    EXPECT_TRUE(lines.SyncHigh(t + ModemLines::kBackdoorHoldMs - 1));  // Wrapped past zero.
+    EXPECT_FALSE(lines.SyncHigh(t + ModemLines::kBackdoorHoldMs));
+    EXPECT_FALSE(lines.SyncHigh(t + 50));  // Expired holds stay expired.
 }

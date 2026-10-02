@@ -3,8 +3,6 @@
 #include <cstring>  // For memcmp, memcpy.
 
 #include "comms.hh"
-#include "crc.hh"
-#include "mode_s_single_bit_filter.hh"
 
 // Uncomment the line below to allow duplicate packets (e.g. for testing).
 // #define DISABLE_DUPLICATE_FILTER
@@ -78,26 +76,13 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
             // Forward for validation against ICAO addresses in the aircraft dictionary.
             PushPacketIfNotDuplicate(decoded_packet);
             status_str = "APFWD     ";
-        } else if (config_.enable_1090_error_correction &&
-                   decoded_packet.raw.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
-                   (decoded_packet.downlink_format == DecodedModeSPacket::kDownlinkFormatExtendedSquitter ||
-                    decoded_packet.downlink_format ==
-                        DecodedModeSPacket::kDownlinkFormatExtendedSquitterNonTransponder)) {
-            // Checksum correction is enabled, and we have a packet worth correcting. The syndrome was already calculated
-            // while constructing the packet.
-            // Only extended squitters received as DF=17/18 are corrected, and never by flipping a bit in the DF field:
-            // a DF=17/18 is only accepted if its first five bits say so (DO-260B 2.2.4.3.4.7.3.a). Correcting other
-            // formats (or the DF field) turns noise and non-ADS-B formats (e.g. DF=19, DF=24) into ADS-B packets.
-            // The prefilter answers "no single-bit error" for most syndromes without the 112-entry search.
-            int16_t bit_flip_index = ModeSSingleBitFilter::kFilter.MayMatch(decoded_packet.crc_syndrome)
-                                         ? crc24_find_single_bit_error(decoded_packet.crc_syndrome,
-                                                                       RawModeSPacket::kExtendedSquitterPacketLenBits)
-                                         : -1;
-            if (bit_flip_index >= DecodedModeSPacket::kDFNumBits) {
-                // Found a single bit error: flip it and push the corrected packet to the output queue.
-                flip_bit(decoded_packet.raw.buffer, bit_flip_index);
+        } else if (config_.enable_1090_error_correction && decoded_packet.IsSingleBitCorrectable()) {
+            // Checksum correction is enabled, and we have a packet worth correcting (an extended squitter received as
+            // DF=17/18, per DO-260B 2.2.4.3.4.7.3.a; see DecodedModeSPacket::CorrectSingleBitError).
+            int16_t bit_flip_index = decoded_packet.CorrectSingleBitError();
+            if (bit_flip_index >= 0) {
+                // Found a single bit error: the packet is corrected, push it to the output queue.
                 decoded_mode_s_packet_bit_flip_locations_out_queue.Enqueue(bit_flip_index);
-                decoded_packet = DecodedModeSPacket(decoded_packet.raw);
                 PushPacketIfNotDuplicate(decoded_packet);
                 status_str = "1FIXD     ";
             } else {

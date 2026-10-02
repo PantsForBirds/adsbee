@@ -153,6 +153,22 @@ class DecodedModeSPacket {
      */
     uint32_t CalculateCRC24(uint16_t packet_len_bits = RawModeSPacket::kExtendedSquitterPacketLenBits) const;
 
+    /**
+     * Whether this packet may be corrected with CorrectSingleBitError(): a 112-bit extended squitter received as DF=17
+     * or DF=18 that failed its CRC. A DF=17/18 is only accepted if its first five bits say so (DO-260B
+     * 2.2.4.3.4.7.3.a). Correcting other formats turns noise and non-ADS-B formats (e.g. DF=19, DF=24) into ADS-B
+     * packets, and address parity formats (DF=0/4/5/16/20/21) have no syndrome to correct with.
+     */
+    bool IsSingleBitCorrectable() const;
+
+    /**
+     * Single-bit error correction for every product's decoder. If IsSingleBitCorrectable() and the CRC syndrome is
+     * that of a single bit error outside the DF field, flips that bit and re-decodes the packet (which is then valid).
+     * Never flips a bit in the DF field. The decoder's setting for whether to correct at all is checked by the caller.
+     * @retval Index of the corrected bit, or -1 if the packet was left unchanged.
+     */
+    int16_t CorrectSingleBitError();
+
     bool is_valid = false;
     // True if the packet's CRC can only be checked against a known ICAO address: DF=0,4,5,16,20,21 (address parity), or
     // a DF=11 reply to an interrogator with a nonzero II/SI code. is_valid is set once the address is confirmed.

@@ -78,6 +78,7 @@ bool LR2021::PostAsyncFrame(const uint8_t* tx_buf, size_t len, uint8_t* rx_buf) 
         .arg = this,
         .status = SPI_TRANSFER_QUEUED,
     };
+    status_tracker_.OnFrame(FrameOpcode(tx_buf, len));  // Which command the next Stat word reports on.
     SetNSS(false);
     async_in_flight_ = true;
     if (!SPI_transfer(spi_handle_, &async_txn_)) {

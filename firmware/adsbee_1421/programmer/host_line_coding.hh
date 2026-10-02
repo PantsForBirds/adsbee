@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 // Host line coding (CDC SET_LINE_CODING) -> what the Programmer does with the requested baud. Pure logic with no SDK
-// dependencies so it can be host-tested (host_test/host_line_coding_test.cc); bridge.cc calls it from
+// dependencies so it can be host-tested (host_test/test_host_line_coding.cc); bridge.cc calls it from
 // tud_cdc_line_coding_cb().
 
 // Host baud that reboots the Programmer's own RP2040 into its USB bootloader (RPI-RP2), so the Programmer can be

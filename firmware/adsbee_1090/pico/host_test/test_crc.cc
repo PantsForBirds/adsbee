@@ -1,5 +1,9 @@
+#include <random>
+
+#include "buffer_utils.hh"
 #include "crc.hh"
 #include "gtest/gtest.h"
+#include "mode_s_packet.hh"
 #include "unit_conversions.hh"
 
 TEST(CRC, CRC24ModeSMessage) {
@@ -75,4 +79,37 @@ TEST(CRC, CRC24SingleBitError56) {
     // Attempt fixing the message.
     flip_bit(message, 27);
     EXPECT_EQ(crc24_syndrome(message, 7), icao);
+}
+// The bitwise word-buffer CRC that DecodedModeSPacket::CalculateCRC24 used before it switched to the table CRC in
+// crc.cpp (removed from mode_s_packet.cpp), kept here as the reference. Algorithm from The 1090MHz Riddle (Junzi Sun),
+// pg. 91: a conditional convolution of the frame with the 25-bit generator word.
+static uint32_t WordBufferCRC24(const uint32_t buffer[RawModeSPacket::kMaxPacketLenWords32], uint16_t packet_len_bits) {
+    uint32_t crc_buffer[RawModeSPacket::kMaxPacketLenWords32];
+    for (uint16_t i = 0; i < RawModeSPacket::kMaxPacketLenWords32; i++) crc_buffer[i] = buffer[i];
+    SetNBitsInWordBuffer(24, 0x0, packet_len_bits - 24, crc_buffer);  // Zero the parity field.
+    for (uint16_t i = 0; i < packet_len_bits - 24; i++) {
+        uint32_t word = GetNBitsFromWordBuffer(25, i, crc_buffer);
+        if (word & (1u << 24)) {
+            SetNBitsInWordBuffer(25, word ^ (1u << 24 | kCRC24Generator), i, crc_buffer);
+        }
+    }
+    return GetNBitsFromWordBuffer(24, packet_len_bits - 24, crc_buffer);
+}
+
+// CalculateCRC24 (table CRC) is bit for bit the same as the word-buffer CRC it replaced, for random 56 and 112-bit
+// frames of every downlink format.
+TEST(CRC, CalculateCRC24MatchesWordBufferCRC) {
+    std::mt19937 rng(24);
+    for (int n = 0; n < 100000; n++) {
+        uint32_t words[RawModeSPacket::kMaxPacketLenWords32];
+        for (uint16_t i = 0; i < RawModeSPacket::kMaxPacketLenWords32; i++) words[i] = rng();
+        const bool extended = n & 1;
+        const uint16_t len_bits =
+            extended ? RawModeSPacket::kExtendedSquitterPacketLenBits : RawModeSPacket::kSquitterPacketLenBits;
+        const uint16_t len_words =
+            extended ? RawModeSPacket::kExtendedSquitterPacketNumWords32 : RawModeSPacket::kSquitterPacketNumWords32;
+        const DecodedModeSPacket packet(RawModeSPacket(words, len_words));
+        ASSERT_EQ(packet.CalculateCRC24(len_bits), WordBufferCRC24(packet.raw.buffer, len_bits))
+            << "frame " << n << " length " << len_bits;
+    }
 }
