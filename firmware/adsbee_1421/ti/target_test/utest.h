@@ -1558,16 +1558,15 @@ int utest_main(int argc, const char* const argv[]) {
     }
 
 cleanup:
-    for (index = 0; index < utest_state.tests_length; index++) {
-        free(UTEST_PTR_CAST(void*, utest_state.tests[index].name));
-    }
-
+    // ADSBee: keep the test registry (utest_state.tests and each test name). Static constructors fill it once per
+    // boot, and upstream frees it here without clearing it because it expects the program to exit next. AT+TEST
+    // calls utest_main again in the same boot, which would then run the tests from freed memory and free it twice.
     free(UTEST_PTR_CAST(void*, skipped_testcases));
     free(UTEST_PTR_CAST(void*, failed_testcases));
-    free(UTEST_PTR_CAST(void*, utest_state.tests));
 
     if (utest_state.output) {
         fclose(utest_state.output);
+        utest_state.output = UTEST_NULL;
     }
 
     return UTEST_CAST(int, failed);
