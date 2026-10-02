@@ -2,45 +2,43 @@
 
 #include "adsbee.hh"
 #include "eeprom.hh"
-#include "hardware/sync.h"
 #include "main.hh"  // For ISRS_ON_CORE1.
+#include "pico/multicore.h"
 #include "spi_coprocessor.hh"
 
 UTEST_STATE();
 
-// Function (and its argument) that core 1 should run next, set by RunOnISRCore() and cleared by core 1 once it ran.
-static void (*volatile core1_test_function)(void*) = nullptr;
-static void* volatile core1_test_function_arg = nullptr;
+// RunOnISRCore() hands a function to core 1 over the inter-core FIFO: core 0 pushes the function pointer and its
+// argument, and core 1 pushes kCore1TestFunctionDone back once the function has returned. Nothing else uses the FIFO
+// after core 1 is launched (no multicore lockout or flash_safe_execute in this firmware).
+static constexpr uint32_t kCore1TestFunctionDone = 0xD0D0D0D0;
 
 void RunPendingTestFunctionOnCore1() {
-    void (*function)(void*) = core1_test_function;
-    if (function == nullptr) {
+    if (!multicore_fifo_rvalid()) {
         return;
     }
-    __dmb();  // Read the argument after the function pointer that published it.
-    function(core1_test_function_arg);
-    __dmb();  // Finish the function's writes before reporting completion.
-    core1_test_function = nullptr;
+    void (*function)(void*) = reinterpret_cast<void (*)(void*)>(multicore_fifo_pop_blocking());
+    // Core 0 pushes the argument right after the function pointer.
+    void* arg = reinterpret_cast<void*>(multicore_fifo_pop_blocking());
+    function(arg);
+    multicore_fifo_push_blocking(kCore1TestFunctionDone);
 }
 
 bool RunOnISRCore(void (*function)(void*), void* arg, uint32_t timeout_ms) {
 #ifdef ISRS_ON_CORE1
-    core1_test_function_arg = arg;
-    __dmb();  // Publish the argument before the function pointer.
-    core1_test_function = function;
-    uint64_t deadline_us = time_us_64() + timeout_ms * kUsPerMs;
-    while (core1_test_function != nullptr) {
-        if (time_us_64() > deadline_us) {
-            core1_test_function = nullptr;
-            return false;
-        }
+    uint64_t timeout_us = static_cast<uint64_t>(timeout_ms) * kUsPerMs;
+    multicore_fifo_drain();  // Drop a reply left over from an earlier call that timed out.
+    if (!multicore_fifo_push_timeout_us(reinterpret_cast<uintptr_t>(function), timeout_us) ||
+        !multicore_fifo_push_timeout_us(reinterpret_cast<uintptr_t>(arg), timeout_us)) {
+        return false;
     }
-    __dmb();  // Read the function's results after seeing it complete.
+    uint32_t reply;
+    return multicore_fifo_pop_timeout_us(timeout_us, &reply) && reply == kCore1TestFunctionDone;
 #else
     (void)timeout_ms;
     function(arg);
-#endif
     return true;
+#endif
 }
 
 static constexpr uint32_t kTestWatchdogDeadlineMs = 60'000;
