@@ -44,10 +44,11 @@ bool LR2021::Init() {
     CONSOLE_INFO("LR2021::Init", "Initializing.");
     // Re-enable the IRQ input that DeInit() switched off.
     GPIO_resetConfig(config_.gpio_irq);
-    // Do a proper reboot.
+    // Do a proper reboot: a hardware reset on NRESET (the ENABLE line), held for kResetPulseUs.
     SetEnable(false);
-    DelayUs(100);
+    DelayUs(kResetPulseUs);
     SetEnable(true);
+    status_tracker_.Reset();  // No command before the first one after a reset.
 
     // A SYNC assertion may have tri-stated the interface (and set the abort flag) while we were getting
     // here. Bail before SPI_open re-muxes SCLK/PICO onto the bus the host now owns. A SYNC ISR landing
@@ -191,69 +192,45 @@ void LR2021::DelayUs(uint32_t us) {
     }
 }
 
-// Mode S CRC-24 generator polynomial (0x1FFF409 is 25 bits; bit 24 is the implicit top bit).
-static constexpr uint32_t kModeSCrc24Poly = 0x1FFF409;
-
 bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_t agc_gain, uint8_t rx_boost) {
     const bool df17_mode = IsOokDF17PreambleMode(preamble_mode);
-    // NOTE: Stat for each command is for the previous instruction, so error messages reflect an error with the previous
-    // instruction.
     // The caller (ADSBee::ApplyReceiverConfig) guarantees the chip is in a clean kStdbyRC state via
     // a fresh Init() before this runs, so the config commands below execute from standby.
     if (!SetRfFrequency(1090e6)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetRfFrequency.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetRfFrequency");
     }
     if (rx_boost > RxBoost::kBoostMax) {
         rx_boost = RxBoost::kBoostMax;
     }
     if (!SetRxPathAdv(RxPath::kLfPath, static_cast<RxBoost>(rx_boost))) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetRxPathAdv.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetRxPathAdv");
     }
     // Calibrate the RF frontend on the LF path at 1090MHz (currently selected RF frequency).
     if (!CalibFe()) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during CalibFe.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "CalibFe");
     }
     if (!SetPacketType(PacketType::kPktOok)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetPacketType.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetPacketType");
     }
     if (!SetOokModulationParams(2e6,                                // 2Mbps bitrate
                                 OokPulseShape::kOokPulseShapeNone,  // No pulse shaping
                                 OokRxBw::kOokRxBw3076kHz            // 3.076MHz Rx bandwidth
 
                                 )) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokModulationParams.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetOokModulationParams");
     }
-    // DF17 mode keys on the DF data bits and captures the message remainder mid-byte, so it runs
-    // with the hardware CRC OFF (software validates). MODE_S_PREAMBLE uses the 3-byte hardware CRC
-    // (11-byte payload + appended parity). MODE_S_SW_CRC uses the standard preamble detector but
-    // runs CRC-off with the parity bytes captured as payload, so software validates -- the FIFO
-    // packet is 14 bytes of raw air bits either way (GetOokRxPacketLenBytes).
-    uint16_t payload_len_bytes;
-    OokCrc crc_mode;
-    if (df17_mode) {
-        payload_len_bytes = kOokDF17PacketRxLenBytes;
-        crc_mode = kOokCrcOff;
-    } else if (preamble_mode == SettingsManager::kR1090PreambleModeModeSSwCrc) {
-        payload_len_bytes = kOokADSBPacketRxLenBytes + kOokADSBPacketCrcLenBytes;
-        crc_mode = kOokCrcOff;
-    } else {
-        payload_len_bytes = kOokADSBPacketRxLenBytes;
-        crc_mode = kOokCrc3Byte;
-    }
-    if (!SetOokPacketParams(8,                         // Tx preamble length
-                            kOokAddrCompOff,           // No address filtering
-                            kOokPktFormatFixedLength,  // Fixed length packets
-                            payload_len_bytes,         // Payload length (mode dependent)
-                            crc_mode,                  // 3-byte hardware CRC or off (mode dependent)
-                            kOokEncodingManchesterInv  // Inverted Manchester encoding
+    // Every mode runs with the hardware CRC off and validates in software. DF17 mode keys on the DF
+    // data bits and captures the message remainder mid-byte; the other modes capture from message
+    // bit 0 with the parity bytes as payload. The FIFO packet is 14 bytes of raw air bits either way
+    // (GetOokRxPacketLenBytes).
+    if (!SetOokPacketParams(8,                                     // Tx preamble length
+                            kOokAddrCompOff,                       // No address filtering
+                            kOokPktFormatFixedLength,              // Fixed length packets
+                            GetOokRxPacketLenBytes(preamble_mode),  // Payload length (mode dependent)
+                            kOokCrcOff,                            // No hardware CRC
+                            kOokEncodingManchesterInv              // Inverted Manchester encoding
                             )) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokPacketParams.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetOokPacketParams");
     }
     // CRC handling. Bit 0x01000000 of 0xF30844 must be CLEARED for Mode S reception. Empirically,
     // setting it breaks reception entirely (it was the old AT+R1090_LR_CRC=1 path): the OOK engine
@@ -266,48 +243,53 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     // NOTE(hardware-validate): register 0xF30844 is undocumented; its exact meaning is unconfirmed,
     // but bench testing shows clear = working reception, set = no valid packets.
     if (!WriteRegMemMask32(0xF30844, 0x01000000, 0)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during WriteRegMemMask32.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "WriteRegMemMask32");
     }
 
     // No sync word in either mode: preamble mode uses the preamble detector; DF17 mode puts the
     // DF=17 data bits directly in the detector pattern.
     if (!SetOokSyncWord(0, kOokBitOrderLsbFirst, 0)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokSyncWord.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetOokSyncWord");
     }
+#ifdef HARDWARE_UNIT_TESTS
+    // Pattern length override for the next test_detector_len_override_count configs, so a target test can make
+    // the chip reject a config (and its retries).
+    uint8_t test_len_chips = 0;
+    if (test_detector_len_override_count > 0) {
+        test_detector_len_override_count--;
+        test_len_chips = test_detector_len_override;
+    }
+#else
+    const uint8_t test_len_chips = 0;
+#endif
     if (df17_mode) {
-        // Detect on the preamble tail + leading DF=17 data bits rather than the full preamble. The
-        // real preamble still lets the (manual) AGC settle before the pattern completes.
-        if (!SetOokDetector(kOokDF17Detector.pattern,            // Preamble tail + DF17 header chips
-                            kOokDF17Detector.len_chips - 1,      // Pattern length (field is N-1)
+        // Detect on the preamble tail + leading DF=17 data bits (see lr2021_ook_adsb.hh).
+        if (!SetOokDetector(kOokDF17Detector.pattern,  // Preamble tail + DF17 header chips
+                            (test_len_chips ? test_len_chips : kOokDF17Detector.len_chips) - 1,  // Field is N-1
                             0,                                   // No pattern repetition
                             false,                               // (no sync word used)
                             OokSfdKind::kOokSfdKindFallingEdge,  // SFD on falling edge
                             0                                    // SFD length
                             )) {
-            CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokDetector.");
-            return false;
+            return SequenceStepFailed("LR2021::SetOokADSB", "SetOokDetector");
         }
     } else {
-        if (!SetOokDetector(0b1010000101,                        // Preamble pattern
-                            15,                                  // Pattern length: 16 chips (field N-1)
+        // MODE_S_STRONG detects on preamble chips 6-15 (see lr2021_ook_adsb.hh); the other modes use
+        // the whole preamble. Both patterns end at chip 15, so the capture starts at message bit 0.
+        const bool strong_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong;
+        const uint16_t pattern = strong_mode ? LR2021OokAdsb::kStrongPattern : LR2021OokAdsb::kModeSPattern;
+        const uint8_t pattern_len_chips =
+            strong_mode ? LR2021OokAdsb::kStrongPatternLenChips : LR2021OokAdsb::kModeSPatternLenChips;
+        if (!SetOokDetector(pattern,  // Preamble pattern (LSB-first chips)
+                            (test_len_chips ? test_len_chips : pattern_len_chips) - 1,  // Field is N-1
                             0,                                   // No pattern repetition
                             false,                               // Sync word is not raw
                             OokSfdKind::kOokSfdKindFallingEdge,  // Start frame delimiter on falling edge
                             0                                    // Start frame delimiter length
                             )) {
-            CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokDetector.");
-            return false;
+            return SequenceStepFailed("LR2021::SetOokADSB", "SetOokDetector");
         }
     }
-    // CRC polynomial/init only matter when the hardware CRC is enabled (preamble mode). DF17 mode
-    // has CRC off and validates in software, so this is a harmless no-op there.
-    if (!SetOokCrcParams(kModeSCrc24Poly, 0)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetOokCrcParams.");
-        return false;
-    }
-
     // Set up the FIFO. The high threshold doubles as the IRQ-paced drain valve: kIrqRxFifo latches
     // (and the DIO6 IRQ line rises) only once 9 whole packets have accumulated, i.e. only when the
     // main loop's routine level-read sweep is falling behind. The loop drain does NOT gate on this
@@ -315,43 +297,54 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     // latency.
     static_assert(GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeS) == kOokFifoPacketLenBytes &&
                       GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeDF17) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSSwCrc) == kOokFifoPacketLenBytes,
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes,
                   "IRQ drain threshold math assumes 14-byte FIFO packets in every preamble mode.");
     uint8_t rx_fifo_flags = kFifoIrqFlagFifoHigh | kFifoIrqFlagFifoOverflow;
     uint8_t tx_fifo_flags = 0x0;
     uint16_t rx_fifo_low_threshold = 0;  // Not actually used.
     uint16_t rx_fifo_high_threshold = kIrqDrainThresholdBytes;
     if (!ConfigFifoIrqAdv(rx_fifo_flags, tx_fifo_flags, rx_fifo_high_threshold, 0, rx_fifo_low_threshold, 0)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during ConfigFifoIrqAdv.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "ConfigFifoIrqAdv");
     }
     // Route the RX FIFO IRQ to DIO6, which is wired to the CC1314's LR_IRQ pin (rising-edge
     // interrupt; see lr2021_irq_drain.cpp). The IRQ register bit is latched: the drain paths clear it
     // over SPI (ClearFifoIrqFlags then GetAndClearIrq) to drop the line.
     if (!SetDioFunction(DioNum::kDio6, DioFunc::kDioFuncIrq, PullDrive::kPullNone)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetDioFunction for the IRQ line.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetDioFunction for the IRQ line");
     }
     if (!SetDioIrqConfig(DioNum::kDio6, HostIrqs::kIrqRxFifo)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetDioIrqConfig for the IRQ line.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetDioIrqConfig for the IRQ line");
     }
 
     if (!SetAgcGainManual(agc_gain)) {  // 0 = auto, 1..15 manual (13 = max).
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetAgcGainManual.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetAgcGainManual");
+    }
+    // The standard preamble detector needs the whole preamble, and an AGC gain change during the
+    // preamble blanks its first three pulses (lr2021_ook_adsb.hh). With the AGC on, MODE_S raises the
+    // level at which it starts cutting the gain so that packets up to -45 dBm arrive with the gain
+    // unchanged. DF17 and MODE_S_STRONG detect after the blanked chips and keep the chip default (the
+    // AGC acts from about -53 dBm). Manual gain (agc_gain != 0) leaves the AGC off, so the register
+    // doesn't matter there.
+    if (agc_gain == 0 && preamble_mode == SettingsManager::kR1090PreambleModeModeS &&
+        !WriteRegMemMask32(LR2021OokAdsb::kAgcConfigRegAddr, LR2021OokAdsb::kAgcTriggerMask,
+                           LR2021OokAdsb::AgcTriggerRegValue(LR2021OokAdsb::kAgcTriggerStandardPreamble))) {
+        return SequenceStepFailed("LR2021::SetOokADSB", "setting the AGC trigger");
+    }
+    // MODE_S_STRONG only looks for strong signals, so it raises the OOK detection threshold, which
+    // keeps its short pattern from triggering on noise (lr2021_ook_adsb.hh).
+    if (preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong &&
+        !WriteRegMemMask32(LR2021OokAdsb::kOokDetectRegAddr, LR2021OokAdsb::kOokDetectThresholdMask,
+                           LR2021OokAdsb::OokDetectThresholdRegValue(LR2021OokAdsb::kOokDetectThresholdStrong))) {
+        return SequenceStepFailed("LR2021::SetOokADSB", "setting the OOK detection threshold");
     }
 
     uint32_t rx_timeout = 0xFFFFFF;  // Continuous Rx mode (no timeout).
     if (!SetRxAdv(rx_timeout)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during SetRxAdv.");
-        return false;
+        return SequenceStepFailed("LR2021::SetOokADSB", "SetRxAdv");
     }
 
-    // One more status command to mop up errors from previous command.
-    LR2021::StatusRsp stat;
-    if (!GetStatus(&stat)) {
-        CONSOLE_ERROR("LR2021::SetOokADSB", "Error during GetStatus.");
+    // SetRxAdv's own status only arrives with the frame after it: check it.
+    if (!CheckLastCommandStatus("LR2021::SetOokADSB")) {
         return false;
     }
 
@@ -363,20 +356,17 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
 bool LR2021::StartCwTone(bool use_hf_path, uint32_t freq_hz, int8_t tx_power_dbm) {
     // Begin from a clean standby state.
     if (!SetStandby(SysStandbyMode::kSysStandbyXosc)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during SetStandby.");
-        return false;
+        return SequenceStepFailed("LR2021::StartCwTone", "SetStandby");
     }
     // Select a continuous-carrier packet type. The chip otherwise keeps the OOK packet type left over
     // from the ADS-B receiver config (SetOokADSB), and in OOK the modulator gates the carrier off, so
     // the TONE test only leaks the LO (~-40 dBm) and the PA never keys. Generic FSK transmits an
     // unmodulated continuous carrier in TONE test mode.
     if (!SetPacketType(PacketType::kPktFskGeneric)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during SetPacketType.");
-        return false;
+        return SequenceStepFailed("LR2021::StartCwTone", "SetPacketType");
     }
     if (!SetRfFrequency(freq_hz)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during SetRfFrequency.");
-        return false;
+        return SequenceStepFailed("LR2021::StartCwTone", "SetRfFrequency");
     }
 
     // Select and configure the requested PA. pa_lf_duty_cycle and pa_lf_slices control the PA's duty
@@ -385,12 +375,10 @@ bool LR2021::StartCwTone(bool use_hf_path, uint32_t freq_hz, int8_t tx_power_dbm
     // pa_hf_duty_cycle at its firmware default (16).
     const PaSel pa_sel = use_hf_path ? PaSel::kHfPa : PaSel::kLfPa;
     if (!SetPaConfig(pa_sel, PaLfMode::kPaLfFsm, /*pa_lf_duty_cycle=*/6, /*pa_lf_slices=*/7)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during SetPaConfig.");
-        return false;
+        return SequenceStepFailed("LR2021::StartCwTone", "SetPaConfig");
     }
     if (!SelPa(pa_sel)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during SelPa.");
-        return false;
+        return SequenceStepFailed("LR2021::StartCwTone", "SelPa");
     }
     // tx_power is in 0.5 dB steps. Convert the requested dBm and clamp to the active path's range
     // (LF: -19..44 = -9.5..22 dBm, HF: -39..24 = -19.5..12 dBm).
@@ -400,8 +388,7 @@ bool LR2021::StartCwTone(bool use_hf_path, uint32_t freq_hz, int8_t tx_power_dbm
     if (tx_power_half_db < tx_power_min) tx_power_half_db = tx_power_min;
     if (tx_power_half_db > tx_power_max) tx_power_half_db = tx_power_max;
     if (!SetTxParams((int8_t)tx_power_half_db, RampTime::kRamp16u)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during SetTxParams.");
-        return false;
+        return SequenceStepFailed("LR2021::StartCwTone", "SetTxParams");
     }
 
     // Calibrate the frontend on the selected path. CalibFe takes the frequency in 4 MHz steps with the
@@ -411,22 +398,18 @@ bool LR2021::StartCwTone(bool use_hf_path, uint32_t freq_hz, int8_t tx_power_dbm
         calib_word |= 0x8000;
     }
     if (!CalibFe(calib_word)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during CalibFe.");
-        return false;
+        return SequenceStepFailed("LR2021::StartCwTone", "CalibFe");
     }
 
     // Key up the continuous tone (unmodulated carrier).
     if (!SetTxTestMode(TxTestMode::kTestTone)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during SetTxTestMode.");
-        return false;
+        return SequenceStepFailed("LR2021::StartCwTone", "SetTxTestMode");
     }
 
-    // Read back the chip status to confirm the tone actually put the chip into TX mode. The status word
-    // reflects the previous command, so issue a fresh GetStatus transaction (which updates last_stat_)
-    // and then inspect last_stat_.chip_mode. Expect kTx (0x5); anything else means the tone did not key.
-    LR2021::StatusRsp irq_rsp;
-    if (!GetStatus(&irq_rsp)) {
-        CONSOLE_ERROR("LR2021::StartCwTone", "Error during GetStatus after keying tone.");
+    // Read back the chip status to confirm the tone actually put the chip into TX mode: one status frame, whose
+    // Stat word reports SetTxTestMode and the chip mode now. Expect kTx (0x5); anything else means the tone did
+    // not key.
+    if (!CheckLastCommandStatus("LR2021::StartCwTone")) {
         return false;
     }
     CONSOLE_INFO("LR2021::StartCwTone", "post-tone chip_mode=0x%x (kTx=0x5) cmd_status=%s",
@@ -444,8 +427,7 @@ bool LR2021::StartCwTone(bool use_hf_path, uint32_t freq_hz, int8_t tx_power_dbm
 bool LR2021::StopCwTone() {
     // Returning to standby drops the carrier.
     if (!SetStandby(SysStandbyMode::kSysStandbyRc)) {
-        CONSOLE_ERROR("LR2021::StopCwTone", "Error during SetStandby.");
-        return false;
+        return SequenceStepFailed("LR2021::StopCwTone", "SetStandby");
     }
     return true;
 }
@@ -461,49 +443,40 @@ bool LR2021::StartRssiScan(bool use_hf_path, uint32_t freq_hz) {
         return false;
     }
     if (!SetRfFrequency(freq_hz)) {
-        CONSOLE_ERROR("LR2021::StartRssiScan", "Error during SetRfFrequency.");
-        return false;
+        return SequenceStepFailed("LR2021::StartRssiScan", "SetRfFrequency");
     }
     // Boost off so the reading isn't skewed by the extra front-end gain.
     if (!SetRxPathAdv(use_hf_path ? RxPath::kHfPath : RxPath::kLfPath, RxBoost::kBoostOff)) {
-        CONSOLE_ERROR("LR2021::StartRssiScan", "Error during SetRxPathAdv.");
-        return false;
+        return SequenceStepFailed("LR2021::StartRssiScan", "SetRxPathAdv");
     }
     // Calibrate the frontend on the currently selected path at the currently set RF frequency, exactly
     // as SetOokADSB does. (Explicit calib words, as used in the StartCwTone TX flow, fail with
     // CMD_FAIL in this RX bring-up.)
     if (!CalibFe()) {
-        CONSOLE_ERROR("LR2021::StartRssiScan", "Error during CalibFe.");
-        return false;
+        return SequenceStepFailed("LR2021::StartRssiScan", "CalibFe");
     }
     // The RX chain needs a packet type and modulation config even for a bare RSSI measurement; reuse
     // the known-good OOK config from SetOokADSB, which fixes the RX/RSSI bandwidth at ~3.076 MHz.
     if (!SetPacketType(PacketType::kPktOok)) {
-        CONSOLE_ERROR("LR2021::StartRssiScan", "Error during SetPacketType.");
-        return false;
+        return SequenceStepFailed("LR2021::StartRssiScan", "SetPacketType");
     }
     if (!SetOokModulationParams(2e6,                                // 2Mbps bitrate
                                 OokPulseShape::kOokPulseShapeNone,  // No pulse shaping
                                 OokRxBw::kOokRxBw3076kHz            // 3.076MHz Rx bandwidth
                                 )) {
-        CONSOLE_ERROR("LR2021::StartRssiScan", "Error during SetOokModulationParams.");
-        return false;
+        return SequenceStepFailed("LR2021::StartRssiScan", "SetOokModulationParams");
     }
     // Auto AGC so GetRssiInst tracks the input power across its full range.
     if (!SetAgcGainManual(0)) {
-        CONSOLE_ERROR("LR2021::StartRssiScan", "Error during SetAgcGainManual.");
-        return false;
+        return SequenceStepFailed("LR2021::StartRssiScan", "SetAgcGainManual");
     }
     uint32_t rx_timeout = 0xFFFFFF;  // Continuous Rx mode (no timeout).
     if (!SetRxAdv(rx_timeout)) {
-        CONSOLE_ERROR("LR2021::StartRssiScan", "Error during SetRxAdv.");
-        return false;
+        return SequenceStepFailed("LR2021::StartRssiScan", "SetRxAdv");
     }
-    // One more status command to mop up errors from the previous command, then verify the chip
-    // actually entered RX so callers don't poll RSSI from a chip sitting in standby.
-    LR2021::StatusRsp stat;
-    if (!GetStatus(&stat)) {
-        CONSOLE_ERROR("LR2021::StartRssiScan", "Error during GetStatus.");
+    // Check SetRxAdv's status (it arrives with the next frame), then verify the chip actually entered RX so
+    // callers don't poll RSSI from a chip sitting in standby.
+    if (!CheckLastCommandStatus("LR2021::StartRssiScan")) {
         return false;
     }
     if (last_stat_.chip_mode != ChipMode::kRx) {

@@ -39,6 +39,9 @@ class ADSBee {
     // RX_ENABLE/R1090_* settings are remembered and re-applied on enable.
     bool SetLR2021Enabled(bool enabled);
     bool LR2021IsEnabled() const { return lr2021_enabled_; }
+    // The LR2021 rejected the selected receiver config (CMD_PERR) on every retry; the receiver is down until a
+    // config applies. AT+RX_STATS reports it as rx_cfg_error.
+    bool ReceiverConfigRejected() const { return receiver_config_rejected_; }
     // Sub-GHz receiver enable is owned by SubGHzRadio (it must open/close the RF core); these forward to it.
     // SetRxSubGHzEnabled() returns false if the RF client failed to open/close.
     bool SetRxSubGHzEnabled(bool enabled);
@@ -96,7 +99,19 @@ class ADSBee {
     uint32_t lr2021_rx_rearm_count = 0;      // Health ladder: minimal SetRxAdv re-arm (chip left RX).
     uint32_t lr2021_rx_reconfig_count = 0;   // Health ladder: full ApplyReceiverConfig escalation.
     uint32_t lr2021_config_fail_count = 0;   // ApplyReceiverConfig attempts that failed (retried on backoff).
+    // CMD_PERR answers to a receiver config: each one is followed by a hard LR2021 reset and a retry of the
+    // same config (see ApplyReceiverConfigInner).
+    uint32_t lr2021_config_perr_count = 0;
     uint32_t lr2021_validity_reconfig_count = 0;  // Validity watchdog: reconfigs after N frames with 0 CRC passes.
+
+    // CPU cost, in CPU cycles (48 per microsecond; utils/cycle_counter.hh). Reported and reset via AT+RX_STATS.
+    uint32_t parse_capture_max_cycles = 0;    // Longest per-capture pass of ParseLR2021RxFifo.
+    uint32_t max_loop_cycles = 0;             // Longest main loop iteration (max_loop_us, at cycle resolution).
+    uint64_t loop_total_cycles = 0;           // Sum and count of main loop iterations, for the average.
+    uint32_t loop_count = 0;
+    // Share of main loop time spent in the 1090 path (adsbee.Update(): LR2021 drain and parse, plus
+    // packet_decoder.Update()); 1000 minus this is what is left for UAT, reporting and the console.
+    uint64_t rx1090_total_cycles = 0;
 
     // Longest single super-loop iteration observed, in microseconds. Reported and reset via AT+RX_STATS. Every
     // millisecond spent in one iteration is a millisecond the LR2021 FIFO isn't drained and AT commands aren't
@@ -117,6 +132,9 @@ class ADSBee {
     bool rx_position_available = false;
 
    private:
+#ifdef HARDWARE_UNIT_TESTS
+    friend class ADSBeeTestAccessor;  // target_test/test_rx_cpu.cpp: feeds synthetic captures to the parser.
+#endif
     void IngestAndForwardPackets();
     void PruneAircraftDictionary();
     // Periodically refreshes rx_position / rx_position_available from the configured source (e.g. the
@@ -174,6 +192,14 @@ class ADSBee {
     // ApplyReceiverConfig after kMaxRearmAttempts (or immediately if the last config attempt failed).
     static constexpr uint32_t kRxHealthTimeoutMs = 1000;
     static constexpr uint32_t kRxRecoveryBackoffMs = 2000;
+    // A receiver config the LR2021 answers with CMD_PERR is retried right away, after a hard reset, this many
+    // more times. If it is still rejected the receiver stays down in the error state (ReceiverConfigRejected)
+    // and the health ladder keeps retrying the SAME config, one try per retry, with the backoff doubling from
+    // kConfigRejectedBackoffMinMs to kConfigRejectedBackoffMaxMs. A try is a full reset and config, about
+    // 8.6 ms of main loop (measured on target). The receiver never runs a config the user did not select.
+    static constexpr uint8_t kConfigPErrRetries = 2;
+    static constexpr uint32_t kConfigRejectedBackoffMinMs = 2000;
+    static constexpr uint32_t kConfigRejectedBackoffMaxMs = 60000;
     static constexpr uint8_t kMaxRearmAttempts = 2;
     // Validity watchdog threshold: this many parsed frames with zero CRC-valid decodes means the
     // FIFO byte stream is mis-framed (statistically impossible with real traffic), and the full
@@ -186,6 +212,25 @@ class ADSBee {
     uint32_t lr2021_last_recovery_ms_ = 0;  // Last recovery attempt (re-arm or reconfig), for backoff.
     uint8_t lr2021_rearm_attempts_ = 0;     // Consecutive minimal re-arms without a confirmed kRx.
     bool receiver_config_ok_ = false;       // Last ApplyReceiverConfig attempt succeeded end-to-end.
+    // The LR2021 rejected the current receiver config (CMD_PERR) on every retry: the receiver is held in reset
+    // and AT+RX_STATS reports rx_cfg_error=1. Cleared when a config applies.
+    bool receiver_config_rejected_ = false;
+    uint32_t config_rejected_backoff_ms_ = 0;  // Health-ladder backoff while rejected (doubles per failed try).
+    // The config of the current rejection episode, so a repeat is not logged again and a new config (the user
+    // changed it) starts a new episode with the shortest backoff.
+    SettingsManager::R1090PreambleMode rejected_mode_ = SettingsManager::kR1090PreambleModeDF17;
+    uint8_t rejected_gain_ = 0;
+    uint8_t rejected_rx_boost_ = 0;
+    // Recovery backoff of the health ladder: kRxRecoveryBackoffMs, or the rejected-config backoff.
+    uint32_t RecoveryBackoffMs() const {
+        return receiver_config_rejected_ ? config_rejected_backoff_ms_ : kRxRecoveryBackoffMs;
+    }
+    void OnReceiverConfigRejected();
+    // The config being applied is the one already rejected (a health-ladder retry, not a new episode).
+    bool RejectedConfigIsCurrent() const {
+        return receiver_config_rejected_ && rejected_mode_ == r1090_preamble_mode_ && rejected_gain_ == r1090_gain_ &&
+               rejected_rx_boost_ == r1090_rx_boost_;
+    }
     uint32_t last_drain_error_log_ms_ = 0;  // Rate-limits the drain-failure CONSOLE_ERROR (1/s).
     uint32_t lr2021_frames_since_valid_ = 0;  // Parsed frames since the last CRC-valid decode (watchdog input).
 };

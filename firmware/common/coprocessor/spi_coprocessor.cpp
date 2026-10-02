@@ -99,15 +99,20 @@ bool SPICoprocessor::Update() {
 
     // Pull pending log messages from the slave interface.
     if (config_.pull_log_messages && config_.interface.num_queued_log_messages > 0) {
-        // Read log messages from coprocessor.
-        uint8_t log_messages_buffer[ObjectDictionary::kLogMessageMaxNumChars * ObjectDictionary::kLogMessageQueueDepth];
-        if (Read(ObjectDictionary::Address::kAddrLogMessages, log_messages_buffer,
-                 config_.interface.queued_log_messages_packed_size_bytes)) {
+        // Read log messages from coprocessor, at most one SPI transaction's worth per update. The unpack below stops at
+        // the first message that didn't fit, and only complete messages are rolled off the coprocessor's queue, so the
+        // rest arrives on the next update. This keeps the pull to a single SPI transaction (a multi-transaction read
+        // that failed kept the whole backlog stuck), and keeps a queue-sized buffer (5 kB) off the 4 kB core 0 stack.
+        static uint8_t log_messages_buffer[SPICoprocessorPacket::SCResponsePacket::kDataMaxLenBytes - 1];
+        uint16_t log_messages_read_len =
+            MIN(config_.interface.queued_log_messages_packed_size_bytes, sizeof(log_messages_buffer));
+        if (Read(ObjectDictionary::Address::kAddrLogMessages, log_messages_buffer, log_messages_read_len)) {
             // Acknowledge the log messages to clear the queue.
 
-            uint16_t num_messages_pulled = object_dictionary.UnpackLogMessages(
-                log_messages_buffer, sizeof(log_messages_buffer), object_dictionary.log_message_queue,
-                config_.interface.num_queued_log_messages);
+            uint16_t num_messages_pulled =
+                object_dictionary.UnpackLogMessages(log_messages_buffer, log_messages_read_len,
+                                                    object_dictionary.log_message_queue,
+                                                    config_.interface.num_queued_log_messages);
 
             ObjectDictionary::RollQueueRequest roll_request = {
                 .queue_id = ObjectDictionary::QueueID::kQueueIDLogMessages, .num_items = num_messages_pulled};

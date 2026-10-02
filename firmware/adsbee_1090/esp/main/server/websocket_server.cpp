@@ -304,7 +304,12 @@ esp_err_t WebSocketServer::HandleControlFrame(httpd_req_t* req, int client_fd, h
             if (config_.pre_disconnect_callback) {
                 config_.pre_disconnect_callback(this, client_fd);
             }
-            return ESP_FAIL;  // httpd closes the session on handler error, triggering ws_close_fd.
+            RemoveClient(client_fd);  // Stop broadcasting to it now; ws_close_fd will find it already removed.
+            // Return ESP_OK: httpd has marked the session ws_close and queues its own close for it after this
+            // handler returns. Returning an error here also made httpd delete the session immediately, so the queued
+            // close (which holds the session slot, not the fd) could land on the next connection accepted into that
+            // slot and reset it.
+            return ESP_OK;
         }
         default:
             return ESP_OK;  // PONG: nothing to do beyond the activity timer.

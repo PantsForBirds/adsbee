@@ -22,9 +22,9 @@ const char SettingsManager::kSubGHzModeStrs[SettingsManager::kNumSubGHzRadioMode
 
 const char SettingsManager::kR1090PreambleModeStrs[SettingsManager::kNumR1090PreambleModes]
                                                   [SettingsManager::kR1090PreambleModeStrMaxLen] = {
-                                                      "MODE_S_PREAMBLE",  // Trigger on the standard Mode S preamble.
-                                                      "DF17",  // Trigger on 2nd preamble half + DF17 header.
-                                                      "MODE_S_SW_CRC",  // Standard preamble, hardware CRC off.
+                                                      "DF17",           // Preamble chips 8-15 + DF17 header bits.
+                                                      "MODE_S",         // Standard preamble, raised AGC trigger.
+                                                      "MODE_S_STRONG",  // Preamble chips 6-15, raised OOK threshold.
 };
 
 const char SettingsManager::RxPosition::kPositionSourceStrs[SettingsManager::RxPosition::kNumPositionSources]
