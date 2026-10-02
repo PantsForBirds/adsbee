@@ -187,6 +187,8 @@ if (ON_EMBEDDED_DEVICE)
     target_include_directories(combined PRIVATE $<TARGET_PROPERTY:application,INCLUDE_DIRECTORIES>)
     target_link_libraries(combined $<TARGET_PROPERTY:application,LINK_LIBRARIES>)
     target_link_options(combined PUBLIC "-Wl,-Map=combined.map")
+    # Lets code tell that it runs from the combined image, whose partition 0 header describes app0.bin (see util_crc.py).
+    target_compile_definitions(combined PRIVATE COMBINED_IMAGE)
     target_compile_options(combined PRIVATE -fstack-usage) # Adds stack usage files in Debug/application/CMakeFiles/combined.dir/... as .su files.
     add_dependencies(combined
         bootloader
