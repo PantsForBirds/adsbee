@@ -68,12 +68,14 @@ struct Wire {
 
 // PL011-like receiver: a start bit is the line low (level, not edge) once idle, checked again mid-bit; data and stop
 // bits are sampled mid-bit. A frame that is all zeros with the line low for a whole frame is a break: one NUL with
-// the break flag, then nothing until the line goes high.
+// the break flag, then nothing until the line goes high. As on the CC1314, a break that follows another with no
+// valid character in between arrives as a plain NUL with no flag (console_autobaud.hh).
 struct Receiver {
     const Wire* wire = nullptr;
     double baud = 1000000;
     double scan_from = 0;
     bool waiting_high = false;
+    bool break_armed = true;
 
     struct Byte {
         uint8_t value;
@@ -112,7 +114,13 @@ struct Receiver {
             }
             bool stop = wire->LevelAt(start + 9.5 * bit);
             bool brk = !stop && value == 0 && wire->NextChange(start, true) >= start + 10 * bit;
-            out.push_back({value, !stop, brk});
+            if (stop) break_armed = true;
+            if (brk && !break_armed) {
+                out.push_back({0, false, false});
+            } else {
+                out.push_back({value, !stop, brk});
+            }
+            if (brk) break_armed = false;
             scan_from = start + 9.5 * bit;
             if (brk) {
                 scan_from = start + 10 * bit;
@@ -149,7 +157,6 @@ struct Module {
     uint32_t saved_baud = 1000000;  // AT+SETTINGS=SAVE.
     Receiver rx;
     Transmitter tx;
-    ConsoleAutobaud::BreakFilter filter;
     std::deque<Receiver::Byte> fifo;
     bool break_flag = false;
     std::string line;
@@ -228,9 +235,10 @@ struct Module {
         }
         line.clear();
     }
+    uint32_t answers = 0;
     void AnswerBreak() {
         break_flag = false;
-        filter.OnBreak();
+        answers++;
         tx.queue.clear();  // DropQueuedConsoleTx(): the frame on the wire still finishes.
         Announce();
     }
@@ -274,7 +282,7 @@ struct Module {
                 fifo.pop_front();
                 char c = (char)b.value;
                 if (c == '\0' && break_flag) AnswerBreak();
-                if (!filter.Accept(c)) continue;
+                if (ConsoleAutobaud::IgnoredConsoleByte(c)) continue;
                 line.push_back(c);
                 if (c == '\n') RunLine(now);
             }
@@ -364,6 +372,10 @@ struct Programmer {
                 break;
             case RateWatch::Action::kNone:
                 break;
+        }
+        if (action.send_nul) {
+            tx.queue.push_front(0);  // Ahead of host data; after a break that is still running.
+            if (!tx_low) tx.Run(now);
         }
     }
     void Step(double now) {
@@ -498,14 +510,18 @@ TEST(RateWatch, EarlierOkOnTheSameLine) {
 }
 
 // Former limit 2: a reset with SYNC high when the module's bootloader backdoor is off boots the application at its
-// saved rate; the Programmer, at the ROM bootloader's 1 M, follows its boot "UU".
+// saved rate; the Programmer, at the ROM bootloader's 1 M, follows its boot "UU", which comes while the Programmer
+// still holds SYNC high (ModemLines::kBackdoorHoldMs).
 TEST(RateWatch, BackdoorOffBootloaderReset) {
     for (uint32_t saved : {9600u, 115200u, 921600u, 3000000u}) {
         Sim sim(saved, saved);
         sim.programmer.SetUart(1000000, sim.now);
         sim.programmer.watch.OnBootloaderReset(1000000, (uint64_t)(sim.now / 1000));
         sim.module.Reset(sim.now);
-        sim.Run(200);
+        sim.programmer.sync_high = true;
+        sim.Run(300);
+        sim.programmer.sync_high = false;
+        sim.Run(10);
         EXPECT_EQ(sim.programmer.watch.phase(), RateWatch::Phase::kLocked) << saved;
         EXPECT_EQ(sim.programmer.baud, ConsoleBaud::CC1314ActualBaud(saved)) << saved;
         EXPECT_EQ(sim.programmer.watch.stats().asks, 0u) << saved;  // The ROM bootloader is never sent a break.
@@ -569,7 +585,6 @@ TEST(RateWatch, BreakLock) {
             EXPECT_EQ(sim.programmer.baud, ConsoleBaud::CC1314ActualBaud(hidden));
             EXPECT_EQ(sim.programmer.watch.last_lock().asks, 1u);
             EXPECT_LT(sim.programmer.watch.last_lock().elapsed_us, 6000u) << hidden;
-            EXPECT_EQ(sim.module.filter.pending_nuls(), 0u);
             // The partial line, if it reached the module at its rate, continues; otherwise it is garbage on its own line.
             sim.module.line.clear();
             EXPECT_EQ(sim.Command("\r\nAT+UPTIME?\r\n", "\r\n").rfind("UPTIME=", 0), 0u) << hidden;
@@ -668,15 +683,29 @@ TEST(RateWatch, SpuriousHint) {
     EXPECT_EQ(sim.programmer.host_out.find("#MDS"), 0u);
 }
 
-// While the module sleeps (SYNC high) its line says nothing: no hints, no asks.
-TEST(RateWatch, SyncHighIgnored) {
-    Sim sim(115200, 115200);
-    sim.programmer.sync_high = true;
-    sim.module.SetUart(57600, sim.now);
-    sim.module.stream_every_ns = 1e6;
-    sim.Run(100);
-    EXPECT_TRUE(sim.programmer.actions.empty());
-    EXPECT_EQ(sim.programmer.watch.stats().hints, 0u);
+// While SYNC is high the module may be asleep: UART errors are ignored and no break goes out, but a "UU" still counts.
+TEST(RateWatch, SyncHigh) {
+    {
+        Sim sim(115200, 115200);
+        sim.programmer.sync_high = true;
+        sim.programmer.watch.OnRxErrors(5);
+        sim.module.silent = true;
+        sim.module.SetUart(57600, sim.now);  // No "UU": the edges hint, nothing resolves, nothing is asked.
+        sim.module.stream_every_ns = 1e6;
+        sim.Run(100);
+        EXPECT_EQ(sim.programmer.watch.stats().asks, 0u);
+        EXPECT_EQ(sim.programmer.baud, 115200u);
+        sim.programmer.sync_high = false;  // Awake: the next hint asks; this module never answers.
+        sim.Run(200);
+        EXPECT_GE(sim.programmer.watch.stats().asks, 1u);
+    }
+    {
+        Sim sim(115200, 115200);
+        sim.programmer.sync_high = true;
+        sim.Command("AT+BAUD_RATE=CONSOLE,460800\r\n", "OK\r\n");  // Announced: followed.
+        EXPECT_EQ(sim.programmer.baud, ConsoleBaud::CC1314ActualBaud(460800));
+        EXPECT_EQ(sim.programmer.watch.stats().asks, 0u);
+    }
 }
 
 // Host data waits only while a lock runs, and in order.
@@ -706,17 +735,44 @@ TEST(RateWatch, NoModule) {
     EXPECT_TRUE(sim.programmer.host_in.empty());
 }
 
-// The module side alone: a break's NUL never reaches the parser, other NULs do, and pending NULs are capped.
-TEST(ConsoleAutobaud, BreakFilter) {
-    ConsoleAutobaud::BreakFilter f;
-    EXPECT_TRUE(f.Accept('\0'));
-    EXPECT_TRUE(f.Accept('A'));
-    f.OnBreak();
-    EXPECT_TRUE(f.Accept('A'));
-    EXPECT_FALSE(f.Accept('\0'));
-    EXPECT_TRUE(f.Accept('\0'));
-    for (int i = 0; i < 10; i++) f.OnBreak();
-    EXPECT_EQ(f.pending_nuls(), ConsoleAutobaud::BreakFilter::kMaxPendingNuls);
+// Asks back to back with no host data in between: the NULs around each break let the module's UART flag every one.
+TEST(RateWatch, RepeatedBreaks) {
+    for (uint32_t baud : {9600u, 115200u, 3000000u}) {
+        Sim sim(baud, baud);
+        for (int i = 0; i < 5; i++) {
+            sim.programmer.watch.Ask((uint64_t)(sim.now / 1000));
+            sim.Run(200);
+            EXPECT_EQ(sim.programmer.watch.phase(), RateWatch::Phase::kLocked) << baud << " #" << i;
+            EXPECT_EQ(sim.programmer.watch.last_lock().asks, 1u) << baud << " #" << i;
+        }
+        EXPECT_EQ(sim.module.answers, 5u) << baud;
+        EXPECT_EQ(sim.module.line, "") << baud;  // The NULs never reached the AT parser.
+        EXPECT_EQ(sim.QueryBaud(), Sim::BaudLine(baud)) << baud;
+    }
+}
+
+// The model's UART behaves like the CC1314's: without the NULs, the second break goes unflagged.
+TEST(RateWatch, RepeatedBreakNeedsACharacter) {
+    Wire w;
+    Receiver rx;
+    rx.wire = &w;
+    rx.baud = 115200;
+    for (double t : {1e6, 3e6}) {
+        w.Set(t, false);
+        w.Set(t + 2e6, true);  // 2 ms.
+    }
+    std::vector<Receiver::Byte> bytes;
+    rx.Run(10e6, bytes);
+    ASSERT_EQ(bytes.size(), 2u);
+    EXPECT_TRUE(bytes[0].break_error);
+    EXPECT_FALSE(bytes[1].break_error);
+    EXPECT_EQ(bytes[1].value, 0u);
+}
+
+// The module side alone.
+TEST(ConsoleAutobaud, Constants) {
     EXPECT_EQ(std::string(ConsoleAutobaud::kAnswer), "UU");
     EXPECT_EQ(ConsoleAutobaud::kAnswerLen, 2u);
+    EXPECT_TRUE(ConsoleAutobaud::IgnoredConsoleByte('\0'));
+    EXPECT_FALSE(ConsoleAutobaud::IgnoredConsoleByte('A'));
 }

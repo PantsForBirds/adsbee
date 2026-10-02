@@ -20,6 +20,7 @@ void ConsoleWatchInit() {
 RateWatch& ConsoleWatch() { return *watch; }
 
 void ConsoleWatchApply(const RateWatch::Action& action) {
+    static const uint8_t kNul = 0;
     switch (action.kind) {
         case RateWatch::Action::kRetune:
             TargetUartSetBaud(action.baud);  // Also drops what came in at the old rate.
@@ -34,6 +35,8 @@ void ConsoleWatchApply(const RateWatch::Action& action) {
         case RateWatch::Action::kNone:
             break;
     }
+    // Queued in the UART's FIFO; after a lock it goes out once a break that is still running ends.
+    if (action.send_nul) TargetUartWriteBlocking(&kNul, 1);
 }
 
 uint32_t ConsoleLock(AtAbortFn abort) {

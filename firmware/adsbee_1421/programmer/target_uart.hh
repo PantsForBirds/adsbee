@@ -12,7 +12,7 @@
 void TargetUartInit(uint32_t baud);
 void TargetUartSetBaud(uint32_t baud);  // Also flushes stale RX input.
 uint32_t TargetUartGetBaud();          // Rate last requested with TargetUartInit() / TargetUartSetBaud().
-// Drives TX (the module's console RX) low as a GPIO, for the autobaud trigger (console_lock.hh), or hands it back to
+// Drives TX (the module's console RX) low as a GPIO, for a break (rate_watch.hh), or hands it back to
 // the UART, which idles high. Holding discards bytes still queued for the module.
 void TargetUartHoldTxLow(bool hold);
 

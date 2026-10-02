@@ -65,15 +65,16 @@ RateWatch::Action RateWatch::StartAsk(uint64_t now_us) {
     phase_ = Phase::kAsking;
     asks_++;
     stats_.asks++;
-    mark_ = last_count_;  // The answer comes after the break starts.
-    ask_start_us_ = now_us;
-    answer_us_ = 0;
+    // The NUL (10 bits at the UART's rate) goes out now; the break follows after kPreBreakIdleUs of idle line.
+    break_pending_ = true;
+    break_active_ = false;
+    break_start_us_ = now_us + (baud_ != 0 ? 10000000ull / baud_ + 1 : 0) + kPreBreakIdleUs;
+    deadline_us_ = break_start_us_ + kAskAnswerMs * 1000ull;
+    mark_ = last_count_;
     analyzed_count_ = mark_;
-    deadline_us_ = now_us + kAskAnswerMs * 1000ull;
-    break_active_ = true;
-    break_end_us_ = now_us + kBreakUs;
+    answer_us_ = 0;
     Action action;
-    action.kind = Action::kBreakStart;
+    action.send_nul = true;
     return action;
 }
 
@@ -111,6 +112,7 @@ bool RateWatch::Analyze(uint64_t now_us, Action* action) {
         action->kind = Action::kRetune;
         action->baud = baud_;
     }
+    action->send_nul = true;
     stats_.locks++;
     last_lock_ = LockInfo();
     last_lock_.measured_baud = m.baud;
@@ -143,12 +145,23 @@ bool RateWatch::EdgesFitRate(uint32_t baud) {
 
 RateWatch::Action RateWatch::Poll(uint64_t now_us, bool sync_high, uint32_t rx_received) {
     SampleArrivals(rx_received, now_us);
+    sync_high_ = sync_high;
     uint64_t count = edges_.Count();
     if (count != last_count_) {
         last_count_ = count;
         last_edge_us_ = now_us;
     }
     Action action;
+    if (break_pending_ && now_us >= break_start_us_) {
+        break_pending_ = false;
+        break_active_ = true;
+        break_end_us_ = now_us + kBreakUs;
+        ask_start_us_ = now_us;
+        mark_ = count;  // The answer comes after the break starts.
+        analyzed_count_ = mark_;
+        action.kind = Action::kBreakStart;
+        return action;
+    }
     if (break_active_ && now_us >= break_end_us_) {
         break_active_ = false;
         action.kind = Action::kBreakEnd;
@@ -159,17 +172,15 @@ RateWatch::Action RateWatch::Poll(uint64_t now_us, bool sync_high, uint32_t rx_r
         case Phase::kLocked:
         case Phase::kBootloader:
         case Phase::kUnknown: {
-            bool hint = false;
-            if (sync_high) {
-                check_from_ = count;
-            } else {
-                hint = pending_errors_ > 0;
-                if (!hint && count != checked_ &&
-                    (now_us - last_check_us_ >= kCheckIntervalUs || now_us - last_edge_us_ >= kQuietUs)) {
-                    hint = EdgesHint(count);
-                    checked_ = count;
-                    last_check_us_ = now_us;
-                }
+            // While SYNC is high the module may be asleep and its line floating, so UART errors mean nothing; its
+            // edges are still worth a look (a module whose bootloader backdoor is off boots the application, and says
+            // "UU", while the Programmer holds SYNC high after a reset into the bootloader).
+            bool hint = !sync_high && pending_errors_ > 0;
+            if (!hint && count != checked_ &&
+                (now_us - last_check_us_ >= kCheckIntervalUs || now_us - last_edge_us_ >= kQuietUs)) {
+                hint = EdgesHint(count);
+                checked_ = count;
+                last_check_us_ = now_us;
             }
             pending_errors_ = 0;
             if (hint && phase_ == Phase::kUnknown && now_us - last_resolve_us_ < kUnknownHintIntervalMs * 1000ull) {
@@ -188,8 +199,10 @@ RateWatch::Action RateWatch::Poll(uint64_t now_us, bool sync_high, uint32_t rx_r
             if (Analyze(now_us, &action)) return action;
             if (now_us >= deadline_us_) {
                 // No "UU". A spurious hint if the edges fit the current rate. The ROM bootloader is never asked, nor is
-                // a module whose rate is unknown already (it has been, and will be again on schedule).
-                if (watch_phase_ == Phase::kBootloader || watch_phase_ == Phase::kUnknown || EdgesFitRate(baud_)) {
+                // a module whose rate is unknown already (it has been, and will be again on schedule), nor one that
+                // may be asleep.
+                if (watch_phase_ == Phase::kBootloader || watch_phase_ == Phase::kUnknown || sync_high ||
+                    EdgesFitRate(baud_)) {
                     EndLock(watch_phase_);
                     return action;
                 }
@@ -205,9 +218,16 @@ RateWatch::Action RateWatch::Poll(uint64_t now_us, bool sync_high, uint32_t rx_r
         case Phase::kAsking:
         case Phase::kAwaitingBoot:
             pending_errors_ = 0;  // The break and boot output at the wrong rate leave errors behind.
-            if (phase_ == Phase::kAsking && answer_us_ == 0 && count != mark_) answer_us_ = last_edge_us_;
+            if (phase_ == Phase::kAsking && answer_us_ == 0 && !break_pending_ && count != mark_) {
+                answer_us_ = last_edge_us_;
+            }
             if (Analyze(now_us, &action)) return action;
             if (now_us >= deadline_us_) {
+                if (sync_high || break_pending_ || break_active_) {
+                    // An asleep module can't answer: ask once SYNC is low. (A break still running ends first.)
+                    deadline_us_ = now_us + kBootAnswerMs * 1000ull;
+                    return action;
+                }
                 if (phase_ == Phase::kAwaitingBoot || asks_ < kMaxAsks) return StartAsk(now_us);
                 stats_.failed_locks++;
                 next_ask_us_ = now_us + kUnknownAskIntervalMs * 1000ull;

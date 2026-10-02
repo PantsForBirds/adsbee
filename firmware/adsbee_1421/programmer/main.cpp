@@ -3,16 +3,16 @@
 // At power-up the Programmer enters the CC1314's ROM UART bootloader (SYNC backdoor + reset pulse) and
 // compares the on-chip flash against the baked-in adsbee_1421 image using the bootloader's CRC32
 // command; on any mismatch (or a blank device) it reflashes and verifies. Once the device is
-// confirmed up to date it resets it into the app, finds the console's baud rate with the autobaud
-// trigger (the app boots at its saved console baud; factory default 1 M; see console_lock.hh), and
-// becomes a transparent USB-CDC serial adapter (see bridge.hh for the modem-control-line emulation
-// contract and rate_watch.hh for the virtual USB baud rate).
+// confirmed up to date it resets it into the app, locks onto the console's baud rate from the "UU"
+// the app says at boot (it boots at its saved console baud; factory default 1 M; see console_lock.hh),
+// and becomes a transparent USB-CDC serial adapter (see bridge.hh for the modem-control-line
+// emulation contract and rate_watch.hh for the virtual USB baud rate).
 //
 // If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0,DEADBEE
 // disabled the backdoor), it skips the image check and enters pass-through with a warning.
 //
 // Hold BOOTSEL at power-up to force a reflash; tap BOOTSEL during pass-through to rerun the
-// check (also the recovery for in-band AT+REBOOT / AT+BAUD_RATE desyncs). Hold BOOTSEL for 3 s --
+// check. Hold BOOTSEL for 3 s --
 // at any point, including while the Programmer is stuck reporting a dead console -- to arm a settings
 // erase, which runs at the next bootloader entry and factory-resets the device. Wiring in board.hh.
 

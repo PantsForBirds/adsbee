@@ -20,7 +20,8 @@
 //            to one the module's UART generates and retune. If none turns up within kResolveMs, and the edges don't
 //            fit the current rate either, ask.
 //   Ask:     when unsure (after a reset if the boot "UU" doesn't come, after a hint that didn't resolve and isn't a
-//            module rebooting at kFactoryBaud, while the rate is unknown), send a break (TX low for kBreakUs, longer than a frame at 9600 baud) and lock onto the
+//            module rebooting at kFactoryBaud, while the rate is unknown), send a break (TX low for kBreakUs, longer
+//            than a frame at 9600 baud) and lock onto the
 //            "UU" the module answers with. Up to kMaxAsks tries, then the rate is unknown: one more ask every
 //            kUnknownAskIntervalMs, host data flowing in between.
 //
@@ -50,6 +51,9 @@ class EdgeSource {
 class RateWatch {
    public:
     static constexpr uint32_t kBreakUs = 2000;  // A frame at 9600 baud is 1.04 ms.
+    // An ask sends a NUL first (Action::send_nul), then waits this long before the break: the NUL can start a frame at
+    // a slower module rate, which has to end (1.04 ms at 9600 baud) before the break so the break reads as one.
+    static constexpr uint32_t kPreBreakIdleUs = 1100;
     // An ask's answer: the module's main loop notices the break (a few ms in dense traffic), then 2.1 ms of "UU" at
     // 9600 baud.
     static constexpr uint32_t kAskAnswerMs = 30;
@@ -91,11 +95,14 @@ class RateWatch {
             kNone,
             kRetune,      // Forward the console bytes received up to `keep` (free-running count), then set the
                           // UART to `baud`, which drops the rest (received at the old rate after the change).
-            kBreakStart,  // Drive TX low.
+            kBreakStart,  // Drive TX low (after what the UART is still sending).
             kBreakEnd,    // Hand TX back to the UART.
         } kind = kNone;
         uint32_t baud = 0;
         uint32_t keep = 0;
+        // Send a NUL at the UART's (new) rate: after every lock, and ahead of every break. The module ignores NULs, and
+        // a character between two breaks lets its UART flag the second one (console_autobaud.hh).
+        bool send_nul = false;
     };
 
     // Statistics (status messages, test builds' timing output).
@@ -130,8 +137,8 @@ class RateWatch {
     // UART framing and break errors received since the last call.
     void OnRxErrors(uint32_t count);
 
-    // Call every loop. sync_high: the module is asleep (SYNC high), so its line says nothing. rx_received: console bytes
-    // the UART has received so far (a free-running count).
+    // Call every loop. sync_high: SYNC is high, so the module may be asleep: UART errors are ignored and no break is
+    // sent (edges still count). rx_received: console bytes the UART has received so far (a free-running count).
     Action Poll(uint64_t now_us, bool sync_high, uint32_t rx_received);
 
     // The console bytes the bridge may forward (unless HoldConsoleData() or DropConsoleData()): up to this count (of
@@ -143,8 +150,8 @@ class RateWatch {
     bool Locking() const {
         return phase_ == Phase::kResolving || phase_ == Phase::kAsking || phase_ == Phase::kAwaitingBoot;
     }
-    bool BreakActive() const { return break_active_; }
-    bool HoldHostData() const { return Locking() || break_active_; }
+    bool BreakActive() const { return break_pending_ || break_active_; }
+    bool HoldHostData() const { return Locking() || BreakActive(); }
     bool HoldConsoleData() const { return phase_ == Phase::kResolving; }
     bool DropConsoleData() const { return phase_ == Phase::kAsking || phase_ == Phase::kAwaitingBoot; }
     const LockInfo& last_lock() const { return last_lock_; }
@@ -178,7 +185,10 @@ class RateWatch {
     uint64_t last_edge_us_ = 0;     // When Count() last changed.
     uint64_t lock_start_us_ = 0;
     uint64_t deadline_us_ = 0;
+    uint64_t break_start_us_ = 0;
     uint64_t break_end_us_ = 0;
+    bool break_pending_ = false;  // The NUL went out; the break starts at break_start_us_.
+    bool sync_high_ = false;      // As of the last Poll().
     bool break_active_ = false;
     uint32_t asks_ = 0;             // In the current lock.
     uint64_t ask_start_us_ = 0;
