@@ -15,6 +15,7 @@ extern "C" {
 #include "adsbee.hh"
 #include "bsp.hh"
 #include "comms.hh"
+#include "cycle_counter.hh"
 #include "hal.hh"  // For get_time_since_boot_us.
 #include "led.hh"
 #include "object_dictionary.hh"
@@ -132,6 +133,7 @@ int main(void) {
     comms_manager.AnswerAutobaudTrigger();  // At the saved console rate.
 
     leds.FlashLED(bsp.k1090LEDPin, 100);  // Flash the LED for 100ms.
+    CycleCounter::Enable();  // CPU-cost stats in AT+RX_STATS.
 
 #ifdef RFI_LF_S11_SCAN
     uint32_t rf_frequency = 800e6;
@@ -162,16 +164,20 @@ int main(void) {
             adsbee.EnterSyncSleep();
             comms_manager.Resume();   // re-arm UART RX
             subg_radio.Resume();      // restart UAT reception
+            CycleCounter::Enable();   // SysTick doesn't keep its state through STANDBY.
             continue;
         }
 
         uint64_t loop_start_us = get_time_since_boot_us();
+        const uint32_t loop_start_cycles = CycleCounter::Now();
         leds.Update();
         // leds.FlashLED(bsp.k1090LEDPin, 100);  // Flash the LED for 100ms.
         // usleep(1000000);                        // Sleep for 1 second.
         // mode_s_radio.Update();
+        const uint32_t rx1090_start_cycles = CycleCounter::Now();
         adsbee.Update();
         packet_decoder.Update();
+        adsbee.rx1090_total_cycles += CycleCounter::Since(rx1090_start_cycles);
         subg_radio.Update();
         uat_packet_decoder.Update();
         comms_manager.Update();
@@ -180,5 +186,11 @@ int main(void) {
         if (loop_us > adsbee.max_loop_us) {
             adsbee.max_loop_us = loop_us;
         }
+        const uint32_t loop_cycles = CycleCounter::Since(loop_start_cycles);
+        if (loop_cycles > adsbee.max_loop_cycles) {
+            adsbee.max_loop_cycles = loop_cycles;
+        }
+        adsbee.loop_total_cycles += loop_cycles;
+        adsbee.loop_count++;
     }
 }

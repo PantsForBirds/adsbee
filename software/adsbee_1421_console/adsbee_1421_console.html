@@ -2762,6 +2762,7 @@
 //     group: 'Network',             // form section; sections appear in first-use order
 //     help: 'Join an existing WiFi network.',
 //     disconnects: true,            // warn before saving; saved last; SAVE timeout tolerated
+//     experimental: true,           // badge the entry: the feature is not yet stable
 //     query: { expect: /^WIFI_STA=/, quietMs: 350, timeoutMs: 3000 },  // all optional
 //     fields: [ { id, label, type, ... } ],
 //     parse(lines) { ... },         // optional; default: positional split of first matching line
@@ -2809,10 +2810,13 @@ class SettingsEngine {
     // transport contract: sendCommand(cmd, {expect, terminator: 'ok'|'quiet', quietMs,
     // timeoutMs}) -> Promise<string[] of trimmed body lines>; rejects on a whole-line
     // 'ERROR ...' response or timeout.
-    // bulkQuery (optional): { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/ } — a
-    // one-round-trip read of every setting as a JSON object keyed by AT command name.
-    // Entries the dump doesn't cover (or firmware without the command) fall back to
-    // per-command queries automatically.
+    // bulkQuery (optional): { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/,
+    // timeoutMs, attempts }, a one-round-trip read of every setting as a JSON object keyed
+    // by AT command name. It is the normal read path, also used to re-read after a save.
+    // A dump that is lost or cut short (the console drops bytes under heavy log output) is
+    // retried up to `attempts` times. Only firmware that answers the dump with ERROR
+    // (predating the command) falls back to querying every entry one at a time; entries
+    // missing from a good dump (firmware older than the page) are queried individually.
     constructor(config) {
         this.schema = config.schema;
         this.transport = config.transport;
@@ -2873,6 +2877,12 @@ class SettingsEngine {
             const badge = document.createElement('span');
             badge.className = 'settings-danger';
             badge.textContent = 'may drop connection';
+            header.appendChild(badge);
+        }
+        if (entry.experimental) {
+            const badge = document.createElement('span');
+            badge.className = 'settings-experimental';
+            badge.textContent = 'experimental';
             header.appendChild(badge);
         }
         const status = document.createElement('span');
@@ -3211,10 +3221,19 @@ class SettingsEngine {
         const gen = ++this.gen;
         this._updateDirtyUI();
         try {
-            // One-round-trip bulk read first; anything it doesn't cover (older firmware,
-            // or a schema entry the dump doesn't know) is queried individually.
-            const covered = this.bulkQuery ? await this._refreshFromBulk() : null;
-            if (gen !== this.gen) return;
+            let covered = null;
+            if (this.bulkQuery) {
+                const bulk = await this._refreshFromBulk(gen);
+                if (gen !== this.gen) return;
+                if (bulk.error) {
+                    // The dump never arrived intact. Querying ~20 commands one by one over the
+                    // same lossy link fails the same way and takes far longer, so stop here.
+                    for (const entry of this.schema) this._markReadFailed(entry, bulk.error);
+                    this._status(`Could not read settings: ${bulk.error} Press Refresh to try again.`);
+                    return;
+                }
+                covered = bulk.covered;  // null: firmware without the dump, query everything
+            }
             const remaining = this.schema.filter(e => !covered || !covered.has(e.cmd));
             let index = 0;
             for (const entry of remaining) {
@@ -3231,35 +3250,64 @@ class SettingsEngine {
         }
     }
 
-    // Reads every setting in one round trip via the bulk JSON dump. Returns the Set of
-    // cmds successfully populated, or null when the bulk query is unavailable (e.g.
-    // firmware predating AT+SETTINGS?JSON responds ERROR) so refresh() falls back to
-    // querying each command individually.
-    async _refreshFromBulk() {
-        this._status('Reading settings…');
-        let json;
-        try {
-            const lines = await this.transport.sendCommand(this.bulkQuery.command, {
-                expect: this.bulkQuery.expect,
-                terminator: 'ok',
-                timeoutMs: this.bulkQuery.timeoutMs ?? 5000,
-            });
-            const line = lines.find(l => this.bulkQuery.expect.test(l));
-            if (!line) return null;
-            json = JSON.parse(line.slice(line.indexOf('=') + 1));
-        } catch (e) {
-            return null;
+    // Reads every setting in one round trip via the bulk JSON dump. Returns
+    // { covered: Set of cmds populated } on success, { covered: null } when the firmware
+    // answers ERROR (it predates AT+SETTINGS?JSON), or { error } when no attempt produced
+    // a complete dump.
+    async _refreshFromBulk(gen) {
+        const attempts = this.bulkQuery.attempts ?? 3;
+        let error = 'no response.';
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            if (gen !== this.gen) return { error: 'aborted.' };
+            this._status(attempt === 1 ? 'Reading settings…' : `Reading settings (attempt ${attempt}/${attempts})…`);
+            let lines;
+            try {
+                lines = await this.transport.sendCommand(this.bulkQuery.command, {
+                    expect: this.bulkQuery.expect,
+                    terminator: 'ok',
+                    timeoutMs: this.bulkQuery.timeoutMs ?? 3000,
+                });
+            } catch (e) {
+                if (/^ERROR/.test(e.message)) return { covered: null };
+                error = e.message;
+                continue;
+            }
+            const json = SettingsEngine.parseBulkLines(lines, this.bulkQuery.expect);
+            if (!json) {
+                error = 'the settings dump arrived incomplete.';
+                continue;
+            }
+            const covered = new Set();
+            for (const entry of this.schema) {
+                const raw = json[entry.cmd];
+                if (raw === undefined) continue;
+                const values = entry.parseJson ? entry.parseJson(raw) : this._defaultParseJson(entry, raw);
+                if (!values) continue;
+                this._applyEntryValues(entry, values);
+                covered.add(entry.cmd);
+            }
+            return { covered };
         }
-        const covered = new Set();
-        for (const entry of this.schema) {
-            const raw = json[entry.cmd];
-            if (raw === undefined) continue;
-            const values = entry.parseJson ? entry.parseJson(raw) : this._defaultParseJson(entry, raw);
-            if (!values) continue;
-            this._applyEntryValues(entry, values);
-            covered.add(entry.cmd);
+        return { error };
+    }
+
+    // Returns the JSON object from the first dump line that parses, or null. A line cut
+    // short or broken up by interleaved log output fails to parse and is skipped.
+    static parseBulkLines(lines, expect) {
+        for (const line of lines) {
+            if (!expect.test(line)) continue;
+            try {
+                const json = JSON.parse(line.slice(line.indexOf('=') + 1));
+                if (json && typeof json === 'object' && !Array.isArray(json)) return json;
+            } catch (e) { /* try the next line */ }
         }
-        return covered;
+        return null;
+    }
+
+    _markReadFailed(entry, message) {
+        this.readOk[entry.cmd] = false;
+        this._setEntryEnabled(entry, false);
+        this._entryStatus(entry, `read failed: ${message}`, true);
     }
 
     async _refreshEntry(entry) {
@@ -3276,9 +3324,7 @@ class SettingsEngine {
             if (!values) throw new Error('No response.');
             this._applyEntryValues(entry, values);
         } catch (e) {
-            this.readOk[entry.cmd] = false;
-            this._setEntryEnabled(entry, false);
-            this._entryStatus(entry, `read failed: ${e.message}`, true);
+            this._markReadFailed(entry, e.message);
         }
     }
 
@@ -3362,7 +3408,14 @@ class SettingsEngine {
         } finally {
             this.busy = false;
         }
-        if (gen === this.gen) await this.refresh();
+        if (gen !== this.gen) return;
+        // Re-read everything through the dump so the form shows what the device now holds.
+        // If that read fails, keep the save outcome in front of the read error.
+        const saveStatus = this.statusEl.textContent;
+        await this.refresh();
+        if (this.schema.some(e => !this.readOk[e.cmd])) {
+            this._status(`${saveStatus} ${this.statusEl.textContent}`);
+        }
     }
 }
 
@@ -4357,9 +4410,13 @@ function makeRxEnableEntry() {
             },
             {
                 cmd: 'R1090_PREAMBLE', label: '1090 MHz Preamble Detector', group: 'Radio',
+                help: 'DF17 (default) receives DF17 frames only. '
+                    + 'MODE_S decodes every downlink format up to about -45 dBm. '
+                    + 'MODE_S_STRONG decodes strong signals, about -50 to -20 dBm, for a receiver next to '
+                    + 'a transmitter; signals above about -15 dBm are not decoded. Levels measured on a devkit.',
                 fields: [{
                     id: 'mode', label: 'Mode', type: 'enum',
-                    options: ['MODE_S_PREAMBLE', 'DF17', 'MODE_S_SW_CRC'],
+                    options: ['DF17', 'MODE_S', 'MODE_S_STRONG'],
                 }],
             },
             {

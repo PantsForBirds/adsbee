@@ -4,7 +4,7 @@
 
 // Host modem-control lines (CDC SET_CONTROL_LINE_STATE) -> SYNC level and RESET_N pulses for the
 // pass-through bridge. Pure logic with no SDK dependencies so it can be host-tested
-// (host_test/modem_lines_test.cc); bridge.cc feeds it the TinyUSB callbacks and the clock.
+// (host_test/test_modem_lines.cc); bridge.cc feeds it the TinyUSB callbacks and the clock.
 //
 // Adapter emulation (an asserted modem-control bit drives the physical pin low):
 //   RTS asserted            -> SYNC low (awake)
