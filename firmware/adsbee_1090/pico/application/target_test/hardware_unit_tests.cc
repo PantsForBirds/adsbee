@@ -2,9 +2,44 @@
 
 #include "adsbee.hh"
 #include "eeprom.hh"
+#include "main.hh"  // For ISRS_ON_CORE1.
+#include "pico/multicore.h"
 #include "spi_coprocessor.hh"
 
 UTEST_STATE();
+
+// RunOnISRCore() hands a function to core 1 over the inter-core FIFO: core 0 pushes the function pointer and its
+// argument, and core 1 pushes kCore1TestFunctionDone back once the function has returned. Nothing else uses the FIFO
+// after core 1 is launched (no multicore lockout or flash_safe_execute in this firmware).
+static constexpr uint32_t kCore1TestFunctionDone = 0xD0D0D0D0;
+
+void RunPendingTestFunctionOnCore1() {
+    if (!multicore_fifo_rvalid()) {
+        return;
+    }
+    void (*function)(void*) = reinterpret_cast<void (*)(void*)>(multicore_fifo_pop_blocking());
+    // Core 0 pushes the argument right after the function pointer.
+    void* arg = reinterpret_cast<void*>(multicore_fifo_pop_blocking());
+    function(arg);
+    multicore_fifo_push_blocking(kCore1TestFunctionDone);
+}
+
+bool RunOnISRCore(void (*function)(void*), void* arg, uint32_t timeout_ms) {
+#ifdef ISRS_ON_CORE1
+    uint64_t timeout_us = static_cast<uint64_t>(timeout_ms) * kUsPerMs;
+    multicore_fifo_drain();  // Drop a reply left over from an earlier call that timed out.
+    if (!multicore_fifo_push_timeout_us(reinterpret_cast<uintptr_t>(function), timeout_us) ||
+        !multicore_fifo_push_timeout_us(reinterpret_cast<uintptr_t>(arg), timeout_us)) {
+        return false;
+    }
+    uint32_t reply;
+    return multicore_fifo_pop_timeout_us(timeout_us, &reply) && reply == kCore1TestFunctionDone;
+#else
+    (void)timeout_ms;
+    function(arg);
+    return true;
+#endif
+}
 
 static constexpr uint32_t kTestWatchdogDeadlineMs = 60'000;
 static constexpr uint32_t kTestWatchdogFeedIntervalMs = 1000;

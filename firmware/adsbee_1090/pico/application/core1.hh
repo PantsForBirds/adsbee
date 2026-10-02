@@ -7,6 +7,10 @@
 
 extern CPUMonitor core_1_monitor;
 
+#ifdef HARDWARE_UNIT_TESTS
+void RunPendingTestFunctionOnCore1();  // Defined in target_test/hardware_unit_tests.cc.
+#endif
+
 inline void main_core1() {
 #ifdef ISRS_ON_CORE1
     adsbee.InitISRs();
@@ -23,6 +27,9 @@ inline void main_core1() {
             adsbee.SyncReceiver1090IRQEnable();
         }
 #endif  // ISRS_ON_CORE1
+#ifdef HARDWARE_UNIT_TESTS
+        RunPendingTestFunctionOnCore1();  // Lets hardware unit tests read core 1 state, e.g. its SysTick.
+#endif
         core_1_monitor.Tick();
         decoder.UpdateDecoderLoop();
     }
