@@ -1,0 +1,1449 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for ADSBee open source ADS-B receivers.">
+      
+      
+      
+        <link rel="canonical" href="https://adsbee.aero/wiki/latest/adsbee-1090/winglet/">
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../../adsbee-1421/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>ADSBee Winglet - ADSBee Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adsbee-winglet" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ADSBee Docs" class="md-header__button md-logo" aria-label="ADSBee Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ADSBee Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADSBee Winglet
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/PantsForBirds/adsbee" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    PantsForBirds/adsbee
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ADSBee Docs" class="md-nav__button md-logo" aria-label="ADSBee Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ADSBee Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/PantsForBirds/adsbee" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    PantsForBirds/adsbee
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee 1090
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ADSBee 1090
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee Winglet
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee Winglet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-specs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Specs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hardware-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hardware Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hardware Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#full-featured-ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full-featured UI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#external-antennas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        External antennas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#battery-and-power" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Battery and power
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gnss-and-sensors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GNSS and sensors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#more-memory-more-aircraft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        More memory, more aircraft
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mounting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mounting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expansion-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expansion header
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#winglet-vs-adsbee-1090u" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Winglet vs. ADSBee 1090U
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-protocols" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Protocols
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#firmware-and-getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware and Getting Started
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-source-hardware-software" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Source Hardware + Software
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Links
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../adsbee-1421/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee 1421
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ADSBee 1421
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adsbee-1421/m1421/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee m1421 Module
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/update-firmware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Update Firmware
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/modify-enclosure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Modify the Enclosure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../community/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing to these docs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-specs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Specs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hardware-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hardware Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hardware Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#full-featured-ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full-featured UI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#external-antennas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        External antennas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#battery-and-power" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Battery and power
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gnss-and-sensors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GNSS and sensors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#more-memory-more-aircraft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        More memory, more aircraft
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mounting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mounting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expansion-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expansion header
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#winglet-vs-adsbee-1090u" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Winglet vs. ADSBee 1090U
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-protocols" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Protocols
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#firmware-and-getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware and Getting Started
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-source-hardware-software" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Source Hardware + Software
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Links
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/PantsForBirds/adsbee/edit/main/docs/adsbee-1090/winglet.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="adsbee-winglet">ADSBee Winglet<a class="headerlink" href="#adsbee-winglet" title="Permanent link">&para;</a></h1>
+<p><img alt="ADSBee Winglet with all three antennas up." src="../../assets/adsbee-1090/2026-08-040260002-adsbee-winglet-antennas-up-web-ready-642x1024.png" width="320" /></p>
+<p><strong>ADSBee Winglet</strong> is a portable, battery-powered, tri-band air traffic receiver for general aviation and high performance portable applications. It receives <strong>1090MHz Mode S / ADS-B</strong>, <strong>978MHz UAT</strong> (traffic and weather), and <strong>2.4GHz Remote ID</strong> broadcasts from drones, and it has a front-lit ePaper screen, a backlit keypad, and a set of onboard sensors.</p>
+<p>Winglet sits between an open source embedded receiver like the <a href="../#1090u">ADSBee 1090U</a> and a full-featured electronic flight bag (EFB) receiver. Under the hood it builds on the proven ADSBee 1090U dual-band receiver architecture using the <strong>ADSBee m1090</strong> solder-down module, and it runs the same open source ADSBee firmware. Anything we build for Winglet (GNSS integration, sensor fusion, data logging, the on-device UI) can be ported into any project that runs the ADSBee codebase.</p>
+<p><a href="https://discord.gg/KRgVT9sSVW">Chat about Winglet on Discord</a></p>
+<h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
+<p>We launched Winglet on Kickstarter in July 2026, then moved it to a preorder system on our webstore in August. <strong>Our expected ship date is mid to late November 2026.</strong> We’ll post updates here and in our monthly <a href="https://pantsforbirds.com/adsbee-update-august-2026/">ADSBee updates</a>.</p>
+<p>Winglets shipped to fulfill preorders are sold as developer kits: they don’t carry FCC Part 15 or UL battery certifications, but the functionality is unchanged. The only intentional emitter on Winglet is a pre-certified ESP32 WiFi module, and the battery pack is still built to UL standards by our battery manufacturer.</p>
+<p><em>Note: Winglet no longer includes the carbon monoxide (CO) sensor shown in our original announcement, in order to comply with an existing patent. Some renders and photos still show the earlier hardware and will be updated when the final hardware revision is done.</em></p>
+<h2 id="quick-specs">Quick Specs<a class="headerlink" href="#quick-specs" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Receive bands</strong></td>
+<td>1090MHz Mode S / ADS-B<br>978MHz UAT, including FIS-B / TIS-B uplink (maybe other sub-GHz protocols in the future)<br>2.4GHz Remote ID (Bluetooth and WiFi)</td>
+</tr>
+<tr>
+<td><strong>Receiver core</strong></td>
+<td>ADSBee m1090 module (RP2040 + 1090MHz RF frontend), sub-GHz radio, and an ESP32-S3 with additional PSRAM for networking and the UI</td>
+</tr>
+<tr>
+<td><strong>Antennas</strong></td>
+<td>3x external (1090MHz, sub-GHz, 2.4GHz); switchable bias tees on the 1090MHz and sub-GHz inputs</td>
+</tr>
+<tr>
+<td><strong>GNSS</strong></td>
+<td>Multi-constellation WAAS GNSS receiver (u-blox MAX-M10), onboard helical antenna, auxiliary U.FL input</td>
+</tr>
+<tr>
+<td><strong>Sensors</strong></td>
+<td>IMU, magnetometer, pressure altitude, humidity</td>
+</tr>
+<tr>
+<td><strong>Interface</strong></td>
+<td>Front-lit ePaper screen<br>Backlit membrane keypad<br>5x color-changing status indicator LEDs<br>Web interface (mobile or desktop)</td>
+</tr>
+<tr>
+<td><strong>Connectivity</strong></td>
+<td>WiFi (join a network or host one), 13-pin ADSBee expansion header</td>
+</tr>
+<tr>
+<td><strong>Battery</strong></td>
+<td>Internal, user-replaceable, 12+ hrs battery life</td>
+</tr>
+<tr>
+<td><strong>Charging</strong></td>
+<td>USB-C, up to 5V 3A</td>
+</tr>
+<tr>
+<td><strong>Mounting</strong></td>
+<td>Removable snap-on holster with a Sentry-style RAM mount latch</td>
+</tr>
+<tr>
+<td><strong>Source</strong></td>
+<td>Open (ADSBee firmware is GPL v3; enclosure and holster are open source, 3D printed in PETG)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="hardware-features">Hardware Features<a class="headerlink" href="#hardware-features" title="Permanent link">&para;</a></h2>
+<h3 id="full-featured-ui">Full-featured UI<a class="headerlink" href="#full-featured-ui" title="Permanent link">&para;</a></h3>
+<p>The center of Winglet’s front face is an ePaper screen that’s easy to read in all lighting conditions. In bright sunlight it looks just like a sheet of paper, and in the dark a gentle front-light turns on automatically to keep it legible (but not too bright). Status indicator lights show GNSS receiver health and the status of the three receive bands.</p>
+<p>Instead of a single button (or no buttons at all), Winglet has a custom membrane keypad on the right side of its case. Each button has its own full color backlight and a soft tactile feel that works even with gloves on. The keypad drives a menu-driven interface on the ePaper screen for basic functions, like enabling / disabling WiFi, scrolling through sensor values, or viewing an onboard map (low-res map tiles are loaded from the onboard SD card). More complex configuration happens in the web interface.</p>
+<h3 id="external-antennas">External antennas<a class="headerlink" href="#external-antennas" title="Permanent link">&para;</a></h3>
+<p>Most EFB receivers use internal antennas, often printed directly onto lossy PCB substrate. That keeps them small and cheap, but costs a lot of receive range. Winglet uses the same external antennas as the ADSBee 1090U, so you get good range out of the box and can attach your own antennas or feed lines (e.g. cables running to antennas mounted above a metal wing).</p>
+<p>The third antenna covers the 2.4GHz band used by drones broadcasting Remote ID over Bluetooth and WiFi. The same antenna is used to join external WiFi networks (for feeding data) or to host a local network for companion devices like iPads running ForeFlight. It has better gain than the internal WiFi antenna on the ADSBee 1090U, which helps both drone detection range and WiFi range.</p>
+<p>Both the 1090MHz and sub-GHz antenna inputs have switchable bias tees (just like the 1090U) for powering external LNAs or other RF accessories through the antenna ports.</p>
+<h3 id="battery-and-power">Battery and power<a class="headerlink" href="#battery-and-power" title="Permanent link">&para;</a></h3>
+<p>Winglet has an internal rechargeable battery, a battery monitoring system that keeps learning the battery’s capacity over its lifetime, and USB-C fast charging at up to 5V 3A. Together that gives 12+ hours of battery life with precise estimates of the remaining capacity. We’re not big fans of planned obsolescence, so the battery is fully user replaceable with a screwdriver and about 5 minutes of time.</p>
+<h3 id="gnss-and-sensors">GNSS and sensors<a class="headerlink" href="#gnss-and-sensors" title="Permanent link">&para;</a></h3>
+<p>Winglet includes a multi-constellation WAAS GNSS receiver for precise position, plus an onboard magnetometer and IMU for heading and attitude. The IMU is intended to feed a backup attitude display (AHRS) on your tablet via GDL90. Pressure altitude and humidity sensors round out the sensor suite.</p>
+<p>A surface mount helical GNSS antenna on the Winglet PCBA is enough for most applications. If you want to build your own GNSS antenna system, there is an auxiliary U.FL connector on the PCB: move one ceramic capacitor to reroute the antenna trace from the internal antenna to the U.FL. A solder jumper powers a bias tee on the auxiliary input, in case you want to run an external active GNSS antenna directly from Winglet.</p>
+<h3 id="more-memory-more-aircraft">More memory, more aircraft<a class="headerlink" href="#more-memory-more-aircraft" title="Permanent link">&para;</a></h3>
+<p>The ESP32-S3 module on Winglet, which runs the network interfaces and the UI, has additional PSRAM. That extra room lets us grow the aircraft dictionary (the number of aircraft tracked simultaneously) from 200 aircraft on the ADSBee 1090U to 400 aircraft on Winglet, and lets Remote ID reception run alongside WiFi.</p>
+<h3 id="mounting">Mounting<a class="headerlink" href="#mounting" title="Permanent link">&para;</a></h3>
+<p>Winglet uses a two-part mounting system. A removable holster snaps onto the back of the Winglet and can be quickly disconnected and reattached, so you can pull the receiver off for configuration or charging. The back of the holster has a latch that fits the standard Sentry-style RAM mount that’s already in thousands of cockpits and flight bags.</p>
+<p>The enclosure and holster are open source and 3D printed out of PETG, so you can adapt them with your own design.</p>
+<p><img alt="The back of the ADSBee Winglet." src="../../assets/adsbee-1090/2026-08-040260002-adsbee-winglet-back-web-ready-534x1024.png" width="320" /></p>
+<h3 id="expansion-header">Expansion header<a class="headerlink" href="#expansion-header" title="Permanent link">&para;</a></h3>
+<p>For the turbo-nerds, Winglet has the same 13-pin expansion header as the ADSBee 1090U, so it’s compatible with the expansion “pants” designed for the 1090U. We designed Winglet’s power system so it can receive power and data over PoE using our <a href="https://pantsforbirds.com/product/adsbee-1090-poe-pant/">ADSBee PoE Pant</a>, which means a Winglet can be connected and charged via PoE in portable or fixed receiver setups. The header works with the battery still installed, and the PCB has surface-mount threaded standoffs so a pant can be mounted from the back of the board.</p>
+<h2 id="winglet-vs-adsbee-1090u">Winglet vs. ADSBee 1090U<a class="headerlink" href="#winglet-vs-adsbee-1090u" title="Permanent link">&para;</a></h2>
+<p>Winglet and the <a href="../#1090u">ADSBee 1090U</a> share the same receiver architecture and firmware. The 1090U is a compact board for ground stations, feeders, and embedded projects. Winglet wraps the same receiver in a battery-powered handheld with a screen, sensors, and a third antenna.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>ADSBee 1090U</th>
+<th>ADSBee Winglet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Form factor</td>
+<td>Single PCBA (enclosures available as accessories)</td>
+<td>Handheld receiver with enclosure and snap-on holster</td>
+</tr>
+<tr>
+<td>1090MHz receiver</td>
+<td>RP2040 + custom RF frontend on the main board</td>
+<td>ADSBee m1090 module (RP2040 + RF frontend)</td>
+</tr>
+<tr>
+<td>978MHz UAT</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>2.4GHz antenna</td>
+<td>Internal (ESP32-S3 module)</td>
+<td>External, used for WiFi and Remote ID</td>
+</tr>
+<tr>
+<td>Aircraft dictionary</td>
+<td>200 aircraft</td>
+<td>400 aircraft (ESP32-S3 with additional PSRAM)</td>
+</tr>
+<tr>
+<td>GNSS</td>
+<td>Optional, via GNSS module connector</td>
+<td>Built in (u-blox MAX-M10), helical antenna + auxiliary U.FL</td>
+</tr>
+<tr>
+<td>Power</td>
+<td>External power, ~1W</td>
+<td>Internal replaceable battery (12+ hrs), USB-C charging</td>
+</tr>
+<tr>
+<td>User interface</td>
+<td>USB console, web interface</td>
+<td>ePaper screen, backlit keypad, 5 status LEDs, web interface</td>
+</tr>
+<tr>
+<td>Sensors</td>
+<td>None</td>
+<td>IMU, magnetometer, pressure altitude, humidity</td>
+</tr>
+<tr>
+<td>Expansion</td>
+<td>13-pin expansion header</td>
+<td>Same 13-pin expansion header (PoE Pant compatible)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="supported-protocols">Supported Protocols<a class="headerlink" href="#supported-protocols" title="Permanent link">&para;</a></h2>
+<p>Winglet runs ADSBee 1090 firmware, so it decodes and reports the same things as the rest of the ADSBee 1090 family:</p>
+<ul>
+<li><strong>Receive:</strong> 1090MHz Mode S and ADS-B; 978MHz UAT ADS-B and ground uplink (FIS-B / TIS-B); 2.4GHz Remote ID over Bluetooth and WiFi (experimental).</li>
+<li><strong>Reporting protocols:</strong> Raw packets, CSBee, MAVLINK1, MAVLINK2, GDL90 (with or without UAT uplink), Mode S Beast, and Aircraft JSON.</li>
+<li><strong>Network feeds:</strong> stream decoded data to feeders and other endpoints over WiFi, with no external computer required.</li>
+</ul>
+<p>GDL90 is the open data format used by EFB apps, so a tablet connected to Winglet’s WiFi network can display traffic and weather.</p>
+<h2 id="firmware-and-getting-started">Firmware and Getting Started<a class="headerlink" href="#firmware-and-getting-started" title="Permanent link">&para;</a></h2>
+<p>Winglet uses the same firmware image as the ADSBee 1090U: one <code>combined.uf2</code> file that updates the RP2040, the ESP32-S3, and the sub-GHz radio together. The firmware recognizes Winglet by its part number and automatically sets up its built-in u-blox MAX-M10 GNSS receiver. Winglet support, GNSS support, and experimental Remote ID reception first appeared in the <a href="https://github.com/PantsForBirds/adsbee/releases">ADSBee 1090 firmware 0.9.1 release candidates</a>, and they’re under active development on the main branch.</p>
+<p>Configuring and updating a Winglet works the same way as on the 1090U: use the web interface (which now has a full settings GUI) or the AT command console over USB, and update firmware by copying <code>combined.uf2</code> over USB or with an OTA update through the web interface. The <a href="../../getting-started/quick-start/">Quick Start guide</a> walks through all of it. A couple of useful commands:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>AT+DEVICE_INFO?     # part code and firmware version
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>AT+GNSS_FIX?        # current GNSS fix
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>AT+REMOTE_ID=1      # enable Remote ID reception (experimental)
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>AT+SETTINGS?JSON    # dump all settings as JSON
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>AT+SETTINGS=SAVE    # save settings to nonvolatile memory
+</code></pre></div>
+<p>The Winglet-specific parts of the firmware (the ePaper UI and keypad menus, battery monitoring, onboard sensor readouts, and AHRS output over GDL90) are still in development. They’ll land in the open source ADSBee repository as they’re ready, and we’ll update this page when they do.</p>
+<p>If you’d like to build the firmware yourself, follow the <a href="https://github.com/PantsForBirds/adsbee/blob/main/firmware/README.md">firmware README</a> (<code>bash firmware/build.sh adsbee_1090</code> builds the RP2040, ESP32-S3, and CC1312 images into <code>combined.uf2</code>).</p>
+<h2 id="open-source-hardware-software">Open Source Hardware + Software<a class="headerlink" href="#open-source-hardware-software" title="Permanent link">&para;</a></h2>
+<p>Like the rest of ADSBee, Winglet’s firmware is released under a GNU GPL v3 license, and its enclosure and holster are open source. We hope Winglet will be useful in its own right, and also a launching point for other open source products built on the ADSBee m1090 module. For commercial licensing requests, please contact <a href="mailto:john@pantsforbirds.com">john@pantsforbirds.com</a>.</p>
+<h2 id="links">Links<a class="headerlink" href="#links" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://pantsforbirds.com/announcing-adsbee-winglet/">Announcing ADSBee Winglet!</a> (original announcement)</li>
+<li><a href="https://pantsforbirds.com/adsbee-update-august-2026/">ADSBee Update August 2026</a> (preorder and ship date update)</li>
+<li><a href="../">ADSBee 1090</a> and <a href="../../getting-started/quick-start/">Quick Start</a></li>
+<li><a href="../../adsbee-1421/m1421/">ADSBee m1421 dual-band module</a></li>
+<li><a href="https://github.com/PantsForBirds/adsbee">ADSBee on GitHub</a> (<a href="https://github.com/PantsForBirds/adsbee/releases">firmware releases</a>)</li>
+<li><a href="https://discord.gg/KRgVT9sSVW">Pants for Birds Discord</a> (#winglet channel)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      ADSBee source code and schematics are licensed under the GNU GPL v3.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.action.edit", "content.code.copy", "navigation.indexes", "navigation.sections", "navigation.top", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

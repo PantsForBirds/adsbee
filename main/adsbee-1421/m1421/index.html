@@ -1,0 +1,1656 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for ADSBee open source ADS-B receivers.">
+      
+      
+      
+        <link rel="canonical" href="https://adsbee.aero/wiki/latest/adsbee-1421/m1421/">
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../../guides/update-firmware/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>ADSBee m1421 Module - ADSBee Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adsbee-m1421-dual-band-module" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ADSBee Docs" class="md-header__button md-logo" aria-label="ADSBee Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ADSBee Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADSBee m1421 Module
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/PantsForBirds/adsbee" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    PantsForBirds/adsbee
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ADSBee Docs" class="md-nav__button md-logo" aria-label="ADSBee Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ADSBee Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/PantsForBirds/adsbee" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    PantsForBirds/adsbee
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../adsbee-1090/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee 1090
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ADSBee 1090
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adsbee-1090/winglet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee Winglet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee 1421
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ADSBee 1421
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee m1421 Module
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee m1421 Module
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Specs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adsbee-m1421-or-adsbee-1090" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADSBee m1421 or ADSBee 1090?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pinout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pinout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#designing-m1421-into-your-hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Designing m1421 Into Your Hardware
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Designing m1421 Into Your Hardware">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#minimum-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minimum connections
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rf-and-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RF and layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assembly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assembly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#console-and-reporting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Console and reporting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#firmware-updates-from-your-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware updates from your host
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync-sleep-and-lr2021-handoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SYNC sleep and LR2021 handoff
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#developer-kit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Developer Kit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#firmware-and-software" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware and Software
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-source-hardware-software" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Source Hardware + Software
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Links
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/update-firmware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Update Firmware
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/modify-enclosure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Modify the Enclosure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../community/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing to these docs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Specs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adsbee-m1421-or-adsbee-1090" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADSBee m1421 or ADSBee 1090?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pinout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pinout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#designing-m1421-into-your-hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Designing m1421 Into Your Hardware
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Designing m1421 Into Your Hardware">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#minimum-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minimum connections
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rf-and-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RF and layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assembly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assembly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#console-and-reporting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Console and reporting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#firmware-updates-from-your-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware updates from your host
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync-sleep-and-lr2021-handoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SYNC sleep and LR2021 handoff
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#developer-kit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Developer Kit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#firmware-and-software" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware and Software
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-source-hardware-software" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Source Hardware + Software
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Links
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/PantsForBirds/adsbee/edit/main/docs/adsbee-1421/m1421.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="adsbee-m1421-dual-band-module">ADSBee m1421 Dual-Band Module<a class="headerlink" href="#adsbee-m1421-dual-band-module" title="Permanent link">&para;</a></h1>
+<p><img alt="ADSBee m1421 module with dime for scale - front view." src="../../assets/adsbee-1421/2026-07-010260002-adsbee-m1421-pcba-front-dime-shot-1024x875.png" width="480" /></p>
+<p><strong>ADSBee m1421</strong> is an ultra low power, ultra compact dual-band ADS-B receiver module. It receives <strong>1090MHz Mode S / ADS-B</strong> and <strong>978MHz UAT</strong> (including TIS-B traffic and FIS-B weather uplink), tracks up to 400 aircraft onboard, and reports them over a single UART. It’s built for mass and power constrained embedded applications like detect and avoid for drones.</p>
+<p>The name comes from what’s under the hood: a TI <strong>CC1314</strong> low power RF MCU and a Semtech <strong>LR2021</strong> radio. The “m” means it’s a solder-down module, like the ADSBee m1090. The firmware and schematic are open source, and the aircraft decoding and tracking code is shared with our ADSBee 1090 firmware.</p>
+<p><a href="https://github.com/PantsForBirds/adsbee/blob/main/word/exports/datasheet_adsbee_m1421.pdf">Datasheet</a></p>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>Semtech’s LR2021 includes a high bit rate OOK receiver and demodulator, which packs the Mode S RF chain we used to build out of discrete parts (like on the ADSBee 1090U) into a single chip, with far less size and power. The CC1314 is the next generation of the TI CC1312 that receives UAT on the ADSBee 1090U. On m1421, the LR2021 receives 1090MHz, the CC1314’s sub-GHz radio receives 978MHz UAT, and the CC1314’s Cortex-M33 does all of the demodulation, FEC, decoding, and aircraft tracking.</p>
+<ul>
+<li>1090MHz Mode S / ADS-B and 978MHz UAT reception, including ADS-R, TIS-B, and FIS-B (including NOTAMs and weather).</li>
+<li>Onboard aircraft dictionary with up to 400 simultaneous aircraft.</li>
+<li>UART console with an AT command set for configuration; settings are saved to flash.</li>
+<li>Reporting protocols: Raw packets, CSBee, MAVLINK1, MAVLINK2, GDL90, Mode S Beast, and Aircraft JSON.</li>
+<li>SYNC line for host-controlled sleep, which also hands the LR2021 (and its 2.4GHz radio) over to an external MCU.</li>
+<li>Firmware updates over the UART ROM bootloader (no debugger needed) or JTAG.</li>
+<li>Available in standard and NDAA-compliant variants.</li>
+</ul>
+<p><img alt="ADSBee m1421 module with dime for scale - rear view." src="../../assets/adsbee-1421/2026-07-010260002-adsbee-m1421-pcba-back-dime-shot-1024x917.png" width="480" /></p>
+<h2 id="specs">Specs<a class="headerlink" href="#specs" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Receive bands</strong></td>
+<td>1090MHz Mode S / ADS-B (LR2021)<br>978MHz UAT ADS-B + uplink (CC1314 sub-GHz radio)</td>
+</tr>
+<tr>
+<td><strong>Processor</strong></td>
+<td>TI CC1314R10 (Arm Cortex-M33)</td>
+</tr>
+<tr>
+<td><strong>Supply voltage</strong></td>
+<td>1.8V – 3.3V</td>
+</tr>
+<tr>
+<td><strong>Power draw</strong></td>
+<td>19mA @ 1.8-3.3V (less than 60mW)</td>
+</tr>
+<tr>
+<td><strong>Minimum RF input power level</strong></td>
+<td>Mode S: -90dBm<br>UAT: -87dBm</td>
+</tr>
+<tr>
+<td><strong>Dynamic range</strong></td>
+<td>Mode S: 90dB<br>UAT: 87dB</td>
+</tr>
+<tr>
+<td><strong>Simultaneous aircraft tracks</strong></td>
+<td>Up to 400</td>
+</tr>
+<tr>
+<td><strong>Host interface</strong></td>
+<td>UART (console), 1,000,000 baud by default</td>
+</tr>
+<tr>
+<td><strong>Output protocols</strong></td>
+<td>Raw, CSBee, MAVLINK1, MAVLINK2, GDL90, Mode S Beast, Aircraft JSON</td>
+</tr>
+<tr>
+<td><strong>Dimensions</strong></td>
+<td>23.4 x 14.5 x 2.7mm</td>
+</tr>
+<tr>
+<td><strong>Weight</strong></td>
+<td>1.85g</td>
+</tr>
+<tr>
+<td><strong>Package</strong></td>
+<td>36-pin solder-down module with two thermal pads</td>
+</tr>
+<tr>
+<td><strong>Firmware updates</strong></td>
+<td>UART ROM bootloader or JTAG</td>
+</tr>
+<tr>
+<td><strong>License</strong></td>
+<td>Firmware and schematic: GNU GPL v3</td>
+</tr>
+</tbody>
+</table>
+<h2 id="adsbee-m1421-or-adsbee-1090">ADSBee m1421 or ADSBee 1090?<a class="headerlink" href="#adsbee-m1421-or-adsbee-1090" title="Permanent link">&para;</a></h2>
+<p>ADSBee 1421 doesn’t replace the <a href="../../adsbee-1090/">ADSBee 1090</a> family; they have very different architectures and are good at different things.</p>
+<p>To get good dynamic range (receiving very close and very far away aircraft at the same time), the LR2021 is tuned by default to listen for only one Mode S packet type: Downlink Format 17, aka ADS-B. It’s great at seeing where planes are, but you won’t receive squawk codes, and you’ll receive fewer non-ADS-B packets. That’s usually fine for detect and avoid, but can be a drawback for data gathering. You can switch the receiver to the full Mode S preamble to receive all Mode S packet types, at the cost of dynamic range (close-in aircraft can have poor reception).</p>
+<p>In its high-throughput configuration, the LR2021 also doesn’t provide per-packet timestamps or RSSI, so m1421 doesn’t support multilateration (MLAT) out of the box.</p>
+<table>
+<thead>
+<tr>
+<th>Choose…</th>
+<th>If you need…</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../../adsbee-1090/">ADSBee 1090</a></td>
+<td>Full-featured dual-band ADS-B with all the bells and whistles, where power / form factor / cost are secondary. Built-in WiFi / Ethernet / USB connectivity, MLAT timestamps, per-packet RSSI, and all Mode S packet types.</td>
+</tr>
+<tr>
+<td>ADSBee m1421</td>
+<td>Dual-band ADS-B for aircraft tracking where power / form factor / cost are very important. UART interface only.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="pinout">Pinout<a class="headerlink" href="#pinout" title="Permanent link">&para;</a></h2>
+<p>ADSBee m1421 has 36 pins plus two thermal pads (MP) under the CC1314 and LR2021. Pins marked * are only needed for direct control of the LR2021; leave them unconnected for normal applications.</p>
+<table>
+<thead>
+<tr>
+<th>Pin</th>
+<th>Name</th>
+<th>Function</th>
+<th>Pin</th>
+<th>Name</th>
+<th>Function</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>VCC</td>
+<td>Power supply (1.8V – 3.3V)</td>
+<td>19</td>
+<td>VCC</td>
+<td>Power supply (1.8V – 3.3V)</td>
+</tr>
+<tr>
+<td>2</td>
+<td>LD11*</td>
+<td>LR2021 DIO11</td>
+<td>20</td>
+<td>SURX</td>
+<td>CC1314 UART RX (console input)</td>
+</tr>
+<tr>
+<td>3</td>
+<td>LD09*</td>
+<td>LR2021 DIO9</td>
+<td>21</td>
+<td>SUTX</td>
+<td>CC1314 UART TX (console output)</td>
+</tr>
+<tr>
+<td>4</td>
+<td>VCC</td>
+<td>Power supply (1.8V – 3.3V)</td>
+<td>22</td>
+<td>VCC</td>
+<td>Power supply (1.8V – 3.3V)</td>
+</tr>
+<tr>
+<td>5</td>
+<td>LD08*</td>
+<td>LR2021 DIO8</td>
+<td>23</td>
+<td>GND</td>
+<td>Ground</td>
+</tr>
+<tr>
+<td>6</td>
+<td>GND</td>
+<td>Ground</td>
+<td>24</td>
+<td>SRF</td>
+<td>Sub-GHz (978MHz UAT) RF, 50 Ohm</td>
+</tr>
+<tr>
+<td>7</td>
+<td>~LRST*</td>
+<td>LR2021 reset (active low)</td>
+<td>25</td>
+<td>GND</td>
+<td>Ground</td>
+</tr>
+<tr>
+<td>8</td>
+<td>JMSC</td>
+<td>CC1314 JTAG TMSC</td>
+<td>26</td>
+<td>LRFL</td>
+<td>Mode S (1090MHz) RF, 50 Ohm</td>
+</tr>
+<tr>
+<td>9</td>
+<td>JCKC</td>
+<td>CC1314 JTAG TCKC</td>
+<td>27</td>
+<td>GND</td>
+<td>Ground</td>
+</tr>
+<tr>
+<td>10</td>
+<td>JTDO</td>
+<td>CC1314 JTAG TDO</td>
+<td>28</td>
+<td>SYNC</td>
+<td>Drive high to suspend the CC1314 (also the bootloader trigger)</td>
+</tr>
+<tr>
+<td>11</td>
+<td>JTDI</td>
+<td>CC1314 JTAG TDI</td>
+<td>29</td>
+<td>CSMI*</td>
+<td>LR2021 SPI MISO</td>
+</tr>
+<tr>
+<td>12</td>
+<td>SD23</td>
+<td>CC1314 DIO23</td>
+<td>30</td>
+<td>CSMO*</td>
+<td>LR2021 SPI MOSI</td>
+</tr>
+<tr>
+<td>13</td>
+<td>SD24</td>
+<td>CC1314 DIO24</td>
+<td>31</td>
+<td>CSCK*</td>
+<td>LR2021 SPI SCK</td>
+</tr>
+<tr>
+<td>14</td>
+<td>SD25</td>
+<td>CC1314 DIO25</td>
+<td>32</td>
+<td>~LRCS*</td>
+<td>LR2021 SPI CS</td>
+</tr>
+<tr>
+<td>15</td>
+<td>SD26</td>
+<td>CC1314 DIO26 (1090MHz activity LED output)</td>
+<td>33</td>
+<td>LBSY*</td>
+<td>LR2021 busy</td>
+</tr>
+<tr>
+<td>16</td>
+<td>SD27</td>
+<td>CC1314 DIO27 (sub-GHz activity LED output)</td>
+<td>34</td>
+<td>GND</td>
+<td>Ground</td>
+</tr>
+<tr>
+<td>17</td>
+<td>~SRST</td>
+<td>CC1314 reset (active low)</td>
+<td>35</td>
+<td>LRFH*</td>
+<td>LR2021 2.4GHz RF, 50 Ohm</td>
+</tr>
+<tr>
+<td>18</td>
+<td>GND</td>
+<td>Ground</td>
+<td>36</td>
+<td>GND</td>
+<td>Ground</td>
+</tr>
+<tr>
+<td>MP</td>
+<td></td>
+<td>Thermal pads for CC1314 and LR2021 (connect to ground)</td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Module dimensions and the recommended footprint are in the <a href="https://github.com/PantsForBirds/adsbee/blob/main/word/exports/datasheet_adsbee_m1421.pdf">datasheet</a>. The schematic is in the repo at <a href="https://github.com/PantsForBirds/adsbee/tree/main/kicad/adsbee_m1421">kicad/adsbee_m1421</a>.</p>
+<h2 id="designing-m1421-into-your-hardware">Designing m1421 Into Your Hardware<a class="headerlink" href="#designing-m1421-into-your-hardware" title="Permanent link">&para;</a></h2>
+<p>Quite a few customers have already put ADSBee m1421 onto their own carrier boards. Our KiCad <a href="https://github.com/PantsForBirds/kicad-libs/blob/main/lib_fp/Custom_Module.pretty/PantsForBirds_ADSBee_m1421_Module.kicad_mod">footprint</a>, symbols, and 3D models are freely available, and the design files for our <a href="https://pantsforbirds.com/wp-content/uploads/2026/06/adsbee_1421-A.zip">ADSBee 1421 minimum form factor carrier board</a> make a good reference design.</p>
+<h3 id="minimum-connections">Minimum connections<a class="headerlink" href="#minimum-connections" title="Permanent link">&para;</a></h3>
+<p>For normal use as an ADS-B receiver you only need power, ground, the RF inputs, and a handful of signals to your host. These match the 6-pin comms connector on the ADSBee 1421 carrier board:</p>
+<ul>
+<li><strong>VCC</strong> (all four VCC pins) at 1.8V – 3.3V, and <strong>GND</strong>. Logic levels are 0 – VCC.</li>
+<li><strong>SURX / SUTX</strong>: the console UART. This carries AT commands, the selected reporting protocol, and log messages.</li>
+<li><strong>~SRST</strong> and <strong>SYNC</strong>: we strongly recommend routing both to host GPIOs. Together they let your host put the module to sleep and update its firmware in the field (see below). SYNC has a weak pull-down, so a floating SYNC keeps the module awake.</li>
+<li><strong>LRFL</strong> (1090MHz) and <strong>SRF</strong> (978MHz) to your antenna(s). The ADSBee 1421 carrier board uses a power combiner so a single dual-band antenna feeds both inputs.</li>
+</ul>
+<h3 id="rf-and-layout">RF and layout<a class="headerlink" href="#rf-and-layout" title="Permanent link">&para;</a></h3>
+<ul>
+<li>LRFH, LRFL, and SRF are 50 Ohm coplanar waveguides on the module. Break them out as microstrip or coplanar waveguide, whichever you prefer.</li>
+<li>Respect the top copper keepouts in the footprint, where impedance controlled transmission lines run on the surface of the module.</li>
+<li>Filled and capped vias directly under the GND pads next to the RF pins are recommended for minimal impedance discontinuity.</li>
+<li>Connect both MP thermal pads to a ground plane with filled and capped thermal vias.</li>
+<li>All exposed copper pads should have paste.</li>
+</ul>
+<h3 id="assembly">Assembly<a class="headerlink" href="#assembly" title="Permanent link">&para;</a></h3>
+<p>For production, ADSBee m1421 ships in trays of 50, so any contract manufacturer can place it on your PCB. The serial number label on every module is reflow safe and chemical resistant, and the module can withstand up to two reflow passes, so you can put it on the top or bottom of your board without any special precautions.</p>
+<h3 id="console-and-reporting">Console and reporting<a class="headerlink" href="#console-and-reporting" title="Permanent link">&para;</a></h3>
+<p>The console UART runs at 1,000,000 baud by default. You can change it to 115200, 230400, 460800, or 921600 with <code>AT+BAUD_RATE</code> and save it with <code>AT+SETTINGS=SAVE</code>; we recommend 921600 or above, since verbose reporting protocols can bottleneck at 115200. If the console is also your reporting interface, silence the debug logs so they don’t get mixed into your data:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>AT+LOG_LEVEL=SILENT
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>AT+PROTOCOL_OUT=CONSOLE,MAVLINK2
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>AT+MAVLINK_ID=1,156
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>AT+SETTINGS=SAVE
+</code></pre></div>
+<p>Once configured, you can plug m1421 into anything that accepts ADS-B data over UART, like a drone flight controller or your own host MCU. A few other commands you’ll likely use:</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AT+DEVICE_INFO?</code></td>
+<td>Part code, unique ID, and firmware version.</td>
+</tr>
+<tr>
+<td><code>AT+PROTOCOL_OUT=CONSOLE,&lt;protocol&gt;</code></td>
+<td>NONE, RAW, BEAST, BEAST_NO_UAT, BEAST_NO_UAT_UPLINK, CSBEE, MAVLINK1, MAVLINK2, GDL90, GDL90_NO_UAT_UPLINK, AIRCRAFT_JSON.</td>
+</tr>
+<tr>
+<td><code>AT+R1090_PREAMBLE=&lt;mode&gt;</code></td>
+<td>DF17 (default, best dynamic range), MODE_S_PREAMBLE (all Mode S packet types), or MODE_S_SW_CRC.</td>
+</tr>
+<tr>
+<td><code>AT+R1090_GAIN=&lt;step&gt;</code></td>
+<td>1090MHz front-end gain: AUTO (default) or a manual step.</td>
+</tr>
+<tr>
+<td><code>AT+SUBG_MODE=&lt;mode&gt;</code></td>
+<td>UAT_RX (default) or UAT_RX_NO_UPLINK to skip FIS-B / TIS-B uplink and save airtime and CPU.</td>
+</tr>
+<tr>
+<td><code>AT+RX_ENABLE=&lt;all&gt;,&lt;1090&gt;,&lt;subg&gt;</code></td>
+<td>Enable or disable each receiver.</td>
+</tr>
+<tr>
+<td><code>AT+RX_POSITION=...</code></td>
+<td>Set the receiver position (FIXED, GNSS, LOWEST, ICAO, or NONE), used for things like distance to aircraft.</td>
+</tr>
+<tr>
+<td><code>AT+RX_STATS?</code></td>
+<td>Receiver packet and health counters.</td>
+</tr>
+<tr>
+<td><code>AT+WATCHDOG=&lt;seconds&gt;</code></td>
+<td>Watchdog timeout (10 seconds by default, 0 disables).</td>
+</tr>
+<tr>
+<td><code>AT+SETTINGS=SAVE</code></td>
+<td>Save settings to flash (also LOAD, RESET).</td>
+</tr>
+</tbody>
+</table>
+<p>The full AT command and reporting protocol reference is in the <a href="https://github.com/PantsForBirds/adsbee/blob/main/word/exports/datasheet_adsbee_m1421.pdf">ADSBee m1421 datasheet</a>.</p>
+<h3 id="firmware-updates-from-your-host">Firmware updates from your host<a class="headerlink" href="#firmware-updates-from-your-host" title="Permanent link">&para;</a></h3>
+<p>Holding SYNC high on the rising edge of ~SRST puts the CC1314 into its ROM UART bootloader on the SURX / SUTX pins, so your host can reflash m1421 over the same UART it already uses. The ADSBee 1421 Programmer (an RP2040 Zero) does exactly this: it checks the module’s firmware against the image baked into its own flash, updates it if needed, and then acts as a USB to serial bridge. Its <a href="https://github.com/PantsForBirds/adsbee/tree/main/firmware/adsbee_1421/programmer">firmware is open source</a>, so you can remix it to give your own host MCU automatic firmware updates. The <a href="https://github.com/PantsForBirds/adsbee/blob/main/firmware/adsbee_1421/README.md">ADSBee 1421 firmware README</a> describes the bootloader entry sequence in detail. JTAG (pins 8-11) is also available for flashing and breakpoint debugging with a J-Link or equivalent cJTAG probe.</p>
+<h3 id="sync-sleep-and-lr2021-handoff">SYNC sleep and LR2021 handoff<a class="headerlink" href="#sync-sleep-and-lr2021-handoff" title="Permanent link">&para;</a></h3>
+<p>The LR2021 is a capable radio beyond Mode S. Its 2.4GHz frontend is broken out on the LRFH pin, so you can reuse it as a mesh radio with LoRa and other supported protocols. Driving SYNC high puts the CC1314 into a low power sleep state and releases all of the LR2021 control lines so an external MCU can take over. The CC1314 retains its aircraft data while asleep, so you can time-share between mesh radio and Mode S reception.</p>
+<p><img alt="Oscilloscope capture of the LR2021 RESET line being released by m1421 after the SYNC line goes high." src="../../assets/adsbee-1421/2026-08-image-4-1024x659.png" /></p>
+<p><em>The LR2021 RESET line (yellow) being released by m1421 after SYNC (green) goes high, persisted across hundreds of handovers.</em></p>
+<ul>
+<li>To take over the LR2021: drive SYNC high, then wait until ~LRST is released or 40us have passed, whichever comes first. In our testing m1421 is clear of the bus in around 25us.</li>
+<li>To give it back: stop driving the LR2021 bus first, then drive SYNC low. The CC1314 wakes up, takes the bus back, and re-initializes its receivers.</li>
+<li>Firmware 0.3.11-rc1 adds <code>AT+LR_ENABLE=0</code>, which releases the LR2021 bus to an external host without putting the CC1314 to sleep. 1090MHz reception stops while the bus is released; <code>AT+LR_ENABLE=1</code> hands it back.</li>
+<li>If m1421 will sleep longer than the watchdog interval (10 seconds by default), disable the watchdog with <code>AT+WATCHDOG=0</code>. Otherwise the watchdog resets the module during sleep, and with SYNC still high it will enter the bootloader.</li>
+</ul>
+<p>ADSBee m1421 does not currently carry any module-level certification as a transmitter, so it must only be used as a transmitter in compliance with local regulations. If you’re planning to use the LR2021 this way, get in touch and we’ll help.</p>
+<h2 id="developer-kit">Developer Kit<a class="headerlink" href="#developer-kit" title="Permanent link">&para;</a></h2>
+<p>The easiest way to get started is the ADSBee 1421 Developer Kit. It includes an ADSBee m1421 soldered to our open source minimum form factor carrier board (that combination is what we call the ADSBee 1421) with a 10-pin ARM SWD header for breakpoint debugging, a dual-band 1090 / 978MHz flex antenna, a JST-GH to DuPont wire harness, and the ADSBee 1421 Programmer. See the <a href="https://github.com/PantsForBirds/adsbee/blob/main/word/exports/datasheet_adsbee_1421_devkit.pdf">Developer Kit datasheet</a> for pinouts and wiring.</p>
+<p><img alt="ADSBee 1421 Developer Kit" src="../../assets/adsbee-1421/2026-07-adsbee-1421-devkit-1024x683.png" /></p>
+<h2 id="firmware-and-software">Firmware and Software<a class="headerlink" href="#firmware-and-software" title="Permanent link">&para;</a></h2>
+<p>ADSBee m1421 firmware lives in the main <a href="https://github.com/PantsForBirds/adsbee">ADSBee repository</a> under <code>firmware/adsbee_1421/</code>, and shares its Mode S / UAT decoders and aircraft dictionary with ADSBee 1090. Releases are tagged <code>adsbee_1421-&lt;version&gt;</code> on the <a href="https://github.com/PantsForBirds/adsbee/releases">releases page</a>. Each release includes the firmware <code>.hex</code> and an <code>adsbee_1421_programmer-fw&lt;version&gt;.uf2</code> image for the ADSBee 1421 Programmer. Use <code>AT+DEVICE_INFO?</code> to see which version your module is running.</p>
+<p>The <a href="https://adsbee.aero/console/1421/adsbee_1421_console.html">ADSBee 1421 web console</a> on adsbee.aero connects to an ADSBee 1421 over Web Serial (Chrome or Edge). It gives you an AT command terminal, a settings GUI, firmware upload, and a live map of the aircraft you’re receiving. It’s a single HTML file, so you can download it and use it offline. Its source and feature list are in the <a href="https://github.com/PantsForBirds/adsbee/blob/main/software/adsbee_1421_console/README.md">console README</a>.</p>
+<p><img alt="The ADSBee 1421 web console showing a live map of received aircraft." src="../../assets/adsbee-1421/2026-08-image-3-1024x886.png" /></p>
+<p>To build the firmware yourself (everything runs in Docker, so you only need Docker and git), follow the <a href="https://github.com/PantsForBirds/adsbee/blob/main/firmware/README.md">firmware README</a>; <code>bash firmware/build.sh adsbee_1421</code> produces <code>adsbee_1421-&lt;version&gt;.hex</code>.</p>
+<h2 id="open-source-hardware-software">Open Source Hardware + Software<a class="headerlink" href="#open-source-hardware-software" title="Permanent link">&para;</a></h2>
+<p>ADSBee m1421’s firmware and schematic are released under a GNU GPL v3 license. For very high volume applications (above 1k pieces per purchase, or more than 12k pieces per year) or commercial licensing requests, please contact <a href="mailto:john@pantsforbirds.com">john@pantsforbirds.com</a>.</p>
+<h2 id="links">Links<a class="headerlink" href="#links" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://github.com/PantsForBirds/adsbee/blob/main/word/exports/datasheet_adsbee_m1421.pdf">ADSBee m1421 datasheet</a> and <a href="https://github.com/PantsForBirds/adsbee/tree/main/kicad/adsbee_m1421">schematic</a></li>
+<li><a href="https://pantsforbirds.com/the-worlds-smallest-dual-band-ads-b-receiver-module/">The World’s Smallest Dual-Band ADS-B Receiver Module</a> (announcement)</li>
+<li><a href="https://adsbee.aero/console/1421/adsbee_1421_console.html">ADSBee 1421 web console</a></li>
+<li><a href="../../adsbee-1090/">ADSBee 1090</a>, <a href="../../getting-started/quick-start/">Quick Start</a>, and <a href="../../adsbee-1090/winglet/">ADSBee Winglet</a></li>
+<li><a href="https://discord.gg/KRgVT9sSVW">Pants for Birds Discord</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      ADSBee source code and schematics are licensed under the GNU GPL v3.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.action.edit", "content.code.copy", "navigation.indexes", "navigation.sections", "navigation.top", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

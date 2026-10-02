@@ -1,0 +1,1581 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for ADSBee open source ADS-B receivers.">
+      
+      
+      
+        <link rel="canonical" href="https://adsbee.aero/wiki/latest/getting-started/quick-start/">
+      
+      
+        <link rel="prev" href="../..">
+      
+      
+        <link rel="next" href="../../adsbee-1090/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Quick Start - ADSBee Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#quick-start" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ADSBee Docs" class="md-header__button md-logo" aria-label="ADSBee Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ADSBee Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Quick Start
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/PantsForBirds/adsbee" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    PantsForBirds/adsbee
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ADSBee Docs" class="md-nav__button md-logo" aria-label="ADSBee Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ADSBee Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/PantsForBirds/adsbee" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    PantsForBirds/adsbee
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#id-like-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        I’d like to…
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="I’d like to…">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#change-device-software-or-hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🔧 Change Device Software or Hardware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#change-device-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        💾 Change Device Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-into-the-nuts-and-bolts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🔩 Get into the Nuts and Bolts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adsbee-datasheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📄 ADSBee Datasheet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-to-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⌨️ Connect to the CLI
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="⌨️ Connect to the CLI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method-1-connect-via-usb-serial-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 1: Connect via USB Serial Terminal
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Method 1: Connect via USB Serial Terminal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-terminal-software" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Terminal Software
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-2-connect-via-adsbees-webpage-serial-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 2: Connect via ADSBee’s Webpage Serial Terminal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI Tips
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-connect-via-websocket" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 3: Connect via WebSocket
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feed-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📲 Feed air traffic data to an App
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feed-aggregator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🌐 Feed an Aggregator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#join-external-wifi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🛜 Join an External WiFi Network
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embedded-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        💡 Integrate the ADSBee with an Embedded Project
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="💡 Integrate the ADSBee with an Embedded Project">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connect-a-device-via-uart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect a Device via UART
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connect-a-device-via-usb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect a Device via USB
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-adsbee-flight-controller" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🛩️ Connect ADSBee to a Flight Controller
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📈 Export Metrics Data from ADSBee
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../adsbee-1090/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee 1090
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ADSBee 1090
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adsbee-1090/winglet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee Winglet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../adsbee-1421/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee 1421
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ADSBee 1421
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adsbee-1421/m1421/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADSBee m1421 Module
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/update-firmware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Update Firmware
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/modify-enclosure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Modify the Enclosure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../community/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing to these docs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#id-like-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        I’d like to…
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="I’d like to…">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#change-device-software-or-hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🔧 Change Device Software or Hardware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#change-device-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        💾 Change Device Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-into-the-nuts-and-bolts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🔩 Get into the Nuts and Bolts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adsbee-datasheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📄 ADSBee Datasheet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-to-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⌨️ Connect to the CLI
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="⌨️ Connect to the CLI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method-1-connect-via-usb-serial-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 1: Connect via USB Serial Terminal
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Method 1: Connect via USB Serial Terminal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-terminal-software" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Terminal Software
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-2-connect-via-adsbees-webpage-serial-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 2: Connect via ADSBee’s Webpage Serial Terminal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI Tips
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-connect-via-websocket" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method 3: Connect via WebSocket
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feed-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📲 Feed air traffic data to an App
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feed-aggregator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🌐 Feed an Aggregator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#join-external-wifi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🛜 Join an External WiFi Network
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embedded-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        💡 Integrate the ADSBee with an Embedded Project
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="💡 Integrate the ADSBee with an Embedded Project">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connect-a-device-via-uart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect a Device via UART
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connect-a-device-via-usb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect a Device via USB
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-adsbee-flight-controller" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🛩️ Connect ADSBee to a Flight Controller
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📈 Export Metrics Data from ADSBee
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/PantsForBirds/adsbee/edit/main/docs/getting-started/quick-start.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h1>
+<p>Thanks for your purchase of an ADSBee 1090! This quick-start guide should get you headed in the right direction. Please select what you’d like to do from the options below to jump to more detailed instructions.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This quick start guide is a work in progress! Please let me know if you find any typos or want additional information by posting in the <a href="https://discord.gg/KRgVT9sSVW">#documentation</a> channel on Discord!</p>
+</div>
+<h2 id="id-like-to">I’d like to…<a class="headerlink" href="#id-like-to" title="Permanent link">&para;</a></h2>
+<h3 id="change-device-software-or-hardware">🔧 Change Device Software or Hardware<a class="headerlink" href="#change-device-software-or-hardware" title="Permanent link">&para;</a></h3>
+<p><a href="../../guides/update-firmware/">⬆️ Update the Firmware on my ADSBee</a></p>
+<p><a href="../../guides/modify-enclosure/">🥡 Modify the Enclosure of my ADSBee</a></p>
+<h3 id="change-device-settings">💾 Change Device Settings<a class="headerlink" href="#change-device-settings" title="Permanent link">&para;</a></h3>
+<p><a href="#connect-to-cli">⌨️ Connect to the CLI</a></p>
+<p><a href="#feed-app">📲 Feed air traffic data to an App</a></p>
+<p><a href="#feed-aggregator">🌐 Feed raw packets to an Aggregator or Local Endpoint</a></p>
+<p><a href="#embedded-project">💡 Integrate ADSBee with an Embedded Project</a></p>
+<p><a href="#join-external-wifi">🛜 Join an External WiFi Network</a></p>
+<p><a href="#connect-adsbee-flight-controller">🛩️ Connect ADSBee to a Flight Controller</a></p>
+<h3 id="get-into-the-nuts-and-bolts">🔩 Get into the Nuts and Bolts<a class="headerlink" href="#get-into-the-nuts-and-bolts" title="Permanent link">&para;</a></h3>
+<p><a href="#adsbee-datasheet">📄 Read the ADSBee Datasheet</a></p>
+<p><a href="https://github.com/PantsForBirds/adsbee">🐝 Follow the ADSBee Project on GitHub</a></p>
+<p><a href="#export-metrics">📈 Export Metrics Data</a></p>
+<h2 id="adsbee-datasheet">📄 ADSBee Datasheet<a class="headerlink" href="#adsbee-datasheet" title="Permanent link">&para;</a></h2>
+<p>Available for download from the <a href="https://github.com/PantsForBirds/adsbee/blob/main/word/exports/datasheet_adsbee_1090.pdf">GitHub repo</a>.</p>
+<h2 id="connect-to-cli">⌨️ Connect to the CLI<a class="headerlink" href="#connect-to-cli" title="Permanent link">&para;</a></h2>
+<p>The ADSBee 1090’s settings can be changed via its Command Line Interface (CLI). The CLI can be accessed via USB or via a webpage serial terminal. For a full list of CLI commands, run <code>AT+HELP</code> in the CLI. A detailed description of the CLI commands and their functions can also be found in the ADSBee 1090 datasheet.</p>
+<h3 id="method-1-connect-via-usb-serial-terminal">Method 1: Connect via USB Serial Terminal<a class="headerlink" href="#method-1-connect-via-usb-serial-terminal" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Connect the ADSBee 1090 to your computer via a USB C cable. The ADSBee 1090 should enumerate as a virtual COM port on Windows (or /dev/tty/whatever on Mac / Linux).</li>
+<li>Connect to the ADSBee 1090’s COM port using your favorite serial terminal. NOTE: Baud rates and parity don’t matter, since this is a virtual COM port, but line endings MUST be set to <code>\r\n</code>, or else your commands may not be interpreted correctly or at all!</li>
+<li>Type <code>AT+HELP</code> into the web terminal, and hit enter. This should provide a list of available AT commands as shown below. Use the AT commands to interact with the CLI as you please! Note that all changed settings will be discarded on reboot unless they are saved with <code>AT+SETTINGS=SAVE</code>. If you would like to revert to the default settings, use <code>AT+SETTINGS=RESET</code>.</li>
+</ol>
+<p><img alt="AT+HELP output in a USB serial terminal (serialterminal.com)" src="../../assets/getting-started/2024-11-image-2-1024x769.png" /></p>
+<h4 id="recommended-terminal-software">Recommended Terminal Software<a class="headerlink" href="#recommended-terminal-software" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Android: <a href="https://play.google.com/store/apps/details?id=de.kai_morich.serial_usb_terminal&amp;pcampaignid=web_share">Serial USB Terminal</a> by Kai Morich</li>
+<li>Desktop Windows / Mac / Linux: <a href="https://www.serialterminal.com/">Serialterminal.com</a> in Chrome</li>
+</ul>
+<h3 id="method-2-connect-via-adsbees-webpage-serial-terminal">Method 2: Connect via ADSBee’s Webpage Serial Terminal<a class="headerlink" href="#method-2-connect-via-adsbees-webpage-serial-terminal" title="Permanent link">&para;</a></h3>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Connecting to the web CLI is best done on a desktop computer in the Chrome browser. Some phones can connect to the web CLI, but there is a bug in some mobile browsers that currently causes text to be entered into the terminal in reverse.</p>
+</div>
+<ol>
+<li>Join the WiFi network generated by the ADSBee 1090 (SSID takes the form “ADSBee1090-0240907000001” or similar). The default password is <code>yummyflowers</code>.</li>
+<li>
+<p>In a web browser (tested and working on Chrome), visit the following web address: <a href="http://192.168.4.1">http://192.168.4.1</a>. Note that there is no leading “www.”, and the protocol is HTTP, not HTTPS! You should arrive at the screen shown below. The web terminal will timeout after 10 minutes of inactivity, and can be revived by refreshing the page.</p>
+<p><img alt="The ADSBee web terminal at 192.168.4.1" src="../../assets/getting-started/2024-11-image-1024x511.png" /></p>
+</li>
+<li>
+<p>Type <code>AT+HELP</code> into the web terminal, and hit enter. This should provide a list of available AT commands as shown below. Use the AT commands to interact with the CLI as you please! Note that all changed settings will be discarded on reboot unless they are saved with <code>AT+SETTINGS=SAVE</code>. If you would like to revert to the default settings, use <code>AT+SETTINGS=RESET</code>.</p>
+</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>There are no guardrails on the CLI commands! You can turn off WiFi from the Web CLI, which will predictably stop you from being able to interact using said Web CLI. To recover, connect to the CLI via USB and run <code>AT+SETTINGS=RESET</code>.</p>
+</div>
+<p><img alt="AT+HELP output in the web terminal" src="../../assets/getting-started/2024-11-image-1-1024x508.png" /></p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The Web CLI can also be reached by visiting the ADSBee 1090’s IP address once it has joined an external WiFi network (e.g. the network created by the WiFi access point at your house). For instance, if your ADSBee 1090 was assigned an IP address of 10.3.2.5, then you could visit the web CLI by navigating to http://10.3.2.5 (note this is just an example). To get the IP address of the ADSBee 1090, visit the DHCP leases page on your router to see what IP has been assigned to the device.</p>
+</div>
+<h3 id="cli-tips">CLI Tips<a class="headerlink" href="#cli-tips" title="Permanent link">&para;</a></h3>
+<ul>
+<li>AT command arguments can be skipped by leaving them blank, and AT commands can be given fewer than their maximum number of arguments! For instance, if you just want to disable feed 5, you could send <code>AT+FEED=5,,,0,</code> instead of the more verbose <code>AT+FEED=5,78.46.234.18,30004,0,BEAST</code>. In the shorter command, the feed IP address, port, and protocol were omitted. Note that the trailing comma was not necessary, since the final argument is automatically passed as a blank field if it is missing. <code>AT+FEED=5,,,0</code> works just as well!</li>
+<li>Sending messages via the Web CLI can be time-intensive, and may cause the ESP32 to miss transponder packets if console verbosity is set too high. If you’d like to investigate packet reception and other info with <code>AT+LOG_LEVEL=INFO</code>, it’s recommended to do this via the USB terminal and keep the Web CLI interface closed. When using the web CLI, it is recommended to keep the Web CLI verbosity level at <code>AT+LOG_LEVEL=WARNINGS</code>, <code>AT+LOG_LEVEL=ERRORS</code>, or <code>AT+LOG_LEVEL=SILENT</code>.</li>
+<li>The console on the Web CLI will automatically time out after 10 minutes of inactivity (it can be re-activated with a page refresh).</li>
+</ul>
+<h3 id="cli-connect-via-websocket">Method 3: Connect via WebSocket<a class="headerlink" href="#cli-connect-via-websocket" title="Permanent link">&para;</a></h3>
+<p>If you want an SSH-style experience without using a browser, you can use a tool like <a href="https://github.com/vi/websocat">websocat</a> to connect to the CLI of your ADSBee directly at <code>ws://&lt;adsbee_ip_address&gt;/console</code>.</p>
+<p>For instance, to connect to an ADSBee with the hostname “window-bee3”, you could run the following command. Note that the <code>--binary</code> flag is used so that the ADSBee’s newlines come through correctly and everything gets indented properly.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>websocat --binary ws://window-bee3.local/console
+</code></pre></div>
+<h2 id="feed-app">📲 Feed air traffic data to an App<a class="headerlink" href="#feed-app" title="Permanent link">&para;</a></h2>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Electronic Flight Bag (EFB) devices are Android / iOS tablets loaded with maps / VFR charts / approach plates / etc for use by pilots. Devices like Stratux, Foreflight Sentry, and ADSBee 1090 can be used to feed EFB devices with aircraft traffic information over WiFi.</p>
+</div>
+<p>Here are a few apps that can be used with ADSBee 1090. If you have one that you like, please send me a note on Discord so that we can add it to the table!</p>
+<table>
+<thead>
+<tr>
+<th>Platform / Use Case</th>
+<th>iPhone</th>
+<th>Android</th>
+<th>Desktop</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Electronic Flight Bag</strong></td>
+<td><a href="https://apps.apple.com/us/app/foreflight-mobile-efb/id333252638">ForeFlight (paid)</a></td>
+<td><a href="https://play.google.com/store/apps/details?id=com.ds.avare&amp;pcampaignid=web_share">Avare (free)</a></td>
+<td></td>
+</tr>
+<tr>
+<td><strong>Airplane Spotting</strong></td>
+<td><a href="https://apps.apple.com/us/app/aeroadsb/id1560168705">AeroADSB</a></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>ADSBee 1090 is still in Beta, and is not advised for use as a primary EFB traffic information device at this time. Feedback and testing is always welcome, but <strong>safety is #1</strong>! If you do fly with an ADSBee 1090, please make sure to use a tested and functional alternative device as your primary source for traffic information.</p>
+</div>
+<ol>
+<li>The ADSBee 1090 should be ready to go out-of-the-box for feeding most Electronic Flight Bag (EFB) devices! Power on your ADSBee 1090, and look for a WiFi network titled “ADSBee1090-0240907000001” or something similar (the number varies, as each ADSBee generates a WiFi network with its own unique SSID).</li>
+<li>Join the WiFi network with your EFB device. The default password is <code>yummyflowers</code>. You will receive a notice that internet is not available, but your device should remain connected. Note that your device will be assigned an IP address on the subnet 192.168.4.X. The ADSBee is the gateway for this network, with an IP address of 192.168.4.1.</li>
+<li>Configure your electronic flight bag app to accept GDL90 traffic information on port 4000 over UDP (this is the default for most apps). You should see aircraft data streaming into the app! Some example screenshots for Avare (a free Android EFB app) are shown below.</li>
+</ol>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>ADSBee 1090 doesn’t yet support ownship position reports, but it’s on the TODO list (need to integrate a GPS module, the hardware interface is already on the PCB). For now, ADSBee 1090 works best with devices that have their own GPS which can provide ownship position data.</p>
+</div>
+<p><img alt="Avare GDL90 input settings" src="../../assets/getting-started/2024-11-screenshot-20241115-182748-461x1024.png" width="300" /></p>
+<p><em>Note that the “IO” tab with this setting is reached by swiping left along the bottom of the screen. A bit tricky to find it by default!</em></p>
+<p><img alt="Avare showing ownship and traffic" src="../../assets/getting-started/2024-11-screenshot-20241115-182755-461x1024.jpg" width="300" /></p>
+<p><em>Ownship position (red), and traffic (blue).</em></p>
+<h2 id="feed-aggregator">🌐 Feed an Aggregator<a class="headerlink" href="#feed-aggregator" title="Permanent link">&para;</a></h2>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>ADSBee 1090 can stream the transponder packets it receives to an endpoint on a local WiFi network or on the public internet. This can be used to feed aggregators like airplanes.live, adsbexchange, or a local instance of tar1090 (a popular ADS-B decoding software package).</p>
+</div>
+<ol>
+<li>Access the Command Line Interface (CLI). There are multiple ways to do this, refer to the <a href="#connect-to-cli">Connecting to the CLI</a> section to pick your favorite!</li>
+<li>Configure the ADSBee 1090 to <a href="#join-external-wifi">join an external WiFi network</a>.</li>
+<li>Check the current feed settings with <code>AT+FEED?</code></li>
+<li>Enter the details for your new feed with <code>AT+FEED=&lt;feed_index&gt;,&lt;feed_uri&gt;,&lt;feed_port&gt;,&lt;feed_active&gt;,&lt;protocol&gt;</code>.</li>
+<li><code>&lt;feed_index&gt;</code>: ADSBee can support up to 6 feeds simultaneously. This parameter is replaced with a digit from 0-5 in order to indicate which feed is being altered.</li>
+<li><code>&lt;feed_uri&gt;</code>: This parameter is replaced with the IP address of the feed endpoint.</li>
+<li><code>&lt;feed_port&gt;</code>: This parameter indicates which port on the endpoint will be used for the feed. The most common value is 30004, the typical port for Mode-S Beast data over TCP.</li>
+<li><code>&lt;active&gt;</code>: Enable / disable the feed. Set this to 1 to activate the feed.</li>
+<li><code>&lt;protocol&gt;</code>: What protocol to use when feeding. Currently, only <code>BEAST</code> and <code>BEAST_RAW</code> are supported.<ul>
+<li><code>BEAST</code> = All received transponder packets with a valid checksum.</li>
+<li><code>BEAST_RAW</code> = All received transponder packets, regardless of whether they had a valid checksum.</li>
+</ul>
+</li>
+<li>Check that your values were set correctly with <code>AT+FEED?</code>. You should see a sparkline graph below the terminal indicating a non-zero number of packets per second being forwarded to your feed (assuming your ADSBee is receiving packets).</li>
+</ol>
+<p>Want to check the status of your feed? Use the links below to see your feed status for various aggregators. Note that values other than aircraft location, e.g. RSSI, are often shown for aircraft that are aggregated across all feeders, and may not reflect what your ADSBee is receiving.</p>
+<ul>
+<li>Airplanes.live</li>
+<li><a href="https://airplanes.live/myfeed/">https://airplanes.live/myfeed/</a></li>
+<li>ADSB.fi</li>
+<li>Click the status icon in the bottom left of the homepage: <a href="https://adsb.fi/">https://adsb.fi/</a></li>
+<li>ADSB.lol</li>
+<li><a href="https://api.adsb.lol/0/me">https://api.adsb.lol/0/me</a></li>
+</ul>
+<h2 id="join-external-wifi">🛜 Join an External WiFi Network<a class="headerlink" href="#join-external-wifi" title="Permanent link">&para;</a></h2>
+<ol>
+<li><a href="#connect-to-cli">Connect to the CLI</a> via the method of you choosing.</li>
+<li>Run the command <code>AT+WIFI_STA?</code> to check your current WiFi station settings.</li>
+<li>Enter the network credentials for your WiFi network with <code>AT+WIFI_STA=&lt;enabled&gt;,&lt;ssid&gt;,&lt;password&gt;</code>. In this case, replace <code>&lt;enabled&gt;</code> with <code>1</code>, <code>&lt;ssid&gt;</code> with the SSID of your network, and <code>&lt;password&gt;</code> with your WPA passkey. Note that values should be comma separated, with no spaces in between! No quotes are required around any values.</li>
+<li>Save the settings with <code>AT+SETTINGS=SAVE</code>. If you’d like, you can verify that they were saved by calling <code>AT+SETTINGS?</code>.</li>
+<li>Apply the new WiFi settings by restarting the device with <code>AT+REBOOT</code>.</li>
+</ol>
+<h2 id="embedded-project">💡 Integrate the ADSBee with an Embedded Project<a class="headerlink" href="#embedded-project" title="Permanent link">&para;</a></h2>
+<p>The ADSBee 1090 is intended to interface easily with external modules via UART! Both the USB connector (CONSOLE) and UART output can be used to report received aircraft data in a variety of formats, including MAVLINK1, MAVLINK2, GDL90, Mode S Beast, and CSBEE. Of these protocols, CSBEE is the easiest to decode from scratch, and is also the most information rich.</p>
+<h3 id="connect-a-device-via-uart">Connect a Device via UART<a class="headerlink" href="#connect-a-device-via-uart" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Connect to the <a href="#connect-to-cli">CLI</a>.</li>
+<li>Configure the baudrate of the COMMS UART to your desired value using the <code>AT+BAUD_RATE</code> command. For instance, to set the baudrate to 115200 baud on the COMMS UART, send the command: <code>AT+BAUD_RATE=COMMS_UART,115200</code>. Verify your setting with <code>AT+BAUD_RATE?</code>.</li>
+<li>Enable a reporting protocol on the COMMS UART. For instance, to enable CSBEE reporting, send <code>AT+PROTOCOL_OUT=COMMS_UART,CSBEE</code>. Verify your setting by checking the output of <code>AT+PROTOCOL_OUT?</code>.</li>
+<li>Connect your external device to the pins on the ADSBee 1090 labeled GND, TX, and RX. Don’t forget to cross over TX and RX as necessary!</li>
+<li>Save your settings with <code>AT+SETTINGS=SAVE</code>.</li>
+</ol>
+<h3 id="connect-a-device-via-usb">Connect a Device via USB<a class="headerlink" href="#connect-a-device-via-usb" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Connect to the <a href="#connect-to-cli">CLI</a>.</li>
+<li>Silence all log messages on the CONSOLE output, as this may mangle any protocol it’s attempting to transmit: <code>AT+LOG_LEVEL=SILENT</code>.</li>
+<li>Set the desired reporting protocol on the CONSOLE output. For instance, to report CSBEE over the CONSOLE connection, send <code>AT+PROTOCOL_OUT=CONSOLE,CSBEE</code>.</li>
+<li>Confirm that the protocol is being correctly output via the console. You will be able to see the protocol on both the serial and web CLI.</li>
+<li>Save your settings with <code>AT+SETTINGS=SAVE</code>. You can now connect your ADSBee to another project and read data over USB with a library like PySerial!</li>
+</ol>
+<h2 id="connect-adsbee-flight-controller">🛩️ Connect ADSBee to a Flight Controller<a class="headerlink" href="#connect-adsbee-flight-controller" title="Permanent link">&para;</a></h2>
+<p>ADSBee’s MAVLINK1 and MAVLINK2 output is supported by flight controllers running the iNAV firmware (and should work just fine with any flight controller that speaks MAVLINK).</p>
+<p>Chris Corbett made a great video about getting started with ADSBee and an iNAV flight controller, check it out below!</p>
+<p><a href="https://www.youtube.com/watch?v=oQWU1zwIQLM"><img alt="Getting started with ADSBee and an iNAV flight controller (YouTube)" src="../../assets/getting-started/youtube-oqwu1zwiqlm.jpg" /></a></p>
+<h2 id="export-metrics">📈 Export Metrics Data from ADSBee<a class="headerlink" href="#export-metrics" title="Permanent link">&para;</a></h2>
+<p><img alt="ADSBee metrics in a Grafana dashboard" src="../../assets/getting-started/2025-09-image-3-1024x584.png" /></p>
+<p>Thanks to one of our community contributors, it’s possible to export live metrics from an ADSBee to Prometheus, a popular time series database application. Please see setup instructions on the Docker Hub link below for more information.</p>
+<ul>
+<li><a href="https://github.com/BIGjuevos/adsbee-metrics-exporter/">adsbee-metrics-exporter GitHub</a></li>
+<li><a href="https://hub.docker.com/r/bigjuevos/adsbee-metrics-exporter">adsbee-metrics-exporter Docker Hub</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      ADSBee source code and schematics are licensed under the GNU GPL v3.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.action.edit", "content.code.copy", "navigation.indexes", "navigation.sections", "navigation.top", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
