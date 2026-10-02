@@ -1,7 +1,10 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+#include <string_view>
 
 // CCFG BL_CONFIG handling for AT+BOOTLOADER_PIN: the ROM serial bootloader backdoor on SYNC (DIO_5).
 //
@@ -30,7 +33,7 @@
 // reflash it.
 //
 // This header is hardware-independent so the planning logic can be unit tested on the host
-// (ti/host_test). The flash access itself is in ccfg_bootloader.cpp.
+// (ti/host_test). The flash access itself is in ccfg_bootloader_flash.cpp.
 namespace CcfgBootloader {
 
 static constexpr uint32_t kCcfgBaseAddr = 0x50000000;
@@ -143,6 +146,9 @@ struct Plan {
     uint32_t new_bl_config = 0;
     uint32_t program_len_bytes = 0;  // kEraseAndProgram: bytes of new_sector to program from offset 0.
     const char* error = nullptr;     // kRefused: why.
+    // A previous erase-path write failed and its original CCFG could not be put back. This plan rewrites that
+    // original image (kept in RAM) instead of making the requested change.
+    bool restore_retry = false;
 };
 
 /**
@@ -201,6 +207,254 @@ inline Plan PlanUpdate(const uint8_t* current_sector, uint8_t* new_sector, bool 
     plan.program_len_bytes = (used + kFlashWordSizeBytes - 1) / kFlashWordSizeBytes * kFlashWordSizeBytes;
     plan.method = Method::kEraseAndProgram;
     return plan;
+}
+
+/**
+ * CRC-32 (IEEE 802.3, the zlib/Ethernet CRC) over len bytes. Over the kCcfgStructSizeBytes CCFG struct it
+ * equals the CRC that the ROM serial bootloader's COMMAND_CRC32 returns for 0x50000000 (the release image's
+ * CCFG gives 0x66E9858D), so a write can be compared with what the ADSBee 1421 Programmer reads.
+ */
+inline uint32_t Crc32(const uint8_t* data, uint32_t len) {
+    uint32_t crc = 0xFFFFFFFF;
+    for (uint32_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int bit = 0; bit < 8; bit++) crc = (crc >> 1) ^ (0xEDB88320 & (0u - (crc & 1)));
+    }
+    return ~crc;
+}
+inline uint32_t StructCrc32(const uint8_t* sector) { return Crc32(sector, kCcfgStructSizeBytes); }
+
+// AT+BOOTLOADER_PIN set form: AT+BOOTLOADER_PIN=<enabled [1,0]>,<password>[,DRYRUN]. The fixed password makes
+// a CCFG write deliberate; it is not a secret.
+static constexpr char kPassword[] = "DEADBEE";
+
+struct SetArgs {
+    bool ok = false;
+    bool enable = false;
+    bool dry_run = false;
+    const char* error = nullptr;  // !ok: why, for the AT ERROR line.
+};
+
+/**
+ * Parses the arguments of the AT+BOOTLOADER_PIN set form. Every set form, DRYRUN included, needs the password,
+ * and it is checked before the CCFG is read.
+ */
+inline SetArgs ParseSetArgs(const std::string_view* args, uint16_t num_args) {
+    SetArgs result;
+    if (num_args < 1 || (args[0] != "0" && args[0] != "1")) {
+        result.error = "Requires arguments: AT+BOOTLOADER_PIN=<enabled [1,0]>,<password>[,DRYRUN]";
+        return result;
+    }
+    result.enable = args[0] == "1";
+    if (num_args < 2 || args[1].empty()) {
+        result.error = "Requires the password (see AT+HELP or the README): AT+BOOTLOADER_PIN=<enabled [1,0]>,"
+                       "<password>[,DRYRUN]. CCFG not touched";
+        return result;
+    }
+    if (args[1] == "DRYRUN") {
+        result.error = "The password goes before DRYRUN: AT+BOOTLOADER_PIN=<enabled [1,0]>,<password>,DRYRUN. "
+                       "CCFG not touched";
+        return result;
+    }
+    if (args[1] != kPassword) {
+        result.error = "Wrong password. CCFG not touched";
+        return result;
+    }
+    if (num_args >= 3 && !args[2].empty()) {
+        if (args[2] != "DRYRUN") {
+            result.error = "Unknown option, expected DRYRUN. CCFG not touched";
+            return result;
+        }
+        result.dry_run = true;
+    }
+    if (num_args > 3) {
+        result.error = "Too many arguments. CCFG not touched";
+        return result;
+    }
+    result.ok = true;
+    return result;
+}
+
+// Erase path: how many times a failed write tries to put the original CCFG back.
+static constexpr int kRestoreAttempts = 3;
+
+enum class WriteResult : uint8_t {
+    kOk = 0,             // The sector holds the planned image (verified byte for byte), or nothing needed writing.
+    kNotWritten,         // Refused before any flash operation; the CCFG is untouched.
+    kFailedInPlace,      // kProgramWord failed: no erase happened, only BL_CONFIG may differ from the plan.
+    kFailedRestored,     // Erase path failed; the original CCFG was put back and verified.
+    kFailedNotRestored,  // Erase path failed and putting the original back failed too: CCFG in an unknown state.
+};
+
+/**
+ * Performs a planned write (kProgramWord or kEraseAndProgram) and verifies the whole sector against new_sector.
+ * The flash operations come from `flash`, so this logic runs unchanged on the device (ROM flash API, interrupts
+ * masked) and in host tests (a model with fault injection):
+ *   bool flash.Erase();                                              // Erase the CCFG sector.
+ *   bool flash.Program(const uint8_t* src, uint32_t offset, uint32_t len);
+ *   const uint8_t* flash.Read();                                     // The kCcfgSectorSizeBytes sector.
+ * A failed erase-path write writes original_sector back, up to kRestoreAttempts times, each verified byte for
+ * byte; a plan with restore_retry (new_sector is the original) only retries that. Only a verified sector counts
+ * as success: kOk means the sector equals new_sector.
+ */
+template <typename Flash>
+WriteResult WriteAndVerify(Flash& flash, const Plan& plan, const uint8_t* original_sector, const uint8_t* new_sector,
+                           int& restore_attempts, const char*& error) {
+    auto erase_and_program = [&flash, &plan](const uint8_t* image) {
+        return flash.Erase() && flash.Program(image, 0, plan.program_len_bytes) &&
+               memcmp(flash.Read(), image, kCcfgSectorSizeBytes) == 0;
+    };
+    restore_attempts = 0;
+    if (plan.method == Method::kProgramWord) {
+        // Clearing bits only: one in-place program of the word, the sector is never erased.
+        uint32_t word = ReadWord(new_sector, kBlConfigOffset);  // Word aligned for FlashProgram().
+        if (flash.Program(reinterpret_cast<const uint8_t*>(&word), kBlConfigOffset, sizeof(word)) &&
+            memcmp(flash.Read(), new_sector, kCcfgSectorSizeBytes) == 0) {
+            return WriteResult::kOk;
+        }
+        error = "BL_CONFIG program or verify failed";
+        return WriteResult::kFailedInPlace;
+    }
+    if (plan.method != Method::kEraseAndProgram) {
+        error = "nothing to write";
+        return WriteResult::kNotWritten;
+    }
+    if (plan.restore_retry) {
+        // new_sector is the original image: retrying the write is retrying the restore.
+        while (restore_attempts < kRestoreAttempts) {
+            restore_attempts++;
+            if (erase_and_program(new_sector)) return WriteResult::kOk;
+        }
+        error = "CCFG erase, program or verify failed";
+        return WriteResult::kFailedNotRestored;
+    }
+    if (erase_and_program(new_sector)) return WriteResult::kOk;
+    error = "CCFG erase, program or verify failed";
+    // Never leave the sector erased or half written: put the original back. Both images differ only in
+    // BL_CONFIG, so they need the same program length.
+    while (restore_attempts < kRestoreAttempts) {
+        restore_attempts++;
+        if (erase_and_program(original_sector)) return WriteResult::kFailedRestored;
+    }
+    return WriteResult::kFailedNotRestored;
+}
+
+// Short form for the AT ERROR line.
+inline const char* WriteResultStr(WriteResult result) {
+    switch (result) {
+        case WriteResult::kOk:
+            return "OK";
+        case WriteResult::kNotWritten:
+            return "CCFG not touched";
+        case WriteResult::kFailedInPlace:
+            return "BL_CONFIG may be partly written, rest of the CCFG unchanged";
+        case WriteResult::kFailedRestored:
+            return "original CCFG restored, nothing changed";
+        case WriteResult::kFailedNotRestored:
+            return "CCFG IN AN UNKNOWN STATE, DO NOT RESET";
+    }
+    return "?";
+}
+
+struct WriteReport {
+    WriteResult result = WriteResult::kNotWritten;
+    bool enable = false;  // Requested backdoor state.
+    Method method = Method::kRefused;
+    bool restore_retry = false;  // Plan::restore_retry.
+    uint32_t old_bl_config = 0;
+    uint32_t new_bl_config = 0;
+    uint32_t readback_bl_config = 0;  // From flash after the attempt.
+    uint32_t original_crc = 0;        // StructCrc32() of the CCFG before the attempt.
+    uint32_t expected_crc = 0;        // StructCrc32() of the planned image.
+    uint32_t readback_crc = 0;        // StructCrc32() read back from flash after the attempt.
+    int restore_attempts = 0;         // Erase path: restores tried after the failed write.
+    const char* error = nullptr;      // What failed.
+
+    // A flash operation ran and didn't produce the planned image.
+    bool Failed() const { return result != WriteResult::kOk && result != WriteResult::kNotWritten; }
+};
+
+static constexpr size_t kBannerLineMax = 160;
+
+/**
+ * Builds the "CCFG WRITE FAILED" banner for a failed write (report.Failed()): what was attempted, what failed,
+ * the read-back, the resulting state and the recovery steps. Calls emit(const char* line) once per line (no line
+ * ending). Pure so it can be host tested; the device prints each line with CONSOLE_ERROR.
+ */
+template <typename Emit>
+void FailureBanner(const WriteReport& r, Emit emit) {
+    char line[kBannerLineMax];
+    const char* rule = "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
+    const int n = r.enable ? 1 : 0;
+    const bool backdoor_now = BackdoorEnabled(r.readback_bl_config);
+    emit(rule);
+    snprintf(line, sizeof(line), "!!! CCFG WRITE FAILED: AT+BOOTLOADER_PIN=%d (%s the SYNC bootloader backdoor)%s", n,
+             r.enable ? "enable" : "disable", r.restore_retry ? ", retrying the restore of the original CCFG" : "");
+    emit(line);
+    snprintf(line, sizeof(line), "!!! Attempted: %s, BL_CONFIG 0x%08lX -> 0x%08lX", MethodStr(r.method),
+             (unsigned long)r.old_bl_config, (unsigned long)r.new_bl_config);
+    emit(line);
+    snprintf(line, sizeof(line), "!!! Failed: %s", r.error ? r.error : "unknown error");
+    emit(line);
+    snprintf(line, sizeof(line),
+             "!!! Read back: BL_CONFIG 0x%08lX (backdoor %s), CCFG CRC32 0x%08lX (planned 0x%08lX, original 0x%08lX)",
+             (unsigned long)r.readback_bl_config, backdoor_now ? "enabled" : "disabled", (unsigned long)r.readback_crc,
+             (unsigned long)r.expected_crc, (unsigned long)r.original_crc);
+    emit(line);
+    switch (r.result) {
+        case WriteResult::kFailedInPlace:
+            emit("!!! State: the CCFG sector was not erased and only BL_CONFIG can differ from before. The");
+            emit("!!! application image stays valid, so the module runs and resets normally.");
+            emit("!!! Recovery:");
+            emit("!!!   1. Check the setting with AT+BOOTLOADER_PIN? (the read-back above is the live value).");
+            snprintf(line, sizeof(line), "!!!   2. Retry AT+BOOTLOADER_PIN=%d,%s.", n, kPassword);
+            emit(line);
+            snprintf(line, sizeof(line),
+                     "!!!   3. If it keeps failing, AT+BOOTLOADER_PIN=1,%s rewrites the whole CCFG with the backdoor",
+                     kPassword);
+            emit(line);
+            emit("!!!      enabled; reflashing a release image over JTAG (or with the ADSBee 1421 Programmer while the");
+            emit("!!!      backdoor is enabled) also restores it.");
+            break;
+        case WriteResult::kFailedRestored:
+            snprintf(line, sizeof(line),
+                     "!!! State: the original CCFG was written back and verified byte for byte (restore attempt %d of "
+                     "%d).",
+                     r.restore_attempts, kRestoreAttempts);
+            emit(line);
+            snprintf(line, sizeof(line), "!!! Nothing changed: the backdoor is still %s, and the module runs and resets normally.",
+                     backdoor_now ? "enabled" : "disabled");
+            emit(line);
+            emit("!!! Recovery:");
+            snprintf(line, sizeof(line), "!!!   1. Retry AT+BOOTLOADER_PIN=%d,%s.", n, kPassword);
+            emit(line);
+            if (backdoor_now) {
+                emit("!!!   2. If it keeps failing, reflash a release image with the ADSBee 1421 Programmer or JTAG.");
+            } else {
+                emit("!!!   2. If it keeps failing, reflash a release image over JTAG (the ADSBee 1421 Programmer can't");
+                emit("!!!      enter the bootloader while the backdoor is disabled).");
+            }
+            break;
+        case WriteResult::kFailedNotRestored:
+        default:
+            snprintf(line, sizeof(line),
+                     "!!! State: UNKNOWN. Writing the original CCFG back failed %d time(s); the sector may be erased or",
+                     r.restore_attempts);
+            emit(line);
+            emit("!!! half written. DO NOT RESET OR POWER CYCLE THE MODULE YET.");
+            emit("!!! Recovery:");
+            snprintf(line, sizeof(line),
+                     "!!!   1. Send AT+BOOTLOADER_PIN=%d,%s again now: it retries writing the original CCFG, which is",
+                     n, kPassword);
+            emit(line);
+            emit("!!!      kept in RAM until the next reset. Repeat until it reports OK.");
+            emit("!!!   2. If the module resets first, it most likely starts in the CC1314 ROM UART bootloader (the");
+            emit("!!!      erase leaves IMAGE_VALID_CONF unset). Reflash a release image with the ADSBee 1421");
+            emit("!!!      Programmer, which writes a complete CCFG.");
+            emit("!!!   3. If neither works, reflash over JTAG.");
+            break;
+    }
+    emit(rule);
 }
 
 }  // namespace CcfgBootloader

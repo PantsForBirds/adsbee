@@ -14,11 +14,20 @@ uint32_t ReadBlConfig();
 /**
  * Copies the whole CCFG sector to RAM and computes the new image and write method for enabling or
  * disabling the SYNC backdoor. Touches no flash. The RAM images are kept for Apply().
+ *
+ * If an earlier erase-path write failed and its original CCFG could not be put back (RestorePending()), the
+ * plan instead rewrites that original image, kept in RAM since then (Plan::restore_retry), whatever `enable` is.
  */
 Plan Prepare(bool enable);
 
 /**
- * Writes the plan from the most recent Prepare() to flash and verifies it by reading the sector
+ * True while the CCFG may be erased or half written: an erase-path write failed and so did every attempt to
+ * write the original back. Cleared by a successful Apply() of the restore_retry plan Prepare() then returns.
+ */
+bool RestorePending();
+
+/**
+ * Writes the plan from the most recent Prepare() to flash and verifies it by reading the whole sector
  * back. Masks interrupts and turns the VIMS cache and line buffer off for the duration, as TI
  * requires for flash writes. The caller should drain console TX first.
  *
@@ -27,13 +36,10 @@ Plan Prepare(bool enable);
  * isn't left erased.
  *
  * @param[in] plan Result of the most recent Prepare().
- * @param[out] error Set to a description of the failure when returning false.
- * @param[out] restored Set to true if the write failed and the original CCFG was restored and
- * verified.
- * @retval True if the sector now holds plan.new_bl_config and nothing else changed.
+ * @param[in] enable The requested backdoor state (for the report).
+ * @retval What happened, with the read-back BL_CONFIG and CCFG CRC. For report.Failed(), print
+ * FailureBanner(report).
  */
-bool Apply(const Plan& plan, const char*& error, bool& restored);
-
-static constexpr int kRestoreAttempts = 3;
+WriteReport Apply(const Plan& plan, bool enable);
 
 }  // namespace CcfgBootloader
