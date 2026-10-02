@@ -24,7 +24,13 @@ if(NOT CMAKE_MATCH_1)
 endif()
 
 add_executable(host_line_coding_test host_line_coding_test.cc)
-target_include_directories(host_line_coding_test PRIVATE ..)
+target_include_directories(host_line_coding_test PRIVATE .. ../../ti/comms)
 target_compile_definitions(host_line_coding_test PRIVATE ADSBEE_1090_RESET_MAGIC_BAUD_RATE=${CMAKE_MATCH_1})
 target_compile_options(host_line_coding_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME host_line_coding_test COMMAND host_line_coding_test)
+
+# Console baud range (shared with the module firmware), renegotiable rates, probe order and the baud follower.
+add_executable(baud_follower_test baud_follower_test.cc ../baud_follower.cc)
+target_include_directories(baud_follower_test PRIVATE .. ../../ti/comms)
+target_compile_options(baud_follower_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME baud_follower_test COMMAND baud_follower_test)

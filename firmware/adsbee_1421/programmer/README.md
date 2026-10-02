@@ -2,7 +2,7 @@
 
 A Waveshare RP2040-Zero application that keeps an attached ADSBee m1421 (TI CC1314R10) flashed
 with the firmware image baked into the Programmer, then acts as a transparent USB serial adapter to the
-module's console (normally at the factory-default 1,000,000 baud).
+module's console, at whatever baud rate the host opens the port at (see [Baud rate](#baud-rate)).
 
 At power-up the Programmer:
 
@@ -16,10 +16,10 @@ At power-up the Programmer:
    (Settings still reset themselves if the firmware's settings version changed). Matching devices
    are left untouched. `hex_to_c.py` refuses to bake, and the Programmer refuses to flash, an image that
    reaches into those reserved sectors.
-3. Resets the module into the application, finds the console by sweeping the firmware's baud
-   whitelist ({1000000, 921600, 460800, 230400, 115200}, factory-default-first; the app boots
-   at its saved console baud, persisted via `AT+SETTINGS=SAVE`), drives its live rate to 1 M if
-   it answered elsewhere, and becomes a USB-CDC ↔ UART pass-through.
+3. Resets the module into the application, finds the console (it boots at its saved console baud,
+   persisted via `AT+SETTINGS=SAVE`; see [Finding the console](#finding-the-console)), drives its
+   live rate to the host's rate (1 M if no host has set one), and becomes a USB-CDC ↔ UART
+   pass-through.
 
 The ROM bootloader leg always runs at 1 M (the ROM auto-bauds to it; ceiling ~1.2 M). The
 Programmer only moves the console's *live* rate. It never issues `AT+SETTINGS=SAVE`, so the
@@ -72,8 +72,8 @@ To bake a different image, pass `-DADSBEE_1421_HEX=<path>` to CMake.
 
 - **BOOTSEL held at power-up**: force a reflash even if the CRC matches.
 - **BOOTSEL tapped during pass-through**: rerun the check/flash cycle and re-negotiate the
-  console (sweep + move to 1 M). This is also the recovery path after in-band desyncs (see
-  limitations).
+  console (find it, then move it to the host's rate or 1 M). This is also the recovery path after
+  in-band desyncs (see limitations).
 - **BOOTSEL held for 3 s (at any time)**: arm a **settings erase**. The LED blinks white, and at
   the next bootloader entry the Programmer erases the four Settings sectors
   (`0x000FC000`–`0x000FDFFF`); the device then boots with factory defaults. Device Info
@@ -97,7 +97,7 @@ To bake a different image, pass `-DADSBEE_1421_HEX=<path>` to CMake.
 | magenta blink | erasing + programming                    |
 | blue blink    | post-program CRC verify                  |
 | blue          | console baud negotiation                 |
-| green         | pass-through (normally 1 Mbaud)          |
+| green         | pass-through                             |
 | red           | error (automatic retry follows)          |
 
 ## Pass-through behavior
@@ -120,23 +120,66 @@ in pass-through (green LED):
   default HUPCL), which used to read as RTS deasserted and put the module to sleep until the next
   open. Once in the ROM bootloader the module no longer looks at SYNC, and a host still gets back
   in with RTS deasserted and another DTR edge.
-- **Host baud changes are applied to the UART directly**, so tools that manage their own baud
-  (the web console, a host-side bootloader client) work through the Programmer unmodified.
+- **Host baud changes move the module console to the host's rate** (see [Baud rate](#baud-rate)),
+  so a ground station that opens the port at 57600 reads the console at 57600. In the ROM
+  bootloader they go to the UART directly, so a host-side bootloader client works unmodified.
 - **Except 233495534 baud (`0xDEADBEE`)**, which reboots the Programmer's RP2040 into its USB bootloader
   (`RPI-RP2`) so the Programmer can be updated without pressing BOOT, e.g.
-  `python3 -c "import serial; serial.Serial('/dev/ttyACM0', 0xDEADBEE).close()"`. It is the same
+  `python3 -c "import serial, time; s = serial.Serial('/dev/ttyACM0', 115200); s.baudrate = 0xDEADBEE; time.sleep(1); s.close()"`
+  (on some Linux hosts, opening the port at that rate and closing it at once often doesn't reach the
+  Programmer; setting the rate on an open port and keeping it open for a second does). It is the same
   magic baud as the ADSBee 1090 (`PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE` in
   `firmware/adsbee_1090/pico/CMakeLists.txt`; the Programmer's copy is `kRebootToBootselBaud` in
   `host_line_coding.hh`, and the host test checks they match). That baud is never forwarded to the
   module. 1200 baud is an ordinary rate here, as on the 1090, because tools such as pymavlink open
   ports at 1200. Programmer images without the magic baud need BOOT held while plugging in
   once to update.
-- After a host-driven reset with SYNC low the device console reboots at its *saved* baud
-  (factory default 1 M). If the host's line coding matches the rate the console was last
-  negotiated to, the Programmer stays transparent; otherwise it automatically re-negotiates (sweep +
-  `AT+BAUD_RATE`) to the host's rate. A module saved at some other rate is also recoverable by
-  the host probing the whitelist itself (line-coding changes retune the Programmer's UART live) or by
-  the BOOTSEL recheck.
+
+### Baud rate
+
+The ADSBee 1421 console accepts any rate from 9600 to 3,000,000 baud that its UART generates
+within 2% (`AT+BAUD_RATE=CONSOLE,<baud>`; every rate in that range qualifies, see
+`firmware/adsbee_1421/ti/comms/console_baud.hh`). The host's line coding is what a ground station
+or terminal expects on the wire, so when the host sets a rate in that range during pass-through, the
+Programmer moves the console there: it sends `AT+BAUD_RATE=CONSOLE,<new>` at the console's current
+rate, waits for the `OK`, retunes its own UART and checks that the console answers at the new rate.
+Hosts often set several rates while opening a port (pymavlink sets 1200, then its own rate), so the
+Programmer waits until the line coding has been stable for 100 ms and only acts on the last rate.
+Host data sent meanwhile stays in the USB buffer and reaches the console at the new rate. The
+Programmer only moves the *live* rate; it never sends `AT+SETTINGS=SAVE`.
+
+- **Opening the port resets the module** (DTR edge, SYNC low), and the console comes back at its
+  saved rate. If that is the host's rate, the Programmer just retunes its UART; otherwise it moves
+  the console once it has booted (~0.8 s), so a tool sees its first data about 1 s after opening.
+- **Rates outside 9600–3,000,000** (the 1200 baud pymavlink opens ports at, 300, 4 M, ...) go to
+  the Programmer's UART directly, as does every rate while the module is in the ROM bootloader
+  (after a reset with SYNC high, until the next reset with SYNC low).
+- **If the console can't be moved** (it doesn't answer, or runs an image that refuses the rate),
+  pass-through carries on at the rate the console is at and the Programmer writes one warning line
+  (`[ADSBee 1421 Programmer] Console stays at <baud> baud ...`) to the host. The USB rate is
+  virtual, so the host still reads clean data. The next rate change tries again.
+- **Commands that move the console** are recognized in the host's traffic:
+  `AT+BAUD_RATE=CONSOLE,<n>` (the next move probes `<n>` first, so a host that sends it and then
+  changes its own rate, like the web console, resyncs at once), `AT+SETTINGS=SAVE` (the live rate
+  becomes the rate the console boots at), `AT+SETTINGS=RESET` (back to 1 M, live and saved) and
+  `AT+REBOOT` (back to the saved rate; the console is moved to the host's rate again after the boot).
+
+### Finding the console
+
+After resetting the module into its application, the Programmer probes for the console with
+`AT+BAUD_RATE?` (the module prints nothing at boot, and nothing in reply to bytes sent at the
+wrong rate, so a probe at each candidate is the one method that works whatever the module is doing).
+Candidates, in order: the rate the console last booted at, which the Programmer keeps in the last
+4 KB sector of its own flash (written when it finds the console after a reset, or sees a host's
+`AT+SETTINGS=SAVE` or `AT+SETTINGS=RESET`), then 1 M, 921600, 460800, 230400, 115200, 57600,
+500000, 250000, 38400, 19200, 9600, 76800, 2 M, 1.5 M and 3 M. A module saved at the stored rate
+answers the first probe; a common rate is found within a few seconds. Each probe starts with a
+blank line, which closes any garbage an earlier wrong-rate probe left in the console's line buffer.
+A module saved at an uncommon rate with no record in the Programmer's flash (for example, saved
+through a different adapter) can't be found: hold BOOTSEL for 3 s to erase its settings (see
+[Buttons](#buttons)), or open the port at that rate through another adapter and save a common rate.
+
+### ROM bootloader through the Programmer
 
 A host-side ROM bootloader client can flash a module *through* the Programmer: it enters the
 bootloader with RTS deasserted and a DTR edge, and while SYNC is high the Programmer stays fully
@@ -160,7 +203,7 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 | `No response ... RESET_N(GP26)=LOW (stuck in reset ...)` | Something is holding reset low with the Programmer's driver released: a wiring short or a drive conflict on ~SRST. |
 | `No response ... UART RX(GP29)=LOW (module TX not driving ...)` | Module unpowered, held in reset, or SUTX wiring wrong (RX should idle high when the module runs). |
 | `No response ... RESET_N=high, UART RX=high (link plausible)` | Lines look electrically sane; suspect TX leg (GP28 → SURX) or module-side UART config. |
-| `Device console not responding at any whitelisted baud rate` | SBL/flash worked but the app's AT console never answered `AT+DEVICE_INFO?` at any of the five whitelisted rates within ~6 s of boot. If it repeats on every boot with a CRC-verified image, the saved settings are the likely cause: hold BOOTSEL for 3 s to erase them (see [Buttons](#buttons)). |
+| `Device console not responding at any probed baud rate` | SBL/flash worked but the app's AT console never answered `AT+BAUD_RATE?` at any probed rate (see [Finding the console](#finding-the-console)) in three passes. If it repeats on every boot with a CRC-verified image, the saved settings are the likely cause: hold BOOTSEL for 3 s to erase them (see [Buttons](#buttons)). |
 | `Settings erase ARMED` / `Settings erased; ...` | A BOOTSEL long press was registered, and the Settings sectors were erased at the next bootloader entry. The device now boots with factory defaults. |
 
 Modules running pre-backdoor firmware can't be entered via SYNC at all: flash them once via
@@ -171,10 +214,10 @@ flashes it on the next check. See [Prerequisites](../README.md#prerequisites).
 
 ## Limitations
 
-- Sending `AT+BAUD_RATE=CONSOLE,...` through the bridge desyncs the link (the Programmer doesn't
-  parse bridged traffic), and `AT+REBOOT` desyncs it when the device's saved baud differs from
-  the current link rate. Recovery: press BOOTSEL once, change the host line coding to what the
-  device is actually running, or power-cycle the Programmer.
+- `AT+BAUD_RATE=CONSOLE,<n>` sent through the bridge moves the console to `<n>` while the
+  Programmer's UART stays at the host's rate, so the link is garbled until the host sets its line
+  coding (to `<n>`, or any rate: the Programmer finds the console and moves it) or reopens the port.
+  BOOTSEL also recovers.
 - Status text (flash progress, negotiation results) appears on the same CDC port before
   pass-through starts; anything typed during those phases is ignored.
 - Opening the CDC port at 233495534 baud reboots the Programmer into its USB bootloader (see

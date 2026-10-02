@@ -13,6 +13,7 @@ extern "C" {
 #include "aircraft_dictionary_config.hh"
 #include "bsp.hh"
 #include "composite_array.hh"
+#include "console_baud.hh"
 #include "cpp_at.hh"
 #include "settings.hh"
 
@@ -48,17 +49,10 @@ class CommsManager {
         uint32_t uart_timeout_us = 0;  // Timeout for blocking reads, in microseconds.
     };
 
-    // Console baud rates selectable via AT+BAUD_RATE. The stored rate is applied at boot by
-    // SettingsManager::Apply() and persisted via AT+SETTINGS=SAVE; the default is
-    // SettingsManager::Settings::kDefaultUARTBaudRate (1,000,000).
-    static constexpr uint32_t kAllowedBaudRates[] = {115200, 230400, 460800, 921600, 1000000};
-
-    static inline bool IsAllowedBaudRate(uint32_t baud) {
-        for (uint32_t allowed : kAllowedBaudRates) {
-            if (baud == allowed) return true;
-        }
-        return false;
-    }
+    // Console baud rates selectable via AT+BAUD_RATE: any rate in [ConsoleBaud::kMin, ConsoleBaud::kMax] the UART
+    // generates within 2% (console_baud.hh). The stored rate is applied at boot by SettingsManager::Apply() and
+    // persisted via AT+SETTINGS=SAVE; the default is SettingsManager::Settings::kDefaultUARTBaudRate (1,000,000).
+    static constexpr bool IsAllowedBaudRate(uint32_t baud) { return ConsoleBaud::IsSupported(baud); }
 
     CommsManager(CommsManagerConfig config);
 
@@ -124,7 +118,7 @@ class CommsManager {
      * already queued at the old baud) have left the wire before switching, so the host reads them
      * intact. RAM-only until persisted with AT+SETTINGS=SAVE; SettingsManager::Apply() re-applies the
      * stored rate at boot.
-     * @param[in] baud New baud rate; must be one of kAllowedBaudRates.
+     * @param[in] baud New baud rate; must pass IsAllowedBaudRate().
      * @retval True if the baud rate was changed, false if baud was invalid.
      */
     bool SetBaudRate(uint32_t baud);

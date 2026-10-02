@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "console_baud.hh"  // firmware/adsbee_1421/ti/comms: the rates the ADSBee 1421 console accepts.
+
 // Host line coding (CDC SET_LINE_CODING) -> what the Programmer does with the requested baud. Pure logic with no SDK
 // dependencies so it can be host-tested (host_test/host_line_coding_test.cc); bridge.cc calls it from
 // tud_cdc_line_coding_cb().
@@ -24,4 +26,20 @@ constexpr HostBaudAction ClassifyHostBaud(uint32_t baud) {
     if (baud == 0) return HostBaudAction::kIgnore;
     if (baud == kRebootToBootselBaud) return HostBaudAction::kRebootToBootsel;
     return HostBaudAction::kApply;
+}
+
+// The Programmer's UART0 runs from clk_peri, which pico-sdk leaves at clk_sys (125 MHz on the RP2040).
+static constexpr uint32_t kProgrammerUartClockHz = 125000000;
+
+constexpr uint32_t ProgrammerActualBaud(uint32_t baud) {
+    return ConsoleBaud::Pl011ActualBaud(kProgrammerUartClockHz, baud);
+}
+
+// A host rate the Programmer renegotiates the module console to (Option A in bridge.cc): one the console accepts and
+// the Programmer's UART generates within ConsoleBaud::kMaxErrorPpm of the console's actual rate. Every other rate (the
+// 1200 baud pymavlink opens ports at, rates below 9600 or above 3 M) is applied to the Programmer's UART directly.
+constexpr bool IsRenegotiableBaud(uint32_t baud) {
+    return ConsoleBaud::IsSupported(baud) &&
+           ConsoleBaud::ErrorPpm(ConsoleBaud::CC1314ActualBaud(baud), ProgrammerActualBaud(baud)) <=
+               ConsoleBaud::kMaxErrorPpm;
 }

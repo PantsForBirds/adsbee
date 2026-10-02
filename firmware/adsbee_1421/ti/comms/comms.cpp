@@ -36,6 +36,11 @@ static_assert(kRawReportChunkMaxTxBytes < CommsManager::kUartTxRingBytes, "A rep
 
 // Margin added to every baud-derived TX wait so tiny shortfalls don't get a zero-length budget.
 static const uint32_t kTxWaitMarginMs = 5;
+// Caps on the baud-derived waits. They only bind at low console rates (a worst-case report chunk takes ~1 s to clock
+// out at 9600 baud, a full TX ring ~8.5 s), where waiting the full time would stall reception, or run past the
+// watchdog in DrainConsoleTx(). What doesn't fit is dropped, as it is when the wait times out at any rate.
+static const uint32_t kTxRingSpaceWaitMaxMs = 250;
+static const uint32_t kTxDrainWaitMaxMs = 2000;
 
 CommsManager::CommsManager(CommsManagerConfig config)
     : config_(config), at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)) {}
@@ -80,7 +85,9 @@ bool CommsManager::WaitForTxRingSpace(uint16_t num_bytes) {
     // Budget: time for the shortfall to clock out at the current baud rate, doubled, plus margin. Bounded so a wedged
     // UART degrades to dropped output rather than a frozen main loop.
     uint32_t shortfall = num_bytes - TxRingFreeBytes();
-    uint32_t deadline_ms = get_time_since_boot_ms() + 2 * TxBytesToMs(shortfall) + kTxWaitMarginMs;
+    uint32_t wait_ms = 2 * TxBytesToMs(shortfall) + kTxWaitMarginMs;
+    uint32_t deadline_ms =
+        get_time_since_boot_ms() + (wait_ms < kTxRingSpaceWaitMaxMs ? wait_ms : kTxRingSpaceWaitMaxMs);
     while (TxRingFreeBytes() < num_bytes && get_time_since_boot_ms() < deadline_ms) {
         // Safety net: if a write callback was ever lost, restart the drain instead of timing out.
         if (!uart_tx_in_progress_ && uart_tx_head_ != uart_tx_tail_) {
@@ -171,8 +178,9 @@ bool CommsManager::DrainConsoleTx(uint32_t timeout_margin_ms) {
 
     // Software side: wait for the TX ring to empty and the last CALLBACK-mode write to complete. Budget
     // is what the queued bytes need at the current baud rate (doubled) plus the caller's margin.
+    uint32_t wait_ms = 2 * TxBytesToMs(TxRingUsedBytes() + kPrintfBufferMaxSize);
     uint32_t deadline_ms =
-        get_time_since_boot_ms() + 2 * TxBytesToMs(TxRingUsedBytes() + kPrintfBufferMaxSize) + timeout_margin_ms;
+        get_time_since_boot_ms() + (wait_ms < kTxDrainWaitMaxMs ? wait_ms : kTxDrainWaitMaxMs) + timeout_margin_ms;
     while ((uart_tx_in_progress_ || uart_tx_head_ != uart_tx_tail_) && get_time_since_boot_ms() < deadline_ms) {
         // Safety net: restart the drain if a write callback was ever lost.
         if (!uart_tx_in_progress_) {

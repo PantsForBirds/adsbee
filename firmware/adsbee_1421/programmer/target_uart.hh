@@ -11,6 +11,7 @@
 
 void TargetUartInit(uint32_t baud);
 void TargetUartSetBaud(uint32_t baud);  // Also flushes stale RX input.
+uint32_t TargetUartGetBaud();          // Rate last requested with TargetUartInit() / TargetUartSetBaud().
 
 size_t TargetUartRead(uint8_t* buf, size_t max_len);  // Nonblocking, from the RX ring.
 // Blocks up to timeout_ms for one byte, servicing USB (tud_task) and the status LED while

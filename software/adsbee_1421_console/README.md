@@ -4,20 +4,20 @@ A single-file, self-contained web console for the ADSBee m1421 (TI CC1314R10) th
 mimics the ADSBee 1090 ESP32 web interface, but talks to the device over the
 **Web Serial API** instead of WebSockets. Open `adsbee_1421_console.html` directly in
 Chrome or Edge (works from `file://`, no server needed) and click **Connect**
-(the page probes the firmware's baud whitelist to find the device — see below).
+(the page probes common baud rates to find the device — see below).
 
 ## Features
 
 - **Baud auto-detection** — the device boots at its saved console baud
-  (`AT+BAUD_RATE` + `AT+SETTINGS=SAVE`; factory default 1,000,000), so it may be
-  at any of {115200, 230400, 460800, 921600, 1000000}. On connect the page
-  sweeps that list — trying last session's rate first — and locks onto whatever
-  rate answers. Each probe is `AT+BAUD_RATE?`, repeated for ~2.7 s per rate
+  (`AT+BAUD_RATE` + `AT+SETTINGS=SAVE`; factory default 1,000,000), which may be
+  any rate from 9600 to 3,000,000. On connect the page sweeps {1000000, 921600,
+  460800, 230400, 115200, 57600}, trying last session's rate (any supported rate)
+  first, and locks onto whatever rate answers. Each probe is `AT+BAUD_RATE?`, repeated for ~2.7 s per rate
   before moving on (opening the port asserts DTR, which resets the device, so it
   is usually still booting when the first probe goes out), and the rate shown is
   the one the device itself reports. Behind the ADSBee 1421 Programmer
   (`firmware/adsbee_1421/programmer/`) the host baud is virtual and the
-  Programmer retunes the device to it after each host-driven reset; the page
+  Programmer moves the device's console to the host's rate (see its README); the page
   waits that out and, if the device's rate ever differs from the host port's,
   reports both rates. After `AT+REBOOT`,
   `AT+SETTINGS=RESET`, or a firmware flash the page re-sweeps automatically, and

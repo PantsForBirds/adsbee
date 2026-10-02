@@ -19,6 +19,8 @@ static volatile uint32_t rx_head = 0;  // Written by IRQ.
 static volatile uint32_t rx_tail = 0;  // Written by consumer.
 static volatile uint32_t rx_drops = 0;
 
+static uint32_t current_baud = 0;
+
 static uint8_t tx_ring[kTxRingSize];
 static uint32_t tx_head = 0;
 static uint32_t tx_tail = 0;
@@ -37,6 +39,7 @@ static void OnUartRx() {
 }
 
 void TargetUartInit(uint32_t baud) {
+    current_baud = baud;
     uart_init(kUart, baud);
     gpio_set_function(kPinUartTx, GPIO_FUNC_UART);
     gpio_set_function(kPinUartRx, GPIO_FUNC_UART);
@@ -52,9 +55,12 @@ void TargetUartInit(uint32_t baud) {
 }
 
 void TargetUartSetBaud(uint32_t baud) {
+    current_baud = baud;
     uart_set_baudrate(kUart, baud);
     TargetUartFlushInput();
 }
+
+uint32_t TargetUartGetBaud() { return current_baud; }
 
 size_t TargetUartRead(uint8_t* buf, size_t max_len) {
     size_t count = 0;

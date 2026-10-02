@@ -1,5 +1,7 @@
 #include "bridge.hh"
 
+#include "at_client.hh"
+#include "baud_follower.hh"
 #include "board.hh"
 #include "bootsel.hh"
 #include "host_line_coding.hh"
@@ -11,23 +13,26 @@
 #include "target_uart.hh"
 #include "tusb.h"
 
-static volatile bool bridge_active = false;
-static volatile uint32_t host_baud = 0;
-static volatile uint32_t expected_console_baud = kConsoleBaud;
-static volatile bool baud_change_pending = false;
-static ModemLines lines;  // Only touched from tud_task() callbacks and the bridge loop.
+// Only touched from the main loop and the tud_task() callbacks it runs (the bridge loop, and the AT client's waits
+// during a renegotiation), never from interrupts.
+static bool bridge_active = false;
+static uint32_t host_baud = 0;
+static uint32_t expected_console_baud = kConsoleBaud;
+static ModemLines lines;
+static BaudFollower follower;
+
+// A boot rate learned from the host's AT+SETTINGS=SAVE / RESET is written to flash once the console has been quiet
+// for kBootBaudStoreQuietMs (the write stops interrupts for ~50 ms, see baud_store.hh), or after
+// kBootBaudStoreMaxDelayMs regardless.
+static constexpr uint32_t kBootBaudStoreQuietMs = 20;
+static constexpr uint32_t kBootBaudStoreMinDelayMs = 1000;
+static constexpr uint32_t kBootBaudStoreMaxDelayMs = 5000;
 
 static uint32_t NowMs() { return to_ms_since_boot(get_absolute_time()); }
 
-static constexpr bool IsConsoleOrBootloaderBaud(uint32_t baud) {
-    if (baud == kBootloaderBaud) return true;
-    for (uint32_t candidate : kConsoleBaudCandidates) {
-        if (baud == candidate) return true;
-    }
-    return false;
-}
-static_assert(!IsConsoleOrBootloaderBaud(kRebootToBootselBaud),
+static_assert(kRebootToBootselBaud != kBootloaderBaud && !IsRenegotiableBaud(kRebootToBootselBaud),
               "The reboot-to-BOOTSEL baud must not be a rate pass-through tools use");
+static_assert(IsRenegotiableBaud(kConsoleBaud), "The factory console rate must be renegotiable");
 
 extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* coding) {
     (void)itf;
@@ -41,7 +46,7 @@ extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* cod
             return;
         case HostBaudAction::kApply:
             host_baud = coding->bit_rate;
-            if (bridge_active) baud_change_pending = true;
+            if (bridge_active) follower.OnHostBaud(host_baud, NowMs());
             return;
     }
 }
@@ -60,13 +65,41 @@ uint32_t BridgeHostBaud() { return host_baud; }
 
 void BridgeSetExpectedConsoleBaud(uint32_t baud) { expected_console_baud = baud; }
 
+// A reset requested by the host outranks a renegotiation in progress: a ROM bootloader client syncs right after it.
+static bool RenegotiationAborted() { return lines.reset_pending(); }
+
+// Carries out a BaudFollower::Step::kRenegotiate. Host data stays in the CDC FIFO meanwhile (HoldHostData()); console
+// output read during it is consumed by the AT client.
+static void Renegotiate(uint32_t target_baud) {
+    StatusSet(Status::kNegotiating);
+    uint32_t likely[] = {follower.hinted_baud(), follower.console_baud(), TargetUartGetBaud(), follower.boot_baud()};
+    uint32_t found =
+        AtRenegotiateConsole(target_baud, likely, sizeof(likely) / sizeof(likely[0]), RenegotiationAborted);
+    follower.OnRenegotiated(found);
+    if (found != target_baud && !RenegotiationAborted()) {
+        // Pass-through carries on either way. The CDC baud is virtual, so a host reading the console at another rate
+        // still gets clean data; the warning says why the rate didn't follow.
+        if (found == 0) {
+            CdcPrintf("\r\n[ADSBee 1421 Programmer] Console not found; UART set to %lu baud without it.\r\n",
+                      (unsigned long)target_baud);
+        } else {
+            CdcPrintf("\r\n[ADSBee 1421 Programmer] Console stays at %lu baud: AT+BAUD_RATE=CONSOLE,%lu failed.\r\n",
+                      (unsigned long)found, (unsigned long)target_baud);
+        }
+    }
+    StatusSet(Status::kPassthrough);
+}
+
 BridgeExit BridgeRun() {
     StatusSet(Status::kPassthrough);
-    baud_change_pending = false;
     lines.Start();
+    follower.Start(expected_console_baud, AtBootBaud(), host_baud, NowMs());
     bridge_active = true;
 
     absolute_time_t next_bootsel_poll = get_absolute_time();
+    uint32_t last_rx_ms = NowMs();
+    uint32_t boot_baud_change_ms = 0;
+    bool boot_baud_change_seen = false;
     uint8_t buf[64];
 
     while (true) {
@@ -74,32 +107,31 @@ BridgeExit BridgeRun() {
         StatusUpdate();
         TargetUartPumpTx();
 
-        if (baud_change_pending) {
-            baud_change_pending = false;
-            TargetUartSetBaud(host_baud);
-        }
-
         if (lines.reset_pending()) {
-            bool sync_low_at_reset = !lines.reset_sync_high();
+            bool sync_high_at_reset = lines.reset_sync_high();
             TargetPulseReset();  // SYNC already holds the level latched at the DTR edge.
             lines.OnResetDone(NowMs());
-            // A reset with SYNC low reboots into the app, whose console comes up at its saved
-            // baud (factory default 1 M). If the host's line coding differs from the rate the
-            // console was last negotiated to, hand back to the caller to re-negotiate. A host
-            // whose rate matches is assumed in sync; a device saved at some other rate is
-            // recovered by the host probing (line-coding changes retune the Programmer's UART live) or
-            // by the BOOTSEL recheck.
-            if (sync_low_at_reset && host_baud != 0 && host_baud != expected_console_baud) {
-                bridge_active = false;
-                return BridgeExit::kHostResetTarget;
-            }
+            // SYNC high: the ROM bootloader, which takes the host's rate as it is. SYNC low: the application, whose
+            // console comes back at its saved rate; the follower retunes, or renegotiates to the host's rate once the
+            // console is up.
+            follower.OnReset(sync_high_at_reset, NowMs(), kBootWaitMs);
         }
 
-        TargetSetSync(lines.SyncHigh(NowMs()));  // Ends the post-reset backdoor hold.
+        bool sync_high = lines.SyncHigh(NowMs());
+        TargetSetSync(sync_high);  // Ends the post-reset backdoor hold.
+
+        BaudFollower::Step step = follower.Poll(NowMs(), sync_high);
+        if (step.kind == BaudFollower::Step::kApplyDirect) {
+            if (step.baud != TargetUartGetBaud()) TargetUartSetBaud(step.baud);
+        } else if (step.kind == BaudFollower::Step::kRenegotiate) {
+            Renegotiate(step.baud);
+            last_rx_ms = NowMs();
+        }
 
         // Device -> host.
         size_t len = TargetUartRead(buf, sizeof(buf));
         if (len > 0) {
+            last_rx_ms = NowMs();
             size_t written = 0;
             while (written < len) {
                 written += tud_cdc_write(buf + written, (uint32_t)(len - written));
@@ -113,10 +145,28 @@ BridgeExit BridgeRun() {
         // Host -> device. Only take what the UART TX ring can hold so the CDC FIFO provides
         // natural backpressure to the host.
         size_t tx_free = TargetUartTxFree();
-        if (tx_free > 0 && tud_cdc_available()) {
+        if (tx_free > 0 && tud_cdc_available() && !follower.HoldHostData(sync_high)) {
             uint32_t take = (uint32_t)(tx_free < sizeof(buf) ? tx_free : sizeof(buf));
             uint32_t got = tud_cdc_read(buf, take);
-            if (got > 0) TargetUartWriteNonblocking(buf, got);
+            if (got > 0) {
+                follower.OnHostBytes(buf, got, NowMs(), kBootWaitMs);
+                TargetUartWriteNonblocking(buf, got);
+            }
+        }
+
+        if (follower.boot_baud_changed()) {
+            uint32_t now = NowMs();
+            if (!boot_baud_change_seen) {
+                boot_baud_change_seen = true;
+                boot_baud_change_ms = now;
+            }
+            uint32_t age_ms = now - boot_baud_change_ms;
+            if ((age_ms >= kBootBaudStoreMinDelayMs && now - last_rx_ms >= kBootBaudStoreQuietMs) ||
+                age_ms >= kBootBaudStoreMaxDelayMs) {
+                AtNoteBootBaud(follower.boot_baud());
+                follower.ClearBootBaudChanged();
+                boot_baud_change_seen = false;
+            }
         }
 
         if (absolute_time_diff_us(get_absolute_time(), next_bootsel_poll) <= 0) {

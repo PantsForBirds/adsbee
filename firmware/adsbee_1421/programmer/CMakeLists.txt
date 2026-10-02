@@ -49,6 +49,8 @@ add_executable(adsbee_1421_programmer
     cc13x4_bootloader.cc
     flasher.cc
     at_client.cc
+    baud_follower.cc
+    baud_store.cc
     bridge.cc
     modem_lines.cc
     status.cc
@@ -59,13 +61,15 @@ add_executable(adsbee_1421_programmer
 
 pico_generate_pio_header(adsbee_1421_programmer ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
 
-# tusb_config.h lives at the project root; TinyUSB picks it up from the include path.
-target_include_directories(adsbee_1421_programmer PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+# tusb_config.h lives at the project root; TinyUSB picks it up from the include path. console_baud.hh (the console
+# baud range) is shared with the module firmware.
+target_include_directories(adsbee_1421_programmer PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_CURRENT_LIST_DIR}/../ti/comms)
 
 target_link_libraries(adsbee_1421_programmer
     pico_stdlib
 
     hardware_uart    # UART0 to the CC1314 console / ROM bootloader
+    hardware_flash   # Last known console boot baud (baud_store.cc)
     hardware_irq     # UART RX interrupt
     hardware_pio     # WS2812 status LED
     hardware_structs # QSPI pads (BOOTSEL read)

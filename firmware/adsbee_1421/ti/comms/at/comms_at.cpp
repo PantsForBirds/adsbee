@@ -68,7 +68,8 @@ CPP_AT_CALLBACK(CommsManager::ATBaudRateCallback) {
             uint32_t baud;
             CPP_AT_TRY_ARG2NUM(1, baud);
             if (!IsAllowedBaudRate(baud)) {
-                CPP_AT_ERROR("Baud %lu not in {115200 230400 460800 921600 1000000}.", (unsigned long)baud);
+                CPP_AT_ERROR("Baud %lu not supported: the console runs at %lu to %lu baud.", (unsigned long)baud,
+                             (unsigned long)ConsoleBaud::kMin, (unsigned long)ConsoleBaud::kMax);
             }
             // All validation is done, so the command cannot fail: acknowledge at the OLD baud rate,
             // then switch. SetBaudRate() drains the TX line (including this OK) before reconfiguring,
@@ -1181,8 +1182,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "BAUD_RATE",
      .min_args = 0,
      .max_args = 2,
-     .help_string = "AT+BAUD_RATE=CONSOLE,<baud [115200 230400 460800 921600 1000000]>\r\n\tChange the console baud "
-                    "rate. Prints OK at the old baud rate, then switches; reopen the host port at the new "
+     .help_string = "AT+BAUD_RATE=CONSOLE,<baud [9600-3000000]>\r\n\tChange the console baud rate (any rate the "
+                    "UART generates within 2%, e.g. 57600, 115200, 1000000). Prints OK at the old baud rate, then switches; reopen the host port at the new "
                     "rate. Takes effect immediately but persists across reboots only after AT+SETTINGS=SAVE. "
                     "Boot default is 1000000; AT+SETTINGS=RESET restores it.\r\n\t"
                     "AT+BAUD_RATE?\r\n\tQuery the current console baud rate.",

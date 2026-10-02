@@ -2094,8 +2094,8 @@
         /**
          * ADSBee 1421 Web Console.
          *
-         * Talks to an ADSBee 1421 (TI CC1314R10) over the Web Serial API, probing the
-         * firmware's baud whitelist to find the device's saved console rate.
+         * Talks to an ADSBee 1421 (TI CC1314R10) over the Web Serial API, probing
+         * common baud rates to find the device's saved console rate.
          * UI ported from the ADSBee ESP32 web interface
          * (firmware/modules/adsbee/firmware/adsbee_1090/esp/main/server/web/), with the
          * WebSocket transport replaced by a serial line router, and a firmware uploader
@@ -2106,12 +2106,16 @@
 
         // ─── Helpers ─────────────────────────────────────────────────────────────
 
-        // Console baud rates the firmware supports (the AT+BAUD_RATE whitelist), ordered
-        // factory-default-first for probing. The device boots at its saved console baud
-        // (persisted via AT+SETTINGS=SAVE; factory default 1,000,000), so it may be at
-        // any of these — connect() sweeps the list until the device answers, preferring
-        // the rate that worked last session (localStorage).
-        const BAUD_CANDIDATES = [1000000, 921600, 460800, 230400, 115200];
+        // The firmware's console accepts any rate from 9600 to 3,000,000 baud that its UART
+        // generates within 2% (AT+BAUD_RATE; firmware/adsbee_1421/ti/comms/console_baud.hh).
+        // The device boots at its saved console baud (persisted via AT+SETTINGS=SAVE;
+        // factory default 1,000,000), so connect() sweeps BAUD_CANDIDATES, factory-default-
+        // first, until the device answers, preferring the rate that worked last session
+        // (localStorage), which may be any supported rate.
+        const CONSOLE_BAUD_MIN = 9600;
+        const CONSOLE_BAUD_MAX = 3000000;
+        const isConsoleBaud = n => Number.isInteger(n) && n >= CONSOLE_BAUD_MIN && n <= CONSOLE_BAUD_MAX;
+        const BAUD_CANDIDATES = [1000000, 921600, 460800, 230400, 115200, 57600];
         const FACTORY_BAUD = BAUD_CANDIDATES[0];
         const LAST_BAUD_KEY = 'adsbee1421LastBaud';
 
@@ -2355,7 +2359,7 @@
                     const baudMatch = /^AT\+BAUD_RATE=CONSOLE,(\d+)\s*$/i.exec(cmd);
                     if (baudMatch) {
                         const baud = parseInt(baudMatch[1], 10);
-                        if (BAUD_CANDIDATES.includes(baud) && baud !== serial.currentBaud) {
+                        if (isConsoleBaud(baud) && baud !== serial.currentBaud) {
                             setTimeout(() => connectionUI.followManualBaudChange(baud), 750);
                         }
                     } else if (/^AT\+REBOOT\b/i.test(cmd)) {
@@ -4393,10 +4397,10 @@ function makeRxEnableEntry() {
             // ── Serial ──
             {
                 cmd: 'BAUD_RATE', label: 'Console Baud Rate', group: 'Serial', disconnects: true,
-                help: 'Takes effect immediately; the page follows the link to the new rate.',
+                help: `Any rate from ${CONSOLE_BAUD_MIN} to ${CONSOLE_BAUD_MAX} (e.g. 57600, 115200, 1000000). ` +
+                    'Takes effect immediately; the page follows the link to the new rate.',
                 fields: [{
-                    id: 'baud', label: 'Baud', type: 'enum',
-                    options: BAUD_CANDIDATES.map(String),
+                    id: 'baud', label: 'Baud', type: 'int', min: CONSOLE_BAUD_MIN, max: CONSOLE_BAUD_MAX,
                 }],
                 parse(lines) {
                     const m = lines[0] && lines[0].match(/^BAUD_RATE=CONSOLE,(\d+)/);
@@ -5358,7 +5362,7 @@ function makeRxEnableEntry() {
             },
 
             // One AT+BAUD_RATE? round trip (silent-success: body line, no OK). Returns
-            // the whitelisted rate the device says its console is at, or null when
+            // the rate the device says its console is at, or null when
             // nothing legible came back within the window.
             async _queryDeviceBaud() {
                 try {
@@ -5366,7 +5370,7 @@ function makeRxEnableEntry() {
                         { expect: /^BAUD_RATE=CONSOLE,\d+/, terminator: 'quiet', quietMs: 250, timeoutMs: 700 });
                     for (const l of lines) {
                         const n = parseInt(l.split(',')[1], 10);
-                        if (BAUD_CANDIDATES.includes(n)) return n;
+                        if (isConsoleBaud(n)) return n;
                     }
                 } catch (_) { }
                 return null;
@@ -5411,7 +5415,7 @@ function makeRxEnableEntry() {
                 const order = [];
                 const last = parseInt(localStorage.getItem(LAST_BAUD_KEY) ?? '', 10);
                 for (const b of [last, serial.currentBaud, ...BAUD_CANDIDATES]) {
-                    if (BAUD_CANDIDATES.includes(b) && !order.includes(b)) order.push(b);
+                    if (isConsoleBaud(b) && !order.includes(b)) order.push(b);
                 }
                 return order;
             },
@@ -5476,7 +5480,7 @@ function makeRxEnableEntry() {
                 const baud = await this.sweep();
                 if (baud === null) {
                     tabController.notice(
-                        `No response from the device at any supported baud rate (${BAUD_CANDIDATES.join(', ')}). Is it connected and running?`);
+                        `No response from the device at any probed baud rate (${BAUD_CANDIDATES.join(', ')}). Is it connected and running?`);
                     return;
                 }
                 this._announceLink(baud);
