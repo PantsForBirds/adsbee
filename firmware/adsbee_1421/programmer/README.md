@@ -21,6 +21,11 @@ At power-up the Programmer:
    at its saved console baud, persisted via `AT+SETTINGS=SAVE`), drives its live rate to 1 M if
    it answered elsewhere, and becomes a USB-CDC ↔ UART pass-through.
 
+If the bootloader can't be entered but the application console answers (for example after
+`AT+BOOTLOADER_PIN=0,DEADBEE` turned the backdoor off), the Programmer prints a warning, skips steps 1 and
+2, and enters pass-through anyway, so the console stays reachable. A forced reflash or an armed
+settings erase can't run in that state; the settings erase stays armed.
+
 The ROM bootloader leg always runs at 1 M (the ROM auto-bauds to it; ceiling ~1.2 M). The
 Programmer only moves the console's *live* rate. It never issues `AT+SETTINGS=SAVE`, so the
 module's persisted baud setting is untouched. If no module responds, the Programmer retries forever (attach a
@@ -38,9 +43,9 @@ module any time) and reports a diagnosis on the CDC port every few seconds.
 
 The module's firmware must have the CCFG bootloader backdoor enabled: every adsbee_1421 build
 from this repository does (release `adsbee_1421-0.3.7` onward; it is set in
-`firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg`). Older boards need one JTAG flash or the
-`AT+BOOT_UART_BOOTLOADER=1DEADBEE` fallback first. The backdoor itself, its wiring convention and
-the SYNC sleep interaction are documented in
+`firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg`), unless `AT+BOOTLOADER_PIN=0,DEADBEE` turned it
+off on that module. Older boards need one JTAG flash first. The backdoor itself, its wiring
+convention, `AT+BOOTLOADER_PIN` and the SYNC sleep interaction are documented in
 [`../README.md`](../README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
 ## Build
@@ -81,10 +86,9 @@ To bake a different image, pass `-DADSBEE_1421_HEX=<path>` to CMake.
 
   This is the escape hatch for a device whose saved settings stop the console coming up. It can
   be armed from the wait loops as well as from pass-through, so it works while the Programmer is
-  stuck reporting `Device console not responding at any whitelisted baud rate`. In that state
-  `AT+SETTINGS=RESET` and `AT+BOOT_UART_BOOTLOADER` are unavailable, because both need a console
-  that already answers. It is never triggered automatically, because it discards the user's
-  settings.
+  stuck reporting `Device console not responding ...`. In that state `AT+SETTINGS=RESET` is
+  unavailable, because it needs a console that already answers. It is never triggered
+  automatically, because it discards the user's settings.
 
 ## LED legend (WS2812)
 
@@ -156,7 +160,8 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 | `SBL sync at <baud>` | Bootloader entry works; that rate is reused for the session. |
 | `... failed (timed out ...); no late bytes` | Silence from the module: reset, UART, or SYNC not reaching it. |
 | `... failed (unexpected byte ...)` / `late bytes: ...` | The module answered with garbage: baud/framing issue on the link. |
-| `App console responds at <baud> ... SBL entry fails` | Reset + UART wiring are good. Check SYNC (GP27 → module pin 28) and that the module firmware has the CCFG backdoor enabled. |
+| `App console responds at <baud> ... SBL entry fails` | Reset + UART wiring are good. Check SYNC (GP27 → module pin 28) and that the module firmware has the CCFG backdoor enabled (`AT+BOOTLOADER_PIN?` answers `BOOTLOADER_PIN=1`). The Programmer then enters pass-through without the image check (next row). |
+| `WARNING: ROM bootloader entry failed but the application console answers ...` | Pass-through without the image check: the module runs whatever it has, which may differ from the baked image. If the backdoor is off, send `AT+BOOTLOADER_PIN=1,DEADBEE`, then tap BOOTSEL to rerun the check. |
 | `No response ... RESET_N(GP26)=LOW (stuck in reset ...)` | Something is holding reset low with the Programmer's driver released: a wiring short or a drive conflict on ~SRST. |
 | `No response ... UART RX(GP29)=LOW (module TX not driving ...)` | Module unpowered, held in reset, or SUTX wiring wrong (RX should idle high when the module runs). |
 | `No response ... RESET_N=high, UART RX=high (link plausible)` | Lines look electrically sane; suspect TX leg (GP28 → SURX) or module-side UART config. |
@@ -164,10 +169,11 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 | `Settings erase ARMED` / `Settings erased; ...` | A BOOTSEL long press was registered, and the Settings sectors were erased at the next bootloader entry. The device now boots with factory defaults. |
 
 Modules running pre-backdoor firmware can't be entered via SYNC at all: flash them once via
-JTAG, or connect a console directly (the Programmer won't reach pass-through with such a module) and
-send `AT+BOOT_UART_BOOTLOADER=1DEADBEE`. It erases only flash sector 0 (the vector table), so
-the module stays in the ROM bootloader, and Settings and Device Info survive. The Programmer then
-flashes it on the next check. See [Prerequisites](../README.md#prerequisites).
+JTAG. A module whose backdoor was turned off with `AT+BOOTLOADER_PIN=0,DEADBEE` behaves the same way, and
+the Programmer enters pass-through without the image check (`WARNING: ROM bootloader entry failed
+but the application console answers ...`). Send `AT+BOOTLOADER_PIN=1,DEADBEE` through it, then tap BOOTSEL
+to rerun the check. See
+[Turning the backdoor off](../README.md#turning-the-backdoor-off-atbootloader_pin).
 
 ## Limitations
 

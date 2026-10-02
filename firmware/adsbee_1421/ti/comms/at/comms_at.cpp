@@ -5,6 +5,7 @@
 #include <iostream>  // for AT command ingestion
 
 #include "adsbee.hh"
+#include "ccfg_bootloader_flash.hh"
 #include "comms.hh"
 #include "object_dictionary.hh"
 #include "packet_decoder.hh"
@@ -501,21 +502,83 @@ CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
     CPP_AT_PRINTF("\tAT+PROTOCOL_OUT?\r\n\tPROTOCOL_OUT=<iface>,<protocol>\r\n\t...\r\n");
 }
 
-CPP_AT_CALLBACK(CommsManager::ATBootUARTBootloaderCallback) {
+CPP_AT_CALLBACK(CommsManager::ATBootloaderPinCallback) {
     switch (op) {
-        case '?':
-            CPP_AT_PRINTF(
-                "AT+BOOT_UART_BOOTLOADER=1DEADBEE enters the CC1314 ROM UART bootloader (DIO2/DIO3) for "
-                "reflashing. Erases the app image; the device stays in the bootloader until reflashed.\r\n");
+        case '?': {
+            // Read from the CCFG flash sector: the value the boot ROM uses at the next reset.
+            uint32_t bl_config = CcfgBootloader::ReadBlConfig();
+            CPP_AT_CMD_PRINTF("=%d", CcfgBootloader::BackdoorEnabled(bl_config));
+            CPP_AT_PRINTF("BL_CONFIG=0x%08lX: ROM bootloader %s, backdoor %s on DIO_%u (active %s)\r\n",
+                          (unsigned long)bl_config,
+                          CcfgBootloader::RomBootloaderEnabled(bl_config) ? "enabled" : "disabled",
+                          CcfgBootloader::BackdoorEnabled(bl_config) ? "enabled" : "disabled",
+                          CcfgBootloader::BlPinNumberField(bl_config),
+                          CcfgBootloader::BlLevelField(bl_config) ? "high" : "low");
             CPP_AT_SILENT_SUCCESS();
             break;
-        case '=':
-            if (!CPP_AT_HAS_ARG(0) || args[0].compare("1DEADBEE") != 0) {
-                CPP_AT_ERROR("Must confirm with AT+BOOT_UART_BOOTLOADER=1DEADBEE.");
+        }
+        case '=': {
+            // The password is checked before the CCFG is even read.
+            CcfgBootloader::SetArgs set = CcfgBootloader::ParseSetArgs(args, num_args);
+            if (!set.ok) {
+                CPP_AT_ERROR("%s.", set.error);
             }
-            adsbee.EnterUARTBootloader();  // Does not return.
-            CPP_AT_ERROR("Failed to enter bootloader.");
+            const bool enable = set.enable;
+
+            CcfgBootloader::Plan plan = CcfgBootloader::Prepare(enable);
+            if (plan.method == CcfgBootloader::Method::kRefused) {
+                CPP_AT_ERROR("Not writing CCFG: %s.", plan.error);
+            }
+            if (plan.restore_retry) {
+                CPP_AT_PRINTF(
+                    "A previous CCFG write failed and left the sector in an unknown state: writing the original CCFG "
+                    "back first. The requested change is not made by this command.\r\n");
+            }
+            CPP_AT_PRINTF("BL_CONFIG 0x%08lX -> 0x%08lX: %s\r\n", (unsigned long)plan.old_bl_config,
+                          (unsigned long)plan.new_bl_config, CcfgBootloader::MethodStr(plan.method));
+            if (set.dry_run) {
+                CPP_AT_PRINTF("Dry run: new CCFG image computed and checked in RAM, flash not written.\r\n");
+                CPP_AT_SUCCESS();
+            }
+            if (plan.method == CcfgBootloader::Method::kNoChange) {
+                CPP_AT_SUCCESS();
+            }
+
+            // Interrupts are masked for the write (an erase takes milliseconds): get queued output out first.
+            DrainConsoleTx();
+            CcfgBootloader::WriteReport report = CcfgBootloader::Apply(plan, enable);
+            if (report.Failed()) {
+                // Loud and multi-line: a CCFG the boot ROM can't use leaves a module only JTAG or the ROM bootloader
+                // can recover. Printed as errors, and as part of the AT response too when the log level hides errors.
+                const bool errors_logged = settings_manager.settings.log_level >= SettingsManager::LogLevel::kErrors;
+                CcfgBootloader::FailureBanner(report, [errors_logged](const char* line) {
+                    CONSOLE_ERROR("AT+BOOTLOADER_PIN", "%s", line);
+                    if (!errors_logged) CPP_AT_PRINTF(TEXT_COLOR_RED "%s" TEXT_COLOR_RESET "\r\n", line);
+                });
+                CPP_AT_ERROR("CCFG WRITE FAILED (%s): %s.", report.error,
+                             CcfgBootloader::WriteResultStr(report.result));
+            }
+            if (report.result != CcfgBootloader::WriteResult::kOk) {
+                CPP_AT_ERROR("Not writing CCFG: %s. CCFG not touched.", report.error);
+            }
+            CPP_AT_PRINTF("CCFG verified: BL_CONFIG 0x%08lX, CCFG CRC32 0x%08lX.\r\n",
+                          (unsigned long)report.readback_bl_config, (unsigned long)report.readback_crc);
+            if (plan.restore_retry) {
+                CPP_AT_ERROR("Original CCFG written back; the requested change was not made. Send "
+                             "AT+BOOTLOADER_PIN=%d,<password> again to make it.",
+                             enable);
+            }
+            CPP_AT_PRINTF("Bootloader backdoor %s; takes effect at the next reset.\r\n",
+                          enable ? "enabled" : "disabled");
+            if (!enable) {
+                CPP_AT_PRINTF(
+                    "SYNC no longer enters the ROM bootloader, so the ADSBee 1421 Programmer and other SYNC-based "
+                    "tools can't reflash this module. Re-enable with AT+BOOTLOADER_PIN=1,<password> (or use "
+                    "JTAG).\r\n");
+            }
+            CPP_AT_SUCCESS();
             break;
+        }
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
@@ -1205,12 +1268,20 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "Boot default is 1000000; AT+SETTINGS=RESET restores it.\r\n\t"
                     "AT+BAUD_RATE?\r\n\tQuery the current console baud rate.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBaudRateCallback, comms_manager)},
-    {.command = "BOOT_UART_BOOTLOADER",
-     .min_args = 1,
-     .max_args = 1,
-     .help_string = "AT+BOOT_UART_BOOTLOADER=1DEADBEE\r\n\tErase the app image and enter the ROM UART "
-                    "bootloader (DIO2/DIO3) for reflashing.",
-     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBootUARTBootloaderCallback, comms_manager)},
+    {.command = "BOOTLOADER_PIN",
+     .min_args = 0,
+     .max_args = 3,
+     .help_string =
+         "AT+BOOTLOADER_PIN=<enabled [1,0]>,<password>[,DRYRUN]\r\n\tEnable (1, factory default) or disable (0) the "
+         "ROM bootloader backdoor in the CCFG flash: SYNC high while RESET_N is pulsed low starts the CC1314 ROM UART "
+         "bootloader. Takes effect at the next reset and persists across power cycles. <password> is DEADBEE, "
+         "required for every set form (DRYRUN too) so the CCFG is only written on purpose. WARNING: with 0, the "
+         "ADSBee 1421 Programmer and other SYNC-based tools can no longer enter the bootloader to reflash the "
+         "module; the only ways back are AT+BOOTLOADER_PIN=1,DEADBEE from the running firmware, or JTAG. Flashing "
+         "an image writes that image's CCFG (enabled in every release). DRYRUN shows the change without writing "
+         "flash.\r\n\tAT+BOOTLOADER_PIN?\r\n\tQuery the live CCFG setting (no password).\r\n\t"
+         "BOOTLOADER_PIN=<enabled>",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBootloaderPinCallback, comms_manager)},
     {.command = "DEVICE_INFO",
      .min_args = 0,
      .max_args = 5,  // TODO: check this value.

@@ -71,7 +71,6 @@ class ADSBee {
     uint8_t GetR1090RxBoost() const { return r1090_rx_boost_; }
 
     void Reboot();
-    void EnterUARTBootloader();
 
     // True when an external host has asserted SYNC to request the LR2021 bus + MCU sleep. Latched by the
     // SYNC rising-edge ISR (which also hands the bus off immediately: tri-state + command abort) with a

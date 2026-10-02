@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cdc_text.hh"
 #include "hardware/pio.h"
 #include "pico/stdlib.h"
 #include "tusb.h"
@@ -82,13 +83,12 @@ void StatusUpdate() {
 
 void CdcPrintf(const char* format, ...) {
     if (!tud_cdc_connected()) return;
-    char buf[256];
+    char buf[kCdcTextMax];
     va_list args;
     va_start(args, format);
-    int len = vsnprintf(buf, sizeof(buf), format, args);
+    int formatted = vsnprintf(buf, sizeof(buf), format, args);
     va_end(args);
-    if (len <= 0) return;
-    if ((size_t)len >= sizeof(buf)) len = sizeof(buf) - 1;  // vsnprintf truncated.
+    int len = (int)CdcTextFinish(buf, sizeof(buf), formatted);  // Marks a cut-off message with "...".
 
     const char* pos = buf;
     while (len > 0) {
