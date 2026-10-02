@@ -202,7 +202,15 @@ class ADSBee {
     uint64_t GetMLAT12MHzCounts(uint16_t num_bits = 48);
 
     /**
-     * Returns the current value of the MLAT jitter PWM slice's internal counter.
+     * Converts a span of MLAT jitter PWM slice counts (system clock cycles at 125MHz) into 48MHz MLAT counter counts,
+     * using the same ratio as the SysTick scaling in GetMLAT48MHzCounts().
+     * @param[in] sys_clk_counts Number of MLAT jitter PWM slice counts.
+     * @retval Equivalent number of 48MHz MLAT counter counts.
+     */
+    static inline uint32_t MLATJitterCountsTo48MHzCounts(uint32_t sys_clk_counts) { return sys_clk_counts * 48 / 125; }
+
+    /**
+     * Returns the current value of the MLAT jitter PWM slice's internal counter, which counts the system clock.
      * This is only used for testing, since the actual value is usually accessed directly or through DMA.
      * @retval Current value of the MLAT jitter PWM slice counter.
      */
