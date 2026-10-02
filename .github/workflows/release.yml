@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # Explicit, so steps run with -o pipefail (the implicit default shell doesn't set it).
+    shell: bash
+
 concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: false
@@ -28,6 +33,7 @@ jobs:
       product: ${{ steps.info.outputs.product }}
       version: ${{ steps.info.outputs.version }}
       name: ${{ steps.info.outputs.name }}
+      assets: ${{ steps.info.outputs.assets }}
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -36,7 +42,9 @@ jobs:
     - name: Check the tag against the source version
       id: info
       run: |
-        python3 ci/release/release.py info "$GITHUB_REF_NAME" | tee -a "$GITHUB_OUTPUT"
+        python3 ci/release/release.py info "$GITHUB_REF_NAME" > info.txt
+        cat info.txt
+        cat info.txt >> "$GITHUB_OUTPUT"
     - name: Check that the tagged commit is on main
       run: |
         if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
@@ -63,6 +71,7 @@ jobs:
       PRODUCT: ${{ needs.check_tag.outputs.product }}
       VERSION: ${{ needs.check_tag.outputs.version }}
       NAME: ${{ needs.check_tag.outputs.name }}
+      ASSETS: ${{ needs.check_tag.outputs.assets }}
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -94,7 +103,7 @@ jobs:
     - name: Create or update the draft release
       run: |
         run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-        read -ra assets <<< "$(python3 ci/release/release.py info "$TAG" | sed -n 's/^assets=//p')"
+        read -ra assets <<< "$ASSETS"
         # Drafts aren't returned by the releases/tags endpoint, so look the tag up in the list.
         releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
           --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"")
