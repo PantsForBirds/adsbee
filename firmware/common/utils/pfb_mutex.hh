@@ -18,10 +18,8 @@
 #define PFB_MUTEX_UNLOCK(mtx) mutex_exit(&(mtx))
 
 #elif __has_include("freertos/semphr.h") && defined(ESP_PLATFORM)
-// FreeRTOS spinlock implementation (ESP32 / IDF). PFBQueue only holds the lock to copy one element or move an index,
-// so a critical section is cheap. A sleeping mutex let a low-priority task that was preempted while holding it (e.g.
-// a core 0 task logging while tiT keeps core 0 busy) stall the high-priority SPI receive task on core 1 for 100+ ms,
-// which made the RP2040 time out waiting for a response.
+// FreeRTOS spinlock implementation (ESP32 / IDF). The lock is held only briefly. A sleeping mutex held by a preempted
+// low-priority task could stall the SPI receive task long enough for the RP2040 to time out.
 #include "freertos/FreeRTOS.h"
 
 #define PFB_MUTEX_TYPE        portMUX_TYPE

@@ -159,9 +159,8 @@ bool ModeSAircraft::DecodePosition(bool is_airborne, uint32_t ref_lat_awb32, uin
         if (candidate_even_received_timestamp_ms_ != 0 &&
             (last_even_packet_.received_timestamp_ms == candidate_even_received_timestamp_ms_ ||
              last_odd_packet_.received_timestamp_ms == candidate_odd_received_timestamp_ms_)) {
-            // Close to a pending jump candidate, but decoded with one of the packets that produced it. A corrupted
-            // packet decodes to nearly the same bogus position against each complementary packet, so this is no
-            // confirmation. Wait for a pair of entirely new packets.
+            // Close to a pending jump candidate but shares a packet with it, so it can't confirm it (a corrupted
+            // packet gives the same bogus position with any partner). Wait for two new packets.
             return false;
         }
         candidate_even_received_timestamp_ms_ = 0;
@@ -535,9 +534,8 @@ bool ModeSAircraft::ApplyAirbornePositionMessage(const ModeSADSBPacket& packet, 
                 break;
             default:
                 // Check for TypeCodes that can determine a NIC without needing to consult NIC supplement bits.
-                // Version 3 redefined TC=20-22: TC=21 is NIC 7, and TC=20 / TC=22 are refined by NIC supplement D
-                // from the Airborne Velocity message (DO-260C Table 2-11, Table 2-28). Without NIC supplement D, use
-                // the lowest NIC of the TYPE code. Earlier versions: DO-260C Table N-24.
+                // Version 3: TC=21 is NIC 7; TC=20/22 are refined by NIC supplement D from the Airborne Velocity
+                // message, else the TYPE code's lowest NIC (DO-260C Tables 2-11, 2-28). Earlier versions: Table N-24.
                 uint8_t nic_d = NICBitIsValid(ADSBTypes::kNICBitD0) ? (nic_bits >> ADSBTypes::kNICBitD0) & 0b11 : 0;
                 switch (type_code) {
                     case 20:
@@ -765,9 +763,8 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
 #endif                     // ADSB_VERBOSE_PACKET_WARNINGS
             return false;  // Don't attempt vertical rate decode if message type is invalid.
     }
-    // ME[11-13] - NACv (NUCr in version 0, mapped one-for-one to NACv). This is where NACv lives for airborne aircraft
-    // of every ADS-B version; the airborne Operational Status message doesn't carry it. DO-260C 2.2.3.2.6.1.5, N.2.3.8,
-    // Table N-26. TIS-B velocity messages carry NACp in these bits instead (DO-260C 2.2.17.3.4.4).
+    // ME[11-13] - NACv (NUCr in version 0, same values), the only source of airborne NACv. DO-260C 2.2.3.2.6.1.5,
+    // N.2.3.8, Table N-26. TIS-B velocity messages carry NACp here instead (DO-260C 2.2.17.3.4.4).
     bool is_tisb = packet.downlink_format == ModeSADSBPacket::kDownlinkFormatExtendedSquitterNonTransponder &&
                    (packet.ca_cf.code_format == 2 || packet.ca_cf.code_format == 5);
     if (!is_tisb) {
@@ -817,8 +814,7 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
     }
 
     // Decode altitude difference between GNSS and barometric altitude.
-    // ME[49] - Difference From Baro Altitude Sign, ME[50-56] - Difference From Baro Altitude (bits 8-2 of the v3
-    // Extended Difference From Baro Altitude, which v2 receivers decode as a 7 bit field with 25ft resolution).
+    // ME[49] - Difference From Baro Altitude Sign, ME[50-56] - Difference From Baro Altitude (7 bits, 25ft resolution).
     bool gnss_alt_below_baro_alt = static_cast<bool>(packet.GetNBitWordFromMessage(1, 48));
     uint16_t encoded_gnss_alt_baro_alt_difference_ft = static_cast<uint16_t>(packet.GetNBitWordFromMessage(7, 49));
     if (encoded_gnss_alt_baro_alt_difference_ft == 0) {
@@ -827,8 +823,8 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
                         "Difference between GNSS and baro altitude not available for aircraft 0x%lx.", icao_address);
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
         // Don't set decode_successful to false so that we ignore missing GNSS/Baro altitude info.
-        // ME[47-48] - NIC supplement D (version 3), sent when the difference bits are all zeros. TIS-B velocity
-        // messages use these bits for NIC supplement A and NACv. DO-260C 2.2.3.2.6.1.16, 2.2.17.3.4.
+        // ME[47-48] - NIC supplement D (version 3), sent when the difference bits are all zeros; NIC supplement A and
+        // NACv in TIS-B. DO-260C 2.2.3.2.6.1.16, 2.2.17.3.4.
         if (!is_tisb) {
             uint8_t nic_d = packet.GetNBitWordFromMessage(2, 46);
             WriteNICBit(ADSBTypes::kNICBitD0, nic_d & 0b01);
@@ -839,10 +835,8 @@ bool ModeSAircraft::ApplyAirborneVelocitiesMessage(const ModeSADSBPacket& packet
         // DO-260C N.4.2.4.a.
     } else if (altitude_source == ADSBTypes::kAltitudeSourceBaro &&
                HasBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid)) {
-        // Only derive the geometric altitude from a valid barometric altitude (DO-260C N.4.2.4.b). The barometric
-        // altitude is never derived from a GNSS height: transmitters that send GNSS height in the position message
-        // because barometric altitude is unavailable may encode this subfield as the difference from zero pressure
-        // altitude, from a stale baro altitude, or as not available (DO-260C N.4.2.4, Note).
+        // Only derive geometric altitude from a valid barometric altitude, never the reverse: the difference may be
+        // unreliable when the transmitter has no barometric altitude (DO-260C N.4.2.4).
         int gnss_alt_baro_alt_difference_ft =
             (encoded_gnss_alt_baro_alt_difference_ft - 1) * 25 * (gnss_alt_below_baro_alt ? -1 : 1);
         gnss_altitude_ft = baro_altitude_ft + gnss_alt_baro_alt_difference_ft;
@@ -954,8 +948,8 @@ bool ModeSAircraft::ApplyAircraftOperationStatusMessage(const ModeSADSBPacket& p
             if (adsb_version >= 2) {
                 geometric_vertical_accuracy = static_cast<ADSBTypes::GVA>(packet.GetNBitWordFromMessage(2, 48));
             }
-            // ME[32-39] of the airborne OM are reserved in v2 and hold the CA Coordination Capability Bits in v3; NACv
-            // for airborne aircraft comes from the Airborne Velocity message. DO-260C Table 2-55, Table N-27.
+            // ME[32-39] of the airborne OM don't carry NACv; it comes from the Airborne Velocity message. DO-260C
+            // Table 2-55, Table N-27.
 
             break;
         }
@@ -1233,16 +1227,14 @@ bool UATAircraft::ApplyUATADSBStateVector(const DecodedUATADSBPacket::UATStateVe
             direction_valid = false;
     }
     WriteBitFlag(BitFlag::kBitFlagDirectionValid, direction_valid);
-    // Speed validity is independent of the direction: on the ground, speed and track/heading are separate subfields
-    // with their own "not available" encodings, and airborne zero velocity has a speed but no track.
+    // Speed and direction are independently valid (e.g. airborne zero velocity has a speed but no track).
     WriteBitFlag(BitFlag::kBitFlagHorizontalSpeedValid, speed_kts != INT32_MIN);
 
     if (ag_state == ADSBTypes::kAirGroundStateOnGround) {
         // Parse AV dimensions.
         int16_t width_m_temp;
         int16_t length_m_temp;
-        // The return value only reflects the Position Offset Applied flag; the field always carries the A/V length
-        // and width code (UAT Tech Manual Tables 2-34 to 2-36), never a GNSS antenna offset.
+        // The return value is only the Position Offset Applied flag; the field is always A/V length and width.
         DecodedUATADSBPacket::DecodeAVDimensions(state_vector.aircraft_length_width_code, width_m_temp, length_m_temp);
         width_m = width_m_temp;
         length_m = length_m_temp;
@@ -1303,9 +1295,8 @@ bool UATAircraft::ApplyUATADSBModeStatus(const DecodedUATADSBPacket::UATModeStat
     callsign_temp[7] = LookupUATCallsignChar(temp);
 
     if (mode_status.csid) {
-        // Callsign field encodes an ID (alphanumerica callsign). A leading '\0' means the characters were "not
-        // available" (base-40 code 37, sent in all 8 positions when there is no call sign) or reserved: keep the last
-        // known callsign instead of blanking it.
+        // Callsign field encodes an ID (alphanumeric callsign). A leading '\0' means not available or reserved: keep
+        // the last known callsign.
         if (callsign_temp[0] != '\0') {
             strncpy(callsign, callsign_temp, UATAircraft::kCallSignMaxNumChars);
             callsign[UATAircraft::kCallSignMaxNumChars] = '\0';
@@ -1621,9 +1612,7 @@ bool AircraftDictionary::IsPreferredReportForAddress(uint32_t uid, uint32_t time
         }
         bool fresh = position_age_ms <= kPreferredReportPositionFreshMs;
         // Fresh beats stale. Among fresh entries the better source wins, then the newer position. Among stale ones
-        // the newer position wins, then the better source: a direct ADS-B entry whose position froze a minute ago
-        // (other Mode S replies keep the entry alive) must not win over a TIS-B position that just missed one update,
-        // or the target jumps back to the old position until the next TIS-B update.
+        // the newer position wins, so an old direct ADS-B position can't pull the target back from a newer TIS-B one.
         bool better = (fresh != best_fresh) ? fresh
                       : fresh ? ((rank != best_rank) ? rank < best_rank : position_age_ms < best_position_age_ms)
                               : ((position_age_ms != best_position_age_ms) ? position_age_ms < best_position_age_ms
@@ -1650,8 +1639,7 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
         && ContainsAircraft(packet.icao_address)
 #endif
     ) {
-        // DF=0,4,5,16,20,21, or a DF=11 whose parity is overlaid with a nonzero interrogator code (DF=11 replies with
-        // interrogator code 0 come in pre-marked as valid).
+        // DF=0,4,5,16,20,21, or a DF=11 with a nonzero interrogator code.
         // Packet is address parity that is incapable of validating itself, and its CRC was
         // validated against the ICAO addresses in the aircraft dictionary.
         // When AIRCRAFT_DICTIONARY_TRUST_FORWARDED_ADDRESS_PARITY is set, the upstream validator
@@ -1817,8 +1805,7 @@ bool AircraftDictionary::IngestModeSAltitudeReplyPacket(const ModeSAltitudeReply
     }
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagAlert, packet.has_alert);
     aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagIdent, packet.has_ident);
-    // An all zeros AC field means altitude not available, and bad Gillham codes decode to an error value. Don't report
-    // either one as a valid altitude.
+    // Don't report an all-zeros (not available) or invalid altitude code as valid.
     if (packet.altitude_ft > kAltitudeDecodeErrorInvalid) {
         aircraft_ptr->baro_altitude_ft = packet.altitude_ft;
         aircraft_ptr->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);

@@ -59,10 +59,8 @@ void CPUMonitor::ReadCPUUsage(uint8_t& core_0_usage_percent, uint8_t& core_1_usa
             }
         }
 
-        // 2. Calculate the utilization for each core over the interval since the last call. The counters are
-        // cumulative since boot and 32 bits wide (they wrap every ~71 minutes at 1 MHz), so work with unsigned deltas.
-        // Using the cumulative values directly overflowed 100 * idle after ~43 s of idle time and pinned the reported
-        // usage at 99-100%.
+        // 2. Calculate each core's utilization since the last call. The counters are cumulative 32-bit values that
+        // wrap, so use unsigned deltas.
         uint32_t total_delta = ulTotalRunTime - last_total_run_time_;
         core_0_usage_percent =
             UsagePercentFromIdleDelta(idle_runtime_core0 - last_idle_run_time_core_0_, total_delta);
@@ -96,8 +94,7 @@ void CPUMonitor::Update() {
     uint32_t full_usage_expected_ticks =
         MAX(delta_time_ms * full_usage_ticks_per_update_interval_ / config_.update_interval_ms,
             1);  // No division by zero.
-    // A loop slower than the full usage rate is saturated. Clamp the excess at 0: an unsigned subtraction that wraps
-    // reported a saturated core as 0%.
+    // A loop slower than the full usage rate is saturated; clamp the excess at 0 so the subtraction can't wrap.
     uint64_t excess_ticks = ticks_since_last_update > full_usage_expected_ticks
                                 ? ticks_since_last_update - full_usage_expected_ticks
                                 : 0;

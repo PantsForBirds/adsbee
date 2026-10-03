@@ -219,11 +219,9 @@
   k = IPRIM-1;
   if (PRIM == 1) {
     /*
-     * ADSBee modification: with PRIM == 1, step i tests location k = i-1, so
-     * the first PAD steps only test pad locations, which can never hold an
-     * error (see the pad check below). Jump straight to i = PAD+1 by
-     * advancing reg[] by PAD steps. A root in the pad then simply isn't
-     * found, and deg_lambda != count rejects the word as uncorrectable.
+     * ADSBee modification: skip the first PAD steps, which only test pad
+     * locations (never errors). A root in the pad is then not found, and
+     * deg_lambda != count rejects the word.
      */
     for (j = deg_lambda; j > 0; j--) {
       if (reg[j] != A0)
@@ -263,13 +261,10 @@
     goto finish;
   }
   /*
-   * ADSBee modification: an error located in the (virtual, always zero) pad
-   * of a shortened code is impossible, so the word is uncorrectable. Upstream
-   * silently skipped such locations below while still reporting success,
-   * which made the decoder accept ~1 in 800 random 30-byte words (UAT basic
-   * ADS-B) as "corrected". Same fix as Linux lib/reed_solomon "rslib: Fix
-   * remaining decoder flaws". Checked before any symbol is modified so that a
-   * failed decode leaves data[] untouched.
+   * ADSBee modification: an error in the always-zero pad of a shortened code
+   * means the word is uncorrectable (upstream reported success). Same fix as
+   * Linux rslib. Checked before data[] is modified, so a failed decode leaves
+   * it untouched.
    */
   for (j = 0; j < count; j++) {
     if (loc[j] < PAD) {

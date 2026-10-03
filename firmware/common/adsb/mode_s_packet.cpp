@@ -190,14 +190,13 @@ int16_t DecodedModeSPacket::CorrectSingleBitError() {
     if (!IsSingleBitCorrectable()) {
         return -1;
     }
-    // The syndrome was already calculated while constructing the packet. The prefilter answers "no single-bit error"
-    // for most syndromes without the 112-entry search.
+    // The prefilter rules out most syndromes without the 112-entry search.
     if (!ModeSSingleBitFilter::kFilter.MayMatch(crc_syndrome)) {
         return -1;
     }
     int16_t bit_flip_index = crc24_find_single_bit_error(crc_syndrome, RawModeSPacket::kExtendedSquitterPacketLenBits);
     if (bit_flip_index < kDFNumBits) {
-        return -1;  // No single-bit error (-1), or one in the DF field, which must not be corrected.
+        return -1;  // No single-bit error, or one in the DF field, which must not be corrected.
     }
     RawModeSPacket corrected_raw = raw;
     flip_bit(corrected_raw.buffer, bit_flip_index);
@@ -237,19 +236,16 @@ void DecodedModeSPacket::ConstructModeSPacket() {
         }
         case kDownlinkFormatAllCallReply:  // DF = 11
         {
-            // The PI field is parity overlaid with the Code Label (CL, 3 bits) and Interrogator Code (IC, 4 bits), so
-            // the syndrome is (CL << 4) | IC. The full 24-bit syndrome must be kept: truncating it would accept
-            // corrupted packets whose syndrome only has bits set above the truncation point. DO-260B 2.2.3.2.1.7,
-            // DO-181D 2.2.14.4.30.
+            // The parity/interrogator (PI) field is parity overlaid with the Code Label (CL, 3 bits) and Interrogator
+            // Code (IC, 4 bits), so the syndrome is (CL << 4) | IC. Keep all 24 bits so corrupted packets aren't
+            // accepted. DO-260B 2.2.3.2.1.7, DO-181D 2.2.14.4.30.
             icao_address = Get24BitsFromWordBuffer(8, raw.buffer);
             parity_interrogator_id = crc_syndrome;
             if (crc_syndrome == 0) {
-                // Acquisition squitter or reply to an interrogator with II=0: the full CRC checks out.
+                // Acquisition squitter or reply to interrogator code 0.
                 is_valid = true;
             } else if (crc_syndrome <= kAllCallReplyMaxInterrogatorCode) {
-                // Reply to an interrogator with a nonzero II/SI code. Only the top 17 bits of parity are left to check
-                // the packet with, so forward it for confirmation against the ICAO addresses in the aircraft
-                // dictionary, the same way address parity packets are handled.
+                // Reply to a nonzero interrogator code: confirm against the aircraft dictionary, like address parity.
                 is_address_parity = true;
             }
             // Otherwise the packet is corrupted, leave is_valid as false.

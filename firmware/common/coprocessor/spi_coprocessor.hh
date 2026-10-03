@@ -54,9 +54,8 @@ class SPICoprocessor : public SPICoprocessorInterface {
     inline bool IsEnabled() { return config_.interface.IsEnabled(); }
     inline void SetEnable(bool enabled) { config_.interface.SetEnable(enabled); }
 
-    // Set when a boot-time firmware update of this coprocessor failed, so it runs mismatched firmware (or none) and was
-    // disabled. It stays disabled for the rest of this boot, but the disable is not persisted to settings: the next
-    // boot retries the update. Cleared by a successful manual reflash (e.g. AT+ESP32_FLASH).
+    // Set when a boot-time firmware update of this coprocessor failed and it was disabled for this boot only (not
+    // saved to settings, so the next boot retries). Cleared by a successful manual reflash (e.g. AT+ESP32_FLASH).
     bool firmware_update_failed = false;
 
     /**
@@ -138,10 +137,7 @@ class SPICoprocessor : public SPICoprocessorInterface {
         return true;
     }
 
-    /**
-     * Returns true if the last transaction exhausted its retries and no transaction has succeeded since. While the link
-     * is down, transactions fail immediately except for a single-attempt probe every SPILinkGate::kProbeIntervalMs.
-     */
+    /** True if the last transaction exhausted its retries and none has succeeded since. See SPILinkGate. */
     bool IsLinkDown() const { return link_gate_.IsDown(); }
 
 #ifdef HARDWARE_UNIT_TESTS

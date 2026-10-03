@@ -45,9 +45,8 @@ class CPUMonitor {
     static void Init();
 
     /**
-     * Converts the idle time and total time elapsed over one measurement interval into a CPU usage percentage.
-     * Both arguments are deltas of free-running counters (e.g. FreeRTOS run time stats), so the caller must subtract
-     * the previous sample with unsigned arithmetic to stay wrap-safe.
+     * Converts idle and total time over one interval into a CPU usage percentage. Arguments are unsigned deltas of
+     * free-running counters, so they stay correct across counter wraps.
      * @param[in] idle_delta Time spent in the idle task during the interval.
      * @param[in] total_delta Total time elapsed during the interval, in the same units.
      * @retval CPU usage percentage (0-100%). 0 if no time has elapsed.
@@ -61,9 +60,7 @@ class CPUMonitor {
     }
 
 #ifdef ON_ESP32
-    /**
-     * Reads the CPU usage of each core since the previous call, from FreeRTOS run time stats.
-     */
+    /** Reads each core's CPU usage since the previous call, from FreeRTOS run time stats. */
     void ReadCPUUsage(uint8_t &core_0_usage_percent, uint8_t &core_1_usage_percent);
 #else
     /**

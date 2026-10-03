@@ -45,8 +45,7 @@ int UATReedSolomon::DecodeShortADSBMessage(uint8_t message_buf[RawUATADSBPacket:
     if (message_buf == nullptr) {
         return -1;  // Invalid input.
     }
-    // Decode a copy so that a rejected frame (e.g. RS-valid but wrong payload type for this format) leaves
-    // message_buf untouched for the caller's next format attempt.
+    // Decode a copy so a rejected frame leaves message_buf untouched for the next format attempt.
     uint8_t scratch[RawUATADSBPacket::kShortADSBMessageNumBytes];
     memcpy(scratch, message_buf, sizeof(scratch));
     int num_bytes_corrected = decode_rs_char(rs_adsb_short, scratch, nullptr, 0);
@@ -62,8 +61,8 @@ int UATReedSolomon::DecodeLongADSBMessage(uint8_t message_buf[RawUATADSBPacket::
     if (message_buf == nullptr) {
         return -1;  // Invalid input.
     }
-    // Decode a copy so that a rejected frame (e.g. RS-valid but payload type 0, which is only legal in a basic
-    // message) leaves message_buf untouched for the subsequent basic-message attempt.
+    // Decode a copy so a rejected frame (e.g. payload type 0, only legal in a basic message) leaves message_buf
+    // untouched for the basic-message attempt.
     uint8_t scratch[RawUATADSBPacket::kLongADSBMessageNumBytes];
     memcpy(scratch, message_buf, sizeof(scratch));
     int num_bytes_corrected = decode_rs_char(rs_adsb_long, scratch, nullptr, 0);

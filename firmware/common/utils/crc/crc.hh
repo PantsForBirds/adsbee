@@ -3,8 +3,7 @@
 
 #include <cstdint>
 
-// Mode S CRC-24 generator polynomial, x^24 + 0xFFF409 (the x^24 term is implied). The one definition for the firmware;
-// generate_crc_tables.py uses the same value to generate crc_tables.hh.
+// Mode S CRC-24 generator polynomial x^24 + 0xFFF409 (x^24 implied). generate_crc_tables.py must use the same value.
 static constexpr uint32_t kCRC24Generator = 0xFFF409;
 
 /**

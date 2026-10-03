@@ -214,7 +214,7 @@ void DecodedUATADSBPacket::ConstructUATADSBPacket(bool run_fec) {
 #if defined(ON_TI) || defined(ON_HOST)
         // Correct in place. If correction fails, the buffer will not be
         // modified.
-        // A reception shorter than a long message can't hold one: its tail would just be the zero-fill of buffer[].
+        // Too short for a long message; its tail would be buffer[]'s zero fill.
         raw.sigq_bits = raw.buffer_len_bytes >= RawUATADSBPacket::kLongADSBMessageNumBytes
                             ? uat_rs.DecodeLongADSBMessage(raw.buffer)
                             : -1;
@@ -229,9 +229,8 @@ void DecodedUATADSBPacket::ConstructUATADSBPacket(bool run_fec) {
                 // CONSOLE_INFO("DecodedUATADSBPacket", "Decoded Short ADS-B message with %d bytes corrected.",
                 //  raw.sigq_bits);
                 message_format = kUATADSBMessageFormatShort;
-                // The receiver may have captured a long message's worth of bytes (the length is chosen from the
-                // uncorrected payload type code). Downstream consumers (Beast, raw) label and size the frame by
-                // buffer_len_bytes, so drop the trailing bytes that aren't part of the basic message.
+                // The receiver may have read a long message's length; Beast and raw output size frames by
+                // buffer_len_bytes, so trim it.
                 raw.buffer_len_bytes = RawUATADSBPacket::kShortADSBMessageNumBytes;
             } else {
                 // CONSOLE_ERROR("DecodedUATADSBPacket", "Failed to decode UAT ADS-B message, invalid packet.");
