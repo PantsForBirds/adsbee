@@ -2591,6 +2591,8 @@ body.dark-mode #map .leaflet-tile-pane {
 
         // ─── Sinks ───────────────────────────────────────────────────────────────
 
+        const LINE_SINK_IDLE_MS = 50;
+
         // Streaming text decoder + line splitter feeding the LineRouter.
         class LineSink {
             constructor(router) {
@@ -2608,6 +2610,17 @@ body.dark-mode #map .leaflet-tile-pane {
                     if (line.endsWith('\r')) line = line.slice(0, -1);
                     this.router.feed(line);
                 }
+                clearTimeout(this.idleTimer);
+                if (this.buf) this.idleTimer = setTimeout(() => this.flushBinary(), LINE_SINK_IDLE_MS);
+            }
+
+            // Binary output (MAVLink, GDL90, Beast) may never contain a '\n'. Once the line goes idle, show it
+            // instead of holding it until the next text reply. Text waits for its '\n' so replies stay whole.
+            flushBinary() {
+                if (!/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f\ufffd]/.test(this.buf)) return;
+                const text = this.buf;
+                this.buf = '';
+                this.router.feedPartial(text);
             }
         }
 
@@ -3476,6 +3489,11 @@ function makeRxEnableEntry() {
             // Set while an ADSBeeAT bulk operation (firmware update, settings
             // dump/restore) owns the serial stream: every line is diverted to it.
             otaCapture: null,
+
+            // Binary output from LineSink.flushBinary().
+            feedPartial(text) {
+                if (!this.otaCapture) appendToTerminal(text);
+            },
 
             feed(line) {
                 if (this.otaCapture) { this.otaCapture.pushLine(line); return; }

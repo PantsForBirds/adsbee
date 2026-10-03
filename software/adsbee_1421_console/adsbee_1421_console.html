@@ -2554,6 +2554,8 @@
 
         // ─── Sinks ───────────────────────────────────────────────────────────────
 
+        const LINE_SINK_IDLE_MS = 50;
+
         // Streaming text decoder + line splitter feeding the LineRouter.
         class LineSink {
             constructor(router) {
@@ -2571,6 +2573,17 @@
                     if (line.endsWith('\r')) line = line.slice(0, -1);
                     this.router.feed(line);
                 }
+                clearTimeout(this.idleTimer);
+                if (this.buf) this.idleTimer = setTimeout(() => this.flushBinary(), LINE_SINK_IDLE_MS);
+            }
+
+            // Binary output (MAVLink, GDL90, Beast) may never contain a '\n'. Once the line goes idle, show it
+            // instead of holding it until the next text reply. Text waits for its '\n' so replies stay whole.
+            flushBinary() {
+                if (!/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f\ufffd]/.test(this.buf)) return;
+                const text = this.buf;
+                this.buf = '';
+                this.router.feedPartial(text);
             }
         }
 
@@ -3468,6 +3481,11 @@ function makeRxEnableEntry() {
         // ─── LineRouter ──────────────────────────────────────────────────────────
 
         const lineRouter = {
+            // Binary output from LineSink.flushBinary().
+            feedPartial(text) {
+                if (!flashController.active) appendToTerminal(text);
+            },
+
             feed(line) {
                 if (atQueue.tryConsume(line)) return;
                 const t = line.trim();
