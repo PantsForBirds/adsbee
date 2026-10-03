@@ -49,7 +49,15 @@ bool CommsManager::Update() {
         // SPI transaction), or when the max reporting interval has elapsed (guarantees ≤200ms latency).
         bool max_interval_elapsed = (timestamp_ms - last_raw_report_timestamp_ms_) >= kRawReportingMaxIntervalMs;
 
-        if (required_buffer_len >= CompositeArray::RawPackets::kMaxLenBytes || max_interval_elapsed) {
+        if (mode_s_packet_reporting_queue.Length() == 0 && uat_adsb_packet_reporting_queue.Length() == 0 &&
+            uat_uplink_packet_reporting_queue.Length() == 0) {
+            // No packets: still drive the locally decoded protocols, which send the heartbeats.
+            uint8_t no_packets_buf[sizeof(CompositeArray::RawPackets::Header)];
+            CompositeArray::RawPackets no_packets = CompositeArray::PackRawPacketsBuffer(
+                no_packets_buf, sizeof(no_packets_buf), nullptr, nullptr, nullptr);
+            UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks,
+                            &no_packets);
+        } else if (required_buffer_len >= CompositeArray::RawPackets::kMaxLenBytes || max_interval_elapsed) {
             ForceFlushRawPackets();
         }
     }
