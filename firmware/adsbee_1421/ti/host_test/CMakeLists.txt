@@ -1,13 +1,12 @@
-# Host unit tests for SDK-independent ADSBee 1421 (CC1314 application) logic, run with googletest like the
-# ADSBee 1090 host tests (firmware/adsbee_1090/pico/host_test). Standalone (not part of the TI build). Build googletest
-# (firmware/modules/googletest) first, as CI does:
+# Host unit tests for the ADSBee 1421 CC1314 application (googletest, separate from the TI build).
+# Build googletest first:
 #   cd firmware/modules/googletest && mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make
 # Then:
 #   cmake -S firmware/adsbee_1421/ti/host_test -B /tmp/adsbee_1421_host_test
 #   cmake --build /tmp/adsbee_1421_host_test && ctest --test-dir /tmp/adsbee_1421_host_test --output-on-failure
-# Pass -DADSBEE_1421_CCFG_BIN=<file> (the .ccfg section of a built image, from
-# arm-none-eabi-objcopy -O binary -j .ccfg adsbee_1421.elf <file>) to also check that image's CCFG.
-# ccfg_bootloader_test doesn't use googletest, so it can be built and run on its own:
+# -DADSBEE_1421_CCFG_BIN=<file> also checks a built image's CCFG
+# (arm-none-eabi-objcopy -O binary -j .ccfg adsbee_1421.elf <file>).
+# ccfg_bootloader_test needs no googletest:
 #   cmake --build <dir> --target ccfg_bootloader_test && ctest --test-dir <dir> -R ccfg_bootloader --output-on-failure
 cmake_minimum_required(VERSION 3.13)
 project(adsbee_1421_host_test CXX)
@@ -50,8 +49,7 @@ target_sources(host_test PRIVATE
     test_settings.cc
 )
 
-# mode_s_packet.cpp prints uint32_t with %lX, which is right on the 32-bit targets (where uint32_t is long) and a format
-# warning on 64-bit hosts. The ADSBee 1090 host tests build it with -Wno-format for the same reason.
+# mode_s_packet.cpp prints uint32_t with %lX, which warns on 64-bit hosts.
 set_source_files_properties(${ADSBEE_COMMON_DIR}/adsb/mode_s_packet.cpp PROPERTIES COMPILE_OPTIONS -Wno-format)
 
 target_include_directories(host_test PRIVATE
@@ -76,7 +74,7 @@ gtest_discover_tests(host_test
         DISCOVERY_TIMEOUT 10
 )
 
-# CcfgBootloader (AT+BOOTLOADER_PIN) plan tests: a plain executable with no googletest dependency.
+# CcfgBootloader (AT+BOOTLOADER_PIN) tests, without googletest.
 add_executable(ccfg_bootloader_test ccfg_bootloader_test.cc)
 target_include_directories(ccfg_bootloader_test PRIVATE ${ADSBEE_1421_TI_DIR}/settings)
 add_test(NAME ccfg_bootloader_test COMMAND ccfg_bootloader_test)

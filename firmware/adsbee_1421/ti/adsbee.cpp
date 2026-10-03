@@ -44,8 +44,7 @@ static void SyncLineCallback(uint_least8_t /*index*/) {
     }
 }
 
-// Periodic wake during sync sleep so EnterSyncSleep() can feed the watchdog. Nothing to do here: the
-// wake itself makes PowerCC26XX_standbyPolicy() return, and the sleep loop feeds after every return.
+// Periodic wake so EnterSyncSleep() can feed the watchdog. The wake alone is enough, so the callback is empty.
 static ClockP_Struct sync_sleep_wake_clock_struct;
 static void SyncSleepWakeCallback(uintptr_t /*arg*/) {}
 
@@ -79,13 +78,11 @@ void ADSBee::DetectBoardSyncPullDown() {
 }
 
 bool ADSBee::Init() {
-    // Decide the SYNC pull from the board revision before arming SYNC, then apply it over the SysConfig
-    // default (rising edge, internal pull-down) that Board_init() set.
+    // Pick the SYNC pull from the board revision, overriding the SysConfig default set by Board_init().
     DetectBoardSyncPullDown();
     GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(false));
-    // Arm the SYNC rising-edge interrupt before touching the LR2021, so a host asserting SYNC mid-init
-    // still gets the bus handed off promptly. Clear any stale latched edge first: neither
-    // GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
+    // Arm SYNC before touching the LR2021 so a host asserting SYNC mid-init gets the bus promptly. Clear any
+    // stale edge first: neither GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
     GPIO_setCallback(bsp.kSyncPin, SyncLineCallback);
     GPIO_clearInt(bsp.kSyncPin);
     GPIO_enableInt(bsp.kSyncPin);
@@ -136,9 +133,8 @@ void ADSBee::BeginDirectLR2021Access() {
 }
 
 bool ADSBee::EndDirectLR2021Access() {
-    // The caller may have left the chip anywhere (reset, StdbyRC, half-configured). A bare SetRxAdv
-    // re-arm from the RX health ladder would put an unconfigured chip into RX, report kRx and count
-    // as healthy while no Mode S frame ever arrives, so run the full bring-up instead.
+    // The caller may have left the chip in any state, so run the full bring-up. A bare RX re-arm could leave an
+    // unconfigured chip reporting healthy while receiving nothing.
     return ApplyReceiverConfig();
 }
 
@@ -192,13 +188,10 @@ bool ADSBee::ApplyReceiverConfigInner() {
     // leaves it demodulating but never validating. DeInit()+Init() reproduces the exact known-good
     // boot sequence (reset -> kStdbyRC) before configuring, for both boot and live AT changes.
     //
-    // CMD_PERR (the chip rejected a parameter of the config) is answered with a hard reset (Init() pulses
-    // NRESET) and a retry of the SAME config, kConfigPErrRetries more times: a PERR can come from a chip in a
-    // bad state as well as from a config it will never take. If every try is rejected the receiver stays down
-    // (held in reset) in the error state, and the health ladder retries the same config, one try at a time,
-    // on a doubling backoff (OnReceiverConfigRejected). The receiver never runs a config other than the one
-    // selected. Any other failure (no SPI answer, BUSY stuck) may be transient and keeps the ordinary backoff
-    // retries.
+    // On CMD_PERR (the chip rejected a config parameter), hard-reset and retry the same config kConfigPErrRetries
+    // more times, since a chip in a bad state can also cause it. If every try fails, the receiver stays in reset
+    // and the health ladder retries the same config with a doubling backoff (OnReceiverConfigRejected). Other
+    // failures (no SPI answer, BUSY stuck) use the ordinary backoff.
     const uint8_t perr_retries = RejectedConfigIsCurrent() ? 0 : kConfigPErrRetries;
     for (uint8_t attempt = 0;; attempt++) {
         lr2021.DeInit();  // Safe even if never inited (SPI_close is guarded).
@@ -237,7 +230,7 @@ void ADSBee::OnReceiverConfigRejected() {
                                           ? kConfigRejectedBackoffMaxMs
                                           : config_rejected_backoff_ms_ * 2;
     } else {
-        // A new rejection, or the user changed the config: say so once, and start at the shortest backoff.
+        // New rejection or changed config: log once and start at the shortest backoff.
         CONSOLE_ERROR("ADSBee::ApplyReceiverConfig",
                       "LR2021 rejected the receiver config (mode %s, gain %u, boost %u) with CMD_PERR on command "
                       "0x%04x, %u times with a hard reset before each retry. 1090 MHz receiver down; retrying the "
@@ -308,10 +301,8 @@ void ADSBee::EnterSyncSleep() {
     // hardware does not support level-triggered GPIO interrupts, so an edge is the only option. The
     // lost-edge race (host drops SYNC between the GPIO_read below and entering STANDBY) is closed by the
     // re-check loop: with the interrupt enabled, the edge latches as a pending NVIC interrupt, the
-    // policy's WFI returns immediately, and the loop re-reads LOW and exits. Clear any stale latched edge
-    // before enabling (EVFLAGS is not cleared by setConfig/enableInt). The pull follows the board
-    // revision (SyncPinConfig()): off on m1421 rev D and later, where R5 pulls SYNC low and wakes the
-    // module if the host releases the line; the internal pull-down on every other board.
+    // policy's WFI returns immediately, and the loop re-reads LOW and exits. Clear any stale edge first
+    // (setConfig/enableInt don't clear EVFLAGS). SyncPinConfig() picks the pull for the board revision.
     GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(true));
     GPIO_setCallback(bsp.kSyncPin, SyncLineCallback);
     GPIO_clearInt(bsp.kSyncPin);
@@ -336,12 +327,9 @@ void ADSBee::EnterSyncSleep() {
     bool policy_was_enabled = Power_disablePolicy();
     Power_enablePolicy();
 
-    // The watchdog keeps counting through STANDBY (WatchdogCC26X4.h: "Once started, the Watchdog will
-    // keep running in Active, Idle and Standby mode"), and with no ClockP event pending the policy stays
-    // in STANDBY until SYNC drops, for up to ClockP's ~9 hour maximum skip. A watchdog reset with SYNC
-    // high starts the ROM bootloader, so wake at half the configured timeout to feed it. Each wake costs
-    // well under 1 ms of active time. With AT+WATCHDOG=0 after the watchdog was started, the hardware
-    // keeps the old reload value, so fall back to a 500 ms period.
+    // The watchdog keeps running in STANDBY, and with no ClockP event pending the policy can stay there for
+    // hours. A watchdog reset with SYNC high starts the ROM bootloader, so wake at half the timeout to feed it.
+    // After AT+WATCHDOG=0 the hardware keeps the old reload value, so use 500 ms.
     ClockP_Handle wake_clock_handle = nullptr;
     if (WatchdogRunning()) {
         uint32_t wake_period_ms = watchdog_timeout_sec_ > 0 ? watchdog_timeout_sec_ * 500 : 500;
@@ -357,10 +345,8 @@ void ADSBee::EnterSyncSleep() {
     // tick) without having reached STANDBY, or while a power constraint is still momentarily held (e.g. a
     // UART/SPI transfer draining). The caller must have quiesced the persistent constraint holders (the
     // SubGHz RF core and the console UART RX) first, or the policy will never descend to STANDBY. It must
-    // also have stopped every ClockP that fires more often than every ~1 ms (the LED clock): the policy
-    // only enters STANDBY when the next ClockP event is more than Power_getTransitionLatency(STANDBY)
-    // away, and falls back to IDLE otherwise. That case holds no constraint, so the warning below
-    // never reports it.
+    // also have stopped any ClockP firing every ~1 ms or faster (the LED clock), or the policy stays in IDLE
+    // without holding a constraint, which the warning below can't see.
     //
     // Constraint diagnostics: a briefly-held constraint (the CONSOLE_INFO above draining, an SPI transfer
     // finishing) clears on its own and is not worth reporting, so only start complaining once STANDBY has
@@ -370,9 +356,8 @@ void ADSBee::EnterSyncSleep() {
     static constexpr uint32_t kConstraintRepeatMs = 1000;
     uint32_t unblocked_timestamp_ms = get_time_since_boot_ms();
     uint32_t next_warning_timestamp_ms = unblocked_timestamp_ms + kConstraintGraceMs;
-    // Sleep length and policy return count, reported on wake. A sleep that reaches STANDBY returns about
-    // once per watchdog wake period; thousands of returns per second mean something keeps the policy
-    // in IDLE (a frequent ClockP or a wake source firing).
+    // Sleep length and policy returns, reported on wake. Thousands of returns per second mean something keeps
+    // the policy in IDLE.
     uint32_t sleep_start_timestamp_ms = unblocked_timestamp_ms;
     uint32_t policy_returns = 0;
     while (GPIO_read(bsp.kSyncPin) == 1) {
@@ -412,10 +397,8 @@ void ADSBee::EnterSyncSleep() {
         Power_disablePolicy();
     }
 
-    // SYNC is now low: swap the wake interrupt back to the rising-edge sleep-request config, clear the
-    // request flag, then re-initialize the receiver to resume where we left off. If SYNC bounces high
-    // during the re-init, the re-armed ISR re-tristates and sets the flag again, the config aborts, and
-    // the main loop re-enters sync sleep.
+    // SYNC is low: restore the sleep-request interrupt, clear the request, and re-init the receiver. If SYNC goes
+    // high during re-init, the ISR sets the flag again and the main loop re-enters sync sleep.
     GPIO_disableInt(bsp.kSyncPin);
     sync_sleep_requested_ = false;
     GPIO_setConfig(bsp.kSyncPin, SyncPinConfig(false));
@@ -778,7 +761,7 @@ bool ADSBee::UpdateLR2021() {
             // Re-arm didn't stick, or the config never applied: full receiver bring-up (resets the
             // health clocks on both outcomes, so a hard failure retries forever on the backoff).
             lr2021_rx_reconfig_count++;
-            if (!receiver_config_rejected_) {  // A rejected config was logged once, when it was rejected.
+            if (!receiver_config_rejected_) {  // Already logged when rejected.
                 CONSOLE_WARNING("ADSBee::UpdateLR2021", "No confirmed RX for %lu ms; reconfiguring receiver.",
                                 (unsigned long)(now_ms - lr2021_last_rx_ok_ms_));
             }

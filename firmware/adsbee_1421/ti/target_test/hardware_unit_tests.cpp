@@ -10,16 +10,13 @@ CPP_AT_CALLBACK(ATTestCallback) {
     }
 
     if (!adsbee.LR2021IsEnabled()) {
-        // AT+LR_ENABLE=0 hands the LR2021 bus to an external host. Every test drives that bus, so running
-        // them would contend with the host.
+        // With AT+LR_ENABLE=0 an external host owns the LR2021 bus, which every test drives.
         CPP_AT_ERROR("LR2021 interface disabled (AT+LR_ENABLE=0); hardware unit tests unavailable.");
     }
 
     int argc = 0;
     const char* argv[1];
-    // The LR2021 tests reset and re-init the chip, which drops the receiver config. Keep the IRQ-paced
-    // drain chain out of the way while they run, then restore reception as it was (including a
-    // user-disabled receiver, which goes back into reset).
+    // The tests reset the LR2021 and drop the receiver config; restore reception as it was afterwards.
     adsbee.BeginDirectLR2021Access();
     int ret = utest_main(argc, argv);
     if (!adsbee.EndDirectLR2021Access()) {

@@ -1,15 +1,9 @@
 #pragma once
 
-// Which LR2021 command a Stat word reports on.
-//
-// The LR2021 puts a command's result in the Stat word at the start of the NEXT SPI frame ("Returns CMD_PERR in the
-// status of the next command", LR20xx datasheet, and the CommandStatus definitions of GetStatus: "the latest
-// command"). So the Stat word read in a command frame reports the command frame before it, and the Stat word of a
-// read's data frame (no opcode; the host clocks out zeros) reports the read itself. A command's own frame never
-// carries its own status: the last command of a sequence is only checked by a frame sent after it
-// (LR2021::CheckLastCommandStatus).
-//
-// Header-only and SDK-free, so the host tests check it (host_test/test_lr2021_status_tracker.cc).
+// Tracks which LR2021 command a Stat word reports on. The LR2021 returns a command's status at the start of the next
+// SPI frame, so a command frame's Stat word reports the previous command and a read's data frame reports the read.
+// The last command of a sequence needs a later frame to check it (LR2021::CheckLastCommandStatus).
+// Header-only and SDK-free for the host tests.
 
 #include <cstdint>
 

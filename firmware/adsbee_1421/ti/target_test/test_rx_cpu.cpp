@@ -1,7 +1,5 @@
-// On-target tests of the 1090 receive path (AT+TEST): its CPU cost in CPU cycles (utils/cycle_counter.hh), for
-// synthetic DF17-mode captures through ADSBee::ParseLR2021RxFifo and PacketDecoder, and what a receiver config
-// the LR2021 rejects (CMD_PERR) does. Every cycle measurement runs with interrupts off, so min/avg/max are the
-// functions' own cost.
+// On-target tests (AT+TEST) of the 1090 receive path: CPU cost of parsing and decoding synthetic DF17 captures,
+// and handling of receiver configs the LR2021 rejects (CMD_PERR). Timing runs with interrupts off.
 #include <ti/drivers/dpl/HwiP.h>
 
 #include <cstring>
@@ -176,9 +174,8 @@ UTEST(ReceiverConfig, PErrResetsAndRetriesTheSameConfig) {
     adsbee.SetR1090PreambleMode(old_mode);  // Back to what the device ran before the test.
 }
 
-// A config rejected on every retry: the receiver stays down in the error state, still on the selected config (never
-// another mode), with the health ladder's backoff doubling on each further rejection; a config that applies clears
-// it all.
+// A config rejected on every retry: the receiver stays down on the selected config, the backoff doubles on each
+// further rejection, and a config that applies clears it all.
 UTEST(ReceiverConfig, RejectedConfigStaysDownInErrorUntilAConfigApplies) {
     const SettingsManager::R1090PreambleMode old_mode = adsbee.GetR1090PreambleMode();
     const uint32_t old_perrs = adsbee.lr2021_config_perr_count;
@@ -206,8 +203,7 @@ UTEST(ReceiverConfig, RejectedConfigStaysDownInErrorUntilAConfigApplies) {
     EXPECT_STREQ(LR2021::OpcodeName(adsbee.lr2021.status_command_opcode()), "SetOokDetector");
     EXPECT_EQ(adsbee.lr2021.last_stat().command_status, LR2021::CommandStatus::kPErr);
 
-    // The health ladder's retry of the same config, rejected again: one try, still down, still MODE_S, backing
-    // off further.
+    // Health-ladder retry, rejected again: one try, still down, still MODE_S, longer backoff.
     adsbee.lr2021.test_detector_len_override_count = 1;
     const uint32_t perrs_before_retry = adsbee.lr2021_config_perr_count;
     EXPECT_FALSE(ADSBeeTestAccessor::ApplyReceiverConfig());
@@ -217,8 +213,8 @@ UTEST(ReceiverConfig, RejectedConfigStaysDownInErrorUntilAConfigApplies) {
               static_cast<int>(SettingsManager::kR1090PreambleModeModeS));
     EXPECT_EQ(ADSBeeTestAccessor::RejectedBackoffMs(), 2 * ADSBeeTestAccessor::BackoffMinMs());
 
-    // The user changes the config (another gain) and the chip rejects that too: a new episode, logged once, with
-    // the retries and the shortest backoff again, and the receiver still on what was selected.
+    // A new config (another gain), also rejected: a new episode, logged once, with full retries and the shortest
+    // backoff.
     const uint8_t old_gain = ADSBeeTestAccessor::SwapGain(7);
     adsbee.lr2021.test_detector_len_override_count = ADSBeeTestAccessor::PErrTries();
     EXPECT_FALSE(ADSBeeTestAccessor::ApplyReceiverConfig());
@@ -242,9 +238,8 @@ UTEST(ReceiverConfig, RejectedConfigStaysDownInErrorUntilAConfigApplies) {
     adsbee.SetR1090PreambleMode(old_mode);  // Back to what the device ran before the test.
 }
 
-// The last command of a sequence only gets its status from a frame sent after it: CheckLastCommandStatus is that
-// frame. A detector the chip rejects, sent last, is caught and named; one it accepts passes. Also the cost of one
-// receiver config that applies (a full reset and config, the unit of the PERR retries).
+// The last command's status only arrives with the next frame, which CheckLastCommandStatus sends. A rejected
+// detector sent last is caught and named; an accepted one passes. Also times one full receiver config.
 UTEST(ReceiverConfig, LastCommandStatusIsCheckedAndNamed) {
     LR2021& lr = adsbee.lr2021;
     lr.DeInit();

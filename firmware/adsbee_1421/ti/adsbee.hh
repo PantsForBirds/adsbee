@@ -39,16 +39,13 @@ class ADSBee {
     // RX_ENABLE/R1090_* settings are remembered and re-applied on enable.
     bool SetLR2021Enabled(bool enabled);
     bool LR2021IsEnabled() const { return lr2021_enabled_; }
-    // Bracket around code that drives the LR2021 directly, outside the receiver config (the AT+TEST
-    // hardware unit tests reset and re-init the chip, which drops the OOK config and the IRQ routing).
-    // BeginDirectLR2021Access() disarms the LR2021 interrupt lines so no IRQ-paced drain chain runs
-    // underneath the caller. EndDirectLR2021Access() re-applies the receiver config, honoring AT+LR_ENABLE
-    // and AT+RX_ENABLE, so reception resumes exactly as it was. Returns false if the re-apply failed (the
-    // RX health ladder keeps retrying it).
+    // Bracket code that drives the LR2021 directly (e.g. the AT+TEST hardware unit tests). Begin disarms the LR2021
+    // interrupts. End re-applies the receiver config (honoring AT+LR_ENABLE and AT+RX_ENABLE) and returns false if
+    // that failed; the RX health ladder keeps retrying.
     void BeginDirectLR2021Access();
     bool EndDirectLR2021Access();
-    // The LR2021 rejected the selected receiver config (CMD_PERR) on every retry; the receiver is down until a
-    // config applies. AT+RX_STATS reports it as rx_cfg_error.
+    // True while the LR2021 rejects the selected receiver config (CMD_PERR) and the receiver is down. AT+RX_STATS
+    // reports it as rx_cfg_error.
     bool ReceiverConfigRejected() const { return receiver_config_rejected_; }
     // Sub-GHz receiver enable is owned by SubGHzRadio (it must open/close the RF core); these forward to it.
     // SetRxSubGHzEnabled() returns false if the RF client failed to open/close.
@@ -82,15 +79,12 @@ class ADSBee {
     // and blocks until the host drives SYNC LOW. The SYNC ISR has usually already tri-stated the shared
     // LR2021 bus within microseconds of the edge; this finishes the job (SPI teardown, wake-interrupt
     // swap, STANDBY loop) and re-runs the full receiver re-init on wake. The caller must quiesce the
-    // SubGHz RF core (SubGHzRadio::Suspend()) and the console UART RX (CommsManager::Suspend()) before
-    // calling this, otherwise their power constraints prevent the MCU from reaching STANDBY, and must
-    // stop the LED clock (LEDs::Suspend()), whose frequent ClockP events keep the policy in IDLE.
+    // SubGHz RF core (SubGHzRadio::Suspend()), the console UART RX (CommsManager::Suspend()) and the LED clock
+    // (LEDs::Suspend()) first, or the MCU can't reach STANDBY.
     void EnterSyncSleep();
 
-    // True when the part code in the device info flash names an ADSBee m1421 at PCBA rev D or later,
-    // which has an external pull-down on SYNC (R5, 120k to GND), so the CC1314's internal SYNC pull-down
-    // is off in every state. False (unknown, blank, unparseable or older board) keeps the internal
-    // pull-down in every state. Decided once, at the start of Init().
+    // True when the device info flash part code names an ADSBee m1421 rev D or later, which has an external SYNC
+    // pull-down (R5, 120k), so the internal one stays off. Otherwise the internal pull-down is used. Set in Init().
     bool BoardHasSyncPullDown() const { return board_has_sync_pull_down_; }
 
     LR2021 lr2021;
@@ -106,8 +100,7 @@ class ADSBee {
     uint32_t lr2021_rx_rearm_count = 0;      // Health ladder: minimal SetRxAdv re-arm (chip left RX).
     uint32_t lr2021_rx_reconfig_count = 0;   // Health ladder: full ApplyReceiverConfig escalation.
     uint32_t lr2021_config_fail_count = 0;   // ApplyReceiverConfig attempts that failed (retried on backoff).
-    // CMD_PERR answers to a receiver config: each one is followed by a hard LR2021 reset and a retry of the
-    // same config (see ApplyReceiverConfigInner).
+    // Receiver configs rejected with CMD_PERR (each is followed by a hard reset and retry).
     uint32_t lr2021_config_perr_count = 0;
     uint32_t lr2021_validity_reconfig_count = 0;  // Validity watchdog: reconfigs after N frames with 0 CRC passes.
 
@@ -116,8 +109,7 @@ class ADSBee {
     uint32_t max_loop_cycles = 0;             // Longest main loop iteration (max_loop_us, at cycle resolution).
     uint64_t loop_total_cycles = 0;           // Sum and count of main loop iterations, for the average.
     uint32_t loop_count = 0;
-    // Share of main loop time spent in the 1090 path (adsbee.Update(): LR2021 drain and parse, plus
-    // packet_decoder.Update()); 1000 minus this is what is left for UAT, reporting and the console.
+    // Main loop cycles spent in the 1090 path (adsbee.Update() and packet_decoder.Update()).
     uint64_t rx1090_total_cycles = 0;
 
     // Longest single super-loop iteration observed, in microseconds. Reported and reset via AT+RX_STATS. Every
@@ -157,9 +149,8 @@ class ADSBee {
     // (Re)applies the current receiver configuration (sync mode, gain, CRC filter) to the LR2021.
     bool ApplyReceiverConfig();
 
-    // GPIO config for the SYNC pin: falling-edge wake interrupt while in sync sleep, rising-edge
-    // sleep-request interrupt while awake, with the pull chosen by BoardHasSyncPullDown(). Every SYNC
-    // GPIO_setConfig goes through here so the board-revision decision lives in one place.
+    // SYNC pin GPIO config: falling-edge wake while asleep, rising-edge sleep request while awake, with the pull
+    // from BoardHasSyncPullDown(). All SYNC GPIO_setConfig calls go through here.
     uint32_t SyncPinConfig(bool asleep) const;
     // Reads the part code from the device info flash and sets board_has_sync_pull_down_.
     void DetectBoardSyncPullDown();
@@ -199,11 +190,9 @@ class ADSBee {
     // ApplyReceiverConfig after kMaxRearmAttempts (or immediately if the last config attempt failed).
     static constexpr uint32_t kRxHealthTimeoutMs = 1000;
     static constexpr uint32_t kRxRecoveryBackoffMs = 2000;
-    // A receiver config the LR2021 answers with CMD_PERR is retried right away, after a hard reset, this many
-    // more times. If it is still rejected the receiver stays down in the error state (ReceiverConfigRejected)
-    // and the health ladder keeps retrying the SAME config, one try per retry, with the backoff doubling from
-    // kConfigRejectedBackoffMinMs to kConfigRejectedBackoffMaxMs. A try is a full reset and config, about
-    // 8.6 ms of main loop (measured on target). The receiver never runs a config the user did not select.
+    // Immediate hard-reset retries of a config rejected with CMD_PERR. If all fail, the receiver stays down and
+    // the health ladder retries the same config, doubling the backoff from kConfigRejectedBackoffMinMs to
+    // kConfigRejectedBackoffMaxMs. Each try costs about 9 ms of main loop.
     static constexpr uint8_t kConfigPErrRetries = 2;
     static constexpr uint32_t kConfigRejectedBackoffMinMs = 2000;
     static constexpr uint32_t kConfigRejectedBackoffMaxMs = 60000;
@@ -219,12 +208,10 @@ class ADSBee {
     uint32_t lr2021_last_recovery_ms_ = 0;  // Last recovery attempt (re-arm or reconfig), for backoff.
     uint8_t lr2021_rearm_attempts_ = 0;     // Consecutive minimal re-arms without a confirmed kRx.
     bool receiver_config_ok_ = false;       // Last ApplyReceiverConfig attempt succeeded end-to-end.
-    // The LR2021 rejected the current receiver config (CMD_PERR) on every retry: the receiver is held in reset
-    // and AT+RX_STATS reports rx_cfg_error=1. Cleared when a config applies.
+    // Every retry of the current config got CMD_PERR; the receiver is held in reset. Cleared when a config applies.
     bool receiver_config_rejected_ = false;
     uint32_t config_rejected_backoff_ms_ = 0;  // Health-ladder backoff while rejected (doubles per failed try).
-    // The config of the current rejection episode, so a repeat is not logged again and a new config (the user
-    // changed it) starts a new episode with the shortest backoff.
+    // Config of the current rejection, so a repeat isn't logged again and a new config restarts the backoff.
     SettingsManager::R1090PreambleMode rejected_mode_ = SettingsManager::kR1090PreambleModeDF17;
     uint8_t rejected_gain_ = 0;
     uint8_t rejected_rx_boost_ = 0;
@@ -233,7 +220,7 @@ class ADSBee {
         return receiver_config_rejected_ ? config_rejected_backoff_ms_ : kRxRecoveryBackoffMs;
     }
     void OnReceiverConfigRejected();
-    // The config being applied is the one already rejected (a health-ladder retry, not a new episode).
+    // True if the config being applied was already rejected (a health-ladder retry).
     bool RejectedConfigIsCurrent() const {
         return receiver_config_rejected_ && rejected_mode_ == r1090_preamble_mode_ && rejected_gain_ == r1090_gain_ &&
                rejected_rx_boost_ == r1090_rx_boost_;

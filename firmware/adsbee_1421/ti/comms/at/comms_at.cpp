@@ -349,8 +349,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
     switch (op) {
         case '?': {
             LR2021::OokRxStatsAdv stats = {};
-            // With the config rejected the chip is held in reset and has no stats to give; the rest of the line
-            // (rx_cfg_error above all) is what matters then, so report its counters as 0.
+            // A rejected config holds the chip in reset with no stats, so report its counters as 0.
             if (!adsbee.ReceiverConfigRejected() && !adsbee.lr2021.GetOokRxStatsAdv(&stats)) {
                 CPP_AT_ERROR("Failed to read LR2021 Rx stats.");
             }
@@ -553,8 +552,8 @@ CPP_AT_CALLBACK(CommsManager::ATBootloaderPinCallback) {
             DrainConsoleTx();
             CcfgBootloader::WriteReport report = CcfgBootloader::Apply(plan, enable);
             if (report.Failed()) {
-                // Loud and multi-line: a CCFG the boot ROM can't use leaves a module only JTAG or the ROM bootloader
-                // can recover. Printed as errors, and as part of the AT response too when the log level hides errors.
+                // A CCFG the boot ROM can't use leaves only JTAG or the ROM bootloader for recovery, so print it as
+                // errors, and in the AT response too when the log level hides errors.
                 const bool errors_logged = settings_manager.settings.log_level >= SettingsManager::LogLevel::kErrors;
                 CcfgBootloader::FailureBanner(report, [errors_logged](const char* line) {
                     CONSOLE_ERROR("AT+BOOTLOADER_PIN", "%s", line);

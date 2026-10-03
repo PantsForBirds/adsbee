@@ -26,21 +26,16 @@ class CommsManager {
     // depth 8 covers a full 50ms reporting check interval of back-to-back slots (~580B per entry).
     static constexpr uint16_t kUATUplinkPacketReportingQueueDepth = 8;
 
-    // Raw packet reports (RAW, Beast, GDL90 uplink) are formatted in chunks of at most this many packets per main loop
-    // iteration, so a burst of traffic is spread over several iterations instead of stalling one. Formatting a RAW
-    // Mode S frame takes ~150 us on the CC1314, so a chunk adds ~0.5 ms to an iteration. Main loop iterations are short
-    // enough that one chunk per iteration still produces reports faster than the 1 Mbaud UART can send them (~2000
-    // RAW Mode S frames/s).
+    // Max raw packet reports (RAW, Beast, GDL90 uplink) formatted per main loop iteration, so a burst is spread over
+    // several iterations. A chunk adds ~0.5 ms and still outpaces the 1 Mbaud UART.
     static constexpr uint16_t kRawReportMaxModeSPacketsPerUpdate = 3;
     static constexpr uint16_t kRawReportMaxUATADSBPacketsPerUpdate = 2;
     static constexpr uint16_t kRawReportMaxUATUplinkPacketsPerUpdate = 1;
 
     static constexpr uint16_t kATCommandBufMaxLen = 1000;
     static constexpr uint16_t kPrintfBufferMaxSize = 1000;
-    // Software TX ring behind the console UART. Raw reports are formatted into it one chunk per main loop iteration
-    // (see kRawReportMaxModeSPacketsPerUpdate) and only when a worst-case chunk fits, so it absorbs bursts of reports
-    // plus console traffic without the main loop waiting on the wire. At 1 Mbaud a full ring drains in ~80 ms. Must be
-    // a power of two.
+    // Software TX ring behind the console UART, so bursts of output don't block the main loop. A full ring drains in
+    // ~80 ms at 1 Mbaud. Must be a power of two.
     static constexpr uint16_t kUartTxRingBytes = 8192;
     static_assert((kUartTxRingBytes & (kUartTxRingBytes - 1)) == 0, "kUartTxRingBytes must be a power of two.");
 

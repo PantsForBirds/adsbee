@@ -1,6 +1,5 @@
-// LR2021 Mode S detector patterns (lr2021_ook_adsb.hh), checked against a chip-level model of a Mode S
-// transmission: the preamble, the data chips, and what the demodulator puts out while the AGC settles on a strong
-// packet (the first 9 chips blanked).
+// LR2021 Mode S detector patterns (lr2021_ook_adsb.hh), checked against a chip-level model of a Mode S packet,
+// including the AGC blanking the first 9 chips of a strong one.
 #include <random>
 #include <vector>
 
@@ -65,9 +64,7 @@ TEST(LR2021OokAdsb, PatternValidity) {
     EXPECT_EQ(PreambleChipsPattern(0, 9), 0b1010000101);
 }
 
-// A strong packet makes the AGC cut the gain during the preamble, and the demodulator puts out 0 for
-// the first 9 chips. The standard pattern then differs from what the detector sees in 3 chips, the
-// strong pattern in 1.
+// AGC blanking zeroes the first 9 chips: the standard pattern then misses by 3 chips, the strong pattern by 1.
 TEST(LR2021OokAdsb, AgcBlanking) {
     std::vector<uint8_t> chips = ModeSChips({0x5D, 0xAB, 0xCD, 0xEF, 0x00, 0x00, 0x00});
     for (size_t i = 0; i < 9; i++) {
@@ -81,9 +78,7 @@ TEST(LR2021OokAdsb, AgcBlanking) {
               1);
 }
 
-// Without blanking, the strong pattern also lies one chip away from the first pulse pair, 7 chips
-// early (the preamble is two copies of 1010000). The detector latches onto that near-match and then
-// syncs late in the data, which is why MODE_S_STRONG is only for strong signals.
+// Without blanking, the strong pattern also matches within one chip 7 chips early, so it syncs late on weak signals.
 TEST(LR2021OokAdsb, StrongPatternAliasOnCleanPreamble) {
     std::vector<uint8_t> chips(7, 0);  // Silence before the packet.
     std::vector<uint8_t> packet = ModeSChips({0x8D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
@@ -110,8 +105,7 @@ TEST(LR2021OokAdsb, OokDetectThresholdRegValue) {
     EXPECT_EQ(OokDetectThresholdRegValue(0xFF) & ~kOokDetectThresholdMask, 0u);
 }
 
-// The DF17 pattern is preamble chips 8-15 plus the chips of the first four DF bits, so it matches at the end of
-// the preamble of a DF 16 or 17 frame, and only there: six quiet chips never occur inside Manchester data.
+// The DF17 pattern matches only at the end of a DF 16/17 preamble: six quiet chips never occur inside data.
 TEST(LR2021OokAdsb, DF17Pattern) {
     const std::vector<uint8_t> chips = ModeSChips({0x8D, 0x48, 0x40, 0xD6, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0,
                                                    0x57, 0x60, 0x98});
@@ -149,8 +143,7 @@ TEST(LR2021OokAdsb, DF17Pattern) {
     }
 }
 
-// ReconstructDF17Frame gives the same 128 bits as the 0.3.11-rc3 reconstruction: the consumed DF bits, the
-// 112 capture bits after them, and zeros from bit 116 on.
+// ReconstructDF17Frame output: the consumed DF bits, the 112 capture bits, then zeros.
 TEST(LR2021OokAdsb, DF17Reconstruction) {
     std::mt19937 rng(1421);
     for (int n = 0; n < 100000; n++) {
