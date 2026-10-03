@@ -1,0 +1,112 @@
+# Exports word/*.docx to word/exports/<name>.pdf with LibreOffice.
+#   pull_request -> docx changed in the PR whose PDF is older than the docx; PDFs are committed to the
+#                   PR branch (artifact only for forks)
+#   workflow_dispatch -> all docx; committed to the chosen branch (artifact only on the default branch)
+# Pushes made with GITHUB_TOKEN don't trigger workflows, so the export commit doesn't loop.
+name: docx-export
+
+on:
+  pull_request:
+    paths:
+      - "word/**.docx"
+  workflow_dispatch:
+
+concurrency:
+  group: docx-export-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  export:
+    # Pinned so the LibreOffice version (and layout) only changes on purpose.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      PUSH: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && github.ref_name != github.event.repository.default_branch) }}
+      BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.head_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Select docs
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --no-tags "https://github.com/$BASE_REPO" "$BASE_SHA"
+            docs=()
+            for doc in $(git diff --name-only --diff-filter=d "$BASE_SHA"...HEAD -- 'word/*.docx'); do
+              pdf="word/exports/$(basename "$doc" .docx).pdf"
+              # Skip if the PDF was committed with or after the docx (already exported).
+              if [ -f "$pdf" ] && git merge-base --is-ancestor \
+                  "$(git log -1 --format=%H -- "$doc")" "$(git log -1 --format=%H -- "$pdf")"; then
+                echo "Up to date: $pdf"
+              else
+                docs+=("$doc")
+              fi
+            done
+          else
+            docs=(word/*.docx)
+          fi
+          echo "Exporting: ${docs[*]:-none}"
+          echo "docs=${docs[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Install LibreOffice and fonts
+        if: steps.select.outputs.docs != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer-nogui \
+            fonts-crosextra-carlito fonts-liberation fonts-inconsolata
+          poppins=https://raw.githubusercontent.com/google/fonts/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/poppins
+          mkdir -p ~/.local/share/fonts ~/.config/fontconfig
+          for style in Regular Italic Light Medium SemiBold SemiBoldItalic Bold BoldItalic; do
+            curl -fsSL -o ~/.local/share/fonts/Poppins-$style.ttf "$poppins/Poppins-$style.ttf"
+          done
+          cp .github/docx-export/fonts.conf ~/.config/fontconfig/fonts.conf
+          fc-cache -f
+          # Fail if a Word font has no intended substitute.
+          check() { fc-match -f '%{family}\n' "$1" | grep -qx "$2" || { echo "$1 -> $(fc-match "$1")"; exit 1; }; }
+          check Calibri Carlito
+          check "Calibri Light" Carlito
+          check Poppins Poppins
+          check "Poppins SemiBold" "Poppins SemiBold"
+          check Consolas Inconsolata
+          check "Times New Roman" "Liberation Serif"
+          check "Courier New" "Liberation Mono"
+
+      - name: Export
+        if: steps.select.outputs.docs != ''
+        env:
+          DOCS: ${{ steps.select.outputs.docs }}
+        run: |
+          soffice --version
+          soffice --headless --convert-to pdf --outdir word/exports $DOCS
+          mkdir -p "$RUNNER_TEMP/pdfs"
+          for doc in $DOCS; do
+            cp "word/exports/$(basename "$doc" .docx).pdf" "$RUNNER_TEMP/pdfs/"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: steps.select.outputs.docs != ''
+        with:
+          name: docx-export-pdfs
+          path: ${{ runner.temp }}/pdfs
+
+      - name: Commit PDFs
+        if: steps.select.outputs.docs != '' && env.PUSH == 'true'
+        run: |
+          git add word/exports
+          if git diff --cached --quiet; then
+            echo "No PDF changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "word: export PDFs" -m "$(git diff --cached --name-only)"
+          git push origin HEAD:"$BRANCH"
