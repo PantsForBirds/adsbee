@@ -1171,15 +1171,9 @@ class AircraftDictionary {
      */
     bool ContainsAircraft(uint32_t uid) const;
 
-    // Several dictionary entries can describe the same 24-bit ICAO address: the aircraft's own 1090ES (Mode S entry),
-    // its own UAT ADS-B (UAT entry, address qualifier 0), and ground station rebroadcasts of it (DF18 on 1090, which
-    // marks the Mode S entry non-transponder, or UAT TIS-B/ADS-R with address qualifier 2). Outputs that are keyed by
-    // address (aircraft JSON, GDL90 traffic) report only one of them, so that clients don't flip between positions.
-    // DO-260B/DO-282B intent (and readsb's source ranking): a receiver uses the aircraft's own ADS-B, and a rebroadcast
-    // only while nothing better is being received. So: the best-ranked entry with a position updated in the last
-    // kPreferredReportPositionFreshMs wins; if none has a fresh position, the newest position wins (then the best
-    // rank), so the report never falls back to an older position than the one it could show. 15 s covers the TIS-B
-    // update interval (one radar scan, 4.8-12 s).
+    // One ICAO address can have several entries: its own 1090ES, its own UAT ADS-B, and ground rebroadcasts (DF18, UAT
+    // TIS-B/ADS-R). Address-keyed outputs (aircraft JSON, GDL90 traffic) report one: the best-ranked entry with a
+    // position newer than kPreferredReportPositionFreshMs, else the newest position. 15 s covers a TIS-B radar scan.
     static constexpr uint32_t kPreferredReportPositionFreshMs = 15e3;
     enum AddressSourceRank : int8_t {
         kAddressSourceRankDirect = 0,       // 1090ES DF17 / Mode S replies, or UAT ADS-B with an ICAO address.
