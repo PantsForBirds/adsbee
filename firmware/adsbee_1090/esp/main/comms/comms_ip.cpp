@@ -302,15 +302,14 @@ void CommsManager::IPWANTask(void* pvParameters) {
          * deallocated. Here, we can unpack the buffer into a CompositeArray object with pointers because we know it
          * won't go out of scope till we are done with it.
          */
+        CompositeArray::RawPackets reporting_composite_array;
         if (xQueueReceive(ip_wan_reporting_composite_array_queue_, raw_packets_buf, kWiFiSTATaskUpdateIntervalTicks) !=
             pdTRUE) {
-            // No packets available to send, wait and try again.
-            continue;
-        }
-
-        CompositeArray::RawPackets reporting_composite_array;
-        if (!CompositeArray::UnpackRawPacketsBuffer(reporting_composite_array, raw_packets_buf,
-                                                    CompositeArray::RawPackets::kMaxLenBytes)) {
+            // No packets: still drive the locally decoded protocols, which send the heartbeats.
+            reporting_composite_array = CompositeArray::PackRawPacketsBuffer(
+                raw_packets_buf, sizeof(CompositeArray::RawPackets::Header), nullptr, nullptr, nullptr);
+        } else if (!CompositeArray::UnpackRawPacketsBuffer(reporting_composite_array, raw_packets_buf,
+                                                           CompositeArray::RawPackets::kMaxLenBytes)) {
             CONSOLE_ERROR("CommsManager::IPWANTask", "Failed to unpack CompositeArray from buffer.");
             continue;
         }
