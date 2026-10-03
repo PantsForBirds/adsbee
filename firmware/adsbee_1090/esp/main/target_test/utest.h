@@ -1556,11 +1556,8 @@ int utest_main(int argc, const char *const argv[]) {
     }
 
 cleanup:
-    // ADSBee: keep the test registry (utest_state.tests and each test name). Static constructors fill it once per
-    // boot, and upstream frees it here without clearing it because it expects the program to exit next. AT+TEST
-    // calls utest_main again in the same boot, which would then run the tests from freed memory and free it twice.
-    // The registry is allocated once and reused by every run, so keeping it doesn't leak. skipped_testcases and
-    // failed_testcases are allocated by this run only, so they are still freed below.
+    // ADSBee: keep the test registry (utest_state.tests), which static constructors fill once per boot. AT+TEST runs
+    // utest_main again in the same boot, so freeing it here would cause a use-after-free.
     free(UTEST_PTR_CAST(void *, skipped_testcases));
     free(UTEST_PTR_CAST(void *, failed_testcases));
 

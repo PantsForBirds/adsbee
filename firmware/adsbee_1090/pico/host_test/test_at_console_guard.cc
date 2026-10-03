@@ -56,7 +56,7 @@ TEST(ATConsoleGuard, TextLinesPass) {
 TEST(ATConsoleGuard, BinaryLinesAreDropped) {
     ATConsoleGuard guard;
     Assembler a(guard);
-    // An embedded NUL used to truncate the line to a clean-looking C string ("\tAT+BOOT_USB_UF2=1DEADBEE").
+    // An embedded NUL must not truncate the line to a clean-looking command.
     EXPECT_TRUE(Feed(a, std::string("\tAT+BOOT_USB_UF2=1DEADBEE\0\x01\x02\n", 30)).empty());
     EXPECT_TRUE(Feed(a, "AT+REBOOT\x1b[0m\r\n").empty());  // Control characters.
     EXPECT_TRUE(Feed(a, "AT+REBOOT\x7f\r\n").empty());

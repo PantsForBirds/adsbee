@@ -195,8 +195,8 @@ TEST(SPICoprocessor, LogMessagesOffsetChunkedReassembly) {
         }
     }
 }
-// A read request is exactly kBufLenBytes. The ESP32 slave hands ConstructFromBuffer() whatever it received, so a torn
-// frame that happens to start with the read command used to be copied in full past the end of the (static) packet.
+// A read request is exactly kBufLenBytes. The ESP32 passes whatever it received, so other lengths must be rejected
+// without writing past the packet.
 TEST(SPICoprocessorPacket, SCReadRequestPacketRejectsWrongLengthWithoutOverflow) {
     using SCReadRequestPacket = SPICoprocessorPacket::SCReadRequestPacket;
     struct {

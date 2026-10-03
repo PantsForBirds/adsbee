@@ -430,7 +430,7 @@ TEST(AircraftJSON, MessagesIsCumulativeAcrossMetricsIntervals) {
     EXPECT_EQ(GetJSONValue(std::string_view(buf, len), "messages"), "5");
 }
 
-// DO-282B address qualifier 6 is an ADS-R target with a non-ICAO address. It was reported as a direct "adsb_icao".
+// DO-282B address qualifier 6 is an ADS-R target with a non-ICAO address, not a direct "adsb_icao".
 TEST(AircraftJSON, UATAircraftADSRNonICAOAddress) {
     char buf[kAircraftJSONMessageStrMaxLen];
     UATAircraft ac;
@@ -442,9 +442,8 @@ TEST(AircraftJSON, UATAircraftADSRNonICAOAddress) {
     EXPECT_EQ(GetJSONValue(std::string_view(buf), "type"), "adsr_other");
 }
 
-// One ICAO address can have several dictionary entries: the aircraft's own 1090ES (Mode S) or UAT ADS-B, and ground
-// station rebroadcasts (DF18, UAT TIS-B/ADS-R). Only one of them is reported per address, so a client keyed by hex
-// doesn't flip between a stale direct position and a live TIS-B one.
+// An address can have direct and rebroadcast (TIS-B/ADS-R) entries. Only one is reported per address, so clients
+// keyed by hex don't flip between them.
 class PreferredReportForAddress : public ::testing::Test {
    protected:
     static constexpr uint32_t kICAO = 0xA41090;
@@ -477,8 +476,7 @@ TEST_F(PreferredReportForAddress, DirectADSBBeatsFreshTISB) {
 }
 
 TEST_F(PreferredReportForAddress, FreshTISBBeatsStaleDirectPosition) {
-    // Field case (a41090): the 1090ES entry kept a position frozen for minutes (other Mode S replies kept the entry
-    // alive), while UAT TIS-B tracked the aircraft 6 nm away.
+    // Other Mode S replies can keep a direct entry alive with a frozen position.
     ModeSAircraft* mode_s = AddModeS(true, AircraftDictionary::kPreferredReportPositionFreshMs + 1);
     UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 4000);
     EXPECT_FALSE(Preferred(mode_s->GetUID()));
@@ -493,8 +491,7 @@ TEST_F(PreferredReportForAddress, TISBBeatsDirectWithoutPosition) {
 }
 
 TEST_F(PreferredReportForAddress, NewestPositionWinsWhenNothingIsFresh) {
-    // Field case (a8cfae, 1090U): TIS-B missed an update, so neither position was fresh, and the direct 1090ES entry
-    // with a position frozen for 72 s won and the target jumped 3.5 nm back until the next TIS-B update.
+    // Neither position is fresh: the newer TIS-B position wins over a 72 s old direct one.
     ModeSAircraft* mode_s = AddModeS(true, 72000);
     UATAircraft* tisb = AddUAT(UATAircraft::kTISBTargetWithICAO24BitAddress, true, 16000);
     EXPECT_FALSE(Preferred(mode_s->GetUID()));
@@ -529,8 +526,7 @@ TEST_F(PreferredReportForAddress, LoneAndNonICAOEntriesAreAlwaysReported) {
     EXPECT_FALSE(Preferred(tisb->GetUID()));
 }
 
-// "link" tells a map which link a report came from (both links report direct targets as "adsb_icao"), and "seen_pos"
-// how old the position is, so a held position can be told from a live one.
+// "link" names the source link (both report direct targets as "adsb_icao"); "seen_pos" is the position's age.
 TEST(AircraftJSON, LinkAndSeenPos) {
     char buf[kAircraftJSONMessageStrMaxLen];
     ModeSAircraft mode_s(0xA41090);

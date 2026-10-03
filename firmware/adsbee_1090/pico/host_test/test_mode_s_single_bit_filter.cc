@@ -28,8 +28,7 @@ static int16_t FilteredFindSingleBitError(uint32_t syndrome) {
     return kFilter.MayMatch(syndrome) ? crc24_find_single_bit_error(syndrome, kFrameLenBits) : -1;
 }
 
-// The prefilter must never hide a match of crc24_find_single_bit_error: every one of the firmware's 112 single-bit
-// syndromes passes it, and each is the CRC of its single bit.
+// All 112 single-bit syndromes pass the prefilter, and each is the CRC of its bit.
 TEST(ModeSSingleBitFilter, PassesEverySingleBitSyndrome) {
     for (uint16_t i = 0; i < kFrameLenBits; i++) {
         EXPECT_EQ(kBitSyndromes.v[i], crc24_single_bit_syndrome_112[i]) << "bit " << i;
@@ -49,8 +48,7 @@ TEST(ModeSSingleBitFilter, RejectsMostRandomSyndromes) {
     EXPECT_LT(passes, 4000) << "prefilter passed " << passes << " of 100000 random syndromes";
 }
 
-// The filtered search returns exactly what the plain search returns, for random syndromes (almost all of which are
-// not single-bit errors) and for every single-bit syndrome.
+// Filtered and plain searches agree for random and single-bit syndromes.
 TEST(ModeSSingleBitFilter, FilteredSearchMatchesPlainSearch) {
     std::mt19937 rng(112);
     int num_found = 0;

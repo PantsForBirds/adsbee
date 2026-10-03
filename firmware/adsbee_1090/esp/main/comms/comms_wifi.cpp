@@ -25,8 +25,7 @@ static const uint16_t kWiFiAPMessageQueueTimeout = 100;     // ms
 static const uint16_t kWiFiSTAMessageQueueTimeoutMs = 100;  // ms
 static const uint32_t kWANQueueOverflowLogIntervalMs = 10000;
 
-// Counts packets dropped because the WAN queue overflowed and logs them at most once per
-// kWANQueueOverflowLogIntervalMs, since a stalled feed path can overflow the queue every few seconds.
+// Counts packets dropped by WAN queue overflows; logs at most once per kWANQueueOverflowLogIntervalMs.
 static void LogWANQueueOverflow(const uint8_t* raw_packets_buf) {
     static uint32_t num_overflows = 0, dropped_mode_s = 0, dropped_uat_adsb = 0, dropped_uat_uplink = 0;
     static uint32_t last_log_timestamp_ms = 0;
@@ -87,8 +86,7 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
             break;
         }
         case WIFI_EVENT_STA_START: {
-            // The ADSBee is attempting to connect to an external network. Never log WiFi passwords: the console log
-            // reaches the RP2040 console and the web UI's /console websocket.
+            // Never log WiFi passwords: the console log reaches the web UI.
             CONSOLE_INFO("CommsManager::WiFiInit", "WiFi Station started. SSID:%s", wifi_sta_ssid);
             ESP_ERROR_CHECK(esp_wifi_connect());
             // Note: wifi_sta_has_ip_ will get filled in by the IP event handler if an IP is issued.

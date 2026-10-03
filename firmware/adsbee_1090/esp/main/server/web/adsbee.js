@@ -832,8 +832,7 @@ class FirmwareUploader {
         metricsWebSocket.pause();
         let ok = false;
         try {
-            // Opening the updater's /console connection right after closing the page's own is reset by the ESP32;
-            // give it a moment to release the old session.
+            // Give the ESP32 time to release the page's /console session, or it resets the updater's connection.
             await new Promise((r) => setTimeout(r, 1500));
             const bytes = new Uint8Array(await file.arrayBuffer());
             const updater = new AdsbeeOta.OtaUpdater({
@@ -1030,9 +1029,8 @@ const RID_UA_TYPE_STRINGS = [
     'Ground Obstacle', 'Other'
 ];
 
-// Traffic sources. The firmware sends one record per ICAO address, from the preferred source (the aircraft's own 1090
-// or UAT ADS-B, else a ground station's ADS-R or TIS-B rebroadcast of it); the map labels and outlines each target by
-// that source so a rebroadcast can be told from direct ADS-B.
+// Traffic sources. The firmware sends each aircraft from its preferred source (direct ADS-B, else ADS-R or TIS-B
+// rebroadcast); the map outlines each target by source.
 const TRAFFIC_SOURCES = {
     adsb_1090: { label: '1090 ADS-B', stroke: 'rgba(0,0,0,0.5)', dash: '' },
     adsb_uat: { label: 'UAT ADS-B', stroke: '#0057b8', dash: '' },
@@ -1040,8 +1038,7 @@ const TRAFFIC_SOURCES = {
     tisb: { label: 'TIS-B', stroke: '#7b2fbe', dash: '2,2' },
     rid: { label: 'Remote ID', stroke: '#c026d3', dash: '' },
 };
-// A position older than this (seconds, from "seen_pos") is drawn faded: the target is still heard, but its position
-// is being held rather than updated.
+// Positions older than this (seconds, from "seen_pos") are drawn faded.
 const kStalePositionS = 15;
 
 function acSource(ac) {

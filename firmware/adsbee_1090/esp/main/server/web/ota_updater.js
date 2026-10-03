@@ -3,19 +3,14 @@
 // No DOM access, so it runs in node for the tests in test/ota_updater.test.js. The page (adsbee.js,
 // FirmwareUploader) drives it with a websocket transport and shows its progress.
 //
-// Why it does more than send the chunks in order: the receiving RP2040 reads each OTA=WRITE payload with a 5 s
-// timeout, and on a busy network the payload often arrives later (always for the first write after the 12 s erase on
-// 0.9.0-rc19). The write then fails, and the late bytes show up as console noise; on firmware up to 0.9.1-rc4 they are
-// even parsed as AT commands. So:
-//   - Warm-up writes of 0xFF (a no-op on erased flash, and no newline for an old parser to act on) absorb the first
-//     failures before any real data is sent.
-//   - Every write, including the header, is retried. Before a retry the console is drained until it has been quiet
-//     for a while, on the same connection; reconnecting at once makes the ESP32 drop the next command while its queue
-//     still holds the late payload. From the third retry a fresh connection is used, in case the session broke.
-//   - The final, short chunk is sent first, padded with 0xFF (bytes past the image length are never checked).
-//   - OK / READY / ERROR are matched as whole lines: late payload echoed in parse errors can contain "OK".
-//   - If the update fails, the log level, receivers and console protocol are put back as they were, and the ADSBee
-//     keeps running its current firmware (the new partition is only marked bootable by OTA=VERIFY).
+// The RP2040 reads each OTA=WRITE payload with a 5 s timeout, and on a busy network the payload often arrives later.
+// The write then fails and older firmware may parse the late bytes as AT commands. So:
+//   - Warm-up writes of 0xFF (a no-op on erased flash, no newline) absorb the first failures.
+//   - Every write is retried after the console has gone quiet. From the third retry a fresh connection is used.
+//   - The short final chunk is sent first, padded with 0xFF.
+//   - OK / READY / ERROR are matched as whole lines, since echoed payload can contain "OK".
+//   - On failure, settings are restored and the current firmware keeps running (only OTA=VERIFY makes the new image
+//     bootable).
 
 (function (root) {
     'use strict';
@@ -25,9 +20,8 @@
     const OTA_MAGIC = 0x0AD5BEEE;
 
     const DEFAULTS = {
-        // One flash sector per write: each chunk is one websocket frame, and the ESP32 needs a contiguous buffer for
-        // it (with Bluetooth Remote ID the largest free block can be ~10 KB). Must stay a multiple of 4096 so retry
-        // erases stay sector-aligned.
+        // One flash sector per websocket frame; the ESP32 needs a contiguous buffer for it. Must be a multiple of
+        // 4096 so retry erases stay sector-aligned.
         chunkBytes: 0x1000,
         warmupSuccesses: 2,    // 0xFF writes that must succeed in a row before the image.
         warmupMaxAttempts: 12,
@@ -42,8 +36,7 @@
         drainQuietMs: 3000,
         drainMaxMs: 60000,
         reconnectDelayMs: 2000,
-        // The ESP32 allows 4 /console clients, and sessions of a page that was just closed or reloaded can hold a
-        // slot for a while, so the first connection may be refused.
+        // The ESP32 allows 4 /console clients and closed pages can hold a slot for a while.
         connectAttempts: 6,
         connectRetryDelayMs: 5000,
         interWriteDelayMs: 50,

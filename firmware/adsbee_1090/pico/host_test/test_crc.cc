@@ -80,9 +80,7 @@ TEST(CRC, CRC24SingleBitError56) {
     flip_bit(message, 27);
     EXPECT_EQ(crc24_syndrome(message, 7), icao);
 }
-// The bitwise word-buffer CRC that DecodedModeSPacket::CalculateCRC24 used before it switched to the table CRC in
-// crc.cpp (removed from mode_s_packet.cpp), kept here as the reference. Algorithm from The 1090MHz Riddle (Junzi Sun),
-// pg. 91: a conditional convolution of the frame with the 25-bit generator word.
+// Bitwise reference CRC from The 1090MHz Riddle (Junzi Sun), p. 91: divides the frame by the 25-bit generator.
 static uint32_t WordBufferCRC24(const uint32_t buffer[RawModeSPacket::kMaxPacketLenWords32], uint16_t packet_len_bits) {
     uint32_t crc_buffer[RawModeSPacket::kMaxPacketLenWords32];
     for (uint16_t i = 0; i < RawModeSPacket::kMaxPacketLenWords32; i++) crc_buffer[i] = buffer[i];
@@ -96,8 +94,7 @@ static uint32_t WordBufferCRC24(const uint32_t buffer[RawModeSPacket::kMaxPacket
     return GetNBitsFromWordBuffer(24, packet_len_bits - 24, crc_buffer);
 }
 
-// CalculateCRC24 (table CRC) is bit for bit the same as the word-buffer CRC it replaced, for random 56 and 112-bit
-// frames of every downlink format.
+// The table CRC matches the bitwise reference for random 56 and 112-bit frames.
 TEST(CRC, CalculateCRC24MatchesWordBufferCRC) {
     std::mt19937 rng(24);
     for (int n = 0; n < 100000; n++) {

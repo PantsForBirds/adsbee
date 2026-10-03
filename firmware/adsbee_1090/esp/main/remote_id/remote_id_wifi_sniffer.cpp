@@ -1,13 +1,10 @@
 // WiFi promiscuous sniffer for Broadcast Remote ID (ASTM F3411) over WiFi beacon frames.
 //
-// When WiFi AP/STA are disabled the WiFi radio is repurposed as a channel-hopping (1/6/11) sniffer while Ethernet
-// carries IP. The driver is brought up in NULL mode with trimmed RX buffers and promiscuous mode enabled; beacon frames
-// are scanned for the Open Drone ID vendor-specific IE (OUI FA:0B:BC, type 0x0D) and the enclosed message pack is
-// handed to RemoteIDManager::OnRawRemoteIDPacket().
+// Beacons are scanned for the Open Drone ID vendor IE (OUI FA:0B:BC, type 0x0D); the message pack goes to
+// RemoteIDManager::OnRawRemoteIDPacket().
 //
-// On hardware with PSRAM the sniffer may also run while WiFi AP/STA are up ("attached" mode): promiscuous RX is enabled
-// on the running AP/STA driver and the radio stays locked to the AP/STA channel, so reception is best-effort (only
-// transmitters on that channel are heard). RemoteIDManager only picks attached mode when PSRAM was detected.
+// With WiFi AP/STA off the sniffer owns the radio (NULL mode) and hops channels 1/6/11. With AP/STA up (PSRAM only,
+// "attached" mode) it hears only the AP/STA channel.
 
 #include "remote_id_manager.hh"
 
@@ -202,7 +199,7 @@ uint16_t BuildODIDBeaconFrame(uint8_t* buf, uint16_t buf_len_bytes, const uint8_
 bool RemoteIDManager::WiFiSnifferStart(bool attach_to_network_wifi) {
     if (wifi_sniffer_running_) return true;
 
-    // Attached mode rides on the driver CommsManager::WiFiInit() already started for AP/STA; don't init it again.
+    // Attached mode uses the driver CommsManager::WiFiInit() already started.
     if (!attach_to_network_wifi && !WiFiRadioAcquire()) return false;
 
     wifi_promiscuous_filter_t filter = {.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT};

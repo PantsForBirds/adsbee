@@ -32,8 +32,7 @@ TEST(SPILinkGate, ResetClearsDown) {
     EXPECT_EQ(gate.AttemptsAllowed(3), 3);
 }
 
-// With the link dead, a main loop pass that issues many transactions must stay short so the 5 s ESP32 comms-lost
-// check runs well before the ~8.4 s RP2040 watchdog.
+// With the link dead, main loop passes stay short so the 5 s comms-lost check runs before the ~8.4 s watchdog.
 TEST(SPILinkGate, DeadLinkLoopReachesCommsLostTimeoutBeforeWatchdog) {
     constexpr uint32_t kAttemptCostMs = 103;  // Handshake timeout plus lockout per failed attempt.
     constexpr uint32_t kTransactionsPerPass = 12;

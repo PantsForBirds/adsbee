@@ -10,9 +10,8 @@
 /**
  * RemoteIDManager orchestrates Broadcast Remote ID (ASTM F3411) reception on the ESP32-S3.
  *
- * It decides which transports can actually run given (a) the user's settings, (b) the hardware, detected at runtime by
- * HardwareCapabilities (PSRAM lets Remote ID coexist with WiFi AP/STA; without PSRAM, RAM only allows Remote ID when
- * WiFi is off and Ethernet carries IP), and
+ * It decides which transports can run given (a) the user's settings, (b) the hardware (without PSRAM, Remote ID needs
+ * WiFi AP/STA off), and
  * (c) live heap headroom. It brings up the BLE (NimBLE) observer and, on capable configurations, the WiFi promiscuous
  * sniffer; both feed a single de-duplication / rate-limiting stage before packets are ingested locally and forwarded to
  * the RP2040.
@@ -37,8 +36,7 @@ class RemoteIDManager {
     // Per-transport heap guards: Remote ID is a best-effort add-on and must never starve the network stack (whose
     // back-pressure trips around 20 KB, see comms_ip.cpp::safe_send). BLE is the priority transport; the WiFi sniffer is
     // best-effort and only starts if enough internal SRAM remains after the (heavier) BLE stack is up. Tune against the
-    // 1 Hz heap_free_bytes telemetry. All guards measure internal SRAM only (HardwareCapabilities::kInternalHeapCaps):
-    // PSRAM would otherwise mask an internal shortage, and the BLE controller / DMA buffers can only use internal RAM.
+    // 1 Hz heap_free_bytes telemetry. Guards measure internal SRAM only (HardwareCapabilities::kInternalHeapCaps).
     static constexpr uint32_t kMinHeapFreeBytesForBLE = 70 * 1024;
     static constexpr uint32_t kMinHeapFreeBytesForWiFiSniffer = 55 * 1024;
 
@@ -139,7 +137,7 @@ class RemoteIDManager {
     // Rebuilds and re-publishes the transmitted Remote ID content at kTxTickIntervalMs. Called from Update().
     void ServiceTxTick();
 
-    // Returns true if this hardware allows Remote ID to coexist with active WiFi AP/STA (i.e. PSRAM was detected).
+    // True if Remote ID can run alongside WiFi AP/STA (PSRAM detected).
     static bool CanCoexistWithWiFi();
 
     // Rate-limit decision for forwarding a packet to the RP2040. Updates the dedup table. Returns true to forward.
@@ -160,9 +158,8 @@ class RemoteIDManager {
     void BLETxServiceTick();  // Refreshes the advertised ODID content; call at the transmit cadence.
     static bool BluetoothIsSupported();  // False when Bluetooth isn't compiled into this firmware.
 
-    // WiFi promiscuous sniffer control — implemented in remote_id_wifi_sniffer.cpp. With attach_to_network_wifi the
-    // sniffer enables promiscuous RX on the already-running WiFi AP/STA driver and stays on its channel (PSRAM boards);
-    // otherwise it brings the radio up itself in NULL mode and hops channels.
+    // WiFi sniffer, in remote_id_wifi_sniffer.cpp. With attach_to_network_wifi it listens on the running AP/STA
+    // channel; otherwise it owns the radio and hops channels.
     bool WiFiSnifferStart(bool attach_to_network_wifi);
     void WiFiSnifferStop();
     void WiFiSnifferServiceHopper();

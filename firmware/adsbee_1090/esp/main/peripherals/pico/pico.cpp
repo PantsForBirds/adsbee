@@ -1,7 +1,6 @@
 #include "pico.hh"
 
-// Called after a transaction is loaded and ready for pickup by master. Raise the handshake line if the transaction
-// solicits a transfer from the master.
+// Runs when a transaction is ready for the master; raises the handshake line if it solicits a transfer.
 void IRAM_ATTR esp_spi_post_setup_cb(spi_slave_transaction_t *trans) {
     pico_ll.SetSPIHandshakePinLevel(reinterpret_cast<uintptr_t>(trans->user) == Pico::kSolicitTransfer);
 }
@@ -97,8 +96,7 @@ int Pico::SPIWriteReadBlocking(uint8_t *tx_buf, uint8_t *rx_buf, uint16_t len_by
         status = spi_slave_get_trans_result(config_.spi_handle, &done_trans, portMAX_DELAY);
     } else {
         if (rx_prequeued_) {
-            // Only SPICoprocessor::Update()'s full-length receive is expected after a response. Anything else would
-            // queue up behind the pending receive, so let the master complete that one first.
+            // Only Update()'s full-length receive should follow a response; let the queued receive finish first.
             CONSOLE_ERROR("Pico::SPIWriteReadBlocking",
                           "Unexpected %d Byte %s while a receive is queued; waiting for the queued receive first.",
                           len_bytes, tx_buf ? "write" : "read");
@@ -119,10 +117,8 @@ int Pico::SPIWriteReadBlocking(uint8_t *tx_buf, uint8_t *rx_buf, uint16_t len_by
             memcpy(spi_tx_buf_, tx_buf, len_bytes);
         }
         if (tx_buf != nullptr && rx_buf == nullptr) {
-            // Response to the master. Queue the next receive right behind it (see rx_prequeued_). The master can
-            // read a short response within microseconds of the handshake, so queue both with the scheduler suspended:
-            // if this task were preempted in between, the receive would be queued late. The queue is empty here
-            // (this task owns every transaction), so no waiting is needed.
+            // Response: queue the next receive right behind it (see rx_prequeued_). The master can read the response
+            // within microseconds, so suspend the scheduler to queue both together. The queue is empty, so no waiting.
             memset(&spi_rx_trans_, 0, sizeof(spi_rx_trans_));
             spi_rx_trans_.length = SPICoprocessorPacket::kSPITransactionMaxLenBytes * kBitsPerByte;
             spi_rx_trans_.rx_buffer = spi_rx_buf_;

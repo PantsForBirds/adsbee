@@ -328,10 +328,8 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
 }
 
-// Builds a v14 blob by raw byte offset, independent of settings_v14::Settings, using the layout measured from the
-// struct shipped in adsbee_1090-0.9.1-rc2 (1140 B). Every field gets a distinctive non-default value at its offset, so a
-// snapshot field at the wrong offset (or of the wrong size) reads something else and fails. Guards against the frozen
-// snapshot drifting from what devices actually hold.
+// Builds a v14 blob by raw byte offset using the layout shipped in adsbee_1090-0.9.1-rc2 (1140 B), with a distinct
+// value per field, so the frozen settings_v14 snapshot can't drift from what devices hold.
 TEST(SettingsMigration, V14ShippedRc2BlobMigrates) {
     uint8_t blob[1140];
     memset(blob, 0, sizeof(blob));

@@ -12,8 +12,7 @@ TEST(CPUMonitor, UsagePercentFromIdleDelta) {
 }
 
 TEST(CPUMonitor, UsagePercentFromIdleDeltaLargeCounters) {
-    // 100 * idle overflows 32 bits once idle passes ~43 s of 1 MHz ticks. A mostly idle core over a long interval
-    // must still read as mostly idle.
+    // 100 * idle overflows 32 bits after ~43 s of 1 MHz ticks; a long mostly idle interval must still read low.
     EXPECT_EQ(CPUMonitor::UsagePercentFromIdleDelta(3000000000u, 3100000000u), 4);
 }
 
@@ -41,7 +40,7 @@ TEST(CPUMonitor, LoopTickUsage) {
     EXPECT_EQ(run_interval(100000 + 100), 0);  // Idle loop.
     EXPECT_EQ(run_interval(50000 + 100), 50);
     EXPECT_EQ(run_interval(100), 100);  // Exactly the full usage rate.
-    // A loop slower than the full usage rate is saturated. It used to underflow ticks - full_usage_ticks and read 0%.
+    // A loop slower than the full usage rate reads 100%, not an underflowed 0%.
     EXPECT_EQ(run_interval(50), 100);
     EXPECT_EQ(run_interval(0), 100);
 }

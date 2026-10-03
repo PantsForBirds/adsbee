@@ -1,6 +1,4 @@
-// DecodedModeSPacket::CorrectSingleBitError, the single-bit correction every product's decoder uses: only extended
-// squitters received as DF=17/18, never a bit in the DF field (DO-260B 2.2.4.3.4.7.3.a), address parity formats
-// untouched, and the ModeSPacketDecoder setting that turns it off.
+// Single-bit correction: DF=17/18 only, never the DF field (DO-260B 2.2.4.3.4.7.3.a), and can be turned off.
 #include <cstring>
 #include <random>
 
@@ -9,8 +7,7 @@
 #include "mode_s_packet.hh"
 #include "mode_s_packet_decoder.hh"
 
-// A frame with downlink format df and random contents, 56 or 112 bits long, with a correct parity field: the CRC for
-// formats checked by their CRC alone, the CRC XOR icao for address parity formats.
+// Random frame of format df with valid parity (CRC, or CRC XOR icao for address parity formats).
 static RawModeSPacket MakeFrame(uint16_t df, uint16_t len_bits, std::mt19937& rng, uint32_t icao = 0) {
     const uint16_t len_bytes = len_bits / 8;
     uint8_t bytes[RawModeSPacket::kExtendedSquitterPacketLenBytes] = {0};
@@ -36,8 +33,7 @@ static bool SameBuffer(const RawModeSPacket& a, const RawModeSPacket& b) {
     return a.buffer_len_bytes == b.buffer_len_bytes && memcmp(a.buffer, b.buffer, sizeof(a.buffer)) == 0;
 }
 
-// DF=17 and DF=18: every single-bit error outside the DF field is corrected at the right bit, and the corrected packet
-// is the original one. Errors in the DF field are left alone.
+// DF=17/18: every single-bit error outside the DF field is corrected back to the original. DF field errors are not.
 TEST(ModeSSingleBitCorrection, CorrectsDF17AndDF18OutsideTheDFField) {
     std::mt19937 rng(17);
     for (uint16_t df : {17, 18}) {
@@ -93,8 +89,7 @@ TEST(ModeSSingleBitCorrection, LeavesOtherExtendedFormatsAlone) {
     }
 }
 
-// Address parity formats (DF=0/4/5/16/20/21) and DF=11 are untouched: their parity field carries the ICAO address (or
-// interrogator code), so a bit error only changes the recovered address.
+// Address parity formats (DF=0/4/5/16/20/21) and DF=11 are never corrected: their parity holds the address.
 TEST(ModeSSingleBitCorrection, LeavesAddressParityFormatsAlone) {
     std::mt19937 rng(20);
     const uint32_t icao = 0xA1B2C3;
@@ -111,8 +106,7 @@ TEST(ModeSSingleBitCorrection, LeavesAddressParityFormatsAlone) {
             DecodedModeSPacket packet(corrupted);
             const bool was_address_parity = packet.is_address_parity;
             const uint32_t icao_before = packet.icao_address;
-            // A bit error in the DF field can make a different format (e.g. DF=16 with bit 4 flipped arrives as DF=17,
-            // which is correctable), but the packet is never corrected back by flipping a DF bit.
+            // A DF bit error can produce a correctable format (DF=16 -> DF=17), but DF bits are never flipped back.
             if (i >= DecodedModeSPacket::kDFNumBits) {
                 EXPECT_FALSE(packet.IsSingleBitCorrectable()) << "DF " << df << " bit " << i;
             }
@@ -124,8 +118,7 @@ TEST(ModeSSingleBitCorrection, LeavesAddressParityFormatsAlone) {
     }
 }
 
-// The decoder corrects only when enable_1090_error_correction is set, and forwards address parity packets unchanged
-// either way.
+// Corrects only with enable_1090_error_correction; address parity packets pass unchanged either way.
 TEST(ModeSSingleBitCorrection, DecoderSetting) {
     std::mt19937 rng(1090);
     const RawModeSPacket df17 = MakeFrame(17, 112, rng);

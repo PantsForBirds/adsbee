@@ -7,11 +7,9 @@
 #include "object_dictionary.hh"
 #include "pico.hh"
 
-// The raw UAT queues are filled from the RF driver callback (SubGHzRadio::HandlePacketRx, SWI context) and PFBQueue
-// is not ISR-safe: with overwrite_when_full the producer moves head_ and both sides write is_full_, and the element copy
-// in Dequeue() can be torn by a concurrent Enqueue(). Mask interrupts around each consumer-side queue operation. On
-// this single-core M4F that is sufficient. Do NOT use PFBQueue's is_thread_safe flag here -- a blocking mutex would
-// deadlock in ISR context. (Same scheme as adsbee_1421/ti/sub_ghz_radio/uat_packet_decoder.cpp.)
+// The raw UAT queues are filled from the RF callback (software interrupt context), and PFBQueue is not interrupt-safe,
+// so mask interrupts around each consumer-side queue operation. Don't use PFBQueue's is_thread_safe flag: its blocking
+// mutex would deadlock in interrupt context.
 bool UATPacketDecoder::Update() {
     // Process incoming UAT ADS-B packets.
     while (true) {

@@ -20,8 +20,7 @@ TEST(LogMessage, FormatsTagAndMessage) {
     EXPECT_STREQ(msg.message, "no tag");
 }
 
-// Messages longer than kLogMessageMaxNumChars (e.g. a 511-character CONSOLE_PRINTF) used to leave num_chars at the
-// untruncated length, which the RP2040 rejects and which made the next format size wrap around.
+// num_chars must be clamped to kLogMessageMaxNumChars for long messages.
 TEST(LogMessage, ClampsLongMessages) {
     ObjectDictionary::LogMessage msg;
     std::string long_text(600, 'x');

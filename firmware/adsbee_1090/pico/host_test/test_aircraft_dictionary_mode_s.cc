@@ -298,10 +298,8 @@ TEST(ModeSAircraft, CalculateMaxAllowedCPRInterval) {
     EXPECT_EQ(aircraft.GetMaxAllowedCPRIntervalMs(get_time_since_boot_ms()), ModeSAircraft::kRefCPRIntervalMs * 500 / aircraft.speed_kts);
 }
 
-// The ESP32 runs the same dictionary on packets timestamped by the RP2040's MLAT counter, while its own
-// get_time_since_boot_ms() counts from the ESP32's boot (a few seconds later, or hours later after an ESP32 reset).
-// Track freshness must be judged in packet time, or every track looks stale and fast-moving aircraft get the short
-// default CPR window.
+// On the ESP32, packets carry RP2040 timestamps but the local clock counts from the ESP32's boot. Track freshness must
+// use packet time.
 TEST(ModeSAircraft, CPRIntervalUsesPacketTimeNotLocalClock) {
     ModeSAircraft aircraft;
     aircraft.speed_source = ADSBTypes::kSpeedSourceGroundSpeed;
@@ -449,15 +447,13 @@ TEST(AircraftDictionary, IngestAirbornePositionGNSSAltitude) {
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedGNSSAltitude));
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
     EXPECT_EQ(aircraft.altitude_source, ADSBTypes::AltitudeSource::kAltitudeSourceGNSS);
-    // Altitude subfield is 0xA0A: Q=0, so it's Gillham coded like a barometric altitude (DO-260B 2.2.3.2.3.4.2). It
-    // used to be decoded as 2570 meters (8431ft).
+    // Altitude subfield is 0xA0A: Q=0, so it's Gillham coded like a barometric altitude (DO-260B 2.2.3.2.3.4.2).
     EXPECT_EQ(aircraft.gnss_altitude_ft, GillhamToAltitudeFt(AltitudeCodeToGillham(0b1010000001010)));
 }
 
 TEST(AircraftDictionary, IngestAirbornePositionGNSSAltitudeQBit) {
     AircraftDictionary dictionary = AircraftDictionary();
-    // DF=17, TC=20, altitude subfield 0xB50: Q=1, N=1440 -> 25 * 1440 - 1000 = 35000ft GNSS height. Decoding the
-    // subfield as meters would give 2896m (9501ft).
+    // DF=17, TC=20, altitude subfield 0xB50: Q=1, N=1440 -> 25 * 1440 - 1000 = 35000ft GNSS height.
     DecodedModeSPacket tpacket = DecodedModeSPacket((char*)"8DABCDEFA0B502468AABCD71F32A");
     ASSERT_TRUE(tpacket.is_valid);
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(tpacket));
@@ -625,8 +621,7 @@ TEST(AircraftDictionary, AirborneVelocityDifferenceFromBaroAltitude) {
     EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid));
     EXPECT_EQ(aircraft->gnss_altitude_ft, 35550);
 
-    // TC=11 with an undecodable Gillham altitude: baro altitude is no longer valid, so the next difference must not be
-    // applied to the stale 35000ft.
+    // TC=11 with an undecodable Gillham altitude: the next difference must not apply to the stale 35000ft.
     aircraft->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid, false);
     tpacket = DecodedModeSPacket((char*)"8DABCDEF5800102468567887BF8F");
     ASSERT_TRUE(tpacket.is_valid);
@@ -638,9 +633,8 @@ TEST(AircraftDictionary, AirborneVelocityDifferenceFromBaroAltitude) {
 }
 
 TEST(AircraftDictionary, AirborneVelocityDifferenceFromBaroAltitudeWithGNSSPosition) {
-    // An aircraft reporting GNSS height in its position messages (TC=20-22) usually does so because its barometric
-    // altitude is unavailable, and the difference subfield may then be relative to zero pressure altitude (DO-260C
-    // N.4.2.4, Note). The barometric altitude must not be derived from it.
+    // With GNSS height positions (TC=20-22), the difference may be relative to zero pressure altitude (DO-260C N.4.2.4,
+    // Note), so baro altitude must not be derived from it.
     AircraftDictionary dictionary;
     ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
     ASSERT_TRUE(aircraft);
@@ -661,8 +655,7 @@ TEST(AircraftDictionary, AirborneVelocityDifferenceFromBaroAltitudeWithGNSSPosit
 }
 
 TEST(AircraftDictionary, AirborneVelocityNACv) {
-    // NACv for airborne aircraft is ME[11-13] of the Airborne Velocity message (all ADS-B versions; NUCr in v0 maps
-    // one-for-one). DO-260C 2.2.3.2.6.1.5, N.2.3.8, Table N-26.
+    // Airborne NACv is Airborne Velocity ME[11-13] in all versions (NUCr in v0). DO-260C 2.2.3.2.6.1.5, Table N-26.
     AircraftDictionary dictionary;
     ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
     ASSERT_TRUE(aircraft);
@@ -971,8 +964,7 @@ TEST(AircraftDictionary, NICAssignment) {
         EXPECT_EQ(aircraft_ptr->navigation_integrity_category, ADSBTypes::kROCLessThan4NauticalMiles);
     }
 
-    // Version 1 has only one NIC supplement (NIC_A) and ME[8] is the single antenna flag: TC=16 with NIC_A=1 is
-    // RC < 4 NM regardless of ME[8]. DO-260C Table N-16.
+    // Version 1: ME[8] is the single antenna flag, not NIC_B, so TC=16 with NIC_A=1 is RC < 4 NM. DO-260C Table N-16.
     {
         const uint32_t icao = 0x40621Du;
         aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(
@@ -991,9 +983,8 @@ TEST(AircraftDictionary, NICAssignment) {
 }
 
 TEST(AircraftDictionary, GNSSPositionNICVersion3) {
-    // Version 3 redefined the NIC of TYPE codes 20-22: TC=21 is NIC 7 (RC < 0.2NM), and TC=20 / TC=22 are refined by
-    // NIC supplement D in Airborne Velocity ME[47-48]. DO-260C Table 2-11, Table 2-28. Versions 0-2: TC=20 NIC 11,
-    // TC=21 NIC 10, TC=22 NIC 0 (DO-260C Table N-24).
+    // v3 NIC for TC=20-22: TC=21 is NIC 7; TC=20/22 use NIC supplement D (Airborne Velocity ME[47-48]). DO-260C Tables
+    // 2-11, 2-28. v0-2: TC=20/21/22 are NIC 11/10/0 (Table N-24).
     AircraftDictionary dictionary;
     ModeSAircraft* aircraft = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xABCDEFu));
     ASSERT_TRUE(aircraft);
@@ -1795,10 +1786,7 @@ TEST(AircraftDictionary, OperationStatusSurfaceGPSAntennaOffset) {
     EXPECT_EQ(aircraft_ptr->gnss_antenna_offset_right_of_reference_point_m, -4);
 }
 
-// Field case (GS3M running 0.9.0-rc19): one corrupted-but-CRC-valid airborne position packet produced a bogus position
-// (e.g. latitude -218.99 deg) for 2-4 s in the middle of a clean track. The filter rejected the first bogus decode but
-// stored it as its reference, then the same bad packet decoded against the next complementary packet landed right next
-// to it and "confirmed" the jump.
+// One corrupt but CRC-valid position packet, decoded against two complementary packets, must not confirm itself.
 TEST(AircraftDictionary, SingleCorruptCPRPacketCannotConfirmItself) {
     const uint32_t kEvenLat = 93000, kEvenLon = 51372, kOddLat = 74158, kOddLon = 50194;  // ~52.26N, 3.92E
     for (uint32_t corrupt_lat_delta : {3000u, 6000u, 12000u, 24000u}) {

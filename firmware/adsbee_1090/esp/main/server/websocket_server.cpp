@@ -1,7 +1,7 @@
 #include "websocket_server.hh"
 
 #include "esp_heap_caps.h"
-#include "hardware_capabilities.hh"  // Internal-RAM heap guards (PSRAM must not mask an internal shortage).
+#include "hardware_capabilities.hh"  // Internal RAM heap guards.
 
 #include "comms.hh"
 #include "hal.hh"
@@ -41,8 +41,7 @@ bool WebSocketServer::Init() {
                               .handler = ws_handler,
                               .user_ctx = this,
                               .is_websocket = true,
-                              // Answer PING / CLOSE ourselves so the replies are serialized with our own frame writes
-                              // (see SendFrameLocked()). httpd would otherwise reply from its task mid-frame.
+                              // Answer PING / CLOSE ourselves so replies can't land mid-frame (see SendFrameLocked()).
                               .handle_ws_control_frames = true,
                               .supported_subprotocol = nullptr};
     esp_err_t ret = httpd_register_uri_handler(config_.server, &console_ws);
@@ -217,8 +216,7 @@ void WebSocketServer::BroadcastMessage(const char* message, int16_t len_bytes) {
                 clients_[i].consecutive_send_failures = 0;
             } else if (send_duration_ms >= kClientSendTimeoutMs ||
                        ++clients_[i].consecutive_send_failures >= kMaxConsecutiveSendFailures) {
-                // The client stopped reading (the send timed out) or keeps failing. Part of a frame may already be on
-                // the wire, so the stream can't be resynchronized anyway: drop the client.
+                // Client stopped reading or keeps failing. A partial frame may be on the wire, so drop it.
                 CONSOLE_WARNING("WebSocketServer::BroadcastMessage",
                                 "[%s] Dropping client %d: send failed with %s after %lu ms (%d failures in a row).",
                                 config_.label, i, esp_err_to_name(ret), (unsigned long)send_duration_ms,
@@ -305,10 +303,8 @@ esp_err_t WebSocketServer::HandleControlFrame(httpd_req_t* req, int client_fd, h
                 config_.pre_disconnect_callback(this, client_fd);
             }
             RemoveClient(client_fd);  // Stop broadcasting to it now; ws_close_fd will find it already removed.
-            // Return ESP_OK: httpd has marked the session ws_close and queues its own close for it after this
-            // handler returns. Returning an error here also made httpd delete the session immediately, so the queued
-            // close (which holds the session slot, not the fd) could land on the next connection accepted into that
-            // slot and reset it.
+            // Must return ESP_OK: httpd queues its own close for this session slot. An error deletes the session now,
+            // and the queued close could then reset the next connection accepted into that slot.
             return ESP_OK;
         }
         default:

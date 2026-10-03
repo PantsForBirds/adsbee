@@ -655,10 +655,8 @@ void CC1312::SPIEndTransaction() {
     // on the SPI bus can't be accessed while the CC1312 is simultaneously in bootloader mode.
     // Update: Transitioned all peripherals to use the same SPI polarity and phase as the CC1312 bootloader.
 
-    // Reset the handshake expectation after a transaction, like ESP32::SPIEndTransaction(). Otherwise the flag stays
-    // set after every successful read, and the next SPIBeginTransaction() skips the rest of the post transmit lockout
-    // as soon as it sees the HANDSHAKE line from the reply we just read, before the CC1312 has lowered it and re-armed
-    // its SPI peripheral. A request sent into that window is lost and SPIWaitForHandshake() times out after 100 ms.
+    // Clear after each transaction (like ESP32). Left set, the next SPIBeginTransaction() would end the post-transmit
+    // lockout on this reply's still-high HANDSHAKE line, before the CC1312 re-arms SPI, and the request would be lost.
     expecting_handshake_ = false;
     gpio_put(config_.spi_cs_pin, true);
     spi_last_transmit_timestamp_us_ = get_time_since_boot_us();  // Update the last transmit timestamp.

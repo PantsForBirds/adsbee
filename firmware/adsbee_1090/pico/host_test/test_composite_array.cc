@@ -623,13 +623,12 @@ TEST(CompositeArray, RawPacketsHeaderIsValid) {
     EXPECT_TRUE(packets.IsValid());
 }
 
-// A composite array of kMaxLenBytes (what the RP2040 sends to the ESP32) can carry several UAT uplink packets. A
-// receiving queue shallower than that drops the tail of the array, which is what the ESP32 did with a depth of 2.
+// A full-size composite array holds several UAT uplink packets; the receiving queue must hold them all.
 TEST(CompositeArray, FullArrayOfUATUplinksNeedsMatchingQueueDepth) {
     constexpr uint16_t kUplinksPerArray =
         (CompositeArray::RawPackets::kMaxLenBytes - sizeof(CompositeArray::RawPackets::Header)) /
         sizeof(RawUATUplinkPacket);
-    ASSERT_GE(kUplinksPerArray, 3);  // Needs more than the ESP32's old queue depth of 2 to be meaningful.
+    ASSERT_GE(kUplinksPerArray, 3);
 
     uint8_t buffer[CompositeArray::RawPackets::kMaxLenBytes] = {0};
     PFBQueue<RawUATUplinkPacket> tx_queue =
@@ -658,8 +657,7 @@ TEST(CompositeArray, FullArrayOfUATUplinksNeedsMatchingQueueDepth) {
     }
 }
 
-// When one destination queue is full, the other packet types in the same array must still be enqueued, and the drops
-// are counted for a periodic summary log line.
+// A full queue must not block other packet types in the same array; drops are counted for a periodic log.
 TEST(CompositeArray, FullQueueOnlyDropsItsOwnPacketType) {
     uint8_t buffer[CompositeArray::RawPackets::kMaxLenBytes] = {0};
     PFBQueue<RawModeSPacket> mode_s_tx =
@@ -690,7 +688,7 @@ TEST(CompositeArray, FullQueueOnlyDropsItsOwnPacketType) {
     EXPECT_FALSE(CompositeArray::UnpackRawPacketsBufferToQueues(buffer, packets.len_bytes, &mode_s_rx, &uat_adsb_rx,
                                                                 &uat_uplink_rx));
     EXPECT_EQ(mode_s_rx.Length(), 2);
-    ASSERT_EQ(uat_adsb_rx.Length(), 3);  // Previously all 3 were dropped along with the Mode S overflow.
+    ASSERT_EQ(uat_adsb_rx.Length(), 3);
     for (uint16_t i = 0; i < 3; i++) {
         ASSERT_TRUE(uat_adsb_rx.Dequeue(uat_adsb_packet));
         EXPECT_EQ(uat_adsb_packet.buffer[0], i);
