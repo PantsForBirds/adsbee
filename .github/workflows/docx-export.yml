@@ -2,7 +2,7 @@
 #   pull_request -> docx changed in the PR whose PDF is older than the docx; PDFs are committed to the
 #                   PR branch (artifact only for forks)
 #   workflow_dispatch -> all docx; committed to the chosen branch (artifact only on the default branch)
-# Pushes made with GITHUB_TOKEN don't trigger workflows, so the export commit doesn't loop.
+# No loop: GITHUB_TOKEN pushes don't start runs (they wait for approval), and a rerun finds the PDFs up to date.
 name: docx-export
 
 on:
