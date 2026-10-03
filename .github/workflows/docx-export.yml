@@ -71,7 +71,7 @@ jobs:
           cp .github/docx-export/fonts.conf ~/.config/fontconfig/fonts.conf
           fc-cache -f
           # Fail if a Word font has no intended substitute.
-          check() { fc-match -f '%{family}\n' "$1" | grep -qx "$2" || { echo "$1 -> $(fc-match "$1")"; exit 1; }; }
+          check() { echo "$1 -> $(fc-match "$1")"; fc-match -f '%{family}' "$1" | tr , '\n' | grep -qx "$2"; }
           check Calibri Carlito
           check "Calibri Light" Carlito
           check Poppins Poppins
