@@ -311,9 +311,8 @@ void CommsManager::ReportQueuedRawPackets() {
         return;
     }
     if (ReportsRawPackets() && TxRingFreeBytes() < kRawReportChunkMaxTxBytes) {
-        // The link is behind. Leave the packets queued rather than wait for ring space inside iface_write: the Mode S
-        // queue overwrites its oldest entry when full (report_q_ovf) and the UAT queues refuse new entries
-        // (uat_report_q_ovf), so an oversubscribed link costs reports but never stalls the receiver.
+        // The link is behind. Leave packets queued instead of waiting for ring space: full queues drop reports
+        // (report_q_ovf, uat_report_q_ovf) but never stall the receiver.
         return;
     }
 

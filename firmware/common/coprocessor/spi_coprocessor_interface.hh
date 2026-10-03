@@ -165,8 +165,8 @@ class SPICoprocessorSlaveInterface : public SPICoprocessorInterface {
     // Cached ESP32 Remote ID receiver status bitfield (see RemoteIDManager::Status). Only meaningful for the ESP32
     // coprocessor; left 0 for others. Surfaced to the user via AT+REMOTE_ID?.
     uint16_t remote_id_status = 0;
-    // Cached ESP32 hardware capability bitfield (see ObjectDictionary::ESP32HardwareCapability) and PSRAM heap sizes.
-    // Only meaningful for the ESP32 coprocessor; 0 until the first successful device status read.
+    // Cached ESP32 hardware capabilities (ObjectDictionary::ESP32HardwareCapability) and PSRAM heap sizes. ESP32 only;
+    // 0 until the first device status read.
     uint8_t hardware_capabilities = 0;
     uint16_t psram_total_kb = 0;
     uint16_t psram_free_kb = 0;

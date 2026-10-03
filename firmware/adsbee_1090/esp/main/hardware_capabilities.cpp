@@ -13,8 +13,7 @@ size_t HardwareCapabilities::psram_total_bytes_ = 0;
 
 void HardwareCapabilities::Detect() {
 #ifdef CONFIG_SPIRAM
-    // With CONFIG_SPIRAM_IGNORE_NOTFOUND the startup code has already probed the PSRAM chip; on a module without PSRAM
-    // esp_psram_is_initialized() is false and no SPIRAM heap region exists.
+    // Startup code already probed PSRAM; without it, esp_psram_is_initialized() is false.
     if (esp_psram_is_initialized()) {
         psram_total_bytes_ = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
     }

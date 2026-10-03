@@ -186,8 +186,8 @@ class ADSBee {
     /**
      * Creates a composite timestamp using the current value of the SysTick timer (running at 125MHz) and the SysTick
      * wrap counter to simulate a timer running at 48MHz (which matches the frequency of the preamble detector PIO).
-     * SysTick is a per-core timer: only call this on the core that ran MLATCounterInit(), which is the core that
-     * handles the demodulator ISRs (core 1 with ISRS_ON_CORE1). On the other core it returns the wrap count alone.
+     * SysTick is per core: call only on the core that ran MLATCounterInit() (the demodulator ISR core). Elsewhere it
+     * returns only the wrap count.
      * @param[in] num_bits Number of bits to mask the counter value to. Defaults to full resolution.
      * @retval 48MHz counter value.
      */
@@ -204,8 +204,7 @@ class ADSBee {
     uint64_t GetMLAT12MHzCounts(uint16_t num_bits = 48);
 
     /**
-     * Converts a span of MLAT jitter PWM slice counts (system clock cycles at 125MHz) into 48MHz MLAT counter counts,
-     * using the same ratio as the SysTick scaling in GetMLAT48MHzCounts().
+     * Converts MLAT jitter PWM slice counts (125MHz system clock cycles) to 48MHz MLAT counter counts.
      * @param[in] sys_clk_counts Number of MLAT jitter PWM slice counts.
      * @retval Equivalent number of 48MHz MLAT counter counts.
      */

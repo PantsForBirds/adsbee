@@ -1,16 +1,9 @@
 #pragma once
 
-// Prefilter for the Mode S decoder's single-bit error correction. Header-only with no SDK dependencies, so it can be
-// shared by every product and the host tests check it against the firmware's own syndrome table (crc_tables.hh).
-//
-// Mode S parity (CRC-24): the syndrome of a 112-bit frame, crc24(bits 0-87) XOR parity(bits 88-111), is the
-// frame read as a polynomial modulo the generator x^24 + 0xFFF409. Flipping message bit i changes the syndrome
-// by kBitSyndromes.v[i] = x^(111-i) mod G (the values of crc24_single_bit_syndrome_112).
-//
-// crc24_find_single_bit_error searches those 112 values linearly for every frame that fails its CRC. The filter
-// holds one bit per low-12-bit syndrome value: a syndrome whose bit is clear can't be a single-bit error. The 112
-// syndromes set 98 of the 4096 bits, so a random syndrome gets through with a probability of 2.4 % and most failed
-// frames (noise, garbled and overlapping captures) skip the search. The result is the same either way.
+// Prefilter for Mode S single-bit error correction, so most failed frames skip the linear search in
+// crc24_find_single_bit_error. Flipping bit i of a 112-bit frame changes the CRC-24 syndrome by
+// kBitSyndromes.v[i] = x^(111-i) mod G. The filter has one bit per value of the syndrome's low 12 bits; a clear bit
+// means it can't be a single-bit error (about 2.4% of random syndromes pass). Header-only so host tests can check it.
 
 #include <cstdint>
 

@@ -7,7 +7,7 @@ site_url: https://adsbee.aero/wiki/
 repo_url: https://github.com/PantsForBirds/adsbee
 repo_name: PantsForBirds/adsbee
 edit_uri: edit/main/docs/
-# Fail the build (including mike deploy) on broken links, missing files, and other warnings.
+# Fail the build (and mike deploy) on broken links and other warnings.
 strict: true
 copyright: ADSBee source code and schematics are licensed under the GNU GPL v3.
 
@@ -43,7 +43,7 @@ plugins:
   - mike:
       # Every version points search engines at the same page in "latest".
       canonical_version: latest
-      # Aliases (latest) are full copies, so the gh-pages branch can be served by any static file server.
+      # Aliases (latest) are full copies, so any static file server can serve gh-pages.
       alias_type: copy
 
 extra:

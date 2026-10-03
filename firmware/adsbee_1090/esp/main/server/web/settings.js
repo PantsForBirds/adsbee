@@ -66,12 +66,9 @@ class SettingsEngine {
     // timeoutMs}) -> Promise<string[] of trimmed body lines>; rejects on a whole-line
     // 'ERROR ...' response or timeout.
     // bulkQuery (optional): { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/,
-    // timeoutMs, attempts }, a one-round-trip read of every setting as a JSON object keyed
-    // by AT command name. It is the normal read path, also used to re-read after a save.
-    // A dump that is lost or cut short (the console drops bytes under heavy log output) is
-    // retried up to `attempts` times. Only firmware that answers the dump with ERROR
-    // (predating the command) falls back to querying every entry one at a time; entries
-    // missing from a good dump (firmware older than the page) are queried individually.
+    // timeoutMs, attempts } reads every setting in one round trip, keyed by AT command.
+    // A lost or cut-short dump is retried. Firmware that answers ERROR, and entries
+    // missing from the dump, fall back to one query per entry.
     constructor(config) {
         this.schema = config.schema;
         this.transport = config.transport;

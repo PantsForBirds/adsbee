@@ -55,9 +55,8 @@ bool SettingsManager::Load() {
     if (bsp.has_eeprom) {
         // Load settings from external EEPROM.
         if (!eeprom.Load(settings)) {
-            // A failed read can leave `settings` partially overwritten. Fall back to defaults in RAM so nothing
-            // downstream (Print(), the coprocessors) sees garbage, but don't persist them: the failure may be a
-            // transient I2C error, and the stored settings may still be intact for the next boot.
+            // A failed read can leave `settings` half-written. Use defaults in RAM but don't save them: the error may
+            // be transient and the stored settings intact.
             CONSOLE_ERROR("settings.cc::Load", "Failed load settings from EEPROM. Using defaults for this boot.");
             ResetToDefaults();
             Sanitize();
@@ -155,7 +154,7 @@ bool SettingsManager::Save() {
     comms_manager.GetBaudRate(SerialInterface::kGNSSUART,
                               settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART]);
 
-    // An ESP32 disabled because its firmware update failed this boot is still meant to be enabled; don't persist that.
+    // Don't save the ESP32 as disabled when only a failed firmware update disabled it.
     if (!esp32.firmware_update_failed) {
         settings.core_network_settings.esp32_enabled = esp32.IsEnabled();
     }

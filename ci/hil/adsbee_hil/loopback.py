@@ -1,7 +1,6 @@
 """RF loopback test: a transmitter plays a known pattern, a receiver must report it.
 
-With no transmitter configured or attached the test is skipped, not failed, so it can sit in CI
-before the bench has one.
+Skipped, not failed, when no transmitter is configured or attached.
 """
 
 import time
@@ -36,10 +35,8 @@ def rf_loopback(receiver: Receiver, transmitter: Optional[Transmitter], pattern:
                 min_fraction: float = 0.5, settle_s: float = 1.0) -> LoopbackResult:
     """Transmits ``pattern`` and checks the receiver reported at least min_fraction of it.
 
-    With explicit messages, only frames identical to a sent message count (background traffic
-    can't pass the test). With an instrument's built-in table the content is unknown here, so all
-    frames of the band's kind count; use a shielded/cabled setup or explicit messages for strict
-    results. Per band, "sent" is pattern.count (dual-band patterns send count on each band).
+    With explicit messages only exact matches count. With an instrument's built-in table every
+    frame on the band counts, so use a cabled or shielded setup. "Sent" is pattern.count per band.
     """
     res = LoopbackResult("skip", receiver.id, transmitter.id if transmitter else None)
     if transmitter is None:

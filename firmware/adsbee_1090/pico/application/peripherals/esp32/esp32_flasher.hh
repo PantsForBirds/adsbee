@@ -50,9 +50,8 @@ class ESP32SerialFlasher {
 
     bool Init() {
         CONSOLE_INFO("ESP32SerialFlasher::Init", "Initializing ESP32 firmware upgrade peripherals.");
-        // Other pins can be muxed to the same UART: GPIO 0/1 connect the GNSS module to uart0, which is also the
-        // flasher's UART. The RP2040 combines the RX inputs of every pin selected for a UART, so the module's NMEA
-        // output would reach the flasher's RX FIFO and break the ESP32 bootloader handshake. Park those pins first.
+        // The RP2040 merges RX from every pin muxed to a UART, so GNSS output on GPIO 0/1 (also uart0) would break the
+        // ESP32 bootloader handshake. Park those pins first.
         ParkSharedUartPins();
         // Initialize the UART.
         gpio_set_function(config_.esp32_uart_tx_pin, GPIO_FUNC_UART);
@@ -140,14 +139,12 @@ class ESP32SerialFlasher {
     }
 
    private:
-    // UART instance (0 or 1) a GPIO connects to when its function is GPIO_FUNC_UART (RP2040 datasheet, GPIO function
-    // table: GPIO 0-3 -> UART0, 4-11 -> UART1, 12-19 -> UART0, 20-27 -> UART1, 28-29 -> UART0).
+    // UART (0 or 1) a GPIO maps to in GPIO_FUNC_UART: GPIO 0-3, 12-19, 28-29 -> UART0; 4-11, 20-27 -> UART1.
     static uint GpioUartIndex(uint gpio) { return ((gpio + 4) >> 3) & 1; }
 
     /**
-     * Switches every pin other than the flasher's own TX/RX that is muxed to the flasher's UART over to a plain SIO
-     * input with a pull-up (idle level for a UART line), remembering its previous pulls so RestoreSharedUartPins()
-     * can undo it.
+     * Turns other pins muxed to the flasher's UART into pulled-up inputs (UART idle level), saving their pulls for
+     * RestoreSharedUartPins().
      */
     void ParkSharedUartPins() {
         parked_pins_mask_ = 0;
@@ -167,8 +164,7 @@ class ESP32SerialFlasher {
     }
 
     /**
-     * Returns the pins parked by ParkSharedUartPins() to GPIO_FUNC_UART with their original pulls. Their owner (e.g.
-     * the GNSS receiver) still has to re-initialize the UART itself, since DeInit() deinitializes it.
+     * Restores pins parked by ParkSharedUartPins(). Their owner (e.g. GNSS) must re-initialize the UART afterward.
      */
     void RestoreSharedUartPins() {
         for (uint gpio = 0; gpio < NUM_BANK0_GPIOS; gpio++) {

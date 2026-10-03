@@ -1,17 +1,11 @@
 #pragma once
 
-// CPU cycle counter for the CPU-cost stats in AT+RX_STATS: 48 cycles per microsecond on the CC1314.
+// CPU cycle counter (48 cycles per microsecond) for the CPU-cost stats in AT+RX_STATS.
 //
-// It runs on SysTick (free-running, 24 bits, core clock), which this firmware doesn't otherwise use. The
-// Cortex-M33 DWT cycle counter would be the natural choice, but on the CC1314 it never counts without a
-// debugger attached: DAUTHSTATUS reads 0xAA (secure and non-secure non-invasive debug disabled), and with that
-// the DWT counters are held even with DEMCR.TRCENA and DWT_CTRL.CYCCNTENA set (checked on target).
+// Uses SysTick (24 bits, core clock), which the firmware doesn't otherwise use. The Cortex-M33 DWT cycle counter
+// doesn't count on the CC1314 without a debugger attached.
 //
-// 24 bits wrap every 349 ms, so only intervals shorter than that measure correctly: take Since(start) within
-// one measurement, never compare absolute values. Reading it costs one load.
-//
-// The registers are addressed directly (ARMv8-M Architecture Reference Manual, the same on every Cortex-M33), so
-// this header needs no device include.
+// Wraps every 349 ms: only measure shorter intervals with Since(start), never compare absolute values.
 
 #include <cstdint>
 

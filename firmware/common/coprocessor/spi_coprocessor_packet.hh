@@ -157,10 +157,8 @@ class SPICoprocessorPacket {
          * without stack-allocating a temporary. Called by the from-buffer constructor; may also be called directly.
          */
         void ConstructFromBuffer(uint8_t *buf_in, uint16_t buf_in_len_bytes) {
-            // A read request is exactly kBufLenBytes long. Anything else is a torn or misaligned frame, and the packet
-            // is invalidated. Copying the frame in full would write past the end of this packet (the slave reuses a
-            // static instance), and returning early would leave the previous request's contents in place to pass
-            // IsValid() again.
+            // A read request is exactly kBufLenBytes long. Invalidate anything else: copying it could overflow this
+            // packet, and returning early would leave the previous request valid.
             if (buf_in_len_bytes != kBufLenBytes) {
                 CONSOLE_ERROR("SPICoprocessor::SCReadRequestPacket",
                               "Attempted to create a packet from a buffer of the wrong size. Received %d Bytes, but "
@@ -269,8 +267,7 @@ class SPICoprocessorPacket {
 
     /**
      * Minimal ACK/NACK response packet. Wire format: CMD | ACK_BYTE | CRC.
-     * Use this instead of SCResponsePacket when sending or receiving an acknowledgment — it is only as
-     * large as the wire format requires and has no data buffer that could be accidentally overwritten.
+     * Use instead of SCResponsePacket for acknowledgments: it has no data buffer to overwrite by accident.
      */
     struct __attribute__((__packed__)) SCAckPacket : public SCPacket {
         static constexpr uint16_t kBufLenBytes = sizeof(SCCommand) + sizeof(uint8_t) + kCRCLenBytes;

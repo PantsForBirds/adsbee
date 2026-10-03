@@ -5,17 +5,12 @@
 #include "hal.hh"
 
 /**
- * Tracks whether the SPI link to a coprocessor is up, so that calls on a dead link fail fast and don't each spend the
- * full retry budget.
+ * Makes transactions on a dead SPI link fail fast. Otherwise each one spends its full retry budget (~100 ms handshake
+ * wait per attempt), a main loop pass takes seconds, and the RP2040 watchdog reboots the board before main() can reset
+ * just the ESP32.
  *
- * Each failed SPI transaction attempt waits up to ~100 ms for a handshake, and a transaction retries 3 times. When the
- * ESP32 stops servicing SPI, the RP2040 main loop issues a dozen or more transactions per pass (raw packet flushes,
- * console writes, status reads, plus a console write for every error message those failures print), so one pass takes
- * several seconds. The RP2040 watchdog (~8.4 s) then fires before main() gets to its 5 s "cycle the ESP32 enable pin"
- * check, and the whole board reboots when only the ESP32 needed cycling.
- *
- * Once a transaction has used all of its retries the link is marked down. While it is down, transactions get no
- * attempts except for a single-attempt probe every kProbeIntervalMs, and any success marks the link up again.
+ * A transaction that exhausts its retries marks the link down. While down, only a single-attempt probe runs every
+ * kProbeIntervalMs; any success marks the link up.
  */
 class SPILinkGate {
    public:
@@ -24,8 +19,7 @@ class SPILinkGate {
     /**
      * Returns how many attempts the next transaction may make.
      * @param[in] max_attempts Attempts allowed while the link is up.
-     * @retval max_attempts if the link is up, 1 if the link is down and a probe is due, 0 if the transaction should
-     * fail immediately.
+     * @retval max_attempts if up, 1 if down and a probe is due, 0 to fail immediately.
      */
     uint16_t AttemptsAllowed(uint16_t max_attempts) {
         if (!down_) return max_attempts;
@@ -35,10 +29,7 @@ class SPILinkGate {
         return 1;
     }
 
-    /**
-     * Records the outcome of a transaction that made at least one attempt.
-     * @param[in] success True if the transaction succeeded.
-     */
+    /** Records the outcome of a transaction that made at least one attempt. */
     void Report(bool success) {
         if (success) {
             down_ = false;

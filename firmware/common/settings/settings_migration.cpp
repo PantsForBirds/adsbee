@@ -2,8 +2,8 @@
 
 #include <cstring>  // memcpy
 
-// The migration chain must end at the live version: settings_v14 is the newest frozen snapshot and MigrateV14ToV15 writes
-// the live struct. When kSettingsVersion is bumped, freeze v15 and extend the chain (see settings_migration.hh).
+// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v15 and extend the chain
+// (see settings_migration.hh).
 static_assert(kSettingsVersion == 15, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
 static_assert(sizeof(settings_v12::Settings) == 1088 && sizeof(settings_v13::Settings) == 1088 &&
                   sizeof(settings_v14::Settings) == 1140,

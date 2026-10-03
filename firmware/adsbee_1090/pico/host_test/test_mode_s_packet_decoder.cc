@@ -48,8 +48,8 @@ TEST(ModeSPacketDecoder, HandleSingleBitError) {
 }
 
 TEST(ModeSPacketDecoder, DontCorrectBitErrorsInDownlinkFormat) {
-    // Flipping the MSb of the DF field (bit index 0) turns a DF=17 into a DF=1. Only packets received as DF=17/18 are
-    // accepted as ADS-B (DO-260B 2.2.4.3.4.7.3.a), so this must not be "corrected" back into a DF=17.
+    // Flipping bit 0 turns DF=17 into DF=1, which must not be corrected back: only received DF=17/18 count as ADS-B
+    // (DO-260B 2.2.4.3.4.7.3.a).
     ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
     RawModeSPacket raw_packet((const char*)"0D40621D58C382D690C8AC2863A7");  // 8D -> 0D.
     decoder.raw_mode_s_packet_in_queue.Enqueue(raw_packet);
@@ -196,8 +196,7 @@ TEST(ModeSPacketDecoder, ForwardAllCallReplyWithInterrogatorCode) {
 }
 
 TEST(ModeSPacketDecoder, RejectDuplicateSquittersWithTrailingBits) {
-    // A 56-bit packet read out of the demodulator as 3 words keeps the bits received after the end of the message in
-    // the low byte of its second word. They aren't part of the packet, so they mustn't defeat the duplicate filter.
+    // Bits after the end of a 56-bit packet (low byte of the second word) must not defeat the duplicate filter.
     ModeSPacketDecoder decoder(ModeSPacketDecoder::PacketDecoderConfig{.enable_1090_error_correction = true});
     RawModeSPacket raw_packet((const char*)"5D7C0B6DB05076");
     ASSERT_EQ(raw_packet.buffer_len_bytes, 7);  // 56 bits.

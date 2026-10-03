@@ -120,13 +120,13 @@ bash firmware/build.sh adsbee_1421 [options] [target]
 | Target | Description |
 |--------|-------------|
 | `ti` (default) | CC1314R10 application |
-| `programmer` | ADSBee 1421 Programmer, an RP2040-Zero flasher and pass-through (requires `ti` built first, because it bakes in the hex) |
+| `programmer` | ADSBee 1421 Programmer, an RP2040-Zero flasher and pass-through (build `ti` first: it bakes in the hex) |
 | `build_and_flash` | Build `ti` + `programmer`, then reflash an attached m1421 through the Programmer |
-| `flash` | Reflash using the Programmer uf2 already on disk; runs no build steps, warns if it or its baked-in hex is stale |
+| `flash` | Reflash with the Programmer uf2 already on disk, without building; warns if it is stale |
 | `clean [target]` | Delete the target's build directory |
 
-The `-d` flag selects a Debug build, as for adsbee_1090. `./build.sh -d build_and_flash` builds the Debug
-CC1314 image and bakes it into the ADSBee 1421 Programmer, so the m1421 is flashed with the Debug image.
+`-d` selects a Debug build, as for adsbee_1090; `./build.sh -d build_and_flash` flashes the m1421 with the
+Debug image.
 
 ### Debug builds and RF test commands
 
@@ -157,9 +157,9 @@ load. Don't connect an antenna: the LR2021 bands cover licensed and aviation spe
 | CC1314 (Release) | `firmware/adsbee_1421/ti/build/Release/adsbee_1421.hex` (+ `.elf`, `.map`, version-stamped copies) |
 | Programmer | `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` (+ `.elf`, version-stamped `-fw<version>` copies) |
 
-See [adsbee_1421/AGENTS.md](adsbee_1421/AGENTS.md) for JTAG flashing, debugging, and the SYNC
-low-power sleep contract, and [adsbee_1421/README.md](adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor)
-for reflashing over UART through the SYNC bootloader backdoor (no debugger needed).
+See [adsbee_1421/AGENTS.md](adsbee_1421/AGENTS.md) for JTAG flashing, debugging and SYNC sleep, and
+[adsbee_1421/README.md](adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor) for
+reflashing over UART without a debugger.
 
 ---
 
@@ -167,32 +167,27 @@ for reflashing over UART through the SYNC bootloader backdoor (no debugger neede
 
 Releases are drafted by CI from release tags (`.github/workflows/release.yml`):
 
-1. Merge the version bump to `main`, then tag the merge commit on `main` with the product and the
-   version in its source, and push the tag:
+1. Merge the version bump to `main`, then tag the merge commit and push the tag:
    ```bash
    git tag adsbee_1421-0.3.11-rc4 origin/main
    git push origin adsbee_1421-0.3.11-rc4
    ```
    Tags are `<product>-M.m.p-rcN` for release candidates and `<product>-M.m.p` for stable releases
    (see [AGENTS.md](AGENTS.md#rules)).
-2. The workflow checks the tag against the firmware version in the source (for adsbee_1421, also the
-   version the ADSBee 1421 Programmer bakes in) and fails before building if they differ. It then builds
-   only that product with `firmware.yml`, including its host tests, and creates a **draft** release:
+2. The workflow fails if the tag doesn't match the source's firmware version, then builds and tests that
+   product and creates a **draft** release:
 
    | Product | Release name | Assets |
    |---|---|---|
    | adsbee_1090 | `ADSBee 1090 Firmware 0.9.1 Release Candidate 4` | `adsbee_1090.ota`, `combined.uf2` |
    | adsbee_1421 | `ADSBee 1421 Firmware Version 0.3.11 Release Candidate 3` | `adsbee_1421-<version>.hex`, `adsbee_1421-<version>.elf`, `adsbee_1421_programmer-fw<version>.uf2` |
 
-   Stable releases drop the "Release Candidate N" suffix. The body is a stub with placeholders for
-   the release notes, followed by a CI block with the run link, the commit and each asset's SHA-256.
-   Before uploading, the workflow checks that the UF2 files are well formed and that the 1421 ELF
-   (with debug info, for symbolizing crash addresses) holds exactly the contents of the `.hex`.
+   Stable releases drop "Release Candidate N". The body has release-notes placeholders and a CI block
+   (run link, commit, asset SHA-256s). The 1421 ELF keeps debug info for decoding crash addresses.
 3. Write the release notes in the draft on GitHub and publish it.
 
-Re-running the workflow (or deleting and re-pushing the tag) while the release is still a draft
-replaces the draft's assets and its CI block and keeps the hand-written notes. A published release
-is never modified: the run fails instead.
+Re-running the workflow (or re-pushing the tag) on a draft replaces its assets and CI block and keeps
+your notes. A published release is never modified; the run fails.
 
 ---
 

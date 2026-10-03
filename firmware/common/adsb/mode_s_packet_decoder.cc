@@ -53,10 +53,8 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
             return false;
         }
 
-        // Short formats (DF 0-15) are always 56 bits. If the demodulation interval ran on after the message (e.g. a
-        // pulse right after it), the receiver hands them over as 112-bit packets. A valid 56-bit packet followed by
-        // zeros is also a valid 112-bit codeword, so decoding those as 112 bits accepts and forwards 14 byte DF=11s,
-        // and loses the rest. Trim them back to 56 bits.
+        // Short formats (DF 0-15) are always 56 bits, but the receiver may hand them over as 112 bits (e.g. a pulse
+        // right after the message). Trim them back to 56 bits.
         RawModeSPacket framed_packet = raw_packet;
         if (framed_packet.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
             (framed_packet.buffer[0] >> (kBytesPerWord * kBitsPerByte - DecodedModeSPacket::kDFNumBits)) <
@@ -77,11 +75,10 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
             PushPacketIfNotDuplicate(decoded_packet);
             status_str = "APFWD     ";
         } else if (config_.enable_1090_error_correction && decoded_packet.IsSingleBitCorrectable()) {
-            // Checksum correction is enabled, and we have a packet worth correcting (an extended squitter received as
-            // DF=17/18, per DO-260B 2.2.4.3.4.7.3.a; see DecodedModeSPacket::CorrectSingleBitError).
+            // Checksum correction is enabled and the packet is a DF=17/18 extended squitter.
             int16_t bit_flip_index = decoded_packet.CorrectSingleBitError();
             if (bit_flip_index >= 0) {
-                // Found a single bit error: the packet is corrected, push it to the output queue.
+                // Corrected a single bit error.
                 decoded_mode_s_packet_bit_flip_locations_out_queue.Enqueue(bit_flip_index);
                 PushPacketIfNotDuplicate(decoded_packet);
                 status_str = "1FIXD     ";
@@ -124,8 +121,7 @@ bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& deco
 
 #ifndef DISABLE_DUPLICATE_FILTER
     // Check if we have already seen this exact packet from another source (got caught by multiple state machines
-    // simultaneously). Only the bits that belong to the packet are compared: the receiver only masks the last word it
-    // reads out of the demodulator, so a 56-bit packet that was read as 3 words has trailing bits in its second word.
+    // simultaneously). Compare only the packet's bits: the last word read from the demodulator may hold trailing bits.
     constexpr uint16_t kBitsPerWord = kBytesPerWord * kBitsPerByte;
     uint16_t num_words = (raw.buffer_len_bytes + kBytesPerWord - 1) / kBytesPerWord;
     uint16_t last_word_num_bits = raw.buffer_len_bytes * kBitsPerByte - (num_words - 1) * kBitsPerWord;

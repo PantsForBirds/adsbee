@@ -12,14 +12,11 @@ static_assert(CcfgBootloader::kCcfgSectorSizeBytes == FlashUtils::kFlashSectorSi
 
 namespace CcfgBootloader {
 
-// RAM images of the CCFG sector: what it held at Prepare() time and what it must hold afterwards.
-// FlashProgram() can't take its source from flash, and the original copy is what a failed erase
-// path restores. Word aligned for FlashProgram().
+// RAM images of the CCFG before and after the change; FlashProgram() can't read its source from flash.
 static uint8_t original_sector[kCcfgSectorSizeBytes] __attribute__((aligned(4)));
 static uint8_t new_sector[kCcfgSectorSizeBytes] __attribute__((aligned(4)));
 static bool prepared = false;
-// An erase-path write left the sector in an unknown state; original_sector holds what must go back and
-// restore_len_bytes how much of it to program.
+// Set when the sector is in an unknown state and original_sector must be written back.
 static bool restore_pending = false;
 static uint32_t restore_len_bytes = 0;
 
@@ -31,7 +28,7 @@ bool RestorePending() { return restore_pending; }
 
 Plan Prepare(bool enable) {
     if (restore_pending) {
-        // The flash no longer holds original_sector, so don't plan from it: write the original back first.
+        // Write the original back before any new change.
         Plan plan;
         memcpy(new_sector, original_sector, kCcfgSectorSizeBytes);
         plan.method = Method::kEraseAndProgram;
@@ -47,8 +44,7 @@ Plan Prepare(bool enable) {
     prepared = plan.method != Method::kRefused;
     return plan;
 }
-// TI requires the VIMS cache and line buffer off while flash is erased or programmed (driverlib
-// flash.h, NVSCC26XX disableFlashCache()); it also makes the read-back below come from flash.
+// TI requires the flash cache (VIMS) off while erasing or programming; it also makes read-back come from flash.
 static uint32_t DisableFlashCache() {
     uint32_t mode = VIMSModeGet(VIMS_BASE);
     VIMSLineBufDisable(VIMS_BASE);
@@ -67,13 +63,11 @@ static void RestoreFlashCache(uint32_t mode) {
     VIMSLineBufEnable(VIMS_BASE);
 }
 
-// WriteAndVerify()'s flash operations. FlashSectorErase() and FlashProgram() run from ROM (driverlib rom.h), so
-// they may operate on bank 0 while the application executes from it, as long as no interrupt handler in flash runs
-// in the meantime (Apply() masks interrupts).
+// These ROM functions can write the flash bank we execute from, as long as interrupts are masked.
 struct RomFlash {
     bool Erase() { return FlashSectorErase(kCcfgBaseAddr) == FAPI_STATUS_SUCCESS; }
     bool Program(const uint8_t* src, uint32_t offset, uint32_t len) {
-        // FlashProgram() can't take its source from flash; every caller passes a RAM buffer.
+        // src must be in RAM.
         return FlashProgram(const_cast<uint8_t*>(src), kCcfgBaseAddr + offset, len) == FAPI_STATUS_SUCCESS;
     }
     const uint8_t* Read() { return CcfgFlash(); }
@@ -109,14 +103,12 @@ WriteReport Apply(const Plan& plan, bool enable) {
         default:
             break;
     }
-    // CCFG ERASE_CONF_1.WEPROT_CCFG_N (latched into FLASH WEPROT_AUX_BY1 at boot) can lock the
-    // sector until the next chip erase. The release CCFG leaves it unlocked.
+    // CCFG can lock itself until the next chip erase (ERASE_CONF_1.WEPROT_CCFG_N); release images don't.
     if (FlashProtectionGet(kCcfgBaseAddr) == FLASH_WRITE_PROTECT) {
         report.error = "CCFG sector is write protected";
         return finish(WriteResult::kNotWritten);
     }
-    // The flash must still match the image Prepare() planned from. A restore retry writes over whatever the
-    // failed write left.
+    // Flash must still match what Prepare() read, except on a restore retry.
     if (!plan.restore_retry && memcmp(CcfgFlash(), original_sector, kCcfgSectorSizeBytes) != 0) {
         report.error = "CCFG changed since it was read";
         return finish(WriteResult::kNotWritten);
@@ -130,8 +122,7 @@ WriteReport Apply(const Plan& plan, bool enable) {
     FlashUtils::FlashUnsafe();
     RestoreFlashCache(cache_mode);
 
-    // Keep the original image in RAM while the sector is in an unknown state, so the next Prepare() can put it
-    // back; otherwise the RAM images no longer describe the flash after a write attempt.
+    // Keep the original in RAM while the sector is in an unknown state so the next Prepare() can restore it.
     restore_pending = result == WriteResult::kFailedNotRestored;
     if (restore_pending) restore_len_bytes = plan.program_len_bytes;
     prepared = false;

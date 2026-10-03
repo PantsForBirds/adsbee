@@ -20,7 +20,7 @@ test = ["pytest"]
 [project.scripts]
 adsbee-hil = "adsbee_hil.cli:main"
 
-# Out-of-tree drivers register here, e.g. in another package's pyproject.toml:
+# Out-of-tree drivers register in their own pyproject.toml:
 #   [project.entry-points."adsbee_hil.receivers"]
 #   my_model = "my_package.drivers:MyReceiver"
 #   [project.entry-points."adsbee_hil.transmitters"]

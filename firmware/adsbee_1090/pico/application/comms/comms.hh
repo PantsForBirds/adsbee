@@ -75,8 +75,8 @@ class CommsManager {
      * @retval True if update succeeded, false otherwise.
      */
     /**
-     * Sends queued console output to the ESP32 (network console). Output is batched: unless force is set, nothing is
-     * sent within kNetworkConsoleMinReportingIntervalMs of the previous send, until the queue is 3/4 full.
+     * Sends queued console output to the ESP32 network console. Unless force is set, waits
+     * kNetworkConsoleMinReportingIntervalMs between sends or until the queue is 3/4 full.
      */
     bool UpdateNetworkConsole(bool force = false);
 

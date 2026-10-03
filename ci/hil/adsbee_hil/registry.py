@@ -49,8 +49,7 @@ def select_receivers(bench: Bench, targets: List[str] = (), model: Optional[str]
                      tag: Optional[str] = None, all_: bool = False, lock_timeout: float = 600.0) -> List[Receiver]:
     """Receivers named by id or USB serial, or all of them (optionally one model / tag).
 
-    A USB serial that isn't in the bench file works too, given ``model`` (or a USB product
-    string that identifies the model), so a single board can be driven without a bench file.
+    Serials not in the bench file work given ``model`` (or an identifying USB product string).
     """
     chosen: List[ReceiverConfig] = []
     for t in targets:

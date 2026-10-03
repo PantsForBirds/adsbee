@@ -1,7 +1,4 @@
 """Test-packet helpers: Mode S CRC, DF17 builders, and parsing of receiver RAW output.
-
-Used to generate known test patterns for transmitters that take raw messages (Pluto, or a
-wiggler's single-message mode) and to match what receivers report against what was sent.
 """
 
 import re

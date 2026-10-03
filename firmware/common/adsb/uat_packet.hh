@@ -73,15 +73,10 @@ class RawUATADSBPacket {
 };
 
 /**
- * Picks how many bytes to receive after the 32 most significant bits of a UAT sync word, given the 4 least
- * significant sync bits (received as the first nibble of the "header") and the payload type code (first 5 bits of the
- * first payload byte). Used by the TI sub-GHz radio firmware (CMD_PROP_SET_LEN) while the packet is still arriving.
- *
- * The ADS-B and ground uplink sync words are bitwise complements, so their LS4 nibbles (0x2 and 0xD) are at Hamming
- * distance 4. The nibble is classified to the nearest pattern, so any 1-bit error still picks the right format; a
- * 2-bit tie goes to ADS-B, which is far more common and whose (short) mis-reception costs ~0.3 ms of receiver time
- * instead of the ~4.2 ms of a 552-byte uplink reception. The payload type code is not FEC-protected yet at this
- * point; a basic message (type 0) is read as 30 bytes, anything else as 48.
+ * Picks how many bytes to receive after the first 32 sync word bits, while the packet is still arriving (sub-GHz radio
+ * CMD_PROP_SET_LEN). The last 4 sync bits pick ADS-B (0x2) or ground uplink (0xD) by nearest match, so 1-bit errors
+ * are tolerated; 2-bit ties go to ADS-B, the common and shorter case. The payload type code is not error-corrected yet:
+ * type 0 (basic) reads 30 bytes, anything else 48.
  * @param[in] sync_word_ls4 4 least significant bits of the received sync word.
  * @param[in] payload_type_code Uncorrected 5-bit payload type code.
  * @retval Number of bytes to receive (30, 48 or 552).
@@ -117,8 +112,7 @@ class DecodedUATADSBPacket {
         if (altitude_encoded == 0) {
             return INT32_MIN;  // Invalid altitude.
         }
-        // Code 4095 means "> 101,337.5 ft" (UAT Tech Manual Table 2-14). Report it as the bucket's nominal value,
-        // 101,350 ft (same as dump978), rather than a sentinel that would be stored and reported as a real altitude.
+        // Code 4095 means "> 101,337.5 ft" (UAT Tech Manual Table 2-14); reported as 101,350 ft, like dump978.
         return 25 * (altitude_encoded - 1) - 1000;  // Convert to feet.
     };
 
@@ -163,9 +157,7 @@ class DecodedUATADSBPacket {
     /**
      * Calculates the aircraft track from north/east velocity contained in the horizontal_velocity and air_ground_state
      * fields. If horizontal velocity info is not available, track is set to 0.0f, speed is set to INT32_MIN, and
-     * returned direction is set to kDirectionTypeNotAvailable. Speed and direction are independent: speed can be valid
-     * while the direction is not available (airborne zero velocity, or on-ground track type 0), and on the ground the
-     * direction can be valid while speed is not (speed_kts_ref = INT32_MIN).
+     * returned direction is set to kDirectionTypeNotAvailable. Speed and direction are independently valid.
      * @param[in] horizontal_velocity Horizontal velocity in the state vector, in kts.
      * @param[in] air_ground_state Air-ground state from the UAT state vector.
      * @param[out] direction_deg_ref Output parameter for the calculated direction in degrees.
@@ -191,14 +183,13 @@ class DecodedUATADSBPacket {
                                                                            int32_t& vertical_rate_fpm_ref);
 
     /**
-     * Decodes the Aircraft / Vehicle length and width code from the A/V size field that is transmitted in place of
-     * vertical rate while the aircraft is on the ground (UAT Tech Manual Tables 2-34 to 2-36).
+     * Decodes the Aircraft/Vehicle (A/V) size field, sent instead of vertical rate on the ground (UAT Tech Manual
+     * Tables 2-34 to 2-36).
      * @param[in] av_dimensions_encoded Encoded Aircraft/Vehicle field.
      * @param[out] width_m_ref Reference that gets set to the decoded width.
      * @param[out] length_m_ref Reference that gets set to the decoded length.
-     * @retval kAVDimensionsTypeGNSSSensorOffset if the Position Offset Applied (POA) bit is set, i.e. the reported
-     * position has been normalized from the GNSS antenna to the ADS-B reference point, kAVDimensionsTypeAVLengthWidth
-     * otherwise. The decoded width / length are the A/V dimensions in both cases.
+     * @retval kAVDimensionsTypeGNSSSensorOffset if the Position Offset Applied bit is set, else
+     * kAVDimensionsTypeAVLengthWidth. Width and length are the A/V dimensions either way.
      */
     static ADSBTypes::AVDimensionsType DecodeAVDimensions(uint32_t av_dimensions_encoded, int16_t& width_m_ref,
                                                           int16_t& length_m_ref);
@@ -222,8 +213,8 @@ class DecodedUATADSBPacket {
             uint16_t vertical_velocity          : 11;
             uint16_t aircraft_length_width_code : 11;
         };
-        // Byte 17 bits 5-8. ADS-B targets: MSB is the UTC coupled flag, other bits reserved. TIS-B targets (address
-        // qualifier 2 or 3): 4-bit TIS-B site ID. Must not be a bool: that would collapse every non-zero value to 1.
+        // Byte 17 bits 5-8: UTC coupled flag (MSB) for ADS-B, 4-bit site ID for TIS-B (address qualifier 2 or 3).
+        // Not a bool, which would collapse the site ID to 1.
         uint8_t utc_coupled_or_tis_b_site_id : 4;
     };
 

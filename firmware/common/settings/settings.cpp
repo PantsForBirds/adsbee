@@ -5,8 +5,8 @@
 #endif
 #include "comms.hh"
 
-// A bool loaded from a raw settings blob can hold any byte value, and reading one that isn't 0 or 1 is undefined
-// behavior. Inspect the storage byte instead of the bool, and rewrite any nonzero value as true.
+// A bool loaded from raw flash can hold any byte, and reading one that isn't 0 or 1 is undefined behavior. Check the
+// raw byte and rewrite nonzero values as true.
 static bool SanitizeBool(bool& value, const char* name, int index = -1) {
     uint8_t raw;
     memcpy(&raw, &value, sizeof(raw));
@@ -41,8 +41,7 @@ static bool SanitizeString(char* str, size_t size, const char* name, int index =
 bool SettingsManager::Sanitize() {
     bool changed = false;
 
-    // CoreNetworkSettings is CRC-protected. If the CRC was valid before sanitizing, keep it valid after any fix-up so
-    // the block can still be restored after a failed migration.
+    // Keep a valid CoreNetworkSettings CRC valid after fix-ups, so the block can be restored after a failed migration.
     Settings::CoreNetworkSettings& cns = settings.core_network_settings;
     bool cns_was_valid = cns.IsValid();
     bool cns_changed = false;
@@ -80,7 +79,7 @@ bool SettingsManager::Sanitize() {
         changed |= SanitizeString(settings.feed_uris[i], sizeof(settings.feed_uris[i]), "feed_uris", i);
     }
 
-    // A baud rate of 0 is invalid for the hardware UARTs (the console is a USB CDC port, where 0 is the normal value).
+    // Baud rate 0 is invalid on hardware UARTs (but normal for the USB console).
     if (settings.baud_rates[SerialInterface::kCommsUART] == 0) {
         CONSOLE_ERROR("SettingsManager::Sanitize", "Comms UART baud rate is 0, resetting to %lu.",
                       (unsigned long)Settings::kDefaultCommsUARTBaudrate);
@@ -140,7 +139,7 @@ bool SettingsManager::Sanitize() {
         settings.gnss_receiver_type = kGNSSReceiverNone;
         changed = true;
     }
-    // GNSS can't run without a receiver type; AT+GNSS refuses to enable it that way, so treat the combination as disabled.
+    // GNSS can't run without a receiver type (AT+GNSS refuses it too).
     if (settings.gnss_enabled && settings.gnss_receiver_type == kGNSSReceiverNone) {
         CONSOLE_ERROR("SettingsManager::Sanitize", "gnss_enabled is set with receiver type NONE, disabling GNSS.");
         settings.gnss_enabled = false;

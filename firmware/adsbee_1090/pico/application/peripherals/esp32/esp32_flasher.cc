@@ -79,8 +79,7 @@ bool ESP32SerialFlasher::FlashESP32() {
         if (attempt > 1) {
             CONSOLE_WARNING("ESP32SerialFlasher::FlashESP32", "Retrying ESP32 flash (attempt %u/%u).", attempt,
                             kFlashAttempts);
-            // A failed attempt may have left the link at the higher baud rate. esp_loader_connect() resets the ESP32
-            // into its ROM bootloader, which syncs at the initial rate.
+            // A failed attempt may have left the higher baud rate; the bootloader syncs at the initial rate.
             SetBaudRate(initial_baudrate_);
         }
         esp_loader_error_t err = connect_to_target(config_.esp32_higher_baudrate);
@@ -105,8 +104,7 @@ bool ESP32SerialFlasher::FlashESP32() {
     }
     ResetTarget();
     DeInit();
-    // Start the next FlashESP32() call from the bootloader sync rate. Only the stored value: the UART is deinitialized
-    // (held in reset) now, and Init() applies config_.esp32_baudrate through uart_init().
+    // Next flash starts at the bootloader sync rate. Store only: the UART is deinitialized; Init() applies it.
     config_.esp32_baudrate = initial_baudrate_;
 
     if (success) {

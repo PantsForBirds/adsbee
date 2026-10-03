@@ -1,7 +1,5 @@
-// The ADSBee 1421 PacketDecoder's handling of failed and address parity frames: single-bit correction through the
-// shared DecodedModeSPacket::CorrectSingleBitError (only DF=17/18, never a bit in the DF field, per DO-260B
-// 2.2.4.3.4.7.3.a) and address parity frames forwarded unchanged. The rule itself is tested with the ADSBee 1090 host
-// tests (test_mode_s_single_bit_correction.cc); these check the 1421 decoder uses it.
+// ADSBee 1421 PacketDecoder: single-bit correction (the rule itself is tested in the ADSBee 1090 host tests) and
+// forwarding of address-parity frames.
 #include <cstring>
 #include <memory>
 #include <random>
@@ -13,9 +11,8 @@
 
 SettingsManager settings_manager;  // PacketDecoder::DecodeOne reads the log level.
 
-// A 112-bit frame with downlink format df, random contents and a correct parity field (the CRC XOR icao; icao = 0 for
-// formats checked by their CRC alone). The LR2021 always captures 112 bits, so 56-bit formats are sent the same way,
-// with their parity field in bits 32-55 and noise after it.
+// A 112-bit frame with downlink format df, random contents and parity = CRC ^ icao (icao = 0 for CRC-only formats).
+// 56-bit formats get noise after their parity, since the LR2021 always captures 112 bits.
 static RawModeSPacket MakeCapture(uint16_t df, std::mt19937& rng, uint32_t icao = 0) {
     const uint16_t len_bytes = df < 16 ? RawModeSPacket::kSquitterPacketLenBytes
                                        : RawModeSPacket::kExtendedSquitterPacketLenBytes;
@@ -57,9 +54,8 @@ class PacketDecoderTest : public ::testing::Test {
     std::unique_ptr<PacketDecoder> decoder = std::make_unique<PacketDecoder>();
 };
 
-// DF=17 (both receiver mode families) and DF=18 (preamble modes): every single-bit error outside the DF field is
-// corrected back to the original frame. Errors in the DF field are never corrected; the frame is dropped, or forwarded
-// unchanged if the error made it an address parity format.
+// DF 17/18: every single-bit error outside the DF field is corrected. DF field errors never are: the frame is dropped,
+// or forwarded unchanged if it became an address-parity format.
 TEST_F(PacketDecoderTest, CorrectsDF17AndDF18OutsideTheDFField) {
     std::mt19937 rng(1421);
     for (uint16_t df : {17, 18}) {
@@ -88,8 +84,7 @@ TEST_F(PacketDecoderTest, CorrectsDF17AndDF18OutsideTheDFField) {
     }
 }
 
-// Other 112-bit formats with a single-bit error (DF=19 military, DF=22, DF=24 Comm-D) are dropped, never corrected
-// into ADS-B packets.
+// Other 112-bit formats (DF 19, 22, 24) with a bit error are dropped, never corrected.
 TEST_F(PacketDecoderTest, DropsOtherExtendedFormatsWithBitErrors) {
     std::mt19937 rng(19);
     for (uint16_t df : {19, 22, 24}) {
@@ -102,8 +97,8 @@ TEST_F(PacketDecoderTest, DropsOtherExtendedFormatsWithBitErrors) {
     EXPECT_EQ(decoder->bitflips_fixed_count, 0u);
 }
 
-// Address parity formats are forwarded as received, with or without a bit error (which only changes the recovered
-// ICAO address), for the aircraft dictionary to confirm. 56-bit formats are trimmed from the 112-bit capture first.
+// Address-parity formats are forwarded as received, bit error or not, for the aircraft dictionary to confirm.
+// 56-bit formats are trimmed first.
 TEST_F(PacketDecoderTest, ForwardsAddressParityFramesUnchanged) {
     std::mt19937 rng(20);
     const uint32_t icao = 0xA1B2C3;

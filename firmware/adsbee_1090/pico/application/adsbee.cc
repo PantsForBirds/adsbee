@@ -797,12 +797,8 @@ void ADSBee::MLATCounterInit() {
 
     // PWM slice 5 is used for LEVEL_PWM, anything else is fine to use for the MLAT jitter counter.
     mlat_jitter_pwm_slice_ = pwm_gpio_to_slice_num(bsp.r1090_pulses_pin);  // Use pulses pin for slice 1.
-    // The slice counts the system clock (no divider). The PWM divider is 8.4 fixed point and can't hold 125/48: the
-    // SDK truncates it to 41/16 = 2.5625, which made a 48.78MHz count that was 1.6% fast against the 48MHz MLAT
-    // counter. Counting clk_sys and scaling with MLATJitterCountsTo48MHzCounts() is exact, like the SysTick scaling in
-    // GetMLAT48MHzCounts(). The 16-bit counter wraps every 65536 / 125MHz = 524us; the jitter corrections measured on
-    // hardware stay under 30us (the time from the demodulator's first FIFO pull to OnDemodBegin()), so a correction
-    // never spans a full wrap.
+    // Count clk_sys undivided and scale with MLATJitterCountsTo48MHzCounts(): the 8.4 fixed-point PWM divider can't
+    // hold 125/48 exactly. The 16-bit counter wraps every 524us, well above the <30us jitter corrections.
     pwm_config config = pwm_get_default_config();
     pwm_config_set_clkdiv_int_frac(&config, 1, 0);
     pwm_config_set_wrap(&config, 0xFFFF);             // Use the full 16-bit span.

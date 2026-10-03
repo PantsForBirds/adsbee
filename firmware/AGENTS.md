@@ -16,12 +16,22 @@ bash firmware/build.sh adsbee_1090 [args...]   # forwards to adsbee_1090/build.s
 bash firmware/build.sh adsbee_1421 [args...]   # forwards to adsbee_1421/build.sh
 ```
 
-Each product has its own firmware/settings versions; the version-management rules below apply
-**per product**, and a `firmware/common/` change concerns **both** products' versions
-(enforced by `scripts/check_version_sync.sh`). The one exception is
-`firmware/common/coprocessor/object_dictionary.cpp`, which holds adsbee_1090's version constants
-and isn't built into adsbee_1421, so a 1090-only version bump needs no 1421 bump. CI builds a product only when its own files,
-`firmware/common/`, or `firmware/modules/` changed.
+Each product has its own firmware and settings versions, and the rules below apply per product. A
+`firmware/common/` change needs a version bump in **both** products, except
+`common/coprocessor/object_dictionary.cpp` (adsbee_1090's version constants). CI builds a product only when its own
+files, `firmware/common/` or `firmware/modules/` changed.
+
+## Comments and docs
+
+- Use as few words as possible. Say what the code does and why; history, rejected alternatives, bench
+  measurements and task ids go in the commit message or PR description.
+- One-line comments by default. Write a short paragraph only for non-obvious hardware behavior or a rule
+  callers must follow.
+- Don't restate what the code or names already say.
+- Spell out abbreviations on first use; avoid jargon a new contributor wouldn't know.
+- READMEs are for users: short sections, bullets and the rules they need to operate the device. Design
+  notes belong in code comments.
+- Use American spelling. Avoid "it's not X, it's Y" phrasing.
 
 ## Project Summary
 
@@ -133,30 +143,23 @@ static constexpr uint32_t kSettingsVersion = N;
 ```
 
 ### Rules
-1. **Any change to ESP32 or CC1312 code, or to shared `common/` code** → the firmware version must be one that is **not yet released** (RC for dev builds, patch for releases). If the version on the branch is already the next unreleased RC, keep it; if it matches a release tag, move it to the next unreleased RC. A `common/` change applies this to adsbee_1421's version too, except a change to `common/coprocessor/object_dictionary.cpp` (the 1090 version constants), which adsbee_1421 doesn't build.
-2. **Any change to the `Settings` struct** → increment `kSettingsVersion`, with the firmware version following rule 1; commit both together
-3. If firmware version is unchanged, RP2040 skips reflashing the coprocessors — symptom: old behavior persists after flashing new `combined.uf2`. While developing under an unchanged unreleased version, force a reflash or bump the RC locally to test.
-4. Never go below the latest release: versions compare by major, minor, patch, then RC, and every RC sorts below its stable release (`0.9.1-rc9` < `0.9.1` < `0.9.2-rc1`).
+1. **Any change to ESP32 or CC1312 code, or to shared `common/` code** → the firmware version must be **not yet released** (an RC for dev builds). Keep the branch's version if it is already the next unreleased RC; if it matches a release tag, move to the next unreleased RC. A `common/` change applies to adsbee_1421 too, except `common/coprocessor/object_dictionary.cpp`.
+2. **Any change to the `Settings` struct** → increment `kSettingsVersion` and follow rule 1; commit both together.
+3. If the firmware version is unchanged, RP2040 skips reflashing the coprocessors, so old behavior persists after flashing a new `combined.uf2`. To test under an unchanged version, force a reflash or bump the RC locally.
+4. Never go below the latest release. Every RC sorts below its release: `0.9.1-rc9` < `0.9.1` < `0.9.2-rc1`.
 
-Release tags are named `<product>-M.m.p-rcN` for release candidates and `<product>-M.m.p` for
-stable releases (`kFirmwareVersionReleaseCandidate = 0`), e.g. `adsbee_1090-0.9.1-rc3`,
-`adsbee_1421-0.3.10`.
-Pushing a release tag runs `.github/workflows/release.yml`, which builds that product from the
-tagged commit and creates a draft GitHub release (see "Releases" in [README.md](README.md#releases)).
+Release tags are `<product>-M.m.p-rcN` or `<product>-M.m.p` (`kFirmwareVersionReleaseCandidate = 0`), e.g.
+`adsbee_1090-0.9.1-rc3`, `adsbee_1421-0.3.10`. Pushing one runs `.github/workflows/release.yml`, which builds that
+product and drafts a GitHub release (see [Releases](README.md#releases)).
 
 ### Automated enforcement
-These rules are checked automatically by `scripts/check_version_sync.sh` (covers both products).
-When a product's watched paths or `kSettingsVersion` changed, it fails if the new firmware
-version matches a release tag (naming the tag and the next free RC) or is lower than the latest
-release; an unreleased version passes even when it equals the base branch's. The tags come from
-the local repository, so run `git fetch --tags`; with no tags for a product, the check warns and
-falls back to requiring a version different from the base.
-Watched paths: adsbee_1090 watches `adsbee_1090/esp/`, `adsbee_1090/ti/` and `common/`;
-adsbee_1421 watches `adsbee_1421/` and `common/` except `common/coprocessor/object_dictionary.cpp`
-(adsbee_1090's version constants, not compiled into any adsbee_1421 build).
-Markdown-only changes (`*.md`: READMEs, AGENTS.md) are exempt and need no bump; any other file under
-the watched paths, including `CMakeLists.txt`, scripts, and assets, still does. The CI
-`version_sync_check` job runs the check and its tests (`scripts/test_check_version_sync.sh`).
+`scripts/check_version_sync.sh` checks these rules for both products. If a product's watched paths or
+`kSettingsVersion` changed, it fails when the new version matches a release tag or is below the latest release. It
+reads local tags, so run `git fetch --tags`; with no tags it only requires a version different from the base.
+- Watched paths: adsbee_1090: `adsbee_1090/esp/`, `adsbee_1090/ti/`, `common/`. adsbee_1421: `adsbee_1421/` and
+  `common/` except `common/coprocessor/object_dictionary.cpp`.
+- `*.md` changes need no bump; any other file in a watched path does.
+- The CI `version_sync_check` job runs the check and its tests (`scripts/test_check_version_sync.sh`).
 - **`build.sh`** (both products') runs the check locally before every build, but only **warns** —
   a failed check never blocks a local build.
 - **Local git hook** — the enforcing gate; catches it before you even commit. A native `pre-commit` hook (no external tooling) is installed by the dev setup script:
@@ -227,4 +230,4 @@ By hand, or to recover a device that will not enumerate:
 | ESP32 keeps old behavior after flashing | Firmware version unchanged | Increment firmware version |
 | RP2040 build fails (missing binary) | ESP32 or CC1312 not built yet | Run `bash build.sh all` or build in order |
 | Settings reset on every boot | `kSettingsVersion` mismatch | Ensure both processors run the same firmware |
-| ESP32 aborts at boot on one hardware revision only | An sdkconfig option that requires PSRAM (e.g. `BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL`, `SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY`) or > 4 MB flash | The one ESP32 image must run on the ESP32-S3-MINI-1U-N8 (8 MB flash, no PSRAM) and -N4R2 (4 MB flash, 2 MB PSRAM); see `adsbee_1090/esp/README.md`. Gate RAM-hungry features at runtime on `HardwareCapabilities::HasPSRAM()` |
+| ESP32 aborts at boot on one hardware revision only | An sdkconfig option that needs PSRAM or > 4 MB flash | One ESP32 image runs on the ESP32-S3-MINI-1U-N8 (8 MB flash, no PSRAM) and -N4R2 (4 MB flash, 2 MB PSRAM). Gate RAM-hungry features on `HardwareCapabilities::HasPSRAM()`; see `adsbee_1090/esp/README.md` |

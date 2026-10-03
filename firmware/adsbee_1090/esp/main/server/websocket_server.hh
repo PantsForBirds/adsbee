@@ -30,9 +30,8 @@ class WebSocketServer {
     // How long a frame write waits for another write to the same server to finish before the frame is dropped.
     static constexpr uint32_t kSendMutexTimeoutMs = 100;
     static constexpr uint16_t kControlFramePayloadMaxLen = 125;  // RFC 6455 section 5.5.
-    // Websocket frame writes block the calling task. Bound each send() on a client socket (httpd's default is 5 s, and
-    // a frame is two sends), and drop a client whose send times out or that fails this many sends in a row: a client
-    // that stopped reading would otherwise stall the sending task on every broadcast.
+    // Frame writes block the caller, so bound each send() and drop a client whose send times out or fails this many
+    // times in a row. Otherwise a client that stopped reading stalls every broadcast.
     static constexpr uint32_t kClientSendTimeoutMs = 1000;
     static constexpr uint8_t kMaxConsecutiveSendFailures = 3;
 
@@ -129,10 +128,8 @@ class WebSocketServer {
     bool UpdateActivityTimer(int client_fd);
 
     /**
-     * Writes one frame to a client while holding send_mutex_.
-     * httpd_ws_send_frame_async() writes the frame header and the payload with two separate send() calls and no
-     * locking, so every frame written to a socket must go through here, including the PONG / CLOSE replies to control
-     * frames, which are written from the httpd task while broadcasts come from other tasks.
+     * Writes one frame to a client while holding send_mutex_. Every frame, including PONG / CLOSE replies, must go
+     * through here: httpd_ws_send_frame_async() writes header and payload in two unlocked send() calls.
      * @retval Result of httpd_ws_send_frame_async, or ESP_FAIL if the mutex could not be taken in time.
      */
     esp_err_t SendFrameLocked(int client_fd, httpd_ws_frame_t *frame);

@@ -58,10 +58,9 @@ settings, then sets `AT+LOG_LEVEL=SILENT` and
 `AT+PROTOCOL_OUT=CONSOLE,AIRCRAFT_JSON` and renders the newline-delimited
 aircraft JSON stream. Switching back restores the saved settings. These
 changes are RAM-only (`AT+SETTINGS=SAVE` is never issued), so a device power
-cycle always returns to the persisted configuration — including if the page is
-closed while on the Live Map tab (a best-effort restore is attempted on close, but
-cannot be guaranteed). In network mode the Live Map tab simply uses the `/aircraft`
-WebSocket, exactly like the device-hosted page.
+cycle always returns to the persisted configuration, even if the page is closed
+on the Live Map tab. In network mode the Live Map tab uses the `/aircraft`
+WebSocket, like the device-hosted page.
 
 ## Firmware upload
 
@@ -85,8 +84,8 @@ re-copy the marked block:
   (between its `BEGIN/END SHARED SETTINGS ENGINE` markers) into this page's
   `BEGIN/END VENDORED ADSBee settings engine` markers. The
   `SETTINGS_SCHEMA_1090` table and `Settings1090Transport` are copied from the
-  same file below the shared block. `firmware/adsbee_1090/esp/main/server/web/test/settings_drift.test.js`
-  fails when any of these copies differs from `settings.js`.
+  same file. `firmware/adsbee_1090/esp/main/server/web/test/settings_drift.test.js`
+  fails when a copy differs.
 - **Page CSS**: `style.css` is embedded in full, followed by a marked block of
   standalone-console additions (connection controls, browser banner,
   `.metrics-unavailable` notes).

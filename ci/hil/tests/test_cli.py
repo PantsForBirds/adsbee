@@ -98,8 +98,7 @@ def test_select_by_model_and_tag(bench, capsys):
 
 
 def test_ad_hoc_serial_without_bench(bench, capsys):
-    # The ADSBee 1421 Programmer is identifiable by its product string; an "ADSBee 1090" could be any RP2040
-    # variant, so it needs --model.
+    # The ADSBee 1421 Programmer is known by its product string; an "ADSBee 1090" needs --model.
     rc, out, _ = run(capsys, "at", "-d", "J1421", "AT+UPTIME?")
     assert rc == 0 and "UPTIME=42" in out
     rc, out, err = run(capsys, "at", "-d", "P1090", "AT+UPTIME?")

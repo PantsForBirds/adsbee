@@ -1300,9 +1300,7 @@
             margin: 8px 0 0;
         }
 
-        /* Bootloader-entry instructions (automatic, then manual). The device must be in the
-           ROM bootloader before flashing, so these are the main content of the preflight
-           panel. */
+        /* Bootloader-entry instructions (automatic, then manual). */
         #firmware-auto,
         #firmware-steps {
             background: #0d0d0d;
@@ -1368,9 +1366,7 @@
             color: #e4e4e7;
         }
 
-        /* The page-wide disabled style is a light gray that reads as the brightest
-           thing on this dark modal, which is backwards: a locked Flash button must
-           look less prominent than the Check button the user is meant to press. */
+        /* Locked buttons must look dimmer than the active one on this dark modal. */
         .fw-modal-buttons .tools-button:disabled {
             background-color: #2a2a2a;
             color: #6b6b6b;
@@ -2093,24 +2089,21 @@
         /**
          * ADSBee 1421 Web Console.
          *
-         * Talks to an ADSBee 1421 (TI CC1314R10) through the ADSBee 1421 Programmer over
-         * the Web Serial API.
+         * Talks to an ADSBee 1421 through the ADSBee 1421 Programmer over Web Serial.
          * UI ported from the ADSBee ESP32 web interface
          * (firmware/modules/adsbee/firmware/adsbee_1090/esp/main/server/web/), with the
-         * WebSocket transport replaced by a serial line router, and a firmware uploader
-         * for the CC13x4 ROM serial bootloader (TRM SWCU194 ch. 10).
+         * a serial transport and a CC13x4 ROM bootloader uploader (TRM SWCU194 ch. 10).
          */
 
         'use strict';
 
         // ─── Helpers ─────────────────────────────────────────────────────────────
 
-        // Console rate range (firmware/adsbee_1421/ti/comms/console_baud.hh). The Programmer's USB
-        // baud rate is virtual, so the port always opens at HOST_BAUD.
+        // Console rate range (ti/comms/console_baud.hh). The port always opens at HOST_BAUD (the rate is virtual).
         const CONSOLE_BAUD_MIN = 9600;
         const CONSOLE_BAUD_MAX = 3000000;
         const isConsoleBaud = n => Number.isInteger(n) && n >= CONSOLE_BAUD_MIN && n <= CONSOLE_BAUD_MAX;
-        // Rates offered in the Settings tab; any other rate in range is a custom one.
+        // Settings tab presets; other rates in range are custom.
         const CONSOLE_BAUD_PRESETS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 2000000, 3000000];
         // Settings form values for a console rate, and back.
         const consoleBaudValues = baud => Number.isInteger(baud)
@@ -2118,20 +2111,17 @@
         const consoleBaudFromValues = v => v.preset === 'CUSTOM' ? parseInt(v.custom, 10) : parseInt(v.preset, 10);
         const HOST_BAUD = 1000000;
 
-        // Opening the port resets the module, so keep asking for ~3.6 s (8 x ~450 ms) while it boots.
+        // Opening the port resets the module; keep asking for ~3.6 s while it boots.
         const PROBE_ATTEMPTS = 8;
 
         const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-        // Modem-control wiring for the SYNC bootloader backdoor, the same convention as the
-        // ADSBee 1421 Programmer (firmware/adsbee_1421/programmer/bridge.cc) and a plain USB-UART
-        // adapter wired RTS -> SYNC, DTR -> RESET_N, where asserting a line drives its pin low:
-        //   RTS asserted = SYNC low (awake), RTS deasserted = SYNC high (sleep; the next reset
-        //   enters the ROM bootloader). DTR asserted = RESET_N low: the Programmer acts on the
-        //   assert edge only (a fixed 50 ms pulse), and a plain adapter holds reset for as long
-        //   as DTR is asserted. See "Reflashing over UART" in firmware/adsbee_1421/README.md.
+        // Wiring for the SYNC bootloader backdoor (ADSBee 1421 Programmer or an adapter wired RTS -> SYNC,
+        // DTR -> RESET_N); asserting a line drives its pin low:
+        //   RTS asserted = SYNC low (awake); deasserted = SYNC high (sleep; next reset enters the ROM bootloader).
+        //   DTR asserted = reset: the Programmer pulses 50 ms on the edge; a plain adapter holds it while asserted.
         const SIGNALS_RUN = { requestToSend: true, dataTerminalReady: false };
-        const BACKDOOR_RESET_PULSE_MS = 50;   // DTR asserted time; the Programmer's pulse is also 50 ms
+        const BACKDOOR_RESET_PULSE_MS = 50;   // DTR asserted time
         const BACKDOOR_BOOT_WAIT_MS = 150;    // after the pulse, before the first sync bytes
         const hex8 = (v) => (v >>> 0).toString(16).padStart(8, '0');
 
@@ -2191,8 +2181,7 @@
         // aircraft still draws its full history.
         const kTrailAllMaxPoints = 100;
 
-        // Map display options persist across reloads. Storage can throw (private mode,
-        // disabled cookies), so both sides are defensive.
+        // Map display options persist across reloads. Storage can throw (private mode).
         function readMapFlag(key, dflt) {
             try {
                 const v = localStorage.getItem(key);
@@ -2340,8 +2329,7 @@
                     // The device does not echo; the local '> cmd' line above is the echo.
                     atQueue.send(command + '\r\n', { visible: true, terminator: 'quiet', quietMs: 500, timeoutMs: 15000 })
                         .catch(() => { /* visible commands print their own output/errors */ });
-                    // The Programmer follows console rate changes. After AT+REBOOT, recheck the link
-                    // and refresh the uptime card.
+                    // After AT+REBOOT, recheck the link and refresh the uptime card.
                     if (/^AT\+REBOOT\b/i.test(command.trim())) {
                         setTimeout(() => connectionUI.renegotiateAfterReset(), 1500);
                     }
@@ -2496,14 +2484,8 @@
                 this.writer = port.writable.getWriter();
                 this.connected = true;
                 this._closing = false;
-                // The OS asserts DTR and RTS when a port opens (Linux does it in the tty
-                // layer), which the ADSBee 1421 Programmer turns into a reset pulse with SYNC
-                // low and a plain DTR -> RESET_N adapter into a held reset. The page can't
-                // prevent that, so a module is reset into its application on connect, and
-                // the bootloader is entered afterwards from the firmware dialog.
-                // Park the lines in the normal-run state: RTS asserted = SYNC pin low
-                // (awake, no bootloader backdoor), DTR deasserted = RESET_N released. Neither
-                // is an edge the Programmer acts on, so parking never resets or sleeps the module.
+                // The OS asserts DTR and RTS on open, which resets the module into its application.
+                // Park the lines in the run state (SYNC low, reset released); this never resets or sleeps it.
                 try { await port.setSignals(SIGNALS_RUN); } catch (_) { }
                 this._readLoopPromise = this._readLoop();
             }
@@ -2712,6 +2694,7 @@
 // ══ BEGIN VENDORED ADSBee settings engine (from firmware/adsbee_1090/esp/main/server/web/settings.js) ══
 // Copied verbatim from between that file's BEGIN/END SHARED SETTINGS ENGINE markers;
 // edit it there and re-copy. Unindented to keep the copy mechanical, like Leaflet above.
+
 // Schema-driven settings form. Each schema entry describes one AT command:
 //
 //   {
@@ -2769,12 +2752,9 @@ class SettingsEngine {
     // timeoutMs}) -> Promise<string[] of trimmed body lines>; rejects on a whole-line
     // 'ERROR ...' response or timeout.
     // bulkQuery (optional): { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/,
-    // timeoutMs, attempts }, a one-round-trip read of every setting as a JSON object keyed
-    // by AT command name. It is the normal read path, also used to re-read after a save.
-    // A dump that is lost or cut short (the console drops bytes under heavy log output) is
-    // retried up to `attempts` times. Only firmware that answers the dump with ERROR
-    // (predating the command) falls back to querying every entry one at a time; entries
-    // missing from a good dump (firmware older than the page) are queried individually.
+    // timeoutMs, attempts } reads every setting in one round trip, keyed by AT command.
+    // A lost or cut-short dump is retried. Firmware that answers ERROR, and entries
+    // missing from the dump, fall back to one query per entry.
     constructor(config) {
         this.schema = config.schema;
         this.transport = config.transport;
@@ -3482,6 +3462,7 @@ function makeRxEnableEntry() {
         build(v) { return [`AT+RX_ENABLE=,${v.r1090 ? 1 : 0},${v.subg ? 1 : 0}`]; },
     };
 }
+
 // ══ END VENDORED ADSBee settings engine ══
 
         // ─── LineRouter ──────────────────────────────────────────────────────────
@@ -4495,10 +4476,9 @@ function makeRxEnableEntry() {
             },
         };
 
-        // Bootloader pin (AT+BOOTLOADER_PIN): the SYNC backdoor in the module's CCFG flash. Kept out of the
-        // settings schema on purpose: it isn't part of the settings struct (AT+SETTINGS=SAVE doesn't touch it), and
-        // each change is a CCFG flash write the user must confirm by typing the password by hand. The prompt shows
-        // the password but never fills it in.
+        // Bootloader pin (AT+BOOTLOADER_PIN): the SYNC backdoor in CCFG (customer configuration) flash. Not in the
+        // settings schema: it isn't a saved setting, and each change is a CCFG write the user confirms by typing the
+        // password.
         const BOOTLOADER_PIN_PASSWORD = 'DEADBEE';
         const bootloaderPinCard = {
             enabled: null,  // true/false from AT+BOOTLOADER_PIN?, null when unknown
@@ -4570,7 +4550,7 @@ function makeRxEnableEntry() {
                       'Afterwards the ADSBee 1421 Programmer and this page can no longer enter the bootloader ' +
                       'to flash firmware; only AT+BOOTLOADER_PIN=1,' + BOOTLOADER_PIN_PASSWORD +
                       ' from the running firmware, or JTAG, can turn it back on.';
-                // Empty default: the user types the password, it is never filled in.
+                // Never prefilled: the user types the password.
                 const typed = window.prompt(`${warning}\n\nTo ${action} the bootloader pin, type the password ` +
                     `${BOOTLOADER_PIN_PASSWORD} by hand:`, '');
                 if (typed === null) return;  // Cancelled.
@@ -4582,7 +4562,7 @@ function makeRxEnableEntry() {
                 this.show(this.enabled, 'writing CCFG\u2026');
                 try {
                     if (!serial.connected) throw new Error('Not connected.');
-                    // Visible, so the whole response (including any CCFG WRITE FAILED banner) reaches the terminal.
+                    // Visible, so any CCFG WRITE FAILED banner reaches the terminal.
                     await atQueue.send(`AT+BOOTLOADER_PIN=${target},${typed}\r\n`,
                         { visible: true, terminator: 'ok', timeoutMs: 5000 });
                     this.busy = false;
@@ -4602,9 +4582,8 @@ function makeRxEnableEntry() {
 
         // ─── Intel HEX parser ────────────────────────────────────────────────────
 
-        // Records → contiguous segments, padded to 4-byte alignment with 0xFF, split
-        // into main flash (1 MB @ 0x0) and CCFG (2 KB @ 0x50000000). The ADSBee 1421
-        // Programmer bakes images with the same rules (firmware/adsbee_1421/programmer/scripts/hex_to_c.py).
+        // Records → contiguous segments, padded to 4-byte alignment with 0xFF, split into main flash (1 MB @ 0x0) and
+        // CCFG (2 KB @ 0x50000000). Same rules as programmer/scripts/hex_to_c.py.
         const IntelHex = {
             MAIN_FLASH_BASE: 0x00000000,
             MAIN_FLASH_SIZE: 0x00100000,   // CC1314R10: 1 MB main bank
@@ -4687,8 +4666,7 @@ function makeRxEnableEntry() {
 
         // ─── CC13x4 ROM serial bootloader ────────────────────────────────────────
 
-        // CC13x4 ROM serial bootloader client (TRM SWCU194 section 10.2; the ADSBee 1421
-        // Programmer's firmware/adsbee_1421/programmer/cc13x4_bootloader.cc is the C++ equivalent).
+        // CC13x4 ROM serial bootloader client (TRM SWCU194 section 10.2; C++ version: programmer/cc13x4_bootloader.cc).
         // Runs over the RawSink while the read loop keeps pumping.
         const BL = {
             ACK: 0xCC, NACK: 0x33,
@@ -4820,19 +4798,10 @@ function makeRxEnableEntry() {
 
         // ─── FlashController ─────────────────────────────────────────────────────
 
-        // The device must be in the ROM bootloader before flashing: SYNC (DIO_5) held high
-        // across a reset makes the boot ROM start the serial bootloader. Two ways in:
-        //  - enterBootloader() drives it through the modem-control lines (RTS -> SYNC,
-        //    DTR -> RESET_N), which works through the ADSBee 1421 Programmer and through any
-        //    adapter wired that way. It makes a single attempt that takes a few seconds. If
-        //    the ROM doesn't answer, it puts SYNC back low so a running module isn't left
-        //    asleep.
-        //  - By hand (SYNC jumpered high, then a reset), for adapters without RTS/DTR wired
-        //    to the module. The user then presses Enter bootloader as well: with the lines
-        //    unwired its toggles do nothing, and with DTR wired the reset lands back in the
-        //    bootloader because SYNC is still high.
-        // Either way verifyBootloader() proves the ROM is actually answering before anything
-        // is erased, and every exit from the bootloader drives SYNC low first.
+        // SYNC (DIO_5) held high across a reset starts the ROM bootloader. enterBootloader() does this through
+        // RTS/DTR; without that wiring the user does it by hand, then presses Enter bootloader (harmless).
+        // verifyBootloader() confirms the ROM answers before anything is erased, and every exit from the
+        // bootloader drives SYNC low first.
         const flashController = {
             active: false,
             _image: null,
@@ -4988,9 +4957,8 @@ function makeRxEnableEntry() {
             // SYNC through RTS: asserted = pin low. See SIGNALS_RUN.
             async _setSync(high) { await serial.setSignals({ requestToSend: !high }); },
 
-            // Reset through DTR, shaped to work on both wirings: an assert edge (the Programmer
-            // pulses RESET_N for 50 ms on it) held for BACKDOOR_RESET_PULSE_MS (a plain
-            // adapter holds RESET_N low meanwhile), then released.
+            // Reset through DTR: an assert edge (the Programmer's trigger) held BACKDOOR_RESET_PULSE_MS (a plain
+            // adapter's reset), then released.
             async _pulseReset() {
                 await serial.setSignals({ dataTerminalReady: false });
                 await serial.setSignals({ dataTerminalReady: true });
@@ -4998,9 +4966,7 @@ function makeRxEnableEntry() {
                 await serial.setSignals({ dataTerminalReady: false });
             },
 
-            // Leave the bootloader for the application: SYNC low first (the ROM samples it at
-            // boot, so a reset with SYNC high lands back in the bootloader), then the
-            // bootloader's own RESET command, which needs no reset wiring.
+            // Leave the bootloader: SYNC low first (else the reset lands back in it), then the ROM's RESET command.
             async _leaveBootloader(bl) {
                 try { await this._setSync(false); } catch (_) { }
                 await bl.reset();
@@ -5013,8 +4979,7 @@ function makeRxEnableEntry() {
             // erased. A bare sync ACK is not enough on its own, so this also pings and
             // reads the chip ID. On failure it works out *which* failure it is, because
             // "your device is still running its firmware" and "nothing is wired up" need
-            // completely different fixes from the user. With enter set it first drives the
-            // backdoor: SYNC high (RTS deasserted) and a reset pulse (DTR).
+            // completely different fixes from the user. With enter set it first enters via the backdoor.
             async verifyBootloader({ enter = false } = {}) {
                 if (this._checking || this._state === 'running') return;
                 if (!serial.connected) {
@@ -5026,9 +4991,8 @@ function makeRxEnableEntry() {
                 this.setVerified(false, '', '');
                 this.setStatus('Checking for the ROM bootloader...');
                 try {
-                    // Take the port away from the console for the duration of the check. Let a
-                    // link check that is still running (e.g. after a Cancel restarted the
-                    // device) finish first, so its AT probes don't land in the bootloader.
+                    // Take the port from the console for the check, after any running link check finishes
+                    // (its AT probes must not land in the bootloader).
                     this.active = true;
                     await connectionUI._exclusive(() => { }).catch(() => { });
                     await atQueue.drain().catch(() => { });
@@ -5069,9 +5033,7 @@ function makeRxEnableEntry() {
                     }
                     throw new Error('no response to the bootloader sync pattern');
                 } catch (e) {
-                    // A failed entry must not leave SYNC high: that is a sleep request to a
-                    // module still running its application (and the diagnosis below needs it
-                    // awake to answer).
+                    // Don't leave SYNC high: it puts a running module to sleep, and the diagnosis needs it awake.
                     if (enter) {
                         try { await this._setSync(false); } catch (_) { }
                     }
@@ -5247,8 +5209,6 @@ function makeRxEnableEntry() {
                         this.logLine(`CRC32 verified @ 0x${hex8(seg.addr)} (0x${hex8(localCrc)})`);
                     }
 
-                    // SYNC low, then the bootloader's own RESET command, which works whether
-                    // or not DTR is wired.
                     this.setStatus('Resetting device...');
                     await this._leaveBootloader(bl);
                     this.setProgress(100);
@@ -5396,9 +5356,7 @@ function makeRxEnableEntry() {
                             '(Reopen this dialog and Retry to recover — the board is not bricked.)')) {
                         return;
                     }
-                    // Leave the bootloader, best-effort: SYNC low always (never leave a module
-                    // with a sleep request), and if the image is intact (a check that passed,
-                    // then Cancel) restart it into the application.
+                    // Best effort: always SYNC low; if the image is intact (check passed, then Cancel), restart it.
                     if (serial.connected) {
                         if (this._bl && !this._eraseStarted) {
                             try { await this._leaveBootloader(this._bl); } catch (_) { }
@@ -5501,9 +5459,8 @@ function makeRxEnableEntry() {
                 return null;
             },
 
-            // Liveness check: ask AT+BAUD_RATE? up to `attempts` times while the device boots.
-            // If the reported rate differs from the port's, require two replies in a row so a
-            // stale line isn't mistaken for a live link.
+            // Liveness check: ask AT+BAUD_RATE? up to `attempts` times while the device boots. A rate that differs
+            // from the port's must be reported twice in a row (a stale line isn't a live link).
             //
             // Returns the device's rate, or null.
             async probe(attempts = PROBE_ATTEMPTS) {
@@ -5526,9 +5483,8 @@ function makeRxEnableEntry() {
                 tabController.notice(`Console link up: device console at ${deviceBaud} baud.`);
             },
 
-            // Link checks and the bootloader check share one port and must not interleave.
-            // _exclusive() runs fn after any section in flight; negotiate() also coalesces, so
-            // a second caller joins the running check.
+            // Link checks and the bootloader check must not interleave. _exclusive() runs fn after any section in
+            // flight; a second negotiate() call joins the running one.
             _negChain: Promise.resolve(),
             _negotiation: null,
 
@@ -5574,8 +5530,7 @@ function makeRxEnableEntry() {
                     // Restore the device's console before letting go of the port.
                     try { await tabController.enterConsoleMode(++tabController.gen); } catch (_) { }
                 }
-                // The device keeps its current baud rate (it boots at its saved rate, so
-                // there is no "default" to restore).
+                // The device keeps its current baud rate.
                 atQueue.abortAll('Disconnected');
                 await serial.disconnect();
                 // A bootloader check only describes the device on the other end of the port

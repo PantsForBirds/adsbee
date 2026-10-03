@@ -1,10 +1,8 @@
-"""Bench inventory: which receivers and transmitters are attached to this host, and how.
+"""Bench inventory: the receivers and transmitters attached to this host.
 
-The inventory is a TOML file (see ``bench.example.toml``). It is looked up in this order:
-``--config``, ``$ADSBEE_HIL_CONFIG``, ``~/.config/adsbee-hil/bench.toml``. Most commands also work
-without one: devices can be addressed by ``--serial`` plus ``--model``.
-
-Library code never hardcodes a bench's serial numbers; they live only in the bench file.
+A TOML file (see ``bench.example.toml``), looked up in order: ``--config``, ``$ADSBEE_HIL_CONFIG``,
+``~/.config/adsbee-hil/bench.toml``. Without one, address devices by ``--serial`` plus ``--model``.
+Serial numbers live only in the bench file, never in code.
 """
 
 import os
@@ -40,7 +38,7 @@ class TransmitterConfig:
     type: str
     usb_serial: Optional[str] = None
     tags: List[str] = field(default_factory=list)
-    # Receivers this transmitter is cabled/radiating to. Empty = all receivers on the bench.
+    # Receivers this transmitter reaches. Empty = all.
     receivers: List[str] = field(default_factory=list)
     options: Dict[str, Any] = field(default_factory=dict)  # Type-specific: uri, attenuation, ...
 
@@ -50,8 +48,8 @@ class Bench:
     name: str = "unnamed"
     path: Optional[str] = None
     lock_dir: Optional[str] = None
-    # Refuse to flash while a process whose command line matches one of these regexes runs (like
-    # pgrep -f), e.g. a CI job that owns a receiver. Overridable per command with --force.
+    # Refuse to flash while a process's command line matches one of these regexes (like pgrep -f),
+    # e.g. a CI job. --force overrides.
     busy_processes: List[str] = field(default_factory=list)
     # External tools, e.g. flashers["adsbee_1421"] = {"command": [...]}.
     flashers: Dict[str, Dict[str, Any]] = field(default_factory=dict)

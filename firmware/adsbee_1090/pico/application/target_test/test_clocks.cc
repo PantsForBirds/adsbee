@@ -7,9 +7,8 @@ struct MLATCounterSnapshot {
     uint64_t mlat_12mhz_counts;
 };
 
-// Reads the MLAT counters right after a tick of the 1MHz timer. SysTick is a per-core timer, and the MLAT counter is
-// built on the SysTick of the core that ran MLATCounterInit(), which is the core that handles the demodulator ISRs.
-// Run this with RunOnISRCore().
+// Reads the MLAT counters right after a 1MHz timer tick. Run with RunOnISRCore(): the MLAT counter uses that core's
+// SysTick.
 static void __not_in_flash_func(TakeMLATCounterSnapshot)(void* arg) {
     MLATCounterSnapshot* snapshot = static_cast<MLATCounterSnapshot*>(arg);
     uint32_t interrupts = save_and_disable_interrupts();
@@ -32,7 +31,7 @@ UTEST(Clocks, Test48MHzMLATCounter) {
         ASSERT_TRUE(RunOnISRCore(TakeMLATCounterSnapshot, &mlat_counter_snapshot_start));
         sleep_ms(1000);
         ASSERT_TRUE(RunOnISRCore(TakeMLATCounterSnapshot, &mlat_counter_snapshot_end));
-        // Expect the MLAT counter to advance by 48 counts per microsecond of the 1MHz timer (48000000 in 1 s).
+        // Expect 48 counts per microsecond.
         uint64_t elapsed_us = mlat_counter_snapshot_end.timestamp_us - mlat_counter_snapshot_start.timestamp_us;
         uint64_t mlat_counter_delta =
             mlat_counter_snapshot_end.mlat_48mhz_counts - mlat_counter_snapshot_start.mlat_48mhz_counts;
@@ -46,7 +45,7 @@ UTEST(Clocks, Test12MHzMLATCounter) {
         ASSERT_TRUE(RunOnISRCore(TakeMLATCounterSnapshot, &mlat_counter_snapshot_start));
         sleep_ms(1000);
         ASSERT_TRUE(RunOnISRCore(TakeMLATCounterSnapshot, &mlat_counter_snapshot_end));
-        // Expect the MLAT counter to advance by 12 counts per microsecond of the 1MHz timer (12000000 in 1 s).
+        // Expect 12 counts per microsecond.
         uint64_t elapsed_us = mlat_counter_snapshot_end.timestamp_us - mlat_counter_snapshot_start.timestamp_us;
         uint64_t mlat_counter_delta =
             mlat_counter_snapshot_end.mlat_12mhz_counts - mlat_counter_snapshot_start.mlat_12mhz_counts;
@@ -54,8 +53,7 @@ UTEST(Clocks, Test12MHzMLATCounter) {
     }
 }
 
-// Counts MLAT jitter PWM slice counts over span_us of the 1MHz timer. Runs from RAM with interrupts disabled so that
-// flash cache misses and interrupts don't stretch the span.
+// Counts MLAT jitter PWM slice counts over span_us. Runs from RAM with interrupts off so nothing stretches the span.
 static uint16_t __not_in_flash_func(CountMLATJitterPWMSliceSpan)(uint32_t span_us) {
     uint32_t interrupts = save_and_disable_interrupts();
     uint32_t timestamp_us = time_us_32();
@@ -72,10 +70,9 @@ static uint16_t __not_in_flash_func(CountMLATJitterPWMSliceSpan)(uint32_t span_u
 }
 
 UTEST(Clocks, TestMLATJitterPWMSlice) {
-    // OnDemodComplete() subtracts MLAT jitter PWM slice counts, converted with MLATJitterCountsTo48MHzCounts(), from
-    // the 48MHz MLAT timestamp. Verify that a converted span advances at 48MHz.
+    // Verify that converted jitter counts advance at 48MHz, as OnDemodComplete() assumes.
     static const uint32_t kTestNumRepeats = 10;
-    static const uint32_t kSpanUs = 500;  // Shorter than the 524us wrap of the 16-bit counter at 125MHz.
+    static const uint32_t kSpanUs = 500;  // Under the 16-bit counter's 524us wrap.
     for (uint32_t i = 0; i < kTestNumRepeats; i++) {
         uint32_t mlat_counts = ADSBee::MLATJitterCountsTo48MHzCounts(CountMLATJitterPWMSliceSpan(kSpanUs));
         // Expect 24000 counts in 500us at 48MHz, within 1us.

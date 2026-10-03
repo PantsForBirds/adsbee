@@ -86,8 +86,7 @@ bool SettingsManager::Apply() {
         HeapDiagnostics::Mark("wifi");
     }
 
-    // (Re)configure Broadcast Remote ID reception now that the WiFi/Ethernet state is settled. RemoteIDManager decides
-    // which transports can actually run given the hardware (PSRAM vs not, detected at boot), the WiFi/Ethernet state, and free heap.
+    // Reconfigure Remote ID now that the WiFi/Ethernet state is settled.
     remote_id_manager.Apply();
 
     return true;

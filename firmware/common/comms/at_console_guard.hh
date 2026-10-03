@@ -5,25 +5,13 @@
 #include <string_view>
 
 /**
- * Keeps binary data on an AT console (e.g. an AT+OTA=WRITE payload) away from the AT parser.
- *
- * AT+OTA=WRITE prints READY and then reads len raw bytes with ATReadConsole(). Before this guard, any of those bytes
- * that ATReadConsole() didn't consume went through the normal line assembler and CppAT::ParseMessage(), which runs an
- * "AT+CMD=args" found anywhere in a line. That happened when:
- *   - network_console_putc() found the outgoing console queue full and called UpdateAT() from inside the WRITE
- *     callback (e.g. to print an SPI error while waiting for payload bytes). The nested UpdateAT() drained the incoming
- *     queue, payload included, into the parser.
- *   - The WRITE timed out (or returned early) before the whole payload arrived; the rest of it then reached the parser.
- * A firmware image contains text such as the help line "AT+BOOT_USB_UF2=1DEADBEE", so a misparsed chunk could reboot
- * the RP2040 into its USB bootloader, which a network-only unit can't leave without a power cycle.
- *
- * The guard:
- *   1. While a binary payload is being read (BeginBinaryPayload() .. EndBinaryPayload()), the line assembler must not
- *      consume anything (PayloadInProgress()), so a nested UpdateAT() leaves the payload to ATReadConsole().
- *   2. After a payload read that ended short, the missing bytes are discarded when they arrive, until the count is met
- *      or the console has been idle for kDiscardIdleTimeoutMs (in case the sender gave up).
- *   3. A completed line that contains NUL or ASCII control characters other than \t, \r, \n is treated as binary
- *      data and is dropped without being parsed or echoed.
+ * Keeps binary console data (e.g. an AT+OTA=WRITE payload) away from the AT parser. The parser runs "AT+CMD=args"
+ * found anywhere in a line, and firmware images contain text like "AT+BOOT_USB_UF2=1DEADBEE".
+ *   1. While a payload is being read, the line assembler must not consume input (PayloadInProgress()), so a nested
+ *      UpdateAT() leaves the bytes to ATReadConsole().
+ *   2. If a payload read ends short, the missing bytes are dropped as they arrive, until the count is met or the
+ *      console is idle for kDiscardIdleTimeoutMs.
+ *   3. Lines with NUL or control characters other than \t, \r, \n are dropped without being parsed or echoed.
  */
 class ATConsoleGuard {
    public:
@@ -35,10 +23,7 @@ class ATConsoleGuard {
         payload_len_bytes_ = len_bytes;
     }
 
-    /**
-     * Call when the payload read returns. received_bytes < 0 means nothing (or an unknown amount) was read; the whole
-     * payload is then treated as outstanding.
-     */
+    /** Call when the payload read returns. received_bytes < 0 treats the whole payload as unread. */
     void EndBinaryPayload(int32_t received_bytes, uint32_t timestamp_ms) {
         payload_in_progress_ = false;
         uint32_t received = received_bytes < 0 ? 0 : static_cast<uint32_t>(received_bytes);
@@ -52,10 +37,7 @@ class ATConsoleGuard {
 
     uint32_t DiscardRemainingBytes() const { return discard_remaining_bytes_; }
 
-    /**
-     * Call for every console character before it goes to the line assembler. Returns true if the character is the rest
-     * of an unfinished binary payload and must be dropped.
-     */
+    /** Call for every console character. Returns true if it belongs to an unfinished payload and must be dropped. */
     bool DiscardChar(uint32_t timestamp_ms) {
         if (discard_remaining_bytes_ == 0) {
             return false;
@@ -70,10 +52,7 @@ class ATConsoleGuard {
         return true;
     }
 
-    /**
-     * Returns true if a completed console line (including its terminator, and any bytes after an embedded NUL) is
-     * text that may be parsed as an AT command. Bytes >= 0x80 are allowed (UTF-8 SSIDs, passwords).
-     */
+    /** True if a completed line (terminator included) is text. Bytes >= 0x80 are allowed for UTF-8 SSIDs/passwords. */
     static bool LineIsText(const char *buf, uint16_t len) {
         for (uint16_t i = 0; i < len; i++) {
             uint8_t c = static_cast<uint8_t>(buf[i]);
@@ -92,8 +71,8 @@ class ATConsoleGuard {
 };
 
 /**
- * Assembles console characters into lines for the AT parser, with the ATConsoleGuard rules applied. One per input
- * source (USB stdio, network console); the guard is shared because ATReadConsole() reads payload bytes from both.
+ * Builds AT parser lines from console characters, applying ATConsoleGuard. One per input source; they share one guard
+ * because ATReadConsole() reads payloads from both.
  */
 template <uint16_t kBufMaxLen>
 class ATLineAssembler {

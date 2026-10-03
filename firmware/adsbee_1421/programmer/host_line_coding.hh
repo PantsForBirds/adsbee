@@ -4,14 +4,11 @@
 
 #include "console_baud.hh"  // Shared with the module firmware (ti/comms).
 
-// Host line coding (CDC SET_LINE_CODING) -> what the Programmer does with the requested baud. Pure logic with no SDK
-// dependencies so it can be host-tested (host_test/test_host_line_coding.cc); bridge.cc calls it from
-// tud_cdc_line_coding_cb().
-// The USB baud rate is virtual (bridge.hh); only the magic baud below does anything.
+// What the Programmer does with the baud rate the host sets (USB CDC SET_LINE_CODING). Only the magic baud below
+// does anything. Pure logic, host-tested in host_test/test_host_line_coding.cc.
 
-// Host baud that reboots the Programmer into its USB bootloader (RPI-RP2) for updates without pressing BOOT. Same as
-// the ADSBee 1090's PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE (host_test checks); pico-sdk's default, 1200, is a rate
-// pymavlink opens ports at. The Programmer owns TinyUSB directly, so the baud is checked here.
+// Host baud that reboots the Programmer into its USB bootloader (RPI-RP2). Same as the ADSBee 1090's
+// PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE; pico-sdk's default, 1200, is used by pymavlink so it can't be the magic baud.
 static constexpr uint32_t kRebootToBootselBaud = 0xDEADBEE;  // 233495534 baud.
 
 enum class HostBaudAction {

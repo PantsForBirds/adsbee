@@ -1,8 +1,5 @@
-// Host tests for CcfgBootloader (AT+BOOTLOADER_PIN): PlanUpdate(), WriteAndVerify(), the set-form argument and
-// password parsing, the CCFG CRC and the CCFG WRITE FAILED banner. Each plan is played back against a model of the
-// CC13x4 CCFG flash sector (erase -> 0xFF plus the ROM's default security block, program -> bitwise AND) to check
-// that the planned writes produce exactly the planned image, and with injected flash faults to check that a
-// failure is never reported as success.
+// Host tests for CcfgBootloader (AT+BOOTLOADER_PIN), run against a model of the CCFG flash sector with fault
+// injection. A failure must never be reported as success.
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -35,8 +32,7 @@ static const uint32_t kReleaseCcfg[kCcfgStructSizeBytes / 4] = {
 struct FlashSector {
     uint8_t bytes[kCcfgSectorSizeBytes];
 
-    // Fault injection: flash operations (Erase() and Program() calls, counted from 0) fault_at to
-    // fault_at + fault_ops - 1 get `fault` (an erase fault only hits erases, a program fault only programs).
+    // Operations fault_at to fault_at + fault_ops - 1 (counted from 0) get `fault`, if it matches their kind.
     enum class Fault { kNone, kEraseFails, kProgramFails, kProgramCorrupts };
     static constexpr int kAlways = 1000;
     Fault fault = Fault::kNone;
@@ -54,8 +50,7 @@ struct FlashSector {
         int op = ops++;
         return (op >= fault_at && op < fault_at + fault_ops) ? fault : Fault::kNone;
     }
-    // ROM FlashSectorErase() on the CCFG sector. A failed erase leaves the sector erased without the security
-    // block (interrupted before the ROM programmed it).
+    // A failed erase leaves the sector erased without the ROM's security block.
     bool Erase() {
         Fault f = NextOp();
         memset(bytes, 0xFF, sizeof(bytes));
@@ -63,8 +58,8 @@ struct FlashSector {
         memcpy(bytes + kSecurityOffset, kPostEraseSecurity, kSecuritySizeBytes);
         return true;
     }
-    // ROM FlashProgram(): bits can only go from 1 to 0. A failed program writes only the first half; a corrupting
-    // one reports success but also clears one bit that should have stayed set.
+    // Programming only clears bits. A failed program writes half; a corrupting one reports success but clears an
+    // extra bit.
     bool Program(const uint8_t* data, uint32_t offset, uint32_t len) {
         Fault f = NextOp();
         for (uint32_t i = 0; i < (f == Fault::kProgramFails ? len / 2 : len); i++) bytes[offset + i] &= data[i];
@@ -147,7 +142,7 @@ static void TestReEnableRestoresReleaseSector() {
 }
 
 static void TestEnableFromOtherConfigs() {
-    // ROM bootloader disabled, backdoor on another pin, active low: enabling sets all four fields.
+    // ROM bootloader off, backdoor on another pin, active low.
     FlashSector flash;
     WriteWord(flash.bytes, kBlConfigOffset, 0x00FE0700);
     Plan plan = PlanAndApply(flash, true);
@@ -165,7 +160,7 @@ static void TestErasedCcfgRefused() {
 }
 
 static void TestIncompatibleSecurityRefusedBeforeErase() {
-    // TAP_DAP_0 = 0xFFFFFFFF can't be programmed back after an erase (the ROM writes 0xFFC5C5C5).
+    // TAP_DAP_0 = 0xFFFFFFFF can't be restored after an erase (the ROM writes 0xFFC5C5C5).
     FlashSector flash;
     WriteWord(flash.bytes, 0x38, 0xFFFFFFFF);
     WriteWord(flash.bytes, kBlConfigOffset, 0xC5FF0500);
@@ -188,7 +183,7 @@ static void TestDataBeyondStructIsKept() {
     EXPECT(flash.bytes[0x123] == 0x5A);
 }
 
-// AT+BOOTLOADER_PIN=<enabled [1,0]>,<password>[,DRYRUN]: every set form needs the password, before DRYRUN.
+// AT+BOOTLOADER_PIN=<enabled [1,0]>,<password>[,DRYRUN]
 static SetArgs Parse(std::vector<std::string_view> args) {
     return ParseSetArgs(args.data(), static_cast<uint16_t>(args.size()));
 }
@@ -241,8 +236,7 @@ static void TestSetArgsPassword() {
     EXPECT(a.error && strstr(a.error, "CCFG not touched"));
 }
 
-// The CCFG CRC matches the ROM serial bootloader's COMMAND_CRC32 over the struct (0x66E9858D for the release CCFG,
-// as the ADSBee 1421 Programmer reads it) and zlib's crc32().
+// Matches the ROM bootloader's COMMAND_CRC32 (0x66E9858D for the release CCFG) and zlib's crc32().
 static void TestCrc32() {
     FlashSector release;
     EXPECT(StructCrc32(release.bytes) == 0x66E9858D);
@@ -252,9 +246,8 @@ static void TestCrc32() {
     EXPECT(StructCrc32(disabled.bytes) != 0x66E9858D);
 }
 
-// Runs one planned write against `flash` with a fault and returns the result, checking the invariants that make a
-// result trustworthy: kOk only for a sector equal to the plan, kFailedRestored only for a sector equal to the
-// original, kFailedInPlace only with nothing outside BL_CONFIG changed.
+// Runs one planned write with a fault and checks the result matches the sector: kOk = planned image,
+// kFailedRestored = original, kFailedInPlace = only BL_CONFIG changed.
 static WriteResult WriteWithFault(FlashSector& flash, bool enable, FlashSector::Fault fault, int fault_at,
                                   int fault_ops, int* restore_attempts_out = nullptr) {
     uint8_t original[kCcfgSectorSizeBytes];
@@ -300,18 +293,18 @@ static WriteResult WriteWithFault(FlashSector& flash, bool enable, FlashSector::
 }
 
 static void TestWriteFaultsDisable() {
-    // In-place program of BL_CONFIG: a failed or corrupted program is reported, never as OK.
+    // A failed or corrupted in-place program is never reported as OK.
     for (auto fault : {FlashSector::Fault::kProgramFails, FlashSector::Fault::kProgramCorrupts}) {
         FlashSector flash;
         EXPECT(WriteWithFault(flash, false, fault, 0, 1) == WriteResult::kFailedInPlace);
-        // A cut-off program only gets as far as BL_ENABLE (the low byte): the ROM bootloader stays enabled.
+        // A cut-off program only reaches BL_ENABLE (low byte), so the ROM bootloader stays enabled.
         if (fault == FlashSector::Fault::kProgramFails) EXPECT(RomBootloaderEnabled(flash.BlConfig()));
     }
 }
 
 static void TestWriteFaultsEnable() {
     using Fault = FlashSector::Fault;
-    // Erase path, operations: 0 erase, 1 program (the new image), then restores (erase, program) pairs.
+    // Erase path operations: 0 erase, 1 program, then (erase, program) pairs per restore.
     {
         FlashSector flash;
         PlanAndApply(flash, false);
@@ -331,7 +324,7 @@ static void TestWriteFaultsEnable() {
         EXPECT(WriteWithFault(flash, true, Fault::kProgramCorrupts, 1, 1) == WriteResult::kFailedRestored);
     }
     {
-        // The new image's program (op 1) and the first restore's program (op 3) fail; the second restore works.
+        // Ops 1-3 fail; the second restore works.
         FlashSector flash;
         PlanAndApply(flash, false);
         int attempts = 0;
@@ -339,14 +332,12 @@ static void TestWriteFaultsEnable() {
         EXPECT(attempts == 2);
     }
     {
-        // Everything from the first erase on fails: the original can't go back. That is the one result that must say
-        // the CCFG state is unknown, after exactly kRestoreAttempts restores.
+        // Every operation fails: the state is unknown after exactly kRestoreAttempts restores.
         for (auto fault : {Fault::kEraseFails, Fault::kProgramFails, Fault::kProgramCorrupts}) {
             FlashSector flash;
             PlanAndApply(flash, false);
             EXPECT(WriteWithFault(flash, true, fault, 0, FlashSector::kAlways) == WriteResult::kFailedNotRestored);
-            // The restore retry (the plan Prepare() builds while a restore is pending) writes the original back once
-            // the flash works again.
+            // A restore retry succeeds once the flash works again.
             uint8_t original[kCcfgSectorSizeBytes];
             FlashSector disabled;
             PlanAndApply(disabled, false);
@@ -370,8 +361,7 @@ static void TestWriteFaultsEnable() {
             EXPECT(attempts == kRestoreAttempts && error != nullptr);
         }
     }
-    // Exhaustive single faults: any one faulty operation of any kind ends in a verified OK (the fault missed the
-    // write: wrong kind of operation, or past the end) or a verified restore. Erases are the even operations.
+    // Any single fault ends in a verified OK (fault missed) or a verified restore. Erases are the even operations.
     for (auto fault : {Fault::kEraseFails, Fault::kProgramFails, Fault::kProgramCorrupts}) {
         for (int at = 0; at < 2 + 2 * kRestoreAttempts; at++) {
             FlashSector flash;
@@ -383,7 +373,7 @@ static void TestWriteFaultsEnable() {
     }
 }
 
-// The CCFG WRITE FAILED banner: loud, complete and with the right recovery for each failure.
+// The CCFG WRITE FAILED banner, with the right recovery for each failure.
 static std::vector<std::string> Banner(const WriteReport& report) {
     std::vector<std::string> lines;
     FailureBanner(report, [&lines](const char* line) { lines.emplace_back(line); });
@@ -463,8 +453,7 @@ static void TestFailureBanner() {
     EXPECT(strstr(WriteResultStr(WriteResult::kFailedNotRestored), "DO NOT RESET"));
 }
 
-// The .ccfg section of a built image (objcopy -O binary -j .ccfg adsbee_1421.elf): its CCFG must
-// match kReleaseCcfg, so a CCFG change in adsbee_1421.syscfg gets checked against the erase path.
+// A built image's .ccfg must match kReleaseCcfg, so CCFG changes in adsbee_1421.syscfg get tested here.
 static void TestBuiltImage(const char* path) {
     FlashSector built;
     memset(built.bytes, 0xFF, sizeof(built.bytes));

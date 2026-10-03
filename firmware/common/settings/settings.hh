@@ -563,24 +563,12 @@ class SettingsManager {
     bool Load();
 
     /**
-     * Repairs values in `settings` that no valid settings blob can contain, instead of leaving them as-is:
-     *   - every enum-typed field is clamped to its legal range (out-of-range values are reset to defaults);
-     *   - every bool is normalized to 0/1 (any nonzero byte becomes true);
-     *   - every fixed-size char array is forced to be NUL-terminated;
-     *   - a baud rate of 0 on the Comms or GNSS UART is reset to that UART's default;
-     *   - gnss_enabled with receiver type NONE is turned off.
-     * CoreNetworkSettings' CRC is recomputed after a fix-up only if it was valid beforehand.
-     * Settings migration can only be as trustworthy as the version tag on a stored blob (see the NOTE in
-     * settings_migration.hh for a case where that tag was wrong for a real device), and other corruption sources (a
-     * bit-flipped flash sector, a partially-written EEPROM page) are always possible too. An out-of-range enum value
-     * used to index a kXxxStrs[] lookup table (Print(), PrintAT(), AT command handlers) is a hard fault on the RP2040
-     * and a crash/reboot loop on the ESP32 (which receives `settings` from the RP2040 over SPI at boot and calls
-     * Print() immediately) -- i.e. a corrupted settings blob can brick the device on every subsequent boot, surviving
-     * even a full reflash, because the settings flash/EEPROM sector isn't touched by an application update. Called on
-     * every Load() path (after migration, the factory-defaults fallback, or a failed EEPROM read), so nothing
-     * downstream sees these values regardless of where they came from.
-     * @retval True if any field was out-of-range and got reset (caller should persist the fix), false if nothing
-     *         needed changing.
+     * Repairs values no valid settings blob can contain: clamps enums to their range, normalizes bools to 0/1,
+     * NUL-terminates char arrays, resets a zero UART baud rate to its default, and turns off gnss_enabled with
+     * receiver type NONE. Recomputes the CoreNetworkSettings CRC only if it was valid before. Called on every Load()
+     * path, because an out-of-range enum used as a table index crashes the RP2040 and ESP32 on every boot, and the
+     * settings sector survives a reflash.
+     * @retval True if anything was reset (caller should save), false otherwise.
      */
     bool Sanitize();
 
@@ -654,16 +642,14 @@ extern SettingsManager settings_manager;
 
 // Layout lock for the live Settings struct. Settings are stored as raw bytes (flash/EEPROM) and sent as raw bytes to the
 // ESP32 and CC1312, so ANY change to the struct's layout -- adding, removing, reordering or resizing a field, or changing
-// an enum's underlying type -- changes what older firmware and stored blobs mean. v15 exists because fields were
-// inserted twice without a version bump, and devices misread their settings after an update.
+// an enum's underlying type -- changes what older firmware and stored blobs mean.
 //
 // If one of these fails because you changed Settings:
 //   1. Bump kSettingsVersion (and the firmware version, see scripts/check_version_sync.sh).
 //   2. Freeze the PREVIOUS layout as a settings_vN snapshot in settings_versions.hh and add a MigrateVNToVN+1 step in
 //      settings_migration.cpp (see the recipe at the top of settings_versions.hh).
 //   3. Update the version and the numbers below to the new layout.
-// Do not just edit the numbers. These hold on every target that stores or transfers Settings (host tests, RP2040,
-// ESP32-S3, CC1312), since all of them build this header with the same ABI rules.
+// Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
 static_assert(kSettingsVersion == 15,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
 static_assert(sizeof(SettingsManager::Settings) == 1144,

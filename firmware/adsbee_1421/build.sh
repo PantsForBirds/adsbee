@@ -135,9 +135,8 @@ build_app() {
     done
 }
 
-# Path to the Programmer image the flash commands push, and to the CC1314 hex baked into it at CMake
-# configure time (see programmer/README.md) -- a rebuilt ti with a stale programmer would flash old
-# m1421 firmware even though both files exist.
+# Programmer image the flash commands push, and the CC1314 hex baked into it at configure time (see
+# programmer/README.md). A rebuilt ti with a stale Programmer image would flash old m1421 firmware.
 programmer_uf2_path() { echo "programmer/build/${CONFIG}/adsbee_1421_programmer.uf2"; }
 ti_hex_path() { echo "ti/build/${CONFIG}/adsbee_1421.hex"; }
 
@@ -164,9 +163,8 @@ flash_m1421() {
         exit 1
     fi
 
-    # Snapshot serial nodes NOW: the Programmer is in the bootloader, so its CDC node is absent. Whatever
-    # node appears after the copy is the rebooted Programmer -- this works whether the Programmer was freshly
-    # plugged in or was already attached before entering the bootloader.
+    # Snapshot serial nodes while the Programmer is in the bootloader; the node that appears after the copy is
+    # the rebooted Programmer.
     local nodes_before
     nodes_before="$(list_serial_nodes)"
 
@@ -178,9 +176,8 @@ flash_m1421() {
     echo "uf2 accepted; programmer rebooting."
     echo "The Programmer now checks the attached m1421 and flashes it automatically if the firmware differs."
 
-    # Best-effort monitor: find the Programmer's CDC port (the node that newly appeared vs the snapshot)
-    # and watch the flash transcript. Read-only: DTR edges in pass-through mode pulse the target's
-    # reset line, so never write or toggle the line after opening.
+    # Best-effort monitor of the Programmer's new serial port. Read-only: DTR edges in pass-through mode pulse
+    # the target's reset line, so never write or toggle the line after opening.
     local port="" nodes_after node
     for i in $(seq 1 10); do
         sleep 1
@@ -200,8 +197,7 @@ flash_m1421() {
     fi
 
     echo "Monitoring ${port} (up to 180 s) ..."
-    # 1000000 baud matches the Programmer's console/pass-through rate, so the line-coding event our open
-    # generates is harmless even if the Programmer has already reached pass-through.
+    # Open at the Programmer's console rate so the baud change is harmless if it is already in pass-through.
     stty -f "$port" 1000000 raw -echo 2>/dev/null || stty -F "$port" 1000000 raw -echo 2>/dev/null || true
 
     local result="" line deadline
@@ -254,7 +250,7 @@ if ! "$(pwd)/../scripts/check_version_sync.sh" HEAD WORKTREE; then
 fi
 
 if [ "$DO_BUILD_AND_FLASH" -eq 1 ]; then
-    # Fresh CC1314 firmware, then a programmer image with it baked in, then flash the Programmer.
+    # Build CC1314 firmware, bake it into a Programmer image, then flash the Programmer.
     build_app ti
     build_app programmer
     flash_m1421
@@ -262,12 +258,10 @@ if [ "$DO_BUILD_AND_FLASH" -eq 1 ]; then
 fi
 
 if [ "$DO_FLASH" -eq 1 ]; then
-    # Flash-only: no container builds at all. Two things can make the Programmer image stale -- edited
-    # sources, or a ti hex rebuilt after the programmer baked its copy in -- so check both.
+    # Flash only, no builds. Warn if the Programmer image is older than the sources or the ti hex baked into it.
     warn_if_artifact_stale "$(programmer_uf2_path)" "./build.sh build_and_flash" \
         ../common ../modules ti programmer
-    # Both artifacts live under build/, which warn_if_artifact_stale deliberately skips, so compare
-    # them directly: a ti hex newer than the Programmer image means the baked-in copy is out of date.
+    # warn_if_artifact_stale skips build/, so compare the two artifacts directly.
     if [ -f "$(ti_hex_path)" ] && [ -f "$(programmer_uf2_path)" ] &&
        [ "$(ti_hex_path)" -nt "$(programmer_uf2_path)" ]; then
         echo ""

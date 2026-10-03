@@ -44,7 +44,7 @@ bool LR2021::Init() {
     CONSOLE_INFO("LR2021::Init", "Initializing.");
     // Re-enable the IRQ input that DeInit() switched off.
     GPIO_resetConfig(config_.gpio_irq);
-    // Do a proper reboot: a hardware reset on NRESET (the ENABLE line), held for kResetPulseUs.
+    // Hardware reset: hold NRESET (the ENABLE line) low for kResetPulseUs.
     SetEnable(false);
     DelayUs(kResetPulseUs);
     SetEnable(true);
@@ -83,10 +83,8 @@ bool LR2021::Init() {
 bool LR2021::DeInit() {
     CONSOLE_INFO("LR2021::DeInit", "De-initializing.");
     SetEnable(false);
-    // In reset, DIO6 (LR_IRQ) falls back to its default 40 kOhm pull-up, which fights the LR_IRQ
-    // pull-down for as long as the chip is held in reset (SYNC sleep, AT+LR_ENABLE=0, 1090 RX off):
-    // about 0.35 mA at 3.3 V. Nothing reads the line until the next Init(), so turn its input buffer off
-    // (no pull, no input current at any level); Init() restores the SysConfig config.
+    // In reset, DIO6 (LR_IRQ) has a 40 kOhm pull-up that fights the LR_IRQ pull-down (about 0.35 mA at 3.3 V).
+    // Turn its input buffer off; Init() restores the SysConfig setting.
     GPIO_setConfig(config_.gpio_irq, GPIO_CFG_NO_DIR);
     if (spi_handle_ != nullptr) {
         // Never close the handle with a DMA in flight: cancel any async drain transfer first (also
@@ -219,10 +217,8 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
                                 )) {
         return SequenceStepFailed("LR2021::SetOokADSB", "SetOokModulationParams");
     }
-    // Every mode runs with the hardware CRC off and validates in software. DF17 mode keys on the DF
-    // data bits and captures the message remainder mid-byte; the other modes capture from message
-    // bit 0 with the parity bytes as payload. The FIFO packet is 14 bytes of raw air bits either way
-    // (GetOokRxPacketLenBytes).
+    // Every mode runs with the hardware CRC off and checks the CRC in software. The FIFO packet is 14 bytes of raw
+    // bits (GetOokRxPacketLenBytes).
     if (!SetOokPacketParams(8,                                     // Tx preamble length
                             kOokAddrCompOff,                       // No address filtering
                             kOokPktFormatFixedLength,              // Fixed length packets
@@ -252,8 +248,7 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         return SequenceStepFailed("LR2021::SetOokADSB", "SetOokSyncWord");
     }
 #ifdef HARDWARE_UNIT_TESTS
-    // Pattern length override for the next test_detector_len_override_count configs, so a target test can make
-    // the chip reject a config (and its retries).
+    // Pattern length override so a target test can make the chip reject a config.
     uint8_t test_len_chips = 0;
     if (test_detector_len_override_count > 0) {
         test_detector_len_override_count--;
@@ -319,19 +314,14 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     if (!SetAgcGainManual(agc_gain)) {  // 0 = auto, 1..15 manual (13 = max).
         return SequenceStepFailed("LR2021::SetOokADSB", "SetAgcGainManual");
     }
-    // The standard preamble detector needs the whole preamble, and an AGC gain change during the
-    // preamble blanks its first three pulses (lr2021_ook_adsb.hh). With the AGC on, MODE_S raises the
-    // level at which it starts cutting the gain so that packets up to -45 dBm arrive with the gain
-    // unchanged. DF17 and MODE_S_STRONG detect after the blanked chips and keep the chip default (the
-    // AGC acts from about -53 dBm). Manual gain (agc_gain != 0) leaves the AGC off, so the register
-    // doesn't matter there.
+    // MODE_S raises the AGC trigger so packets up to -45 dBm keep their whole preamble (lr2021_ook_adsb.hh). DF17
+    // and MODE_S_STRONG keep the chip default. Manual gain (agc_gain != 0) leaves the AGC off.
     if (agc_gain == 0 && preamble_mode == SettingsManager::kR1090PreambleModeModeS &&
         !WriteRegMemMask32(LR2021OokAdsb::kAgcConfigRegAddr, LR2021OokAdsb::kAgcTriggerMask,
                            LR2021OokAdsb::AgcTriggerRegValue(LR2021OokAdsb::kAgcTriggerStandardPreamble))) {
         return SequenceStepFailed("LR2021::SetOokADSB", "setting the AGC trigger");
     }
-    // MODE_S_STRONG only looks for strong signals, so it raises the OOK detection threshold, which
-    // keeps its short pattern from triggering on noise (lr2021_ook_adsb.hh).
+    // MODE_S_STRONG raises the OOK detection threshold so its short pattern doesn't trigger on noise.
     if (preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong &&
         !WriteRegMemMask32(LR2021OokAdsb::kOokDetectRegAddr, LR2021OokAdsb::kOokDetectThresholdMask,
                            LR2021OokAdsb::OokDetectThresholdRegValue(LR2021OokAdsb::kOokDetectThresholdStrong))) {
@@ -406,9 +396,7 @@ bool LR2021::StartCwTone(bool use_hf_path, uint32_t freq_hz, int8_t tx_power_dbm
         return SequenceStepFailed("LR2021::StartCwTone", "SetTxTestMode");
     }
 
-    // Read back the chip status to confirm the tone actually put the chip into TX mode: one status frame, whose
-    // Stat word reports SetTxTestMode and the chip mode now. Expect kTx (0x5); anything else means the tone did
-    // not key.
+    // Confirm the tone keyed: the next status frame should report the chip in TX mode (kTx, 0x5).
     if (!CheckLastCommandStatus("LR2021::StartCwTone")) {
         return false;
     }
@@ -474,8 +462,7 @@ bool LR2021::StartRssiScan(bool use_hf_path, uint32_t freq_hz) {
     if (!SetRxAdv(rx_timeout)) {
         return SequenceStepFailed("LR2021::StartRssiScan", "SetRxAdv");
     }
-    // Check SetRxAdv's status (it arrives with the next frame), then verify the chip actually entered RX so
-    // callers don't poll RSSI from a chip sitting in standby.
+    // Check SetRxAdv's status, then verify the chip entered RX so callers don't poll RSSI in standby.
     if (!CheckLastCommandStatus("LR2021::StartRssiScan")) {
         return false;
     }

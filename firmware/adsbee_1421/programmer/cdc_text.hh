@@ -5,13 +5,11 @@
 
 // Status text formatting for CdcPrintf() (status.cc). Pure so it can be host-tested (host_test/test_cdc_text.cc).
 
-// CdcPrintf() formats into a fixed stack buffer of this size. Keep each message well below it; split long ones
-// across calls.
+// CdcPrintf()'s stack buffer size. Split longer messages across calls.
 static constexpr size_t kCdcTextMax = 256;
 
-// Length of the text to send, given vsnprintf's return value `len` for a buffer of `size` bytes. When the message
-// didn't fit, the end of the buffer is overwritten with "...\r\n", so a cut-off line is visible as one and still ends
-// the line. Returns 0 for an encoding error.
+// Length to send, given vsnprintf's return `len` for a `size`-byte buffer. A message that didn't fit ends in
+// "...\r\n". Returns 0 for an encoding error.
 inline size_t CdcTextFinish(char* buf, size_t size, int len) {
     if (len <= 0 || size == 0) return 0;
     if ((size_t)len < size) return (size_t)len;

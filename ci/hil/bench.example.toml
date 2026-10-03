@@ -1,22 +1,19 @@
-# Example bench inventory for adsbee-hil. Copy to ~/.config/adsbee-hil/bench.toml (or point
-# $ADSBEE_HIL_CONFIG / --config at it) and replace the placeholders with what
-# `adsbee-hil discover` prints on your bench.
+# Example adsbee-hil bench file. Copy to ~/.config/adsbee-hil/bench.toml and fill in what
+# `adsbee-hil discover` prints.
 
 [bench]
 name = "example-bench"
-# Where per-device lock files live. Must be shared by every user/runner that drives this bench.
+# Per-device lock files. Must be shared by every user and runner on this bench.
 lock_dir = "/tmp/adsbee-hil-locks"
-# `flash` refuses while a process whose command line matches one of these regexes runs (like
-# pgrep -f), e.g. a GitHub Actions job that owns a receiver on this bench. `--force` overrides.
+# `flash` refuses while a process's command line matches one of these regexes (here: a GitHub
+# Actions job). `--force` overrides.
 busy_processes = ["bin/Runner.Worker"]
 
 # External tools that aren't part of this repository.
 [flashers.adsbee_1421]
-# CC13x4 ROM serial-bootloader flasher for the ADSBee 1421 module, run with the ADSBee 1421
-# Programmer's console port. Placeholders: {image} {port} {baud} {verbose}. It MUST erase only the
-# sectors the image covers: a bank erase also wipes the module's settings and device-info (OTA key)
-# sectors.
-# Can also be set with $ADSBEE_HIL_FLASHER_ADSBEE_1421 (a shell-quoted string).
+# CC13x4 ROM bootloader flasher for the 1421 module (or $ADSBEE_HIL_FLASHER_ADSBEE_1421, shell-quoted).
+# Placeholders: {image} {port} {baud} {verbose}. It MUST erase only the image's sectors: a full erase
+# wipes the module's settings and OTA keys.
 command = ["/path/to/venv/bin/python", "/path/to/cc13x4_flasher.py", "{image}",
            "-p", "{port}", "-b", "{baud}", "--erase", "sector", "{verbose}"]
 

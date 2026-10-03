@@ -41,9 +41,8 @@ struct CodeParams {
 }  // namespace
 
 /**
- * A reported successful decode must always produce a valid codeword. Karn's decoder used to report success when some
- * error locations landed in the virtual zero-padding of the shortened code (impossible positions), leaving an output
- * that isn't a codeword at all. That made ~1 in 800 random noise frames pass as valid basic UAT ADS-B messages.
+ * A successful decode must produce a valid codeword, including when error locations fall in the shortened code's zero
+ * padding.
  */
 TEST(UATReedSolomon, RandomFramesNeverDecodeToNonCodewords) {
     const CodeParams codes[] = {
@@ -81,8 +80,7 @@ TEST(UATReedSolomon, RandomFramesNeverDecodeToNonCodewords) {
 }
 
 /**
- * Error correction capability must be unaffected: up to t = nroots/2 byte errors at any in-frame position (payload or
- * parity) are corrected and the reported count is exact.
+ * Up to t = nroots/2 byte errors anywhere in the frame are corrected, with an exact reported count.
  */
 TEST(UATReedSolomon, CorrectsUpToTErrorsAnywhereInFrame) {
     const CodeParams codes[] = {
@@ -107,8 +105,7 @@ TEST(UATReedSolomon, CorrectsUpToTErrorsAnywhereInFrame) {
             uint8_t received[RawUATUplinkPacket::kUplinkMessageBlockNumBytes];
             memcpy(received, codeword, len);
             bool corrupted[RawUATUplinkPacket::kUplinkMessageBlockNumBytes] = {false};
-            // Always hit the first and last byte of the frame on some trials: those are the positions adjacent to
-            // the padding boundary and the end of the block.
+            // Sometimes hit the first and last bytes: they border the padding and the end of the block.
             for (int e = 0; e < num_errors; e++) {
                 uint16_t pos;
                 if (e == 0 && trial % 3 == 0) {

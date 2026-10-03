@@ -5,8 +5,7 @@
 #include "hardware_unit_tests.hh"
 #include "mode_s_packet.hh"
 
-// Times the ingest of an odd packet that completes a CPR pair, which runs the position decode (and the CPR filter when
-// it's enabled).
+// Times ingesting an odd packet that completes a CPR pair, which runs the position decode.
 uint64_t TimeDictionaryPacketIngestUs() {
     DecodedModeSPacket odd_packet = DecodedModeSPacket((const char*)"8D48C22D60AB00DEABC5DB78FCD6");  // odd
     odd_packet.raw.mlat_48mhz_64bit_counts = 1'000 * 48'000;
@@ -31,8 +30,7 @@ uint64_t TimeDictionaryPacketIngestUs() {
     return end_timestamp_us - start_timestamp_us;
 }
 
-// Returns the median of several timed ingests. Interrupt handlers (USB, timers) that fire during an ingest land in a
-// single sample and pushed it over the limit now and then; the median measures the ingest itself.
+// Median of several timed ingests, so an interrupt during one sample doesn't fail the test.
 uint64_t MedianDictionaryPacketIngestUs() {
     static const uint16_t kNumSamples = 11;
     uint64_t samples_us[kNumSamples];

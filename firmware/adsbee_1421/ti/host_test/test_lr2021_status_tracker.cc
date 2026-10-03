@@ -1,6 +1,4 @@
-// LR2021StatusTracker (lr2021_status_tracker.hh): which command a Stat word reports on. The LR2021 puts a command's
-// result in the Stat word of the NEXT frame, so a command frame reports the command before it and a read's data
-// frame reports the read.
+// LR2021StatusTracker (lr2021_status_tracker.hh): which command a Stat word reports on.
 #include "gtest/gtest.h"
 #include "lr2021_status_tracker.hh"
 

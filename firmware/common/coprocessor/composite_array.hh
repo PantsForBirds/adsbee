@@ -91,9 +91,8 @@ class CompositeArray {
     static_assert(sizeof(RawRemoteIDPacket) % 4 == 0);
 
     /**
-     * Per-type caps on how many packets one PackRawPacketsBuffer() call dequeues. The defaults are unlimited, so only
-     * the buffer length bounds the pack. A caller that formats the packed packets in a latency-sensitive loop uses
-     * these to bound the work per call and leaves the rest queued for the next one.
+     * Per-type caps on how many packets one PackRawPacketsBuffer() call dequeues, to bound work per call. Unlimited by
+     * default.
      */
     struct PackLimits {
         uint16_t max_mode_s_packets;
@@ -164,10 +163,8 @@ class CompositeArray {
      * skip.
      * @retval True if all packets were successfully enqueued, false otherwise.
      *
-     * A full queue drops only the packets that don't fit; the other packet types in the array are still enqueued.
-     * Drops are counted in queue_full_drops and logged as one summary at most every kQueueFullLogIntervalMs. On the
-     * ESP32 this runs on the SPI receive task, and a log line per dropped array (several per second when the consumer
-     * falls behind) went back to the RP2040 over the same SPI link and on to the /console clients.
+     * A full queue drops only the packets that don't fit. Drops are counted in queue_full_drops and logged at most once
+     * per kQueueFullLogIntervalMs, since log lines travel over the same SPI link.
      */
     static bool UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_len_bytes,
                                                PFBQueue<RawModeSPacket>* mode_s_queue,

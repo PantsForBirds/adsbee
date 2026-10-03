@@ -399,8 +399,7 @@ TEST(DecodedUATPacket, DO282BDownlinkPacketsDecodeAndPacketType) {
         DecodedUATADSBPacket packet = DecodedUATADSBPacket(test_case.raw_encoded_adsb_message);
         EXPECT_EQ(packet.message_format, test_case.expected_format);
         EXPECT_EQ(test_case.expected_format != DecodedUATADSBPacket::kUATADSBMessageFormatInvalid, packet.IsValid());
-        // All of these vectors are 48-byte receptions. A frame that decodes as a basic message must be forwarded as
-        // a 30-byte basic message (Beast/raw outputs label and size the frame by buffer_len_bytes).
+        // These are 48-byte receptions; one that decodes as basic must be forwarded as a 30-byte basic message.
         if (test_case.expected_format == DecodedUATADSBPacket::kUATADSBMessageFormatShort) {
             EXPECT_EQ(packet.raw.buffer_len_bytes, RawUATADSBPacket::kShortADSBMessageNumBytes);
         } else if (test_case.expected_format == DecodedUATADSBPacket::kUATADSBMessageFormatLong) {
@@ -530,9 +529,8 @@ TEST(UATFEC, EncodeShortUATADSBPacket) {
 }
 
 TEST(UATFEC, RejectedADSBDecodeLeavesBufferUnmodified) {
-    // A long RS(48,34) codeword carrying payload type 0 is RS-correctable but illegal (type 0 is basic-only), so the
-    // long decoder must reject it. It must do so without writing its correction into the buffer, since the caller
-    // retries the same buffer as a basic message.
+    // A long codeword with payload type 0 (basic-only) must be rejected without writing corrections into the buffer,
+    // which the caller retries as a basic message.
     uint8_t codeword[RawUATADSBPacket::kLongADSBMessageNumBytes] = {0};
     for (uint16_t i = 1; i < RawUATADSBPacket::kLongADSBMessagePayloadNumBytes; i++) {
         codeword[i] = static_cast<uint8_t>(i * 37 + 11);
@@ -575,7 +573,7 @@ TEST(UATSync, MessageLengthFromSyncLS4AndPayloadType) {
     EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0x2, 31), RawUATADSBPacket::kLongADSBMessageNumBytes);
     EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0xD, 0), RawUATUplinkPacket::kUplinkMessageNumBytes);
     EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0xD, 17), RawUATUplinkPacket::kUplinkMessageNumBytes);
-    // Any single bit error keeps the format (previously every ADS-B nibble error became a 552-byte uplink reception).
+    // Any single bit error keeps the format.
     for (uint8_t bit = 0; bit < 4; bit++) {
         SCOPED_TRACE(bit);
         EXPECT_EQ(UATMessageLenBytesFromSyncAndPayloadType(0x2 ^ (1 << bit), 0),

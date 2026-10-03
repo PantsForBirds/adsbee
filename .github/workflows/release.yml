@@ -1,10 +1,8 @@
 name: Draft Release
 
-# Pushing a release tag (adsbee_1090-M.m.p[-rcN] or adsbee_1421-M.m.p[-rcN]) builds that product
-# from the tagged commit with firmware.yml and creates a draft GitHub release with its assets.
-# Release notes are written by hand in the draft before it is published. Re-running the workflow
-# for a tag whose release is still a draft replaces the draft's assets and the CI block of its
-# body; a published release is never modified. See the "Releases" section of firmware/README.md.
+# A release tag (adsbee_1090-M.m.p[-rcN] or adsbee_1421-M.m.p[-rcN]) builds that product and creates a
+# draft GitHub release. Re-runs update a draft's assets and CI block; published releases are never
+# modified. See "Releases" in firmware/README.md.
 
 on:
   push:
@@ -17,7 +15,7 @@ permissions:
 
 defaults:
   run:
-    # Explicit, so steps run with -o pipefail (the implicit default shell doesn't set it).
+    # Explicit so steps run with -o pipefail.
     shell: bash
 
 concurrency:
@@ -25,8 +23,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Fails before anything is built if the tag isn't a release tag or its version doesn't match the
-  # source (and, for adsbee_1421, the version the ADSBee 1421 Programmer bakes in).
+  # Fails early if the tag's version doesn't match the source (and, for adsbee_1421, the
+  # ADSBee 1421 Programmer's baked-in version).
   check_tag:
     runs-on: ubuntu-latest
     outputs:

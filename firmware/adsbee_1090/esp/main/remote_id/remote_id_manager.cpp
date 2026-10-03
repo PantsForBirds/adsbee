@@ -33,9 +33,7 @@ bool RemoteIDManager::EnsureBuffers() {
 }
 
 bool RemoteIDManager::CanCoexistWithWiFi() {
-    // Decided at runtime: the same image runs on the ESP32-S3-MINI-1U-N8 (no PSRAM) and the -N4R2 (2 MB PSRAM).
-    // With PSRAM the NimBLE host heap and the WiFi/LWIP buffers are allocated from PSRAM, so BLE can coexist with WiFi
-    // AP/STA. Without it there is not enough internal SRAM to run WiFi AP/STA and the BLE stack simultaneously.
+    // Without PSRAM, internal SRAM can't hold both WiFi AP/STA and the BLE stack.
     return HardwareCapabilities::HasPSRAM();
 }
 
@@ -130,7 +128,7 @@ void RemoteIDManager::Reconcile() {
     const bool wifi_ap_sta_up =
         comms_manager.wifi_ap_enabled || comms_manager.wifi_sta_enabled;
 
-    // Without PSRAM, Remote ID may only run when WiFi AP/STA are off (and Ethernet is carrying IP).
+    // Without PSRAM, Remote ID only runs with WiFi AP/STA off.
     if (wifi_ap_sta_up && !CanCoexistWithWiFi()) {
         status_ |= kStatusBlockedByWiFi;
         // Still surface whether Bluetooth is even compiled in, so this early-return doesn't mask kStatusNotInBuild: a
@@ -174,15 +172,8 @@ void RemoteIDManager::Reconcile() {
     }
 
     // --- WiFi beacon sniffer (best-effort) ---
-    // Two modes:
-    //   - WiFi AP/STA down: the sniffer owns the radio (NULL mode) and hops channels 1/6/11.
-    //   - WiFi AP/STA up (only reachable with PSRAM; the no-PSRAM case returned above): the sniffer attaches promiscuous
-    //     RX to the running AP/STA driver and listens on the AP/STA channel only, since hopping would break the link.
-    // On a board without PSRAM the internal SRAM cannot hold BOTH the BLE controller/host and the WiFi driver alongside
-    // the network stack (ethernet + httpd + feeds) — running both drops free heap/DMA low enough to starve safe_send and
-    // drop packets — so the sniffer is mutually exclusive with BLE there: it runs only when BLE is not active (BLE is the
-    // priority transport). A PSRAM board (CanCoexistWithWiFi) has the headroom to run both. When allowed, it still
-    // passes a heap guard as a backstop.
+    // With WiFi AP/STA down the sniffer owns the radio and hops channels; with AP/STA up (PSRAM only) it listens on the
+    // AP/STA channel. Without PSRAM it runs only while BLE is off, since both together starve the network stack.
     const bool ble_is_active = (status_ & kStatusBLEActive) != 0;
     const bool wifi_sniffer_allowed = want_wifi && (CanCoexistWithWiFi() || !ble_is_active);
     if (wifi_sniffer_allowed) {

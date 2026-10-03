@@ -1,6 +1,4 @@
-// The 1090 MHz receiver mode values that settings store in flash, and the settings version that guards them: the
-// three current modes are numbered 0-2 with DF17 the factory default, each selectable by its name, and a settings
-// blob from before the renumbering (version 3) is rejected on load rather than read with the new numbering.
+// 1090 MHz receiver mode values stored in flash, and the settings version that guards their numbering.
 #include <cstring>
 
 #include "gtest/gtest.h"
@@ -8,8 +6,7 @@
 
 using SM = SettingsManager;
 
-// Mode selected by an AT+R1090_PREAMBLE=<name> argument, or -1 if the name is rejected (same lookup as
-// CommsManager::ATR1090PreambleCallback).
+// Same lookup as CommsManager::ATR1090PreambleCallback; -1 if the name is rejected.
 static int ModeForName(const char* name) {
     for (uint16_t i = 0; i < SM::kNumR1090PreambleModes; i++) {
         if (strcmp(name, SM::kR1090PreambleModeStrs[i]) == 0) {
@@ -52,8 +49,7 @@ TEST(Settings, VersionRenumberedModesIsCurrent) {
 }
 
 TEST(Settings, BlobFromBeforeTheRenumberingIsRejected) {
-    // A version 3 blob, intact (its own CRC is right), holding what was MODE_S_STRONG there (3). Load() resets
-    // to factory defaults when IsValid() fails, so this value is never read as a mode.
+    // Valid version 3 blob holding the old MODE_S_STRONG value (3).
     SM::Settings settings;
     settings.Stamp();
     settings.settings_version = 3;

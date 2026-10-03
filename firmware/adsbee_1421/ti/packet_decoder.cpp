@@ -4,7 +4,7 @@
 #include "comms.hh"
 #include "settings.hh"
 
-// The host tests (host_test) build DecodeOne() without the SDK, so Update() and its includes are left out there.
+// Host tests build DecodeOne() without the SDK, so Update() and its includes are left out there.
 #ifndef ON_HOST
 #include "adsbee.hh"
 #include "bsp.hh"
@@ -44,10 +44,8 @@ bool PacketDecoder::Update() {
 #endif
 
 void PacketDecoder::DecodeOne(RawModeSPacket& raw_packet, bool df17_mode) {
-    // The LR2021 always captures 112-bit (extended squitter length) frames, so a 56-bit squitter
-    // (DF < 16: DF 0/4/5/11) arrives with 56 bits of noise appended. Truncate to squitter length
-    // before decoding so the software CRC covers the real frame. DF17 sync mode reconstructs
-    // frames with DF >= 16 by construction, so the check is skipped there.
+    // The LR2021 always captures 112 bits, so cut squitters (DF < 16) to 56 bits before the CRC check. DF17 mode
+    // only produces DF >= 16 frames.
     if (!df17_mode && raw_packet.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
         (raw_packet.buffer[0] >> 27) < 16) {
         raw_packet = RawModeSPacket(raw_packet.buffer, RawModeSPacket::kSquitterPacketNumWords32,
@@ -56,12 +54,8 @@ void PacketDecoder::DecodeOne(RawModeSPacket& raw_packet, bool df17_mode) {
     }
     DecodedModeSPacket decoded_packet(raw_packet);
 
-    // Print every received packet (valid or not) with its raw contents, validity, and CRC residual.
-    // The residual is calculated_checksum XOR received_parity: 0 for a valid DF17 frame, and the
-    // ICAO address for address-parity frames (DF 0/4/5/16/20/21). Computed here from mode_s_packet's
-    // public API (CalculateCRC24 + the raw buffer) so the shared module stays untouched. Gated on
-    // log level up front: the residual recompute and buffer formatting are real per-packet work,
-    // and CONSOLE_INFO would evaluate its arguments (then discard the output) even below kInfo.
+    // Log every packet with its CRC residual: 0 for a valid DF17 frame, the ICAO address for address-parity frames.
+    // Checked against the log level first, since CONSOLE_INFO evaluates its arguments even when filtered out.
     if (settings_manager.settings.log_level >= SettingsManager::LogLevel::kInfo) {
         const uint16_t len_bits = raw_packet.buffer_len_bytes * 8;  // 56 (squitter) or 112 (extended)
         const uint32_t crc_residual =
@@ -74,22 +68,18 @@ void PacketDecoder::DecodeOne(RawModeSPacket& raw_packet, bool df17_mode) {
     }
 
     if (df17_mode && decoded_packet.downlink_format != 17) {
-        // DF17 mode: anything else (DF16-labeled noise triggers, or real DF16/ACAS) is dropped
-        // before address-parity forwarding, bit correction, and the dictionary lookup they cost.
-        // The debug print above still shows these frames at kInfo for bench visibility.
+        // DF17 mode: drop everything else (noise triggers or real DF16) before the costlier steps below.
         return;
     }
 
     if (decoded_packet.is_valid || decoded_packet.is_address_parity) {
-        // Address-parity frames (DF 0/4/5/16/20/21) carry ICAO ^ CRC in the parity field and can't
-        // be validated standalone; the aircraft dictionary promotes them to valid downstream iff
-        // the recovered ICAO matches an aircraft it already tracks.
+        // Address-parity frames (DF 0/4/5/16/20/21) carry ICAO ^ CRC in the parity field; the aircraft dictionary
+        // accepts them only if that ICAO matches a tracked aircraft.
         decoded_mode_s_packet_out_queue.Enqueue(decoded_packet);
         // leds.FlashLED(bsp.k1090LEDPin, 10);
     } else if (decoded_packet.CorrectSingleBitError() >= 0) {
-        // Single-bit error correction, shared with the ADSBee 1090 decoder (DecodedModeSPacket::CorrectSingleBitError):
-        // only extended squitters received as DF=17/18, never a bit in the DF field (DO-260B 2.2.4.3.4.7.3.a). It
-        // reuses the syndrome the decode above already computed. Always on, as on the ADSBee 1090.
+        // Single-bit error correction, shared with the ADSBee 1090: only DF 17/18, never in the DF field
+        // (DO-260B 2.2.4.3.4.7.3.a).
         bitflips_fixed_count++;
         decoded_mode_s_packet_out_queue.Enqueue(decoded_packet);
     }

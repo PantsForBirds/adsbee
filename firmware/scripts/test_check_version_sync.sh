@@ -1,13 +1,12 @@
 #!/bin/bash
-# Tests for check_version_sync.sh. Builds a throwaway git repository with the version files of
-# both products and a set of release tags, makes one kind of change per case, and checks the
-# script's verdict (and, where it matters, its message).
+# Tests for check_version_sync.sh: one change per case in a scratch git repository, checking the verdict
+# and, where it matters, the message.
 #
 # Usage: bash firmware/scripts/test_check_version_sync.sh
 
 set -euo pipefail
 
-# CHECK_VERSION_SYNC overrides the script under test (e.g. to run the cases against an old copy).
+# CHECK_VERSION_SYNC overrides the script under test.
 script="${CHECK_VERSION_SYNC:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check_version_sync.sh}"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -70,8 +69,7 @@ make_repo() {
     git commit -q -m base
     local tag
     if [ "$tags" != none ]; then
-        # Includes a tag that doesn't follow the naming scheme (one exists upstream); the
-        # script must ignore it.
+        # A tag outside the naming scheme, which the script must ignore.
         for tag in adsbee_1090-0.9.0-rc19 adsbee_1090-0.9.0 adsbee_1090-rc17 adsbee_1090-0.9.1-rc3 \
             adsbee_1421-0.3.10 adsbee_1421-0.3.11-rc1 adsbee_1421-0.3.11-rc2; do
             git tag "$tag"

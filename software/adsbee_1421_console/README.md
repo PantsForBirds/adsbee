@@ -3,32 +3,26 @@
 A single-file, self-contained web console for the ADSBee m1421 (TI CC1314R10) that
 mimics the ADSBee 1090 ESP32 web interface, but talks to the device over the
 **Web Serial API** instead of WebSockets. Open `adsbee_1421_console.html` directly in
-Chrome or Edge (works from `file://`, no server needed), connect the module through
-the ADSBee 1421 Programmer (`firmware/adsbee_1421/programmer/`) and click **Connect**.
+Chrome or Edge (works from `file://`), connect the module through the ADSBee 1421
+Programmer (`firmware/adsbee_1421/programmer/`) and click **Connect**.
 
 ## Features
 
-- **Console baud rate** — handled by the ADSBee 1421 Programmer, which follows the
-  module's console rate (9600 to 3,000,000; factory default 1,000,000) whatever rate
-  the port is opened at. The page shows the rate the device reports.
-  - Rate changes (`AT+BAUD_RATE=CONSOLE,<n>`, the Settings tab, `AT+SETTINGS=RESET`)
-    need nothing from the page. Wait for the `OK` of `AT+BAUD_RATE=CONSOLE,<n>`
-    before sending the next command.
-  - Disconnecting leaves the device at its current rate.
+- **Console baud rate** — the ADSBee 1421 Programmer follows the module's rate (9600
+  to 3,000,000; default 1,000,000), so the page needs no setting. After
+  `AT+BAUD_RATE=CONSOLE,<n>`, wait for `OK` before the next command.
 - **Console tab** — interactive AT command terminal (line editing, history, ANSI
   colors), a Receiver Statistics panel, a Device Status card, and firmware upload.
   - Statistics update whenever an `RX_STATS=` response appears — type
     `AT+RX_STATS?` yourself or click **Refresh**. There is no background polling,
     so the console stream stays clean.
-  - An **uptime** card sits alongside the statistics, fed by `AT+UPTIME?`. It is read
-    quietly on connect and after anything that reboots the device (`AT+REBOOT`, a
-    firmware flash), and refreshed by the same **Refresh**
-    button — or by typing `AT+UPTIME?` yourself.
+  - An **uptime** card (`AT+UPTIME?`) is read on connect, after reboots and flashes,
+    and on **Refresh**.
   - Device info (`AT+DEVICE_INFO?`) is queried once per connect.
   - All protocol output (CSBee, raw aircraft JSON, etc.) prints in the terminal.
-    Aircraft JSON is hidden from the terminal only while the Live Map tab itself is
-    driving the stream; JSON lines always feed the map's aircraft store either way.
-- **Live Map tab** — Leaflet map + sortable aircraft table + detail sidebar. Entering the
+    Aircraft JSON is hidden only while the Live Map tab drives the stream; it always
+    feeds the map.
+- **Live Map tab** — map, sortable aircraft table and detail sidebar. Entering the
   tab saves the current `AT+LOG_LEVEL` / `AT+PROTOCOL_OUT` settings, then sets
   `AT+LOG_LEVEL=SILENT` and `AT+PROTOCOL_OUT=CONSOLE,AIRCRAFT_JSON` and renders the
   newline-delimited aircraft JSON stream. Switching back to the Console tab restores
@@ -44,19 +38,17 @@ the ADSBee 1421 Programmer (`firmware/adsbee_1421/programmer/`) and click **Conn
     direction whose length scales with speed (about one icon width at 250 kt,
     clamped) — zooming the map never changes its on-screen size.
   - These changes are RAM-only (`AT+SETTINGS=SAVE` is never issued), so a device
-    power cycle always returns to the persisted configuration — including if the
-    page is closed while on the Live Map tab (a best-effort restore is attempted on
-    close, but cannot be guaranteed).
+    power cycle always returns to the persisted configuration, even if the page is
+    closed on the Live Map tab.
 - **Settings tab** — a schema-driven form for every read/write settings AT command
   (receivers, gain/preamble/boost, sub-GHz mode, output protocol, MAVLink IDs,
-  receiver position, console baud (preset or custom, 9600 to 3,000,000), log level,
-  watchdog). Edits are applied with a
+  receiver position, console baud (9600 to 3,000,000), log level, watchdog). Edits
+  are applied with a
   single **Save** button, which sends only the changed `AT+<CMD>=` commands and then
   `AT+SETTINGS=SAVE`; **Refresh** re-reads everything from the device and discards
-  edits. Reads happen in one round trip via `AT+SETTINGS?JSON` (a single-line JSON
-  dump keyed by AT command). A dump that arrives incomplete is retried; only firmware
-  that answers it with `ERROR` (predating the command) is read with per-command queries. All settings traffic runs through the hidden AT queue, so the terminal
-  stays clean. A console baud change takes effect immediately; **Save** persists it.
+  edits. Settings are read in one `AT+SETTINGS?JSON` dump (retried if incomplete;
+  older firmware is queried per command), out of the terminal's view.
+  A console baud change takes effect immediately; **Save** persists it.
   Entering the tab from the Live Map tab first restores the persisted
   `PROTOCOL_OUT`/`LOG_LEVEL` so the form shows saved values, not the map stream's
   overrides.
@@ -69,33 +61,24 @@ the ADSBee 1421 Programmer (`firmware/adsbee_1421/programmer/`) and click **Conn
     AtQueue transport adapter) live just below the tab controller. To expose a new
     AT command in the GUI, add one entry to the schema table.
 - **Upload Firmware** — flashes a `.hex` image (from
-  `firmware/adsbee_1421/ti/build/<Config>/adsbee_1421-<ver>.hex`) via the
-  CC13x4 factory ROM serial bootloader, which the page can enter itself through
-  the SYNC backdoor over RTS/DTR (see below). Runs at the detected
-  baud (the ROM auto-bauds up to ~1.2 M): ~15 s for a ~600 KB image at 1 M,
+  `firmware/adsbee_1421/ti/build/<Config>/adsbee_1421-<ver>.hex`) through the
+  CC13x4 ROM serial bootloader, which the page enters itself (see below). About
+  15 s at 1 M baud,
   or ~2 min at 115200. After the post-flash reboot the page re-detects
   the link automatically.
 
 ## Firmware upload wiring
 
-The device must be in the ROM bootloader before flashing. The mechanism (the CCFG
-bootloader backdoor on SYNC) is documented in
-[Reflashing over UART: the SYNC bootloader backdoor](../../firmware/adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
-The dialog has one button for this, **Enter bootloader**, and three ways to get the
-module there:
+The module must be in the ROM bootloader before flashing (see
+[Reflashing over UART: the SYNC bootloader backdoor](../../firmware/adsbee_1421/README.md#reflashing-over-uart-the-sync-bootloader-backdoor)).
+Press **Enter bootloader** in the dialog. It works two ways:
 
-- Automatically, for the ADSBee 1421 Programmer, or any adapter
-  wired RTS → SYNC and DTR → RESET_N. The page drives the lines with Web Serial
-  `setSignals()`, matching the Programmer's convention (asserting a line drives its pin
-  low): RTS deasserted (SYNC high), then DTR deasserted → asserted for 50 ms → deasserted.
-  The Programmer turns the assert edge into its 50 ms reset pulse; a plain adapter holds
-  RESET_N low while DTR is asserted. After 150 ms the page checks that the ROM answers
-  (see below). It makes one attempt. If the ROM doesn't answer, the page drives
-  SYNC low again so a running module isn't left asleep, and reports whether the
-  application answered (RTS/DTR not wired, or firmware older than 0.3.7) or nothing
-  did.
-- By hand, for adapters without RTS/DTR wired to the module. The dialog prints the
-  steps, which end with the same button:
+- Automatically, with the ADSBee 1421 Programmer or an adapter wired RTS → SYNC and
+  DTR → RESET_N (asserting a line drives its pin low). The page deasserts RTS (SYNC
+  high) and pulses DTR to reset, then checks that the ROM answers. If it doesn't, the
+  page drives SYNC low again so the module isn't left asleep, and reports whether the
+  application answered (RTS/DTR not wired, or firmware older than 0.3.7) or nothing did.
+- By hand, for adapters without RTS/DTR wired to the module:
   1. Wire the adapter to the module: TX → SURX (pin 20, DIO_2), RX → SUTX (pin 21,
      DIO_3), and ground to ground.
   2. Hold SYNC (pin 28, DIO_5) high at 3.3 V.
@@ -104,33 +87,18 @@ module there:
   4. Release reset and keep SYNC high.
   5. Press **Enter bootloader**.
 
-  With RTS and DTR unwired, the button's line changes reach nothing and it only runs
-  the check. On an adapter that wires DTR to RESET_N but leaves RTS unwired, its reset
-  pulse restarts the module, which lands back in the bootloader as long as SYNC is
-  still held high.
-
 The firmware's CCFG must enable the bootloader backdoor, which
-`firmware/adsbee_1421/ti/syscfg/adsbee_1421.syscfg` does (DIO_5, active high; every
-release since `adsbee_1421-0.3.7`), unless `AT+BOOTLOADER_PIN=0,DEADBEE` turned it off on that
-module; `AT+BOOTLOADER_PIN?` shows the setting and `AT+BOOTLOADER_PIN=1,DEADBEE` turns it back on.
-The baud rate does not need to match anything: the ROM locks onto whatever rate the page
-sends its sync bytes at, so the page never reopens the port while the device is in the
-bootloader.
+every release since `adsbee_1421-0.3.7` does, unless `AT+BOOTLOADER_PIN=0,DEADBEE` turned
+it off; `AT+BOOTLOADER_PIN?` shows it and `AT+BOOTLOADER_PIN=1,DEADBEE` turns it back on.
+Any baud rate works: the ROM locks onto the page's rate.
 
-Connecting resets the module. When a serial port opens, the operating system
-asserts DTR and RTS. Behind the ADSBee 1421 Programmer that is a DTR edge, so the
-Programmer pulses reset with SYNC low; on a plain DTR → RESET_N adapter the module is held in reset until the page
-releases DTR. Either way the module boots into its application, even if it was sitting
-in the bootloader because of the backdoor (a module without a valid image stays in the
-bootloader). The page can't prevent this, which is why it enters the bootloader itself,
-after connecting. Right after opening, the page parks the lines in the normal-run state
-(RTS asserted = SYNC low, DTR deasserted); neither is an edge the Programmer acts on.
-Closing the port on Linux or macOS deasserts both lines (HUPCL). The ADSBee 1421 Programmer
-holds SYNC low while DTR is deasserted, so a module behind it stays awake. On a plain adapter,
-or a Programmer image from 0.3.11-rc2 or earlier, RTS deasserted is SYNC high and the module
-sleeps until something drives SYNC low.
+**Connecting resets the module** into its application (the OS asserts DTR on open),
+even if it was in the bootloader, which is why the page enters the bootloader after
+connecting. On Linux and macOS, closing the port deasserts both lines: the ADSBee 1421
+Programmer keeps the module awake, but on a plain adapter (or Programmer 0.3.11-rc2 or
+earlier) the module sleeps until SYNC is driven low.
 
-The check that ends **Enter bootloader** is the gate on flashing. It syncs, pings, and reads the chip ID,
+The check that ends **Enter bootloader** gates flashing. It syncs, pings, and reads the chip ID,
 and only a device that answers all three unlocks the **Flash firmware** button. A
 failure says which failure it is: if the application firmware answers instead, it says
 so and names the baud; if nothing answers at all, it points at the wiring and power.
@@ -139,12 +107,9 @@ that was reset or unplugged between the check and the flash is caught while the 
 is still intact. Disconnecting the port, picking a different file, or closing the
 dialog all revoke a passed check.
 
-After a successful flash (or a settings erase) the page drives SYNC low (RTS
-asserted) and restarts the device with the bootloader's own `RESET` command, which
-works whether or not DTR is wired. If you are holding SYNC high by hand, release it
-first. With SYNC high, the reset lands back in the bootloader.
-Closing the dialog after a passed check without flashing does the same, so the module
-goes back to its application.
+After a flash, a settings erase, or closing the dialog after a passed check, the page
+drives SYNC low and resets the device into its application. **If you are holding SYNC
+high by hand, release it first**, or the reset lands back in the bootloader.
 
 Nothing is erased by the check; erase begins only after the bootloader ACKs.
 Only the 2 KB flash sectors covered by the image are erased (`SECTOR_ERASE`, never a
@@ -160,11 +125,7 @@ factory-default CCFG, which keeps the bootloader enabled).
 - Requires Chrome or Edge (Web Serial). Firefox/Safari show an unsupported banner.
 - Map tiles load from openstreetmap.org and need internet; everything else works
   offline. Leaflet 1.9.4 is vendored inline (BSD-2-Clause, license header kept).
-- Connecting resets the device on an adapter whose DTR is wired to RESET_N (such as
-  the ADSBee 1421 Programmer), because the OS asserts DTR when opening a port; see
-  [Firmware upload wiring](#firmware-upload-wiring). The page parks the lines in the
-  normal-run state right after opening and otherwise touches them only for
-  **Enter bootloader** and on the way out of the bootloader.
+- Connecting resets the device; see [Firmware upload wiring](#firmware-upload-wiring).
 - The page is assembled by hand — Leaflet's JS/CSS are pasted between
   `BEGIN/END VENDORED` markers with the sourcemap comment and `url(images/...)`
   rules stripped. To upgrade Leaflet, replace those two blocks.

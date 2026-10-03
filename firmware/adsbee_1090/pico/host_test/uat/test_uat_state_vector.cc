@@ -8,8 +8,8 @@
 #include "uat_packet.hh"
 
 /**
- * Tests that build UAT basic ADS-B messages field by field (per the UAT Tech Manual STATE VECTOR layout, Table 2-11),
- * FEC-encode them, and run them through the full decode + aircraft dictionary ingest path.
+ * Builds UAT basic ADS-B messages field by field (UAT Tech Manual Table 2-11), FEC-encodes them, and runs them through
+ * decode and aircraft dictionary ingest.
  */
 
 namespace {
@@ -72,8 +72,7 @@ DecodedUATADSBPacket BuildBasicPacket(const UATStateVectorFields& f) {
 }
 
 UATAircraft IngestAndGet(AircraftDictionary& dictionary, const DecodedUATADSBPacket& packet) {
-    // The position filter only accepts a report with a strictly newer timestamp than the last one it saw (starting
-    // from 0), so step the fake system clock before every ingest.
+    // The position filter needs a strictly newer timestamp, so step the fake clock before every ingest.
     inc_time_since_boot_ms(1000);
     EXPECT_TRUE(packet.IsValid());
     EXPECT_TRUE(dictionary.IngestDecodedUATADSBPacket(packet));
@@ -118,8 +117,8 @@ TEST(UATStateVector, PositionAllQuadrants) {
 }
 
 TEST(UATStateVector, PositionFilterAcceptsEquatorCrossing) {
-    // Consecutive reports 1 s apart, ~110 m apart, straddling the equator. The position filter must see them as close
-    // together (it works on 32-bit AWB positions, so the 23-bit UAT latitude has to be sign-restored correctly).
+    // Reports ~110 m apart across the equator must look close to the position filter, which needs the 23-bit UAT
+    // latitude sign-extended correctly.
     AircraftDictionary dictionary;
     UATStateVectorFields f;
     f.nic = 8;
@@ -146,8 +145,7 @@ uint16_t AVSize(uint8_t lw_code, bool poa) { return (lw_code << 7) | (poa << 6);
 }  // namespace
 
 TEST(UATStateVector, OnGroundSpeedWithoutTrack) {
-    // Ground speed is independent of the Track Angle/Heading subfield: a surface target may report a speed with the
-    // track type "not available" (common for vehicles and stationary aircraft).
+    // Ground speed is valid even when the track type is "not available".
     AircraftDictionary dictionary;
     UATStateVectorFields f;
     f.air_ground_state = kAGOnGround;
@@ -161,8 +159,7 @@ TEST(UATStateVector, OnGroundSpeedWithoutTrack) {
 }
 
 TEST(UATStateVector, OnGroundTrackWithoutSpeed) {
-    // "Ground speed not available" (0) with a valid true track: direction is valid, speed must not be (it would
-    // otherwise be reported as INT32_MIN knots).
+    // "Ground speed not available" (0) with a valid true track: direction is valid, speed is not.
     AircraftDictionary dictionary;
     UATStateVectorFields f;
     f.air_ground_state = kAGOnGround;
@@ -201,8 +198,7 @@ TEST(UATStateVector, OnGroundHeadingTypes) {
 }
 
 TEST(UATStateVector, OnGroundDimensionsWithPositionOffsetApplied) {
-    // The POA bit (Table 2-36) only says the reported position was normalized to the ADS-B reference point. The field
-    // still carries the A/V length/width code (Table 2-35), never a GNSS antenna offset.
+    // The POA bit (Table 2-36) doesn't change the field: it is still the A/V length/width code, not an antenna offset.
     for (bool poa : {false, true}) {
         SCOPED_TRACE(poa ? "POA=1" : "POA=0");
         AircraftDictionary dictionary;
@@ -275,8 +271,7 @@ TEST(UATModeStatus, CallsignNotAvailableKeepsLastCallsign) {
     EXPECT_STREQ(aircraft.callsign, "N12345  ");
     EXPECT_EQ(aircraft.emitter_category, ADSBTypes::kEmitterCategoryLight);
 
-    // All eight characters = base-40 digit 37 means "call sign not available" (§3.2.1.5.4.2); that must not blank
-    // out the callsign we already know.
+    // All eight characters = 37 means "call sign not available" (§3.2.1.5.4.2) and must not blank a known callsign.
     const char kNotAvailable[8] = {'\x25', '\x25', '\x25', '\x25', '\x25', '\x25', '\x25', '\x25'};
     aircraft = IngestAndGet(dictionary, BuildModeStatusPacket(0x123456, 1, kNotAvailable, true));
     EXPECT_STREQ(aircraft.callsign, "N12345  ");
@@ -293,8 +288,7 @@ TEST(UATModeStatus, SquawkFromFlightPlanID) {
 }
 
 TEST(UATStateVector, AltitudeAboveMaxIsFiniteAndValid) {
-    // Altitude code 4095 means "> 101,337.5 ft" (Table 2-14). It used to decode to INT32_MAX and was stored as a valid
-    // altitude of 2147483647 ft.
+    // Altitude code 4095 means "> 101,337.5 ft" (Table 2-14) and must decode to a finite value.
     AircraftDictionary dictionary;
     UATStateVectorFields f;
     f.altitude_encoded = 4095;

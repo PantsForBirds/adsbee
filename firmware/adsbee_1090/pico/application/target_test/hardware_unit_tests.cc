@@ -8,9 +8,8 @@
 
 UTEST_STATE();
 
-// RunOnISRCore() hands a function to core 1 over the inter-core FIFO: core 0 pushes the function pointer and its
-// argument, and core 1 pushes kCore1TestFunctionDone back once the function has returned. Nothing else uses the FIFO
-// after core 1 is launched (no multicore lockout or flash_safe_execute in this firmware).
+// Inter-core FIFO protocol: core 0 pushes function and argument; core 1 replies kCore1TestFunctionDone. Nothing else
+// uses the FIFO after core 1 launches.
 static constexpr uint32_t kCore1TestFunctionDone = 0xD0D0D0D0;
 
 void RunPendingTestFunctionOnCore1() {
@@ -89,9 +88,8 @@ CPP_AT_CALLBACK(ATTestCallback) {
 
     int argc = 0;
     const char* argv[1];
-    // The tests block the main loop for about 11 s, longer than the longest RP2040 watchdog timeout (8.3 s). Keep the
-    // watchdog armed and feed it from a timer interrupt, but only up to a deadline, so a hung test still reboots the
-    // board.
+    // Tests outlast the maximum watchdog timeout (8.3 s). Feed it from a timer until a deadline so a hung test still
+    // reboots the board.
     repeating_timer_t watchdog_feeder;
     test_watchdog_deadline_us = time_us_64() + kTestWatchdogDeadlineMs * kUsPerMs;
     add_repeating_timer_ms(kTestWatchdogFeedIntervalMs, FeedWatchdogUntilTestDeadline, nullptr, &watchdog_feeder);

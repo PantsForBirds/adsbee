@@ -22,6 +22,18 @@ Shared C++ code comes from [`../common/`](../common/) and [`../modules/`](../mod
 referenced via the `ADSBEE_COMMON_DIR` / `ADSBEE_MODULES_DIR` CMake variables whose defaults
 resolve within this repo both on the host and in the containers.
 
+## Comments and docs
+
+- Use as few words as possible. Say what the code does and why; history, rejected alternatives, bench
+  measurements and task ids go in the commit message or PR description.
+- One-line comments by default. Write a short paragraph only for non-obvious hardware behavior or a rule
+  callers must follow.
+- Don't restate what the code or names already say.
+- Spell out abbreviations on first use; avoid jargon a new contributor wouldn't know.
+- READMEs are for users: short sections, bullets and the rules they need to operate the device. Design
+  notes belong in code comments.
+- Use American spelling. Avoid "it's not X, it's Y" phrasing.
+
 ## Prerequisites
 
 - Docker with the `docker compose` plugin.
@@ -106,18 +118,11 @@ the **baked firmware** (the programmer has no version of its own), matching the 
 ([`ti/object_dictionary/object_dictionary.cpp`](ti/object_dictionary/object_dictionary.cpp),
 `kFirmwareVersion*`) and settings version
 ([`ti/settings/settings.hh`](ti/settings/settings.hh), `kSettingsVersion`), independent of
-adsbee_1090's. Any change under `firmware/adsbee_1421/` or the shared `firmware/common/` must ship
-under an adsbee_1421 firmware version that is not yet released (no `adsbee_1421-<version>` tag)
-and not lower than the latest release; if the branch is already on the next unreleased RC, keep
-it. This is enforced by
-[`../scripts/check_version_sync.sh`](../scripts/check_version_sync.sh), which `build.sh` runs
-before every build (as a warning only — it never blocks the build) and which the repo pre-commit
-hook runs on every commit (where it does block). A
-`firmware/common/` change applies the rule to **both** products' versions, except
-`firmware/common/coprocessor/object_dictionary.cpp`: it holds adsbee_1090's version constants and
-isn't built into adsbee_1421, so bumping the 1090 version alone needs no 1421 bump. Markdown-only
-changes (`*.md`) are exempt. See [`../AGENTS.md`](../AGENTS.md#automated-enforcement) for the
-tag naming and how versions compare.
+adsbee_1090's. Any change under `firmware/adsbee_1421/` or `firmware/common/` (except
+`common/coprocessor/object_dictionary.cpp`) needs an adsbee_1421 version that is unreleased (no
+`adsbee_1421-<version>` tag) and not below the latest release. `*.md` changes are exempt.
+[`../scripts/check_version_sync.sh`](../scripts/check_version_sync.sh) enforces this: `build.sh` only warns, the
+pre-commit hook blocks. See [`../AGENTS.md`](../AGENTS.md#automated-enforcement) for tag naming.
 
 ## Flashing
 
@@ -131,11 +136,10 @@ Flash a CC1314R10 over JTAG with a Segger J-Link (see
 
 Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link tools.
 
-> The module can also be reflashed over its console UART through the CC1314 ROM serial
-> bootloader, with no debugger: hold SYNC high through a reset (the CCFG bootloader backdoor,
-> which `AT+BOOTLOADER_PIN=0,DEADBEE` turns off and `AT+BOOTLOADER_PIN=1,DEADBEE` turns back on). The ADSBee 1421 Programmer
-> ([`programmer/`](programmer/)) does this automatically, and any host tool that drives
-> RTS → SYNC and DTR → RESET_N can do it through the Programmer. See [Reflashing over UART: the SYNC bootloader backdoor](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
+> Without a debugger: hold SYNC high through a reset to start the CC1314 ROM serial bootloader on the
+> console UART (`AT+BOOTLOADER_PIN=0,DEADBEE` disables this, `=1,DEADBEE` re-enables it). The ADSBee 1421
+> Programmer ([`programmer/`](programmer/)) does this automatically. See
+> [Reflashing over UART](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
 ## Console autobaud
 
@@ -148,21 +152,17 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 An external host can force the CC1314 into **STANDBY** (deep sleep, SRAM retained) by driving the
 **SYNC line (DIO_5)** HIGH; driving it LOW wakes the MCU. The super-loop in
 [`main.cpp`](ti/main.cpp) polls SYNC at the top of each iteration and, when
-asserted, calls `LEDs::Suspend()` (stops the LED ClockP, whose frequent events keep the power
-policy in IDLE), `SubGHzRadio::Suspend()` and `CommsManager::Suspend()` (release the RF core's and
-the console UART's STANDBY power constraints), then `ADSBee::EnterSyncSleep()`, which powers the
+asserted, calls `LEDs::Suspend()`, `SubGHzRadio::Suspend()` and `CommsManager::Suspend()` (each releases
+something that would keep the MCU out of STANDBY), then `ADSBee::EnterSyncSleep()`, which powers the
 LR2021 down, **tri-states the shared LR2021 bus** (`LR2021::TristateInterface()` — see below), arms
 SYNC as a falling-edge wake source, enters STANDBY via `PowerCC26XX_standbyPolicy()`, and on wake
 restores the bus (`RestoreInterface()`) and re-runs `ApplyReceiverConfig()` to re-initialize the
-LR2021 before `CommsManager::Resume()` / `SubGHzRadio::Resume()` / `LEDs::Resume()` restart the
-console, UAT RX and the LED clock.
+LR2021 before the `Resume()` calls.
 
-> **SYNC is also the bootloader backdoor pin:** the boot ROM samples it at every reset, and SYNC
-> high at reset (including a watchdog reset) starts the ROM serial bootloader, so this firmware
-> doesn't run (unless `AT+BOOTLOADER_PIN=0,DEADBEE` disabled the backdoor). The watchdog keeps
-> counting in STANDBY, so `EnterSyncSleep()` runs a periodic ClockP at half the watchdog timeout to
-> wake and feed it. Drive SYNC low before resetting the module; see
-> [SYNC and sleep](README.md#sync-and-sleep).
+> **SYNC is also the bootloader backdoor pin:** SYNC high at any reset, including a watchdog reset, starts
+> the ROM bootloader instead of this firmware (unless disabled with `AT+BOOTLOADER_PIN=0,DEADBEE`). The
+> watchdog keeps counting in STANDBY, so `EnterSyncSleep()` wakes at half its timeout to feed it. Drive SYNC
+> low before resetting the module; see [SYNC and sleep](README.md#sync-and-sleep).
 
 > **LR2021 bus handoff:** during sleep the CC1314 releases every LR2021 interface pin it normally
 > drives (`LR_CS`, `LR_RESET`, `COPRO_SPI_SCLK`, `COPRO_SPI_PICO`) to high-impedance inputs (with
@@ -171,33 +171,17 @@ console, UAT RX and the LED clock.
 > SYNC — the CC1314 re-drives `LR_CS`/`LR_RESET` and re-muxes the SPI pins as soon as it wakes, so
 > overlapping drive would cause bus contention.
 
-> **Sleep current:** the LR2021 stays held in reset for the whole sleep, by design: a host taking
-> over the bus receives a reset chip, and `LR_RESET` falling is the handoff signal the module
-> datasheet and schematic note describe. On a PCBA Rev D module at 3.3 V, SYNC sleep draws about
-> 0.70 mA, almost all of it the LR2021 in reset; the CC1314 in STANDBY adds about 1 µA. In reset, the
-> LR2021's DIO6 (`LR_IRQ`) comes back with its default pull-up, so `LR2021::DeInit()` turns the
-> `LR_IRQ` input buffer off (`GPIO_CFG_NO_DIR`) instead of leaving its pull-down to fight it (about
-> 0.35 mA), and `Init()` restores it. This also applies to `AT+LR_ENABLE=0` and to 1090 RX disabled.
-> A supply trace of the sleep shows the watchdog-feed wake at half the watchdog timeout (about
-> 0.5 ms at up to ~4.5 mA) and a shorter pulse about every 0.74 s that doesn't return from the power
-> policy: the CC13x4's VDDR recharge in STANDBY (TI's standby path enables the recharge comparator),
-> part of the datasheet STANDBY current and under 1 µA on average.
+> **Sleep current:** the LR2021 is held in reset for the whole sleep so a host taking over the bus gets a
+> reset chip. In reset its DIO6 (`LR_IRQ`) pulls up, so `LR2021::DeInit()` disables the `LR_IRQ` input
+> buffer (also for `AT+LR_ENABLE=0` and 1090 RX disabled). A Rev D module draws about 0.70 mA in SYNC sleep,
+> almost all of it the LR2021.
 
-> **SYNC pull-down note:** the SYNC/DIO_5 pull follows the board revision. At the start of
-> `ADSBee::Init()` the firmware reads the part code from the device info flash (`AT+DEVICE_INFO?`
-> prints it, format `NNNNNNNNNR-YYYYMMDD-VVXXXX`: 9-digit part number, revision letter, date, serial).
-> If it names an ADSBee m1421 (`010260002`) at PCBA Rev D or later, the board has R5 (120 kΩ to GND),
-> so the internal pull-down is off in every state: awake, during sync sleep, and after wake. On every
-> other part code (blank or erased flash, malformed, another part number, or Rev A to C) the internal
-> pull-down stays on in every state, as a fail-safe: a floating or disconnected host reads LOW, so the
-> device stays awake. `ADSBee::SyncPinConfig()` is the one place that picks the pull; the boot log
-> (INFO) and the `CC1314R10 SYNC Pull-Down:` line of `AT+DEVICE_INFO?` show the decision. The SysConfig
-> default ([`adsbee_1421.syscfg`](ti/syscfg/adsbee_1421.syscfg) `GPIO7.pull`, and the generated
-> `ti_drivers_config.c`; keep the two in sync) keeps the pull-down for the short window between
-> `Board_init()` and `ADSBee::Init()`. During sync sleep the host drives SYNC high, so an internal
-> pull-down draws about 80 µA at 3.3 V from the host's SYNC driver; Rev D and later boards avoid that.
-> On a Rev D or later board R5 pulls SYNC low and wakes the module if the host releases the line
-> (hi-Z); on an earlier board the internal pull-down does the same.
+> **SYNC pull-down:** `ADSBee::SyncPinConfig()` picks the SYNC (DIO_5) pull from the part code
+> (`AT+DEVICE_INFO?`). An ADSBee m1421 (`010260002`) at PCBA Rev D or later has R5 (120 kΩ to GND), so the
+> internal pull-down is off. Any other part code, including blank or malformed, keeps the internal
+> pull-down on so a disconnected host reads LOW and the module stays awake. The SysConfig default
+> ([`adsbee_1421.syscfg`](ti/syscfg/adsbee_1421.syscfg) `GPIO7.pull` and the generated `ti_drivers_config.c`;
+> keep them in sync) covers the time before `ADSBee::Init()`.
 
 ## Repo ↔ container layout
 
