@@ -23,6 +23,18 @@ Each product has its own firmware/settings versions; the version-management rule
 and isn't built into adsbee_1421, so a 1090-only version bump needs no 1421 bump. CI builds a product only when its own files,
 `firmware/common/`, or `firmware/modules/` changed.
 
+## Comments and docs
+
+- Use as few words as possible. Say what the code does and why; history, rejected alternatives, bench
+  measurements and task ids go in the commit message or PR description.
+- One-line comments by default. Write a short paragraph only for non-obvious hardware behavior or a rule
+  callers must follow.
+- Don't restate what the code or names already say.
+- Spell out abbreviations on first use; avoid jargon a new contributor wouldn't know.
+- READMEs are for users: short sections, bullets and the rules they need to operate the device. Design
+  notes belong in code comments.
+- Use American spelling. Avoid "it's not X, it's Y" phrasing.
+
 ## Project Summary
 
 ADSBee 1090 is an ADS-B/UAT aviation transponder receiver with a 3-processor heterogeneous firmware:
