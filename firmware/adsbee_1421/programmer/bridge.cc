@@ -23,8 +23,7 @@ static_assert(kRebootToBootselBaud != kBootloaderBaud && !ConsoleBaud::IsSupport
 
 extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* coding) {
     (void)itf;
-    // The USB baud is virtual; only the magic baud does anything. Checked in every state, even mid-flash: the next
-    // boot's CRC check redoes an interrupted flash.
+    // Checked in every state, even mid-flash: the next boot's CRC check redoes an interrupted flash.
     if (ClassifyHostBaud(coding->bit_rate) == HostBaudAction::kRebootToBootsel) reset_usb_boot(0, 0);
 }
 

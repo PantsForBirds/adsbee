@@ -1,6 +1,5 @@
-# Host unit tests for the ADSBee 1421 Programmer's SDK-independent logic, run with googletest like the ADSBee 1090
-# host tests (firmware/adsbee_1090/pico/host_test). Standalone (not part of the pico build). Build googletest
-# (firmware/modules/googletest) first, as CI does:
+# Host unit tests (googletest) for the ADSBee 1421 Programmer's SDK-independent logic. Standalone. Build googletest
+# first:
 #   cd firmware/modules/googletest && mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make
 # Then:
 #   cmake -S firmware/adsbee_1421/programmer/host_test -B /tmp/adsbee_1421_programmer_host_test

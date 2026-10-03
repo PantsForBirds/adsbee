@@ -6,13 +6,10 @@
 // confirmed up to date it resets it into the app, locks onto the console's baud rate (console_lock.hh),
 // and becomes a transparent USB-CDC serial adapter (see bridge.hh).
 //
-// If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0,DEADBEE
-// disabled the backdoor), it skips the image check and enters pass-through with a warning.
+// If bootloader entry fails but the app console answers (e.g. backdoor off), it enters pass-through with a warning.
 //
 // Hold BOOTSEL at power-up to force a reflash; tap BOOTSEL during pass-through to rerun the
-// check. Hold BOOTSEL for 3 s -- at any point, including while the Programmer is stuck reporting a dead
-// console -- to arm a settings erase, which runs at the next bootloader entry and factory-resets the
-// device. Wiring in board.hh.
+// check. Hold BOOTSEL for 3 s at any time to arm a settings erase at the next bootloader entry. Wiring in board.hh.
 
 #include <stdio.h>
 #include <string.h>
@@ -129,8 +126,6 @@ static uint32_t DiagnoseEntryFailure() {
 }
 
 // Resets the device into the app and locks onto its console's saved rate. Never changes the rate or settings.
-// Firmware 0.3.11-rc3 and earlier never sends "UU", but State::kCheck reflashes such images first (unless the
-// bootloader backdoor is off).
 static bool NegotiateConsole(bool print_version) {
     StatusSet(Status::kNegotiating);
     uint32_t found_baud = ConsoleLock();
@@ -185,11 +180,8 @@ int main() {
                 }
                 if (!EnterBootloader(bl)) {
                     if (DiagnoseEntryFailure() != 0) {
-                        // The application runs but the ROM bootloader can't be entered, most likely
-                        // because AT+BOOTLOADER_PIN=0,DEADBEE turned the backdoor off. Bridge the console
-                        // anyway, so the user can still reach the module (and send
-                        // AT+BOOTLOADER_PIN=1,DEADBEE), instead of retrying entry forever.
-                        // One CdcPrintf per line: each must fit kCdcTextMax (cdc_text.hh).
+                        // Likely the backdoor is off: bridge anyway so the user can send AT+BOOTLOADER_PIN=1.
+                        // One CdcPrintf per line: each must fit kCdcTextMax.
                         CdcPrintf("WARNING: ROM bootloader entry failed but the application console answers.\r\n");
                         CdcPrintf("Entering pass-through WITHOUT checking the image against the baked %s.\r\n",
                                   kFirmwareVersionStr);
