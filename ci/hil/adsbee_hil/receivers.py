@@ -1,11 +1,7 @@
 """Receiver drivers: one class per ADSBee model, selected by the ``model`` key in the bench file.
 
-A driver knows how to reach its model's AT console (with that model's quirks), query identity
-and version, reboot, flash, capture reported packets and read receive counters. Other packages
-can add models through the ``adsbee_hil.receivers`` entry-point group (see ``registry.py``).
-
-All public methods take the device's lock (reentrant), so they are safe to call from parallel
-jobs sharing a bench.
+Other packages add models through the ``adsbee_hil.receivers`` entry-point group (see
+``registry.py``). All public methods take the device's (reentrant) lock.
 """
 
 import contextlib
@@ -27,8 +23,7 @@ UF2_MAGIC = (0x0A324655, 0x9E5D5157)
 UF2_FAMILY_RP2040 = 0xE48BFF56
 UF2_FLAG_FAMILY = 0x2000
 BOOT_USB_UF2_CMD = "AT+BOOT_USB_UF2=1DEADBEE"
-# Opening the ADSBee 1421 Programmer's port at this baud reboots it into BOOTSEL: the ADSBee 1090's
-# PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE (kRebootToBootselBaud in firmware/adsbee_1421/programmer).
+# Opening the ADSBee 1421 Programmer's port at this baud reboots it into BOOTSEL (kRebootToBootselBaud).
 JIG_REBOOT_TO_BOOTSEL_BAUD = 0xDEADBEE
 JIG_BOOTSEL_WAIT_S = 5.0  # The Programmer re-enumerates as RPI-RP2 within about 0.5 s.
 
@@ -73,8 +68,7 @@ def _ancestors() -> set:
 def busy_process(patterns: List[str]) -> Optional[str]:
     """First pattern found in a running process's command line, or None.
 
-    Like ``pgrep -f``, but ignores this process and its ancestors (a shell whose command line
-    merely mentions the pattern shouldn't count).
+    Like ``pgrep -f``, but ignores this process and its ancestors.
     """
     if not patterns:
         return None
@@ -233,7 +227,7 @@ class Receiver:
     def capture(self, protocol: str = "RAW") -> Iterator["Capture"]:
         """Switches the console's reporting protocol to RAW and collects frames until exit.
 
-        The previous CONSOLE protocol is restored afterwards (settings aren't saved to flash).
+        Restores the previous CONSOLE protocol afterwards (not saved to flash).
         """
         with self.console() as c:
             before = self._transact(c, "AT+PROTOCOL_OUT?", 3.0)
@@ -291,10 +285,9 @@ class Capture:
 class Adsbee1090U(Receiver):
     """ADSBee 1090U: RP2040 + ESP32 + CC1312. USB CDC console on the RP2040 (baud ignored).
 
-    Flashing a combined.uf2 reboots the RP2040 into BOOTSEL (AT+BOOT_USB_UF2), copies the image to
-    the RPI-RP2 drive on the same USB port, and waits for the app; the RP2040 then updates the
-    ESP32 and CC1312 from the images embedded in combined.uf2. OTA (.ota over the ESP32 WebSocket)
-    goes through ci/test_usb_and_ota_flash/ota_upload.py.
+    combined.uf2: reboots into BOOTSEL (AT+BOOT_USB_UF2) and copies the image to the RPI-RP2 drive
+    on the same USB port; the RP2040 then updates the ESP32 and CC1312. .ota files go over WiFi via
+    ci/test_usb_and_ota_flash/ota_upload.py.
     """
 
     model = "adsbee_1090u"
@@ -346,25 +339,20 @@ class Adsbee1090U(Receiver):
 class Adsbee1421(Receiver):
     """ADSBee 1421 (TI CC1314R10 + Semtech LR2021) behind an ADSBee 1421 Programmer.
 
-    The module has no USB. The USB device (and ``usb_serial``) is the Programmer's RP2040
-    (firmware/adsbee_1421/programmer), a USB<->UART bridge whose modem-control lines drive the
-    module: RTS asserted -> SYNC low (awake), RTS deasserted -> SYNC high (host-controlled sleep /
-    ROM bootloader backdoor armed), DTR assert edge -> reset pulse. Hence:
+    The USB device (and ``usb_serial``) is the Programmer (firmware/adsbee_1421/programmer), a
+    USB-to-UART bridge: RTS asserted -> module awake, RTS deasserted -> asleep / ROM bootloader armed,
+    DTR assert edge -> reset. Hence:
 
-    * HUPCL is cleared so DTR/RTS stay asserted after close (else every close sleeps the module).
-    * The Programmer's USB baud is virtual (it follows the console's rate). Images 0.3.11-rc3 and
-      earlier copy the host's rate instead, so the host tries the likely rates in turn.
-      AT+BAUD_RATE=CONSOLE,... is refused so a run never leaves a module at another rate.
-    * The AT parser rejects a bare "AT"; AT+UPTIME? is the probe.
+    * HUPCL is cleared so DTR/RTS stay asserted after close.
+    * The USB baud is virtual; Programmer 0.3.11-rc3 and earlier copy the host's rate, so several
+      rates are tried. AT+BAUD_RATE=CONSOLE,... is refused.
+    * A bare "AT" is rejected; AT+UPTIME? is the probe.
 
-    Module firmware (.hex) goes through the CC13x4 ROM serial bootloader using an external flasher
-    command from the bench file (``[flashers.adsbee_1421] command``), since the flasher is not
-    part of this repository. It must erase only the sectors the image covers: a full bank erase
-    also wipes the settings and device-info (OTA keys) sectors. The Programmer reflashes the module
-    with its own baked image at every power-up if they differ, so a .hex flashed this way lasts
-    until the Programmer next re-enumerates. Programmer images (.uf2) are copied after opening the
-    Programmer's port at JIG_REBOOT_TO_BOOTSEL_BAUD, which reboots it into BOOTSEL; Programmer
-    images older than that reboot need a human to hold BOOT while replugging.
+    Module .hex images use an external flasher from the bench file (``[flashers.adsbee_1421]``). It
+    must erase only the image's sectors: a full erase wipes settings and OTA keys. The Programmer
+    restores its baked image at power-up, so a flashed .hex lasts until it re-enumerates. Programmer
+    .uf2 images are copied after a reboot into BOOTSEL via JIG_REBOOT_TO_BOOTSEL_BAUD; older images
+    need someone to hold BOOT while replugging.
     """
 
     model = "adsbee_1421"
@@ -383,8 +371,7 @@ class Adsbee1421(Receiver):
                 c = AtConsole(port, baud, keep_lines=True).open()
                 ok = False
                 try:
-                    # The first open after the Programmer enumerated (or after a tool closed the port with
-                    # HUPCL set) resets the module; give it a few tries to boot.
+                    # The first open after enumeration (or a HUPCL close) resets the module; allow time to boot.
                     for _ in range(3 if i == 0 else 1):
                         c.write(b"\r\n")
                         time.sleep(0.05)
@@ -448,7 +435,7 @@ class Adsbee1421(Receiver):
             r = subprocess.run(cmd)
             if r.returncode != 0:
                 raise HilError(f"{self.id}: flasher exited {r.returncode}")
-            # The flasher's close dropped RTS (module asleep); our next open wakes and resets it.
+            # The flasher left the module asleep; reopening wakes and resets it.
             self.console_baud = self.console_bauds[0]
             time.sleep(1.0)
             return parse_key_values(self.at_retry("AT+DEVICE_INFO?", 30))
@@ -471,7 +458,7 @@ class Adsbee1421(Receiver):
                       f"predates the magic-baud reboot). Hold BOOT on the Programmer's RP2040 while replugging its "
                       f"USB (port {port_path}). Waiting {human_timeout:.0f} s ...", flush=True)
             self._copy_to_bootsel(image, port_path, human_timeout)
-            # The Programmer then CRC-checks the module against its baked image and reflashes it (~1 min).
+            # The Programmer then reflashes the module from its baked image (~1 min).
             if not usb.wait_for(lambda: self.state() == "app", 60, 1.0):
                 raise HilError(f"{self.id}: ADSBee 1421 Programmer did not come back in application mode")
             time.sleep(5)

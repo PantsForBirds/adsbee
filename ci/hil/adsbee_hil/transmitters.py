@@ -1,21 +1,11 @@
 """Test transmitters: instruments that put known packets on the air (or on a cable) for receivers.
 
-A transmitter plays a ``TestPattern``: a band, a number of packets (or -1 for "until stopped"),
-a rate, and an output level. ``transmit()`` plays a finite pattern to completion; ``start()`` /
-``stop()`` run a continuous one around some other activity.
+``transmit()`` plays a finite ``TestPattern`` to completion; ``start()`` / ``stop()`` run a
+continuous one. Types: ``bee_wiggler`` (USB AT console) and ``pluto`` (ADALM Pluto SDR, untested,
+no UAT); others register through the ``adsbee_hil.transmitters`` entry-point group.
 
-Implementations here:
-
-* ``bee_wiggler``: PantsForBirds' Mode S / UAT packet generator, driven over its USB AT console.
-  Only the documented AT commands are used; its firmware is not part of this repository.
-* ``pluto``: an ADALM Pluto(+) SDR playing a generated 1090 MHz PPM waveform (pyadi-iio).
-  UNTESTED on hardware so far; UAT is not implemented.
-
-Other types can be added through the ``adsbee_hil.transmitters`` entry-point group.
-
-Cabling note: keep receivers on attenuated coax (or at a safe distance behind attenuators). A
-wiggler's or Pluto's full output into a receiver's front end can damage it, and radiating on
-1090/978 MHz outside a shielded setup is not allowed in most places.
+Keep receivers on attenuated coax or behind attenuators: full output can damage a receiver, and
+radiating on 1090/978 MHz outside a shielded setup is illegal in most places.
 """
 
 import contextlib
@@ -142,7 +132,7 @@ def _num(v: Optional[float]) -> str:
 class BeeWiggler(Transmitter):
     """bee_wiggler over its USB AT console.
 
-    Commands used (arguments as listed by the wiggler's AT+HELP):
+    Commands used:
       AT+DEVICE_INFO?
       AT+MODE_S_ATTEN=<dB>                   1090 MHz step attenuator
       AT+SUBG_ATTEN=<dB>                     978 MHz step attenuator

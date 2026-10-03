@@ -1,14 +1,5 @@
-# Builds the ADSBee docs (mkdocs.yml, docs/) and publishes them with mike to the gh-pages branch.
-#
-# gh-pages layout (served under https://adsbee.aero/wiki/):
-#   versions.json       version list read by the version selector
-#   index.html          redirect to the default version (latest)
-#   main/               docs from the main branch
-#   latest/             alias of main (a full copy, see alias_type in mkdocs.yml)
-#   1090-0.9.1/ ...     one directory per final firmware release tag
-#
-# Versions:
-#   push to main that touches the docs -> version "main", alias "latest" (the default version)
+# Builds the docs (mkdocs.yml, docs/) and publishes them with mike to gh-pages (https://adsbee.aero/wiki/).
+#   push to main touching docs -> version "main", alias "latest" (default)
 #   tag adsbee_1090-X.Y.Z / adsbee_1421-X.Y.Z -> version "1090-X.Y.Z" / "1421-X.Y.Z"
 #   release candidate tags (-rcN) are skipped
 name: docs
@@ -71,7 +62,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # mike commits on top of the existing gh-pages branch (absent before the first deploy).
+          # Fails harmlessly before the first deploy.
           git fetch origin gh-pages --depth=1 || true
       - name: Deploy
         env:

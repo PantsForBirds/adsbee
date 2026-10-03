@@ -1,12 +1,11 @@
 """Per-device locks so several jobs (CI runners, humans, parallel workers) can share one bench.
 
-A lock is an ``flock`` on ``<lock_dir>/<key>.lock``, where the key is the device's USB serial (or
-another stable identity for non-USB instruments). flock locks are released by the kernel when the
-holder exits or crashes, so there are no stale locks to clean up. The lock file holds a line
-describing the current holder, for ``adsbee-hil locks``.
+An ``flock`` on ``<lock_dir>/<key>.lock``, keyed by USB serial (or another stable id). The kernel
+releases it when the holder exits, so locks never go stale. The file names the holder for
+``adsbee-hil locks``.
 
-Everything that talks to a device must hold its lock: the tools in this package take it
-automatically; external scripts can use ``adsbee-hil lock <device> -- <command>``.
+Everything that talks to a device must hold its lock; external scripts use
+``adsbee-hil lock <device> -- <command>``.
 """
 
 import errno
@@ -38,9 +37,7 @@ def _safe_key(key: str) -> str:
 class DeviceLock:
     """Exclusive lock on one device, waiting up to ``timeout`` seconds for it.
 
-    Reentrant within one thread (a flash that runs AT queries takes the same lock again); other
-    threads and processes wait. flock conflicts between separate open() calls even in the same
-    process, so two threads of one process can't both hold a device either.
+    Reentrant within one thread; other threads and processes wait.
     """
 
     _held: Dict[Tuple[str, int], List[int]] = {}  # (path, thread id) -> [fd, depth]

@@ -242,7 +242,7 @@ def cmd_loopback(args, bench) -> int:
         out(r.id, res.summary())
         if res.status == "fail":
             raise RuntimeError("loopback failed")
-    # Receivers sharing a transmitter would run one after another anyway (transmitter lock).
+    # Receivers sharing a transmitter serialize on its lock.
     if run_parallel(_select(args, bench), fn, args.jobs):
         return 1
     if args.fail_on_skip and any(r.status == "skip" for r in results):

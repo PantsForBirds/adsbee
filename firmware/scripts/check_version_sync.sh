@@ -1,46 +1,21 @@
 #!/bin/bash
-# Enforce the firmware/AGENTS.md release rule: firmware that changed must never be released under
-# a version that is already released. Devices reflash coprocessors only when the reported
-# firmware version differs, so two different builds sharing one released version leave devices
-# on a stale build (and, after a Settings struct change, on a mismatched Settings struct: SPI
-# sync failures, reboots).
+# Fails if a product's firmware changed but its firmware version is already released (firmware/AGENTS.md).
+# Devices reflash coprocessors only when the version differs, so a reused version leaves them on a stale
+# build, or with a mismatched Settings struct (SPI sync failures, reboots).
 #
-# Checked per product:
-#   adsbee_1090: versions live in firmware/common (settings.hh kSettingsVersion,
-#                coprocessor/object_dictionary.cpp kFirmwareVersion*); watched paths are the
-#                ESP32/CC1312 coprocessor code and shared common/ code.
-#   adsbee_1421: versions live in firmware/adsbee_1421/ti (settings/settings.hh,
-#                object_dictionary/object_dictionary.cpp); watched paths are the whole product
-#                directory and shared common/ code, except
-#                firmware/common/coprocessor/object_dictionary.cpp. That file holds the 1090's
-#                version constants and isn't compiled into any 1421 build (the 1421 has its own
-#                object_dictionary.cpp), so a 1090-only version bump doesn't require a 1421 bump.
-# Note: any other firmware/common change therefore concerns BOTH products.
+# Per product:
+#   adsbee_1090: versions in firmware/common (settings.hh, coprocessor/object_dictionary.cpp); watches
+#                the ESP32/CC1312 code and firmware/common.
+#   adsbee_1421: versions in firmware/adsbee_1421/ti (settings/settings.hh,
+#                object_dictionary/object_dictionary.cpp); watches firmware/adsbee_1421 and
+#                firmware/common, except common/coprocessor/object_dictionary.cpp (1090 only).
 #
-# The firmware version is written the way release tags are named: <product>-M.m.p-rcN for a
-# release candidate and <product>-M.m.p for a stable release (kFirmwareVersionReleaseCandidate
-# = 0), e.g. adsbee_1421-0.3.11-rc2 or adsbee_1090-0.9.0. A version counts as released when a
-# local git tag with that name exists. Tags are read from the local repository only (no network
-# access), so run `git fetch --tags` first.
-#
-# If the watched paths or kSettingsVersion changed between the old and the new source, the check
-# fails when the NEW firmware version:
-#   - is already released (a tag <product>-<version> exists), or
-#   - is lower than the highest released version of that product.
-# Versions compare by major, minor and patch, then release candidate, with every RC of a
-# version ordered below its stable release (0.3.11-rc9 < 0.3.11 < 0.3.12-rc1).
-# An unreleased version passes whether or not it equals the old source's version, so several
-# changes can accumulate under the next unreleased RC before it is released. Tags that don't
-# follow the naming scheme are ignored.
-#
-# If the product has no release tags at all (e.g. a clone without tags), the check prints a
-# WARNING and falls back to the base comparison: watched-path or settings changes fail unless the
-# firmware version differs from the old source's.
-#
-# Documentation-only changes are exempt from the watched-paths check: Markdown files (*.md, any
-# case) under the watched paths never feed a build, so editing a README or AGENTS.md doesn't
-# require a bump. Nothing else is exempt. In particular *.txt is not (CMakeLists.txt, test
-# input data), and neither are images (the ESP32 web server embeds its favicon.png).
+# If watched paths or kSettingsVersion changed, the NEW version (<product>-M.m.p[-rcN], as release tags
+# are named) must not be released (no such local tag; run `git fetch --tags`) and must not be lower than
+# the latest release. Each RC sorts below its stable release (0.3.11-rc9 < 0.3.11 < 0.3.12-rc1). An
+# unreleased version may be reused across changes. With no release tags, it warns and requires the
+# version to differ from the old source's. Markdown files (*.md) are exempt; nothing else is (*.txt and
+# images can feed a build).
 #
 # Usage: check_version_sync.sh <old_source> <new_source>
 #   Each source is one of:
@@ -58,8 +33,7 @@ set -euo pipefail
 old_source="${1:-HEAD}"
 new_source="${2:-WORKTREE}"
 
-# Count of products that failed, so one product's problem doesn't hide the other's. The script
-# exits non-zero at the end if this is non-zero.
+# Products that failed; checked at the end so one failure doesn't hide another.
 failures=0
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -67,8 +41,7 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || {
     exit 0
 }
 
-# Read a file's contents from a given source. Fails loudly if the source can't be
-# read (bad ref, missing file) rather than silently treating it as empty.
+# Read a file from a source. Fails on a bad ref or missing file.
 read_source() {
     local source="$1" file="$2"
     case "$source" in
@@ -78,8 +51,7 @@ read_source() {
     esac
 }
 
-# True (exit 0) if the file exists at the given source. Used to skip products that don't exist
-# yet at the old source (e.g. diffing a migration commit against a pre-migration ref).
+# True if the file exists at the source (skips products new since the old source).
 exists_at() {
     local source="$1" file="$2"
     case "$source" in
@@ -90,8 +62,7 @@ exists_at() {
 }
 
 # Extract the integer value(s) of a constant from a file at a given source.
-# Uses POSIX extended regex (grep -E) so it works on GNU and BSD/macOS grep alike
-# (grep -P / \K is not portable and silently no-ops on BSD grep).
+# grep -E for GNU and BSD/macOS portability.
 # Usage: extract <source> <repo-relative-file> <constant-name-ERE>
 extract() {
     local source="$1" file="$2" name="$3"
@@ -100,12 +71,10 @@ extract() {
         | grep -oE '[0-9]+$'
 }
 
-# Pathspecs excluded from the watched-paths check: documentation that never feeds a build.
-# See the header comment before adding anything here.
+# Documentation that never feeds a build. See the header before adding anything.
 doc_only_excludes=(':(exclude,glob,icase)**/*.md')
 
-# True (exit 0) if any of the given paths differ between old_source and new_source, ignoring
-# documentation-only files (doc_only_excludes).
+# True if any of the paths differ between the sources, ignoring doc_only_excludes.
 paths_changed() {
     local old="$1" new="$2"
     shift 2
@@ -116,8 +85,7 @@ paths_changed() {
     esac
 }
 
-# Print a product's firmware version at a source, formatted like a release tag suffix:
-# "M.m.p-rcN", or "M.m.p" when kFirmwareVersionReleaseCandidate is 0 (a stable release).
+# Print the firmware version as "M.m.p-rcN", or "M.m.p" when kFirmwareVersionReleaseCandidate is 0.
 # Usage: version_string <source> <version-file>
 version_string() {
     local source="$1" file="$2" major minor patch rc
@@ -132,8 +100,7 @@ version_string() {
     fi
 }
 
-# Print a sortable key "major minor patch rc" for a version string, with a stable release's rc
-# replaced by a number above any RC so that every M.m.p-rcN sorts below M.m.p.
+# Print a sort key "major minor patch rc"; stable releases get rc=999999 to sort after their RCs.
 version_key() {
     local version="$1" rc=999999
     if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([0-9]+))?$ ]]; then
@@ -157,8 +124,7 @@ version_lt() {
     return 1
 }
 
-# Print the released versions of a product (the local tags named <product>-M.m.p[-rcN], with
-# the product prefix removed), lowest first. Tags that don't follow the scheme are ignored.
+# Print a product's released versions (local tags <product>-M.m.p[-rcN]), lowest first.
 released_versions() {
     local product="$1" tag version
     git -C "$root" tag -l "$product-*" | while read -r tag; do
@@ -169,8 +135,7 @@ released_versions() {
     done | sort -n -k1,1 -k2,2 -k3,3 -k4,4 | awk '{print $5}'
 }
 
-# Print the version that follows a released version: the next RC of the same version, or the
-# first RC of the next patch after a stable release.
+# Print the next RC after a released version (rc1 of the next patch after a stable release).
 next_rc() {
     local version="$1"
     [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([0-9]+))?$ ]]
@@ -181,9 +146,7 @@ next_rc() {
     fi
 }
 
-# True (exit 0) if the new source is a git revision contained in the given tag, i.e. the code
-# being checked is part of that release (for example CI re-running on a commit after it was
-# released). WORKTREE and INDEX never are.
+# True if the new source is a revision contained in the tag (e.g. CI re-running a released commit).
 new_source_in_tag() {
     local tag="$1"
     case "$new_source" in
@@ -192,11 +155,8 @@ new_source_in_tag() {
     esac
 }
 
-# Check one product: if its watched paths or settings version changed, its new firmware version
-# must be unreleased and not lower than its highest release.
 # Usage: check_product <name> <settings-file> <version-file> <watched-path>...
-#   A watched path may be a git exclude pathspec (":(exclude)<path>") to leave out one file
-#   inside another watched path.
+#   A watched path may be an exclude pathspec (":(exclude)<path>").
 check_product() {
     local product="$1" settings_file="$2" firmware_version_file="$3"
     shift 3
@@ -204,16 +164,12 @@ check_product() {
 
     echo "--- $product ---"
 
-    # A product that doesn't exist at the old source is new (e.g. this check running across the
-    # commit that introduced it); there is nothing to compare against yet.
     if ! exists_at "$old_source" "$firmware_version_file" || ! exists_at "$old_source" "$settings_file"; then
         echo "$product does not exist at $old_source (new product), skipping."
         return 0
     fi
 
-    # Assign in two steps (NOT `local x=$(...)`) so `set -e` + `pipefail` abort loudly on a read
-    # failure (bad ref, missing file, or a constant that grep can't find) instead of masking it
-    # as "unchanged" and passing silently.
+    # Declare and assign separately: `local x=$(...)` would hide read failures from `set -e`.
     local settings_old settings_new version_old version_new
     settings_old=$(extract "$old_source" "$settings_file" kSettingsVersion)
     settings_new=$(extract "$new_source" "$settings_file" kSettingsVersion)
@@ -238,8 +194,7 @@ check_product() {
     released=$(released_versions "$product")
 
     if [ -z "$released" ]; then
-        # Without tags there is no way to tell what is released. Fall back to comparing against
-        # the old source so the check never passes just because the tags are missing.
+        # No tags: compare against the old source instead.
         echo "WARNING: no $product-* release tags found in this repository. Run \`git fetch --tags\`"
         echo "         so this check can see which versions are released. Falling back to comparing"
         echo "         the firmware version against $old_source."

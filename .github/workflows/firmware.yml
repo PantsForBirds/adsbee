@@ -5,10 +5,8 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  # release.yml calls this workflow to build one product from a release tag. With a product given,
-  # only that product's jobs run and the version sync check is skipped (it compares a commit with
-  # its parent and would flag the release tag being built). Push and pull_request runs pass no
-  # input and behave as before.
+  # Called by release.yml to build one product from a release tag: only that product's jobs run and
+  # the version sync check is skipped (it would flag the tag being built).
   workflow_call:
     inputs:
       product:
@@ -24,7 +22,7 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      # A release build (inputs.product set) selects its product directly; otherwise the path filter decides.
+      # Release builds pick their product; otherwise the path filter decides.
       adsbee_1090: ${{ inputs.product && (inputs.product == 'adsbee_1090' && 'true' || 'false') || steps.filter.outputs.adsbee_1090 }}
       adsbee_1421: ${{ inputs.product && (inputs.product == 'adsbee_1421' && 'true' || 'false') || steps.filter.outputs.adsbee_1421 }}
     steps:
@@ -47,8 +45,8 @@ jobs:
             - 'firmware/modules/**'
             - '.github/workflows/firmware.yml'
 
-  # Host unit tests for every product, in one job so googletest is built (or restored from the cache)
-  # only once per run. Each product's tests run only when its files changed.
+  # Host unit tests for all products in one job so googletest is built once. Each product's tests run
+  # only when its files changed.
   host_build_and_test:
     runs-on: ubuntu-latest
     container: coolnamesalltaken/pico-docker
@@ -64,13 +62,13 @@ jobs:
         submodules: 'recursive'
     - name: Identify host toolchain
       id: toolchain
-      # Part of the googletest cache key, so a new compiler or CMake in the container image rebuilds it.
+      # Part of the googletest cache key: a new compiler or CMake rebuilds it.
       run: echo "versions=gcc$(g++ -dumpfullversion)-cmake$(cmake --version | head -n1 | cut -d' ' -f3)" >> "$GITHUB_OUTPUT"
     - name: Cache googletest build
       id: googletest_cache
       uses: actions/cache@v4
       with:
-        # Only the built libraries are used: the tests take the headers from the googletest sources.
+        # Only the libraries are cached; headers come from the googletest sources.
         path: firmware/modules/googletest/build/lib
         key: googletest-${{ runner.os }}-pico-docker-${{ steps.toolchain.outputs.versions }}-${{ env.GOOGLETEST_CMAKE_FLAGS }}-${{ hashFiles('firmware/modules/googletest/**') }}
     - name: Build googletest
@@ -111,7 +109,7 @@ jobs:
         cd build/host_test && ctest --output-on-failure
 
   web_ui_test:
-    # Runs on the plain runner image: the pico-docker container used by host_build_and_test has no Node.js.
+    # Plain runner image: the pico-docker container has no Node.js.
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.adsbee_1090 == 'true'
@@ -282,10 +280,9 @@ jobs:
 
     - name: Run hardware test
       env:
-        # USB serial number of the 1090U under test (repository variable). With several RP2040
-        # boards on the bench, /dev/ttyACM0 and "the first RPI-RP2 drive" are ambiguous; the
-        # serial selects the console and the BOOTSEL drive (by USB port) unambiguously and locks
-        # the board for the run (ci/hil). Unset: the old /dev/ttyACM0 behavior.
+        # USB serial number of the 1090U under test (repository variable). Selects its console and
+        # BOOTSEL drive when several RP2040 boards are attached, and locks it for the run (ci/hil).
+        # Unset: uses /dev/ttyACM0.
         HIL_1090U_SERIAL: ${{ vars.HIL_1090U_SERIAL }}
       run: |
         # Derive the expected firmware version from source so the post-OTA
@@ -344,8 +341,8 @@ jobs:
         fi
     - name: Check the built image's CCFG
       working-directory: firmware/adsbee_1421/ti
-      # Checks the built image's CCFG against the AT+BOOTLOADER_PIN erase path. Only the googletest-free
-      # ccfg_bootloader_test is built here; host_build_and_test runs the full 1421 host test suite.
+      # Checks the built image's CCFG (customer configuration) against the AT+BOOTLOADER_PIN erase path.
+      # The full 1421 host test suite runs in host_build_and_test.
       run: |
         arm-none-eabi-objcopy -O binary -j .ccfg build/Release/adsbee_1421.elf build/Release/ccfg.bin
         cmake -S host_test -B build/host_test -DADSBEE_1421_CCFG_BIN=$PWD/build/Release/ccfg.bin
@@ -418,17 +415,15 @@ jobs:
         retention-days: 1
 
   version_sync_check:
-    # Fail if a product's firmware (or its Settings struct version) changed while its firmware
-    # version is already released or lower than its latest release, per the release tags.
-    # See firmware/scripts/check_version_sync.sh. Skipped in release builds (see workflow_call above).
+    # Fail if a product's firmware or Settings version changed without a firmware version bump past
+    # its latest release tag. See firmware/scripts/check_version_sync.sh. Skipped in release builds.
     runs-on: ubuntu-latest
     if: ${{ !inputs.product }}
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        # Full history so we can diff against the base branch / previous commit, and the
-        # release tags so the check can tell which versions are released.
+        # Full history and release tags for the diff and release lookup.
         fetch-depth: 0
         fetch-tags: true
     - name: Check Settings/firmware version sync

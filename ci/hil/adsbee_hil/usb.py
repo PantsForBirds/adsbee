@@ -1,13 +1,10 @@
 """USB discovery through sysfs: which ADSBee-family devices are attached, and where.
 
-Everything here reads plain files under /sys and /dev, so it needs no third-party packages and can
-be pointed at a fake tree in tests (``sysfs_root`` / ``dev_root``).
+Reads plain files under /sys and /dev (no third-party packages; tests use a fake tree).
 
-Why not VID:PID? Every RP2040-based ADSBee device (1090U, the ADSBee 1421 Programmer, a Pico) shows
-up as 2e8a:000a in application mode and 2e8a:0003 in BOOTSEL, so VID:PID can't tell two boards
-apart, and ``/dev/ttyACMn`` numbering depends on enumeration order. Devices are addressed by USB
-serial number, and the BOOTSEL mass-storage drive by the USB *port path* (``1-1.3``), which stays
-the same when the board re-enumerates as a different USB device on the same physical port.
+All RP2040 boards share VID:PID and ``/dev/ttyACMn`` depends on enumeration order, so devices are
+addressed by USB serial, and BOOTSEL drives by USB port path (``1-1.3``), which survives
+re-enumeration.
 """
 
 import glob
@@ -22,15 +19,12 @@ RP2040_APP_PID = "000a"
 RP2040_BOOTSEL_PID = "0003"
 RPI_RP2_INFO_FILE = "INFO_UF2.TXT"
 
-# Roots used when a function isn't given one explicitly. Tests point these at a fake tree.
+# Default roots; tests point these at a fake tree.
 SYSFS_ROOT = "/sys"
 DEV_ROOT = "/dev"
 
-# USB product strings that identify a model without talking to it. Every RP2040 ADSBee 1090 variant
-# (1090, 1090U, m1090, GS3M, Winglet, ...) runs the same image and enumerates as "Pants for Birds" /
-# "ADSBee 1090" (older firmware: the stock Pico SDK "Raspberry Pi" / "Pico"). That string doesn't say
-# which variant it is, so it isn't a hint here: those boards are identified by serial (bench config) or
-# by asking them (`discover --probe`).
+# USB product strings that identify a model. ADSBee 1090 variants all report "ADSBee 1090", so they are
+# identified by serial (bench file) or `discover --probe` instead.
 PRODUCT_HINTS = {
     "ADSBee 1421 Programmer": "adsbee_1421",
 }
@@ -173,9 +167,8 @@ def wait_for(pred, timeout: float, interval: float = 0.25):
 def mount_rp2_drive(port_path: str, timeout: float = 20.0) -> str:
     """Returns the mount point of the RPI-RP2 drive on USB port port_path.
 
-    Waits for the block device, then for the desktop automounter, then tries ``udisksctl mount``.
-    Matching by USB port (not by volume label) matters on a bench with several RP2040 boards: two
-    RPI-RP2 drives can be mounted at once, and the first one found may be the wrong board.
+    Waits for the block device, then the desktop automounter, then tries ``udisksctl mount``.
+    Matched by port, not label: several RPI-RP2 drives can be mounted at once.
     """
     dev = wait_for(lambda: block_partition(port_path), timeout)
     if not dev:

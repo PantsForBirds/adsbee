@@ -44,7 +44,7 @@ import check_device
 import ota_upload
 import reboot_to_bootloader
 
-# Device selection and locking are shared with the bench toolkit in ci/hil (stdlib only here).
+# Device selection and locking from ci/hil (standard library only).
 sys.path.insert(0, str(SCRIPT_DIR.parent / "hil"))
 from adsbee_hil import lock as hil_lock  # noqa: E402
 from adsbee_hil import usb as hil_usb  # noqa: E402
@@ -146,8 +146,7 @@ def main() -> None:
 
     host = args.host
 
-    # With --serial, resolve the console and USB port from the serial number, and hold the
-    # device's lock (shared with ci/hil's adsbee-hil) so nothing else drives it meanwhile.
+    # With --serial, find the console and USB port and hold the device's lock (shared with adsbee-hil).
     usb_port: str | None = None
     if args.serial:
         dev = hil_usb.find_by_serial(args.serial)
@@ -179,8 +178,7 @@ def main() -> None:
         time.sleep(2)
 
         if usb_port:
-            # Only the drive on this device's USB port: another board on the bench may be in
-            # BOOTSEL too, and copying there would flash the wrong device.
+            # Only this USB port's drive: another board may be in BOOTSEL too.
             info(f"Waiting for the RPI-RP2 drive on USB port {usb_port} (up to 30s)...")
             try:
                 rpi_mount = Path(hil_usb.mount_rp2_drive(usb_port, timeout=30))

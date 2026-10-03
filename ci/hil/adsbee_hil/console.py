@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Callable, List, Optional
 
-# AT+DEVICE_INFO? prints per-device OTA keys. Keep them out of CI logs and tickets.
+# AT+DEVICE_INFO? prints OTA keys; keep them out of logs.
 _SECRET_LINE = re.compile(r"^(\s*OTA Key \d+:).*$", re.MULTILINE)
 
 
@@ -19,8 +19,8 @@ class AtError(RuntimeError):
 
 
 def _done(text: str) -> bool:
-    # Commands end with a line "OK" or an "ERROR..." line. Streaming commands (RX_CW) print
-    # "Press any key" first and keep going until a byte arrives, so they are never "done".
+    # Commands end with "OK" or "ERROR...". Streaming commands (RX_CW) print "Press any key" and
+    # run until a byte arrives.
     if "Press any key" in text:
         return False
     return bool(re.search(r"(^|\n)\s*OK\s*($|\r|\n)", text)) or "ERROR" in text
@@ -29,9 +29,8 @@ def _done(text: str) -> bool:
 class AtConsole:
     """One open AT console.
 
-    ``keep_lines`` clears HUPCL so DTR/RTS stay asserted after close. Some fixtures wire the
-    modem-control lines to the target (the ADSBee 1421 Programmer maps RTS to the module's
-    SYNC pin and a DTR edge to a reset), and dropping them on close would reset or sleep it.
+    ``keep_lines`` clears HUPCL so DTR/RTS stay asserted after close: the ADSBee 1421 Programmer
+    maps RTS to the module's SYNC pin and a DTR edge to reset, so dropping them sleeps or resets it.
     """
 
     def __init__(self, port: str, baud: int = 115200, keep_lines: bool = False):
@@ -47,7 +46,7 @@ class AtConsole:
         s.port = self.port
         s.baudrate = self.baud
         s.timeout = 0.05
-        # Linux raises DTR and RTS on open anyway; asking for the same state avoids a toggle later.
+        # Match Linux's open state to avoid a later toggle.
         s.dtr = True
         s.rts = True
         s.open()
@@ -84,10 +83,9 @@ class AtConsole:
         return out
 
     def transact(self, cmd: str, timeout: float = 3.0, quiet: float = 0.5) -> str:
-        """Sends one command; returns output up to OK/ERROR, or what arrived before a timeout.
+        """Sends one command; returns output up to OK/ERROR or the timeout.
 
-        Returns early after ``quiet`` seconds of silence once some output arrived, for commands
-        that don't end with OK.
+        Returns early after ``quiet`` seconds of silence, for commands that don't end with OK.
         """
         self._s.reset_input_buffer()
         self.write((cmd.strip() + "\r\n").encode())

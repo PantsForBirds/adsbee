@@ -2698,6 +2698,7 @@ body.dark-mode #map .leaflet-tile-pane {
 // ══ BEGIN VENDORED ADSBee settings engine (from firmware/adsbee_1090/esp/main/server/web/settings.js) ══
 // Copied verbatim from between that file's BEGIN/END SHARED SETTINGS ENGINE markers;
 // edit it there and re-copy. Unindented to keep the copy mechanical, like Leaflet above.
+
 // Schema-driven settings form. Each schema entry describes one AT command:
 //
 //   {
@@ -2755,12 +2756,9 @@ class SettingsEngine {
     // timeoutMs}) -> Promise<string[] of trimmed body lines>; rejects on a whole-line
     // 'ERROR ...' response or timeout.
     // bulkQuery (optional): { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/,
-    // timeoutMs, attempts }, a one-round-trip read of every setting as a JSON object keyed
-    // by AT command name. It is the normal read path, also used to re-read after a save.
-    // A dump that is lost or cut short (the console drops bytes under heavy log output) is
-    // retried up to `attempts` times. Only firmware that answers the dump with ERROR
-    // (predating the command) falls back to querying every entry one at a time; entries
-    // missing from a good dump (firmware older than the page) are queried individually.
+    // timeoutMs, attempts } reads every setting in one round trip, keyed by AT command.
+    // A lost or cut-short dump is retried. Firmware that answers ERROR, and entries
+    // missing from the dump, fall back to one query per entry.
     constructor(config) {
         this.schema = config.schema;
         this.transport = config.transport;
@@ -3468,6 +3466,7 @@ function makeRxEnableEntry() {
         build(v) { return [`AT+RX_ENABLE=,${v.r1090 ? 1 : 0},${v.subg ? 1 : 0}`]; },
     };
 }
+
 // ══ END VENDORED ADSBee settings engine ══
 
         // ─── LineRouter (serial mode) ────────────────────────────────────────────
@@ -4956,7 +4955,7 @@ class AircraftWebSocket {
         this.ws.onopen = () => console.log('[AircraftWS] connected');
         this.ws.onmessage = (ev) => {
             if (!this.onMessage) return;
-            // Firmware batches aircraft into JSON arrays; older firmware sent one object per message.
+            // A JSON array of aircraft, or one object from older firmware.
             let data;
             try { data = JSON.parse(ev.data); } catch (_) { return; }
             for (const ac of (Array.isArray(data) ? data : [data])) {
@@ -4988,9 +4987,8 @@ const RID_UA_TYPE_STRINGS = [
     'Ground Obstacle', 'Other'
 ];
 
-// Traffic sources. The firmware sends one record per ICAO address, from the preferred source (the aircraft's own 1090
-// or UAT ADS-B, else a ground station's ADS-R or TIS-B rebroadcast of it); the map labels and outlines each target by
-// that source so a rebroadcast can be told from direct ADS-B.
+// Traffic sources. Firmware sends one record per ICAO address from the best source (direct 1090 or UAT ADS-B, else an
+// ADS-R or TIS-B rebroadcast); the map labels and outlines each target by source.
 const TRAFFIC_SOURCES = {
     adsb_1090: { label: '1090 ADS-B', stroke: 'rgba(0,0,0,0.5)', dash: '' },
     adsb_uat: { label: 'UAT ADS-B', stroke: '#0057b8', dash: '' },
@@ -4998,8 +4996,7 @@ const TRAFFIC_SOURCES = {
     tisb: { label: 'TIS-B', stroke: '#7b2fbe', dash: '2,2' },
     rid: { label: 'Remote ID', stroke: '#c026d3', dash: '' },
 };
-// A position older than this (seconds, from "seen_pos") is drawn faded: the target is still heard, but its position
-// is a held value that has stopped updating.
+// Positions older than this (seconds, "seen_pos") are drawn faded.
 const kStalePositionS = 15;
 
 function acSource(ac) {
@@ -5014,7 +5011,7 @@ class AircraftStore {
     constructor() {
         this.aircraft = new Map();  // key (hex) → latest merged data
         this.trails = new Map();  // key → [{lat, lon, alt}]
-        this.trailRev = new Map();  // key → bump count, so the map can skip redrawing unchanged trails
+        this.trailRev = new Map();  // key → revision, to skip redrawing unchanged trails
         this.lastSeen = new Map();  // key → Date.now() timestamp
     }
 
