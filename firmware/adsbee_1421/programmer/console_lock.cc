@@ -35,7 +35,7 @@ void ConsoleWatchApply(const RateWatch::Action& action) {
         case RateWatch::Action::kNone:
             break;
     }
-    // Queued in the UART's FIFO; after a lock it goes out once a break that is still running ends.
+    // Queued; goes out when a running break ends.
     if (action.send_nul) TargetUartWriteBlocking(&kNul, 1);
 }
 

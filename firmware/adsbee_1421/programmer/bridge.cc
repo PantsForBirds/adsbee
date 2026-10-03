@@ -12,8 +12,7 @@
 #include "target_uart.hh"
 #include "tusb.h"
 
-// Only touched from the main loop and the tud_task() callbacks it runs (the bridge loop, and the waits inside a lock),
-// never from interrupts.
+// Main loop and tud_task() callbacks only; never touched from interrupts.
 static bool bridge_active = false;
 static ModemLines lines;
 
@@ -24,8 +23,8 @@ static_assert(kRebootToBootselBaud != kBootloaderBaud && !ConsoleBaud::IsSupport
 
 extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* coding) {
     (void)itf;
-    // The USB baud is virtual (rate_watch.hh): only the magic baud does anything. Checked in every Programmer state,
-    // including while it flashes the module: an interrupted flash is redone by the CRC check on the next boot.
+    // The USB baud is virtual; only the magic baud does anything. Checked in every state, even mid-flash: the next
+    // boot's CRC check redoes an interrupted flash.
     if (ClassifyHostBaud(coding->bit_rate) == HostBaudAction::kRebootToBootsel) reset_usb_boot(0, 0);
 }
 
@@ -77,10 +76,8 @@ BridgeExit BridgeRun() {
         TargetUartPumpTx();
 
         if (lines.reset_pending()) {
-            // SYNC high: the ROM bootloader, which auto-bauds to the rate it is sent at, so the UART goes to the
-            // bootloader rate whatever the host's line coding. If the backdoor is off, the application boots instead
-            // and announces its rate, which the watch follows. SYNC low: the application, whose console comes back at
-            // its saved rate; lock onto its boot "UU".
+            // SYNC high: the ROM bootloader at kBootloaderBaud (or the app, if the backdoor is off; the watch
+            // follows it). SYNC low: the app at its saved rate; lock onto its boot "UU".
             TargetUartHoldTxLow(false);  // Ends a break in progress.
             if (lines.reset_sync_high()) {
                 TargetPulseReset();  // SYNC already holds the level latched at the DTR edge.
@@ -118,9 +115,8 @@ BridgeExit BridgeRun() {
         }
         was_unknown = unknown;
 
-        // Device -> host, kConsoleDelayUs after the bytes arrived. While a hint resolves they wait in the RX ring (a
-        // retune drops those that came at the old rate); during an ask or a reset they are the module's answer or boot
-        // output at the wrong rate.
+        // Device -> host, kConsoleDelayUs after arrival. Held while a rate hint resolves; dropped during an ask or
+        // reset, since they arrive at the wrong rate.
         if (watch.DropConsoleData()) {
             while (TargetUartRead(buf, sizeof(buf)) > 0) {
             }
@@ -130,7 +126,7 @@ BridgeExit BridgeRun() {
         tud_cdc_write_flush();
 
         // Host -> device. Only take what the UART TX ring can hold so the CDC FIFO provides natural backpressure to
-        // the host. Held while a lock is in progress.
+        // the host. Held during a lock.
         if (!watch.HoldHostData()) {
             size_t take = TargetUartTxFree();
             if (take > sizeof(buf)) take = sizeof(buf);

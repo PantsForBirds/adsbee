@@ -1,8 +1,6 @@
 ;
-; Edge timer on the console's line (edge_capture.cc, autobaud.hh). Reads the UART RX pin through the jmp pin, which
-; works while the UART owns the pin. X counts down once per 2 cycles in both loops; at every edge the state machine
-; pushes X (autopush at 32 bits), which takes one more cycle. Start with X = ~0, at `high` if the line is high, else at
-; `low`. Runs continuously; DMA drains the FIFO into a ring.
+; Edge timer on the UART RX pin (edge_capture.cc). X counts down every 2 cycles; each edge pushes X. Start with X = ~0,
+; at `high` if the line is high, else at `low`.
 ;
 
 .program autobaud_edges

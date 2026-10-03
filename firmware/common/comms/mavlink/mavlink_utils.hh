@@ -4,14 +4,11 @@
 #include "mavlink.h"
 #include "stdint.h"
 
-// Value of HEARTBEAT.mavlink_version. The MAVLink spec fixes it at 3 for both MAVLink 1 and MAVLink 2 framing (the
-// generated mavlink_msg_heartbeat_pack/_send functions hard-code it); the framing version is carried by the start byte.
+// HEARTBEAT.mavlink_version: always 3 for both MAVLink 1 and 2 (the start byte carries the framing version).
 static constexpr uint8_t kMAVLINKHeartbeatMavlinkVersion = 3;
 
 /**
- * Builds the HEARTBEAT this receiver sends at the start of each MAVLink reporting round: an ADS-B receiver component
- * (MAV_TYPE_ADSB, MAV_AUTOPILOT_INVALID) that is active.
- * @retval HEARTBEAT message struct, ready for mavlink_msg_heartbeat_send_struct.
+ * HEARTBEAT sent at the start of each MAVLink reporting round: an active ADS-B receiver.
  */
 mavlink_heartbeat_t MAVLINKHeartbeatMessage();
 

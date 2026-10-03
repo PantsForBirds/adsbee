@@ -12,13 +12,11 @@
 void TargetUartInit(uint32_t baud);
 void TargetUartSetBaud(uint32_t baud);  // Also flushes stale RX input.
 uint32_t TargetUartGetBaud();          // Rate last requested with TargetUartInit() / TargetUartSetBaud().
-// Drives TX (the module's console RX) low as a GPIO, for a break (rate_watch.hh), or hands it back to
-// the UART, which idles high. Holding discards bytes still queued for the module.
+// Holds TX low for a break, or hands it back to the UART. Holding discards queued TX bytes.
 void TargetUartHoldTxLow(bool hold);
 
 size_t TargetUartRead(uint8_t* buf, size_t max_len);  // Nonblocking, from the RX ring.
-// Moves what the RX FIFO holds into the RX ring now. The RX interrupt fires at half full or after 32 bit times of
-// quiet; the bridge calls this every loop so a byte's arrival time is when it came off the wire.
+// Moves the RX FIFO into the ring now, so arrival times are accurate (the RX interrupt can lag 32 bit times).
 void TargetUartPollRx();
 // Free-running counts of the bytes put into the RX ring and taken out of it (read or flushed).
 uint32_t TargetUartRxReceived();
@@ -34,5 +32,5 @@ size_t TargetUartTxFree();     // Space left in the software TX ring.
 
 void TargetUartFlushInput();
 uint32_t TargetUartRxDropCount();
-// Framing and break errors received since the last call (a wrong rate shows up as these).
+// Framing and break errors since the last call (a sign of a wrong rate).
 uint32_t TargetUartTakeRxErrors();

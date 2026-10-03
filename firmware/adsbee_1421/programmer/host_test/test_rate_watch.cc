@@ -1,9 +1,5 @@
-// Host tests for RateWatch (rate_watch.hh): the Programmer following the module console's baud rate, played through a
-// bit-level model of both UART lines. Each line is a list of level changes in time; a PL011-like receiver samples it
-// at its own rate (mid-bit, 8N1, framing errors, breaks), so bytes sent at one rate and received at another garble
-// as on the bench. The module model answers breaks and announces rate changes with console_autobaud.hh, the code the
-// firmware runs, and runs AT commands the way cppAT does. The Programmer model is bridge.cc's loop around the real
-// RateWatch, reading edge times from the module's TX line.
+// Tests for RateWatch (rate_watch.hh) on a bit-level model of both UART lines, so bytes received at the wrong rate
+// garble realistically. The module model uses console_autobaud.hh; the Programmer model is bridge.cc's loop.
 #include <stdint.h>
 #include <stdio.h>
 
@@ -66,10 +62,8 @@ struct Wire {
     }
 };
 
-// PL011-like receiver: a start bit is the line low (level, not edge) once idle, checked again mid-bit; data and stop
-// bits are sampled mid-bit. A frame that is all zeros with the line low for a whole frame is a break: one NUL with
-// the break flag, then nothing until the line goes high. As on the CC1314, a break that follows another with no
-// valid character in between arrives as a plain NUL with no flag (console_autobaud.hh).
+// PL011-like receiver sampling mid-bit. A break gives one flagged NUL; as on the CC1314, a second break with no
+// character since the first gives an unflagged NUL.
 struct Receiver {
     const Wire* wire = nullptr;
     double baud = 1000000;
@@ -139,7 +133,7 @@ struct Transmitter {
     std::deque<uint8_t> queue;
     double free_at = 0;  // End of the frame on the wire.
 
-    // Called every loop: frames that start before the next call go out now, back to back as DMA sends them.
+    // Sends frames that start before the next call, back to back.
     void Run(double now) {
         while (!queue.empty() && free_at <= now + kProgrammerLoopNs) {
             double start = std::max(free_at, now);
@@ -425,7 +419,7 @@ struct Sim {
         programmer.Init(&to_programmer, &to_module);
         programmer.watch.Start(programmer_baud, 0);
     }
-    // The bridge loop takes 5 to 65 us (USB servicing, forwarding), so the Programmer sees edges and bytes late.
+    // The bridge loop takes 5 to 65 us, so the Programmer sees edges and bytes late.
     double next_programmer = 0;
     uint32_t jitter = 12345;
     void Run(double ms) {
@@ -488,8 +482,7 @@ TEST(RateWatch, ResetLock) {
     }
 }
 
-// The host changes the rate on the open port, waits for the OK, and talks on. The Programmer follows the "UU"; the host
-// sees exactly the replies, no "UU" and no garbage.
+// Rate change on an open port: the Programmer follows the "UU"; the host sees only the replies.
 TEST(RateWatch, FollowsRateChange) {
     for (uint32_t from : kRates) {
         for (uint32_t to : kRates) {
@@ -505,8 +498,7 @@ TEST(RateWatch, FollowsRateChange) {
     }
 }
 
-// Former limit 1: an OK still owed to an earlier command on the same line. Both OKs arrive intact; the retune follows
-// the "UU", whatever the line held before.
+// A rate change while an earlier command's OK is still pending: both OKs arrive intact.
 TEST(RateWatch, EarlierOkOnTheSameLine) {
     for (uint32_t to : {9600u, 115200u, 3000000u}) {
         Sim sim(1000000, 1000000);
@@ -517,9 +509,8 @@ TEST(RateWatch, EarlierOkOnTheSameLine) {
     }
 }
 
-// Former limit 2: a reset with SYNC high when the module's bootloader backdoor is off boots the application at its
-// saved rate; the Programmer, at the ROM bootloader's 1 M, follows its boot "UU", which comes while the Programmer
-// still holds SYNC high (ModemLines::kBackdoorHoldMs).
+// Reset with SYNC high but the bootloader backdoor off boots the application: the Programmer follows its boot "UU",
+// which arrives while SYNC is still held high.
 TEST(RateWatch, BackdoorOffBootloaderReset) {
     for (uint32_t saved : {9600u, 115200u, 921600u, 3000000u}) {
         Sim sim(saved, saved);
@@ -537,12 +528,12 @@ TEST(RateWatch, BackdoorOffBootloaderReset) {
     }
 }
 
-// A real ROM bootloader session at 1 M is left alone: its traffic fits the rate, nothing retunes or asks.
+// A ROM bootloader session at 1 Mbaud is left alone: its traffic fits the rate, nothing retunes or asks.
 TEST(RateWatch, RomBootloaderLeftAlone) {
     Sim sim(115200, 115200);
     sim.programmer.SetUart(1000000, sim.now);
     sim.programmer.watch.OnBootloaderReset(1000000, 0);
-    sim.module.alive = false;  // The ROM bootloader: answers ACKs at 1 M.
+    sim.module.alive = false;  // The ROM bootloader: answers ACKs at 1 Mbaud.
     sim.module.tx.baud = 1000000;
     for (int i = 0; i < 50; i++) {
         sim.module.tx.queue.push_back(0x00);
@@ -555,8 +546,7 @@ TEST(RateWatch, RomBootloaderLeftAlone) {
     EXPECT_EQ(sim.programmer.host_out.size(), 100u);
 }
 
-// AT+REBOOT: the module comes back at its saved rate and the Programmer follows its boot "UU" (unsaved change lost,
-// saved change kept).
+// AT+REBOOT: the Programmer follows the boot "UU" at the saved rate.
 TEST(RateWatch, Reboot) {
     {
         Sim sim(1000000, 1000000);
@@ -576,8 +566,7 @@ TEST(RateWatch, Reboot) {
     }
 }
 
-// Break -> "UU": the Programmer asks with no idea of the rate (a module that changed rate without saying so), locks
-// in one break, and the break leaves no trace in the module's AT parser: a command split around it still runs.
+// Unknown rate: one break locks, and a command split around the break still runs.
 TEST(RateWatch, BreakLock) {
     for (uint32_t hidden : kRates) {
         for (uint32_t programmer : {9600u, 1000000u, 3000000u}) {
@@ -596,8 +585,7 @@ TEST(RateWatch, BreakLock) {
             EXPECT_EQ(sim.programmer.baud, ConsoleBaud::CC1314ActualBaud(hidden));
             EXPECT_EQ(sim.programmer.watch.last_lock().asks, 1u);
             EXPECT_LT(sim.programmer.watch.last_lock().elapsed_us, 6000u) << hidden;
-            // The partial line, if it reached the module at its rate, continues; otherwise it is garbage on its own
-            // line.
+            // The partial line continues if it arrived at the right rate; otherwise it's a garbage line.
             sim.module.line.clear();
             EXPECT_EQ(sim.Command("\r\nAT+UPTIME?\r\n", "\r\n").rfind("UPTIME=", 0), 0u) << hidden;
         }
@@ -613,9 +601,8 @@ TEST(RateWatch, BreakLock) {
     EXPECT_EQ(sim.module.executed.back(), "AT+UPTIME?");
 }
 
-// A rate change the module doesn't announce (old firmware): the Programmer sees errors or short intervals, finds no
-// "UU", the edges don't fit its rate, so it asks; that module never answers, and the Programmer reports the rate
-// unknown and asks again every second while host data flows.
+// Unannounced rate change, module never answers (old firmware): the Programmer reports the rate unknown and asks
+// again every second while host data flows.
 TEST(RateWatch, SilentModuleIsUnknown) {
     Sim sim(1000000, 1000000);
     sim.module.silent = true;
@@ -647,8 +634,7 @@ TEST(RateWatch, HiddenChangeAsks) {
     }
 }
 
-// Report output streaming across a rate change, with no host involvement beyond the command: reports before and after
-// it reach the host intact; only those on the wire around the switch are lost.
+// Reports streaming across a rate change arrive intact; only those on the wire during the switch are lost.
 TEST(RateWatch, StreamingAcrossChange) {
     for (uint32_t from : {115200u, 1000000u, 3000000u}) {
         for (uint32_t to : {57600u, 921600u, 3000000u}) {
@@ -681,7 +667,7 @@ TEST(RateWatch, StreamingAcrossChange) {
     }
 }
 
-// Spurious hints (a framing error at the right rate) change nothing: the edges fit the rate.
+// A stray framing error at the right rate changes nothing.
 TEST(RateWatch, SpuriousHint) {
     Sim sim(115200, 115200);
     sim.module.stream_every_ns = 1e6;
@@ -747,7 +733,7 @@ TEST(RateWatch, NoModule) {
     EXPECT_TRUE(sim.programmer.host_in.empty());
 }
 
-// Asks back to back with no host data in between: the NULs around each break let the module's UART flag every one.
+// Back-to-back breaks: the NULs around each one let the module flag every break.
 TEST(RateWatch, RepeatedBreaks) {
     for (uint32_t baud : {9600u, 115200u, 3000000u}) {
         Sim sim(baud, baud);
@@ -763,7 +749,7 @@ TEST(RateWatch, RepeatedBreaks) {
     }
 }
 
-// The model's UART behaves like the CC1314's: without the NULs, the second break goes unflagged.
+// Model check: without the NULs, the second break goes unflagged, as on the CC1314.
 TEST(RateWatch, RepeatedBreakNeedsACharacter) {
     Wire w;
     Receiver rx;

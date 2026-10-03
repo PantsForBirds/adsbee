@@ -1,5 +1,5 @@
 // ClassifyHostBaud(): which host line-coding bauds reboot the ADSBee 1421 Programmer into BOOTSEL, which are
-// ignored (the USB baud rate is virtual), and that the magic baud is the ADSBee 1090's.
+// ignored, and that the magic baud is the ADSBee 1090's.
 #include "gtest/gtest.h"
 #include "host_line_coding.hh"
 
@@ -14,9 +14,9 @@ TEST(HostLineCoding, MagicBaudMatchesAdsbee1090) {
     EXPECT_EQ(ClassifyHostBaud(ADSBEE_1090_RESET_MAGIC_BAUD_RATE), HostBaudAction::kRebootToBootsel);
 }
 
-// Every other rate is virtual: the Programmer's UART runs at the module's rate whatever the host asks for.
+// Every other rate is ignored: the Programmer's UART follows the module's rate.
 TEST(HostLineCoding, EveryOtherRateIsIgnored) {
-    // pico-sdk's default magic baud, which pymavlink and friends open ports at, must not reboot the Programmer.
+    // Includes 1200 (pico-sdk's default magic baud, used by pymavlink), which must not reboot.
     const uint32_t rates[] = {0, 300, 1200, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 3000000};
     for (uint32_t baud : rates) {
         EXPECT_EQ(ClassifyHostBaud(baud), HostBaudAction::kIgnore) << "baud " << baud;

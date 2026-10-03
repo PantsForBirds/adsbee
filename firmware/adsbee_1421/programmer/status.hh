@@ -30,6 +30,5 @@ void StatusSet(Status status);
 void StatusUpdate();  // Advances blink phase; call from every wait/poll loop.
 
 // printf to the USB CDC port; silently dropped when no host terminal is connected. Used outside
-// pass-through, and in pass-through only for a one-line warning when the console's baud rate can't
-// follow the host's (bridge.cc).
+// pass-through, and in pass-through only for the "Console not found" warning.
 void CdcPrintf(const char* format, ...) __attribute__((format(printf, 1, 2)));

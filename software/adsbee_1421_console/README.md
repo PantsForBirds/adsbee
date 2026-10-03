@@ -8,20 +8,13 @@ the ADSBee 1421 Programmer (`firmware/adsbee_1421/programmer/`) and click **Conn
 
 ## Features
 
-- **Console baud rate** — the page talks to the module through the ADSBee 1421
-  Programmer, whose USB baud rate is virtual: the Programmer's UART runs at the
-  module console's rate, whatever rate the page opened the port at. The module boots
-  at its saved console rate (`AT+BAUD_RATE=CONSOLE,<n>` + `AT+SETTINGS=SAVE`; any rate
-  from 9600 to 3,000,000, factory default 1,000,000), and the Programmer locks onto it
-  after every reset. The page opens the port at 1,000,000 and asks `AT+BAUD_RATE?`
-  until the device answers (opening the port asserts DTR, which makes the Programmer
-  reset the module, so it is usually still booting when the first query goes out);
-  the rate shown is the one the device reports. A console rate change
-  (`AT+BAUD_RATE=CONSOLE,<n>` typed or from the Settings tab, `AT+SETTINGS=RESET`, a
-  reboot back to the saved rate) needs nothing from the page: the Programmer follows
-  it on the open port. As on any serial link, wait for the `OK` of
-  `AT+BAUD_RATE=CONSOLE,<n>` before sending the next command. Disconnecting leaves
-  the device at its current rate.
+- **Console baud rate** — handled by the ADSBee 1421 Programmer, which follows the
+  module's console rate (9600 to 3,000,000; factory default 1,000,000) whatever rate
+  the port is opened at. The page shows the rate the device reports.
+  - Rate changes (`AT+BAUD_RATE=CONSOLE,<n>`, the Settings tab, `AT+SETTINGS=RESET`)
+    need nothing from the page. Wait for the `OK` of `AT+BAUD_RATE=CONSOLE,<n>`
+    before sending the next command.
+  - Disconnecting leaves the device at its current rate.
 - **Console tab** — interactive AT command terminal (line editing, history, ANSI
   colors), a Receiver Statistics panel, a Device Status card, and firmware upload.
   - Statistics update whenever an `RX_STATS=` response appears — type
@@ -56,16 +49,15 @@ the ADSBee 1421 Programmer (`firmware/adsbee_1421/programmer/`) and click **Conn
     close, but cannot be guaranteed).
 - **Settings tab** — a schema-driven form for every read/write settings AT command
   (receivers, gain/preamble/boost, sub-GHz mode, output protocol, MAVLink IDs,
-  receiver position, console baud (common presets or a custom rate from 9600 to
-  3,000,000), log level, watchdog). Edits are applied with a
+  receiver position, console baud (preset or custom, 9600 to 3,000,000), log level,
+  watchdog). Edits are applied with a
   single **Save** button, which sends only the changed `AT+<CMD>=` commands and then
   `AT+SETTINGS=SAVE`; **Refresh** re-reads everything from the device and discards
   edits. Reads happen in one round trip via `AT+SETTINGS?JSON` (a single-line JSON
   dump keyed by AT command). A dump that arrives incomplete is retried; only firmware
   that answers it with `ERROR` (predating the command) is read with per-command queries. All settings traffic runs through the hidden AT queue, so the terminal
-  stays clean. A console baud change takes effect as soon as it is sent, and the
-  ADSBee 1421 Programmer follows it on the open port; **Save** persists it like any
-  other setting. Entering the tab from the Live Map tab first restores the persisted
+  stays clean. A console baud change takes effect immediately; **Save** persists it.
+  Entering the tab from the Live Map tab first restores the persisted
   `PROTOCOL_OUT`/`LOG_LEVEL` so the form shows saved values, not the map stream's
   overrides.
   - The form renderer, dirty tracking, and save/refresh logic (`SettingsEngine`) are

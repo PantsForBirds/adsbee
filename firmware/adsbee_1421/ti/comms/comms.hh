@@ -50,9 +50,8 @@ class CommsManager {
         uint32_t uart_timeout_us = 0;  // Timeout for blocking reads, in microseconds.
     };
 
-    // Console baud rates selectable via AT+BAUD_RATE: any rate in [ConsoleBaud::kMin, ConsoleBaud::kMax] the UART
-    // generates within 2% (console_baud.hh). The stored rate is applied at boot by SettingsManager::Apply() and
-    // persisted via AT+SETTINGS=SAVE; the default is SettingsManager::Settings::kDefaultUARTBaudRate (1,000,000).
+    // Console baud rates selectable via AT+BAUD_RATE (console_baud.hh). Applied at boot by SettingsManager::Apply();
+    // default SettingsManager::Settings::kDefaultUARTBaudRate (1,000,000).
     static constexpr bool IsAllowedBaudRate(uint32_t baud) { return ConsoleBaud::IsSupported(baud); }
 
     CommsManager(CommsManagerConfig config);
@@ -75,14 +74,9 @@ class CommsManager {
      */
     bool Resume();
 
-    /**
-     * Console autobaud (console_autobaud.hh): sends ConsoleAutobaud::kAnswer ("UU") at the console's current rate.
-     * SetBaudRate() calls it right after every switch; main() calls AnnounceBootRate() once SettingsManager::Apply()
-     * has set the saved rate. Update() answers a break on the console RX line, and Resume() a SYNC wake with the line
-     * held low, with it.
-     */
+    // Sends "UU" at the console's current rate (console_autobaud.hh).
     void AnnounceConsoleRate();
-    // At boot, after SettingsManager::Apply(): announces the rate unless Apply() switched it (and announced) already.
+    // Call after SettingsManager::Apply(): announces the rate unless Apply() already did.
     void AnnounceBootRate() {
         if (!rate_announced_) AnnounceConsoleRate();
     }
@@ -262,7 +256,7 @@ class CommsManager {
 
     // Drops the console output queued in the TX ring (what the UART is shifting out still goes).
     void DropQueuedConsoleTx();
-    // Answers a break on the console RX line (or a SYNC wake trigger): drops the queued output and announces the rate.
+    // Answers a break on console RX: drops queued output and sends "UU".
     void AnswerConsoleBreak();
 
     /**

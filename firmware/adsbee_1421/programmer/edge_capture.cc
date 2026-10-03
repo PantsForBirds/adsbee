@@ -8,7 +8,7 @@
 
 static constexpr uint kRingBits = 14;                          // 16 kB.
 static constexpr size_t kRingEntries = (1u << kRingBits) / 4;  // 4096 edges: 2.7 ms of "UU" at 3 Mbaud.
-// Entries never read: the ones the DMA could overwrite while a copy runs (1024 edges take at least 0.68 ms).
+// Oldest entries are never read: the DMA could overwrite them during a copy.
 static constexpr size_t kReadMargin = 1024;
 static constexpr uint32_t kTransferCount = 0xFFFFFFFFu;  // Per DMA run (48 minutes of square wave at 3 Mbaud).
 
@@ -27,8 +27,7 @@ class PioEdgeSource : public EdgeSource {
         sm_config_set_jmp_pin(&config, kPinUartRx);
         sm_config_set_in_shift(&config, false, true, 32);  // Autopush at every `in x, 32`.
         sm_config_set_fifo_join(&config, PIO_FIFO_JOIN_RX);
-        // Edge 0 is falling if the machine starts at `high`. If the pin changes before it runs, its first loop pushes
-        // that edge, so the polarity still holds.
+        // Edge 0 is falling if the machine starts at `high` (a change before it runs is still pushed).
         first_falling_ = gpio_get(kPinUartRx);
         uint start = offset + (first_falling_ ? autobaud_edges_offset_high : autobaud_edges_offset_low);
         pio_sm_init(kCapturePio, sm_, start, &config);
@@ -44,8 +43,7 @@ class PioEdgeSource : public EdgeSource {
         channel_config_set_chain_to(&data, rearm_dma_);
         dma_channel_configure(data_dma_, &data, ring_, &kCapturePio->rxf[sm_], kTransferCount, false);
 
-        // Re-arm: writes the count to the data channel's trigger alias. The data channel keeps its write address, so
-        // the ring carries on where it was.
+        // Re-arm: restarts the data channel, which keeps its write address.
         dma_channel_config rearm = dma_channel_get_default_config(rearm_dma_);
         channel_config_set_transfer_data_size(&rearm, DMA_SIZE_32);
         channel_config_set_read_increment(&rearm, false);

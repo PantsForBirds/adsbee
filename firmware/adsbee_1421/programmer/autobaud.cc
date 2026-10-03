@@ -42,8 +42,7 @@ Measurement MeasureNewest(const uint32_t* cycles, size_t num_edges, bool first_e
     while (true) {
         size_t end = RunEnd(cycles, num_edges, start);
         if (end - start >= min_intervals) {
-            // The newest run. A run that starts two edges earlier and reaches at least as far is the same square wave
-            // seen from its beginning: measure all of it.
+            // Extend back to the start of the same square wave, if it began earlier.
             while (start >= 2 && RunEnd(cycles, num_edges, start - 2) >= end) start -= 2;
             end = RunEnd(cycles, num_edges, start);
             uint32_t bits = (uint32_t)((end - start) & ~(size_t)1);
@@ -81,8 +80,7 @@ bool MatchesRate(uint32_t measured, uint32_t span_cycles, uint32_t baud) {
     return diff * 1000000ull <= tolerance_ppm * actual;
 }
 
-// A bit at `baud` in 1/16 clock cycles: 667 at 3 Mbaud, 208,333 at 9600. Interval arithmetic below stays in 32 bits
-// (the RP2040 divides in hardware but has no 64-bit multiply).
+// A bit at `baud` in 1/16 clock cycles. Arithmetic stays in 32 bits (the RP2040 has no 64-bit multiply).
 static uint32_t BitX16(uint32_t baud, uint32_t clock_hz) { return (uint32_t)((uint64_t)clock_hz * 16 / baud); }
 
 // An interval in thousandths of a bit. Intervals too long for 32 bits are over 20 bits at any console rate.
@@ -115,8 +113,7 @@ bool OtherRateHint(const uint32_t* cycles, size_t num_edges, bool first_edge_fal
     for (size_t i = 1; i < num_edges; i++) {
         uint32_t interval = cycles[i] - cycles[i - 1];
         if (interval < kGlitchCycles) continue;
-        // Only low intervals: they lie inside a frame (a start bit and zero data bits), so they are whole bits. A high
-        // one can include the idle time between two frames, which is any length.
+        // Only low intervals: they lie inside a frame, while a high one can include idle time.
         if (((i - 1) % 2 == 0) != first_edge_falling) continue;
         uint32_t millibits = Millibits(interval, bit_x16);
         if (millibits > 9700) return true;

@@ -1,6 +1,4 @@
-// Host tests for the edge-timing analysis (autobaud.hh). A cycle-level model of autobaud_edges.pio samples generated
-// UART waveforms ("UU" from the module, at the rate its PL011 actually generates), and the pushed counter values go
-// through CountToCycles() and MeasureNewest() as on the Programmer.
+// Tests for autobaud.hh: generated UART waveforms run through a cycle-level model of autobaud_edges.pio.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,8 +24,7 @@ struct Edge {
 
 }  // namespace
 
-// Builds the 8N1 waveform of `bytes` sent back to back at `baud`, starting after `idle_bits` of idle (high). Every
-// falling edge comes `skew` bit times early and every rising edge `skew` late (duty-cycle distortion: low bits longer).
+// 8N1 waveform of `bytes` at `baud` after `idle_bits` of idle. `skew` (in bits) lengthens low bits, shortens high.
 static std::vector<Edge> Uart(const std::vector<uint8_t>& bytes, double baud, double idle_bits = 20, double skew = 0) {
     std::vector<Edge> edges;
     double bit = kClockHz / baud;
@@ -48,8 +45,7 @@ static std::vector<Edge> Uart(const std::vector<uint8_t>& bytes, double baud, do
     return edges;
 }
 
-// Cycle-level model of autobaud_edges.pio: the pin goes through the 2-flop input synchronizer, `jmp pin` and `in`
-// take one cycle each, X starts at ~0 and the state machine at `high` (line high). Returns the pushed X values.
+// Cycle-level model of autobaud_edges.pio, including the 2-flop input synchronizer. Returns the pushed X values.
 static std::vector<uint32_t> RunPio(const std::vector<Edge>& edges, uint32_t max_edges = kMaxEdges) {
     enum { kRise, kHigh, kHighPin, kFall, kLow, kLowPin };
     std::vector<uint32_t> pushed;
@@ -124,7 +120,7 @@ TEST(Autobaud, CounterModel) {
     }
 }
 
-// "UU" at 9600..3 M (the CC1314's actual rate) measured within 0.4%.
+// "UU" at 9600 to 3 Mbaud measured within 0.4%.
 TEST(Autobaud, Rates) {
     uint32_t worst = 0, worst_baud = 0;
     std::vector<uint32_t> rates = {9600,   19200,  38400,  57600,  76800,   115200,  123457,  230400,  250000,
@@ -184,8 +180,7 @@ TEST(Autobaud, JitterAndDistortion) {
         double actual = ConsoleBaud::CC1314ActualBaud(nominal);
         double bit = kClockHz / actual;
         for (int trial = 0; trial < 50; trial++) {
-            // Up to +-3 cycles (24 ns) of random edge jitter on top of the sampling, and low bits up to 1.1 bit times
-            // with high bits down to 0.9 (or the reverse).
+            // +-3 cycles of random jitter; low bits 0.9 to 1.1 bit times.
             double skew = 0.05 * (trial % 5 - 2) / 2.0;
             std::vector<Edge> edges = Uart(kUU, actual, 20 + trial * 0.13, skew);
             for (Edge& edge : edges) edge.t += (rand() % 7 - 3);
@@ -193,7 +188,8 @@ TEST(Autobaud, JitterAndDistortion) {
             EXPECT_TRUE(m.baud != 0);
             uint32_t e = ErrorPpm(actual, m.baud);
             if (e > worst) worst = e;
-            // 6 cycles of jitter and 4 of sampling over the bits averaged. Near 3 M, jitter can end the run early.
+            // Error bound: 10 clock cycles (6 jitter, 4 sampling) over the bits measured. Near 3 Mbaud, jitter can
+            // end the run early.
             EXPECT_TRUE(m.bits >= 8);
             EXPECT_TRUE(e <= (uint32_t)(1e6 * 10 / (m.bits * bit)) + 500);
         }
@@ -229,10 +225,7 @@ TEST(Autobaud, Glitches) {
     }
 }
 
-// Other traffic can't give a wrong rate: a run of alternating one-bit intervals in UART frames is either part of a 0x55
-// or crosses a frame boundary (stop bit 1, start bit 0) at the true bit time, and runs of longer intervals can't line
-// up with the frame boundaries for nine intervals. Such a run gives the right rate, so the test allows "no lock" or
-// "the true rate", for single 'U' runs (9 intervals) as well as "UU".
+// Other traffic may lock only at the true rate (e.g. "T\r" spans nine one-bit intervals), never a wrong one.
 static bool NoneOrTrue(const std::vector<Edge>& edges, double baud) {
     for (size_t min_intervals : {(size_t)9, Autobaud::kMinIntervalsUU}) {
         Autobaud::Measurement m = MeasureWave(edges, min_intervals);
@@ -268,7 +261,6 @@ TEST(Autobaud, WrongPatterns) {
             locks += MeasureWave(Uart(bytes, baud), 9).baud != 0;
             EXPECT_EQ(MeasureWave(Uart(bytes, baud)).baud, 0u);  // No "UU" in any of them.
         }
-        // At the true rate: "T\r" and 0x54 0xD5 hold nine one-bit intervals across the byte boundary.
         EXPECT_TRUE(locks <= 2);
     }
     // MAVLink-like binary at 57600, with and without gaps.
@@ -302,7 +294,7 @@ TEST(Autobaud, LineLowAtStart) {
 
 // Snap to the console's rates.
 TEST(Autobaud, Snap) {
-    // Wake measurements at 3 M and 2 M from the bench (RC oscillator, 2-cycle sampling).
+    // Typical measurements at 3 and 2 Mbaud.
     for (uint32_t measured : {3008021u, 3016086u, 2993000u}) {
         EXPECT_EQ(Autobaud::SnapToConsoleRate(measured), 3000000u);
     }
@@ -310,10 +302,9 @@ TEST(Autobaud, Snap) {
     EXPECT_EQ(Autobaud::SnapToConsoleRate(0), 0u);
     EXPECT_EQ(Autobaud::SnapToConsoleRate(3100000), 3000000u);  // Clamped to the console range.
     EXPECT_EQ(Autobaud::SnapToConsoleRate(9300), ConsoleBaud::CC1314ActualBaud(9600));
-    // Below 250 kbaud the snap moves the measurement by under 0.1%, and an actual rate maps to itself.
+    // An actual rate maps to itself; below 250 kbaud, snapping moves a rate under 0.1%.
     for (uint32_t baud = ConsoleBaud::kMin; baud <= ConsoleBaud::kMax; baud += 1009) {
         uint32_t actual = ConsoleBaud::CC1314ActualBaud(baud);
-        // Same divisor; the rates are truncated.
         EXPECT_LT(ErrorPpm(actual, Autobaud::SnapToConsoleRate(actual)), 200u);
         if (baud < 250000) {
             EXPECT_TRUE(ErrorPpm(baud, Autobaud::SnapToConsoleRate(baud)) < 1000);
@@ -328,7 +319,7 @@ TEST(Autobaud, MatchesRate) {
     EXPECT_TRUE(Autobaud::MatchesRate(115700, 19533, 115200));
     EXPECT_FALSE(Autobaud::MatchesRate(117647, 19533, 115200));
     EXPECT_FALSE(Autobaud::MatchesRate(57600, 39000, 115200));
-    // At 3 M the neighboring console rate (2,953,846, 1.5% off) is told apart from a "UU".
+    // At 3 Mbaud the next console rate down (1.5% off) is rejected.
     EXPECT_TRUE(Autobaud::MatchesRate(3008021, 750, 3000000));
     EXPECT_FALSE(Autobaud::MatchesRate(2953846, 762, 3000000));
     EXPECT_FALSE(Autobaud::MatchesRate(0, 750, 3000000));
@@ -354,7 +345,7 @@ TEST(Autobaud, ShortIntervalsAndFit) {
                 << baud << " at " << other;
         }
     }
-    // Idle gaps of any length between frames (a module's DMA writes) are no hint at the right rate.
+    // Idle gaps between frames are no hint of another rate.
     for (uint32_t baud : {9600u, 115200u, 1000000u}) {
         std::vector<Edge> edges;
         double t0 = 1000;

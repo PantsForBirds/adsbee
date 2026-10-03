@@ -3,18 +3,16 @@
 // At power-up the Programmer enters the CC1314's ROM UART bootloader (SYNC backdoor + reset pulse) and
 // compares the on-chip flash against the baked-in adsbee_1421 image using the bootloader's CRC32
 // command; on any mismatch (or a blank device) it reflashes and verifies. Once the device is
-// confirmed up to date it resets it into the app, locks onto the console's baud rate from the "UU"
-// the app says at boot (it boots at its saved console baud; factory default 1 M; see console_lock.hh),
-// and becomes a transparent USB-CDC serial adapter (see bridge.hh for the modem-control-line
-// emulation contract and rate_watch.hh for the virtual USB baud rate).
+// confirmed up to date it resets it into the app, locks onto the console's baud rate (console_lock.hh),
+// and becomes a transparent USB-CDC serial adapter (see bridge.hh).
 //
 // If bootloader entry fails but the app console answers (for example after AT+BOOTLOADER_PIN=0,DEADBEE
 // disabled the backdoor), it skips the image check and enters pass-through with a warning.
 //
 // Hold BOOTSEL at power-up to force a reflash; tap BOOTSEL during pass-through to rerun the
-// check. Hold BOOTSEL for 3 s --
-// at any point, including while the Programmer is stuck reporting a dead console -- to arm a settings
-// erase, which runs at the next bootloader entry and factory-resets the device. Wiring in board.hh.
+// check. Hold BOOTSEL for 3 s -- at any point, including while the Programmer is stuck reporting a dead
+// console -- to arm a settings erase, which runs at the next bootloader entry and factory-resets the
+// device. Wiring in board.hh.
 
 #include <stdio.h>
 #include <string.h>
@@ -106,8 +104,7 @@ static bool EnterBootloader(Cc13x4Bootloader& bl) {
 // human-readable diagnosis (report-only; never auto-erases the app). Returns the baud rate the
 // application console answered at, or 0 if it didn't answer.
 static uint32_t DiagnoseEntryFailure() {
-    // Any saved baud (the boot "UU", or a break's): a device with a non-default saved baud must not misdiagnose as
-    // dead.
+    // Finds any saved baud, so a non-default rate isn't misdiagnosed as dead.
     uint32_t app_baud = ConsoleLock();
     if (app_baud != 0) {
         snprintf(last_diagnosis, sizeof(last_diagnosis),
@@ -131,14 +128,9 @@ static uint32_t DiagnoseEntryFailure() {
     return app_baud;
 }
 
-// Resets the device into the app and locks onto its console (it boots at its saved console baud, factory default 1 M,
-// and announces it with "UU"; console_lock.hh). Pass-through runs at that rate whatever rate the host opened the USB
-// port at (the USB baud is virtual, bridge.hh). The Programmer never changes the console's rate or sends
-// AT+SETTINGS=SAVE.
-//
-// Module firmware 0.3.11-rc3 and earlier never says "UU", so the lock fails on it. It never gets here with such an
-// image, though: State::kCheck compares the module's flash with the baked image first and reflashes it on any
-// mismatch. Only a module whose bootloader backdoor is off (#242's pass-through fallback) skips that check.
+// Resets the device into the app and locks onto its console's saved rate. Never changes the rate or settings.
+// Firmware 0.3.11-rc3 and earlier never sends "UU", but State::kCheck reflashes such images first (unless the
+// bootloader backdoor is off).
 static bool NegotiateConsole(bool print_version) {
     StatusSet(Status::kNegotiating);
     uint32_t found_baud = ConsoleLock();
@@ -285,8 +277,7 @@ int main() {
             }
 
             case State::kPassthrough: {
-                // Console rate changes and host-driven resets are handled inside the bridge; it only returns for
-                // BOOTSEL.
+                // The bridge handles rate changes and resets itself; it returns only for BOOTSEL.
                 if (BridgeRun() == BridgeExit::kEraseSettings) ArmSettingsErase();
                 force_flash = false;
                 state = State::kCheck;

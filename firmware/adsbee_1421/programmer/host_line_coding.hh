@@ -2,21 +2,16 @@
 
 #include <stdint.h>
 
-#include "console_baud.hh"  // firmware/adsbee_1421/ti/comms: the rates the ADSBee 1421 console accepts.
+#include "console_baud.hh"  // Shared with the module firmware (ti/comms).
 
 // Host line coding (CDC SET_LINE_CODING) -> what the Programmer does with the requested baud. Pure logic with no SDK
 // dependencies so it can be host-tested (host_test/test_host_line_coding.cc); bridge.cc calls it from
 // tud_cdc_line_coding_cb().
-//
-// The USB CDC baud rate is virtual: the Programmer's UART runs at the module console's rate whatever rate the host
-// opened the port at (rate_watch.hh), and at the ROM bootloader's rate in the bootloader. Only the magic baud below
-// does anything.
+// The USB baud rate is virtual (bridge.hh); only the magic baud below does anything.
 
-// Host baud that reboots the Programmer's own RP2040 into its USB bootloader (RPI-RP2), so the Programmer can be
-// updated without pressing BOOT. The same magic baud as the ADSBee 1090: PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE=0XDEADBEE
-// in firmware/adsbee_1090/pico/CMakeLists.txt (host_test fails if the two drift apart). pico-sdk's default magic baud
-// is 1200, a rate pymavlink and other tools open ports at as a Linux kernel workaround. The Programmer owns TinyUSB
-// directly (no stdio_usb), so the SDK's own handler never runs and the baud is checked here.
+// Host baud that reboots the Programmer into its USB bootloader (RPI-RP2) for updates without pressing BOOT. Same as
+// the ADSBee 1090's PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE (host_test checks); pico-sdk's default, 1200, is a rate
+// pymavlink opens ports at. The Programmer owns TinyUSB directly, so the baud is checked here.
 static constexpr uint32_t kRebootToBootselBaud = 0xDEADBEE;  // 233495534 baud.
 
 enum class HostBaudAction {

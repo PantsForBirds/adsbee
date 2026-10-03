@@ -43,8 +43,7 @@ target_sources(host_test PRIVATE
     test_modem_lines.cc
 )
 
-# console_baud.hh (the console baud range) and console_autobaud.hh (the module's "UU" answers, run in
-# test_rate_watch.cc's model of the module) are shared with the module firmware.
+# console_baud.hh and console_autobaud.hh, shared with the module firmware.
 target_include_directories(host_test PRIVATE
     ${ADSBEE_MODULES_DIR}/googletest/googletest/include
     ..

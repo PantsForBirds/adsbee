@@ -1,4 +1,4 @@
-// Host tests for the console baud range (ti/comms/console_baud.hh), shared by the module firmware and the Programmer.
+// Tests for the console baud range (ti/comms/console_baud.hh).
 #include <stdint.h>
 #include <stdio.h>
 
@@ -10,8 +10,7 @@
 
 // ---- Baud arithmetic ----
 
-// The divider code of driverlib UARTConfigSetExpClk() (CC13x4, no clamping) and pico-sdk uart_set_baudrate() (RP2040,
-// clamps the integer part to 1..65535), transcribed independently of console_baud.hh.
+// Independent copies of the driverlib (CC1314) and pico-sdk (RP2040) baud divider code.
 static uint32_t TiActual(uint32_t clk, uint32_t baud) {
     uint32_t div = (((clk * 8) / baud) + 1) / 2;
     uint32_t ibrd = div / 64, fbrd = div % 64;
@@ -47,7 +46,7 @@ TEST(ConsoleBaud, DividerMatchesDrivers) {
     EXPECT_EQ(ConsoleBaud::Pl011ActualBaud(48000000, 0u), 0u);
 }
 
-// Console accepts 9600..3000000 within 2%, and the Programmer's UART matches every one of them.
+// Console accepts 9600 to 3000000 baud within 2%, and the Programmer's UART matches each.
 TEST(ConsoleBaud, ConsoleRange) {
     // The old whitelist stays valid, so saved settings keep working.
     for (uint32_t baud : {115200u, 230400u, 460800u, 921600u, 1000000u}) {
@@ -59,7 +58,7 @@ TEST(ConsoleBaud, ConsoleRange) {
     for (uint32_t baud : {0u, 300u, 1200u, 9599u, 3000001u, 4000000u, 0xDEADBEEu, 0xFFFFFFFFu}) {
         EXPECT_FALSE(ConsoleBaud::IsSupported(baud));
     }
-    // Every rate in range is generated well inside the 2% limit, on both ends of the link.
+    // Every rate in range is well inside 2% on both ends.
     uint32_t worst_cc1314 = 0, worst_link = 0;
     for (uint32_t baud = ConsoleBaud::kMin; baud <= ConsoleBaud::kMax; baud += 101) {
         uint32_t cc1314 = ConsoleBaud::CC1314ActualBaud(baud);
@@ -72,5 +71,5 @@ TEST(ConsoleBaud, ConsoleRange) {
     printf("  worst CC1314 error %u ppm, worst CC1314 vs Programmer mismatch %u ppm\n", (unsigned)worst_cc1314,
            (unsigned)worst_link);
     EXPECT_TRUE(worst_cc1314 < 8000);
-    EXPECT_TRUE(worst_link < 11000);  // ~1%, near 3 M where the RP2040 divisor is smallest.
+    EXPECT_TRUE(worst_link < 11000);  // ~1%, near 3 Mbaud.
 }

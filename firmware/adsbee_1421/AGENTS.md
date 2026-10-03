@@ -139,15 +139,9 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 
 ## Console autobaud
 
-`comms/console_autobaud.hh` (shared with the ADSBee 1421 Programmer's host tests) has the answer and
-the input rule. The console says `UU` at its current rate: `CommsManager::SetBaudRate()` right
-after every reopen, `main.cpp` at boot once `SettingsManager::Apply()` has set the saved rate
-(`AnnounceBootRate()`, unless `Apply()` switched and said it already), and
-`CommsManager::AnswerConsoleBreak()` (drops the queued TX first) for a break: `Update()` reads the
-PL011's raw interrupt status every loop (UART2CC26X2 never enables the break interrupt), and
-`iface_getc()` checks it again when a NUL arrives. `Resume()` answers a SYNC wake with SURX held
-low. The console ignores NUL bytes. A break right after another, with no character in between,
-arrives as an unflagged NUL on the CC1314. See [Console autobaud](README.md#console-autobaud).
+`comms/console_autobaud.hh` holds the `UU` answer and the NUL rule. `CommsManager` sends `UU` after
+`SetBaudRate()`, at boot (`AnnounceBootRate()`), and on a break (`AnswerConsoleBreak()`, polled in
+`Update()`). See [Console autobaud](README.md#console-autobaud).
 
 ## SYNC low-power sleep
 

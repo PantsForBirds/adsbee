@@ -65,7 +65,7 @@ RateWatch::Action RateWatch::StartAsk(uint64_t now_us) {
     phase_ = Phase::kAsking;
     asks_++;
     stats_.asks++;
-    // The NUL (10 bits at the UART's rate) goes out now; the break follows after kPreBreakIdleUs of idle line.
+    // Send the NUL now; the break follows after kPreBreakIdleUs.
     break_pending_ = true;
     break_active_ = false;
     break_start_us_ = now_us + (baud_ != 0 ? 10000000ull / baud_ + 1 : 0) + kPreBreakIdleUs;
@@ -89,8 +89,7 @@ bool RateWatch::Analyze(uint64_t now_us, Action* action) {
     bool first_falling = ((first & 1) == 0) == edges_.FirstFalling();
     Autobaud::Measurement m = Autobaud::MeasureNewest(cycles_, n, first_falling, clock_hz_);
     if (m.baud == 0) return false;
-    // A run that reaches the newest edge may go on (the "UU" isn't over yet, or a 'U' follows): wait for two quiet
-    // bits at its rate, so the retune lands between frames.
+    // The "UU" may not be over: wait for two idle bits so the retune lands between frames.
     if (m.last_edge + 1 >= n && now_us - last_edge_us_ < 2000000ull / m.baud + 1) {
         analyzed_count_ = count - 1;  // Look again at the next Poll().
         return false;
@@ -171,9 +170,8 @@ RateWatch::Action RateWatch::Poll(uint64_t now_us, bool sync_high, uint32_t rx_r
         case Phase::kLocked:
         case Phase::kBootloader:
         case Phase::kUnknown: {
-            // While SYNC is high the module may be asleep and its line floating, so UART errors mean nothing; its
-            // edges are still worth a look (a module whose bootloader backdoor is off boots the application, and says
-            // "UU", while the Programmer holds SYNC high after a reset into the bootloader).
+            // SYNC high: the module may be asleep with a floating line, so ignore UART errors but still check edges
+            // (it may have booted the application anyway).
             bool hint = !sync_high && pending_errors_ > 0;
             if (!hint && count != checked_ &&
                 (now_us - last_check_us_ >= kCheckIntervalUs || now_us - last_edge_us_ >= kQuietUs)) {
@@ -197,9 +195,8 @@ RateWatch::Action RateWatch::Poll(uint64_t now_us, bool sync_high, uint32_t rx_r
             pending_errors_ = 0;
             if (Analyze(now_us, &action)) return action;
             if (now_us >= deadline_us_) {
-                // No "UU". A spurious hint if the edges fit the current rate. The ROM bootloader is never asked, nor is
-                // a module whose rate is unknown already (it has been, and will be again on schedule), nor one that
-                // may be asleep.
+                // No "UU". Ignore the hint if the edges fit the current rate. Don't ask the ROM bootloader, a module
+                // that may be asleep, or one whose rate is already unknown (asked on a schedule).
                 if (watch_phase_ == Phase::kBootloader || watch_phase_ == Phase::kUnknown || sync_high ||
                     EdgesFitRate(baud_)) {
                     EndLock(watch_phase_);

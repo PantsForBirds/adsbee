@@ -19,7 +19,7 @@ static uint8_t rx_ring[kRxRingSize];
 static volatile uint32_t rx_head = 0;  // Written by IRQ.
 static volatile uint32_t rx_tail = 0;  // Written by consumer.
 static volatile uint32_t rx_drops = 0;
-static volatile uint32_t rx_errors = 0;  // Framing and break errors (RateWatch's hint).
+static volatile uint32_t rx_errors = 0;  // Framing and break errors.
 
 static uint32_t current_baud = 0;
 

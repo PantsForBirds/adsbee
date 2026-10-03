@@ -8,8 +8,7 @@
 
 static void SendCommand(const char* command) {
     TargetUartFlushInput();
-    // Bytes at a wrong rate leave garbage in the console's AT line buffer. A leading line end closes that line first;
-    // the console ignores blank lines.
+    // A leading line end clears any garbage in the console's AT line buffer.
     static const uint8_t kLineEnd[] = {'\r', '\n'};
     TargetUartWriteBlocking(kLineEnd, sizeof(kLineEnd));
     TargetUartWriteBlocking((const uint8_t*)command, strlen(command));
@@ -21,8 +20,7 @@ bool AtQueryVersion(char* version_out, size_t max_len) {
 
     char buf[512];
     size_t len = 0;
-    // Silent-success query: accumulate until 300 ms of quiet (mirrors the web console). The reply runs past the buffer
-    // (the OTA keys); the rest is read and dropped, so it never reaches the host when pass-through starts.
+    // No OK: read until 300 ms of quiet. Bytes past the buffer are read and dropped so they never reach the host.
     while (true) {
         int byte = TargetUartReadByteTimeout(300);
         if (byte < 0) break;

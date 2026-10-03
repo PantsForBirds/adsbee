@@ -57,7 +57,7 @@ uint8_t AircraftCategoryToMAVLINKEmitterType(ADSBTypes::EmitterCategory emitter_
 }
 
 mavlink_heartbeat_t MAVLINKHeartbeatMessage() {
-    // mavlink_msg_heartbeat_send_struct sends these bytes as they are, so mavlink_version must be set here.
+    // send_struct doesn't fill in mavlink_version, so set it here.
     return mavlink_heartbeat_t{.custom_mode = 0,
                                .type = MAV_TYPE_ADSB,
                                .autopilot = MAV_AUTOPILOT_INVALID,

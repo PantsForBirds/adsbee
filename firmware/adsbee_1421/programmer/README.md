@@ -2,8 +2,8 @@
 
 A Waveshare RP2040-Zero application that keeps an attached ADSBee m1421 (TI CC1314R10) flashed
 with the firmware image baked into the Programmer, then acts as a transparent USB serial adapter to the
-module's console. The USB baud rate is virtual: the host can open the port at any rate, and the Programmer's UART
-runs at the console's rate and follows it when it changes (see [Baud rate](#baud-rate)).
+module's console. The host can open the port at any baud rate; the Programmer follows the console's rate (see
+[Baud rate](#baud-rate)).
 
 At power-up the Programmer:
 
@@ -17,18 +17,16 @@ At power-up the Programmer:
    (Settings still reset themselves if the firmware's settings version changed). Matching devices
    are left untouched. `hex_to_c.py` refuses to bake, and the Programmer refuses to flash, an image that
    reaches into those reserved sectors.
-3. Resets the module into the application, finds the console (it boots at its saved console baud,
-   persisted via `AT+SETTINGS=SAVE`; see [Finding the console](#finding-the-console)), sets its UART
-   to that rate, and becomes a USB-CDC ↔ UART pass-through.
+3. Resets the module into the application, finds the console at its saved baud rate (see
+   [Finding the console](#finding-the-console)), and becomes a USB ↔ UART pass-through.
 
 If the bootloader can't be entered but the application console answers (for example after
 `AT+BOOTLOADER_PIN=0,DEADBEE` turned the backdoor off), the Programmer prints a warning, skips steps 1 and
 2, and enters pass-through anyway, so the console stays reachable. A forced reflash or an armed
 settings erase can't run in that state; the settings erase stays armed.
 
-The ROM bootloader leg always runs at 1 M (the ROM auto-bauds to it; ceiling ~1.2 M). The
-Programmer never changes the console's rate or sends `AT+SETTINGS=SAVE` on its own, so the module's
-settings are the user's. If no module responds, the Programmer retries forever (attach a
+The ROM bootloader always runs at 1,000,000 baud. The Programmer never changes the console's rate or
+sends `AT+SETTINGS=SAVE` on its own. If no module responds, the Programmer retries forever (attach a
 module any time) and reports a diagnosis on the CDC port every few seconds.
 
 ## Wiring
@@ -123,15 +121,12 @@ in pass-through (green LED):
   default HUPCL), which used to read as RTS deasserted and put the module to sleep until the next
   open. Once in the ROM bootloader the module no longer looks at SYNC, and a host still gets back
   in with RTS deasserted and another DTR edge.
-- **The host's baud rate is virtual** (see [Baud rate](#baud-rate)): a ground station that opens
-  the port at 57600 reads the console at whatever rate the module runs at. In the ROM bootloader the
-  UART runs at 1 M, and the ROM auto-bauds to it, so a host-side bootloader client works at any host
-  rate.
+- **The host's baud rate is virtual** (see [Baud rate](#baud-rate)), including for a host-side
+  ROM bootloader client.
 - **Except 233495534 baud (`0xDEADBEE`)**, which reboots the Programmer's RP2040 into its USB bootloader
   (`RPI-RP2`) so the Programmer can be updated without pressing BOOT, e.g.
   `python3 -c "import serial, time; s = serial.Serial('/dev/ttyACM0', 115200); s.baudrate = 0xDEADBEE; time.sleep(1); s.close()"`
-  (on some Linux hosts, opening the port at that rate and closing it at once often doesn't reach the
-  Programmer; setting the rate on an open port and keeping it open for a second does). It is the same
+  (keep the port open for a second; on some Linux hosts an immediate close doesn't reach it). It is the same
   magic baud as the ADSBee 1090 (`PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE` in
   `firmware/adsbee_1090/pico/CMakeLists.txt`; the Programmer's copy is `kRebootToBootselBaud` in
   `host_line_coding.hh`, and the host test checks they match). 1200 baud is an ordinary rate here,
@@ -140,96 +135,40 @@ in pass-through (green LED):
 
 ### Baud rate
 
-The USB CDC baud rate is virtual. The host can open the Programmer's port at any rate (9600,
-57600, 115200, 3 M, ...) and the Programmer ignores it: its UART runs at the module console's
-rate. The ADSBee 1421 console accepts any rate from 9600 to 3,000,000 baud that its UART generates
-within 2% (`AT+BAUD_RATE=CONSOLE,<baud>`; every rate in that range qualifies, see
-`firmware/adsbee_1421/ti/comms/console_baud.hh`).
+The host's baud rate is ignored: the Programmer's UART runs at the module console's rate, any rate
+from 9600 to 3,000,000. The module sends `UU` after every rate change, at boot, and in answer to a
+break (see [Console autobaud](../README.md#console-autobaud)); the Programmer measures the rate from
+it and follows.
 
-The Programmer doesn't read the host's commands. It follows the console itself: the module says
-`UU` (0x55 0x55) at its new rate right after every rate change, at every boot, and in answer to a
-UART break (see [Console autobaud](../README.md#console-autobaud)), and the Programmer measures
-the rate from the edges of that square wave (see [Finding the console](#finding-the-console)).
+To change the rate, send `AT+BAUD_RATE=CONSOLE,<n>` and keep using the same open port:
 
-**Changing the rate on the fly.** Send `AT+BAUD_RATE=CONSOLE,<n>` through the Programmer, wait
-for its `OK`, and keep talking on the same open port at the same host rate. The module sends the
-`OK` at the old rate, then switches and says `UU` at `<n>`; the Programmer sees it, retunes, and
-the host's next command reaches the module at `<n>`. The same goes for `AT+SETTINGS=RESET` (back
-to the factory 1 M) and for anything else that changes the rate: `AT+REBOOT` or a power cycle back
-to the saved rate, another module plugged in.
-
-- **Wait for the `OK` before sending the next command**, as on any serial line: the module reopens
-  its UART at the new rate after the `OK` and flushes what it received meanwhile, so commands
-  sent in the same write as the switch are lost.
-- **Persisting it.** The new rate is live only. `AT+SETTINGS=SAVE` persists it, as on any device;
-  the Programmer never sends it. After a reboot without a save the module comes back at its saved
-  rate, and the Programmer follows its boot `UU` there. A module saved at a new rate keeps it on
-  any other host, which opens its UART at the saved rate.
-- Rates the console rejects (outside 9600 to 3,000,000) change nothing; the console answers `ERROR`.
+- **Wait for the `OK` before sending the next command.** Commands sent before it are lost.
+- The new rate is live only until `AT+SETTINGS=SAVE`; the Programmer never saves it.
+- After a reboot or `AT+SETTINGS=RESET` the Programmer follows the module back to its saved or
+  default rate.
+- Rates outside 9600 to 3,000,000 return `ERROR` and change nothing.
 
 ### Finding the console
 
-A PIO state machine (`autobaud_edges.pio`, on PIO1; the LED uses PIO0) timestamps every edge on
-the Programmer's RX pin (GP29) at the 125 MHz system clock while the UART keeps the pin, and DMA
-keeps the last 4096 in a ring (`edge_capture.cc`; a second DMA channel re-arms the first, so the
-capture never stops and costs no CPU time). `rate_watch.cc` (host-tested against a bit-level model
-of both UART lines and the module, `host_test/test_rate_watch.cc`) looks at the ring only when it
-has a reason to:
+A PIO state machine timestamps every edge on the Programmer's RX pin into a DMA ring
+(`edge_capture.cc`, `autobaud_edges.pio`). `rate_watch.cc` checks the ring when something looks
+wrong (framing or break errors, or edges that don't fit the current rate) and retunes to the rate
+of the newest `UU`. If it finds none, it asks: it sends a NUL, then a 2 ms break, and locks onto the
+module's `UU` answer, up to 3 tries, then once a second.
 
-- **Hints.** UART framing or break errors, or the newest 32 edges showing data at another rate:
-  intervals shorter than 85% of a bit, intervals off the bit grid, or a `U` at another rate (a `UU`
-  at exactly 1/8 of the UART's rate frames without errors). The edge check runs every 100 µs while
-  edges come in, and once the line goes quiet.
-- **Resolving a hint.** Host data waits while the Programmer looks for the newest `UU` around the
-  hint (`autobaud.cc`: a run of 17 or more alternating one-bit intervals, averaged over an even
-  number of bits so a duty-cycle distortion of the line cancels). It snaps the measurement to the
-  nearest rate the module's UART generates (near 3 M those are 1.5% apart) and retunes if that
-  differs from its own. Without a `UU` within 6 ms, it asks, unless the edges fit its rate (a
-  glitch) or the module's factory 1 M (boot output: the module is rebooting, and its boot `UU`
-  follows).
-- **Asking.** When unsure (after a reset if the boot `UU` doesn't come within 150 ms, after a hint
-  that didn't resolve, while the rate is unknown), the Programmer sends a NUL, waits 1.1 ms, holds
-  its TX low for 2 ms (a break: longer than a frame at 9600) and locks onto the `UU` the module
-  answers with. Up to 3 breaks, then the rate is unknown: the Programmer says so on the CDC port
-  and asks again every second, with host data flowing in between. It never asks while SYNC is high
-  (the module may be asleep), and never in the ROM bootloader.
-- **Console output reaches the host 1.5 ms after it arrives,** long enough for the edge check to
-  see a `U` even at 9600. A `UU` at a slower rate reads as plausible bytes at the old rate (0x00,
-  0x80, ... with no framing error); this way they are dropped by the retune instead of reaching the
-  host. Bytes that arrived before the `UU` started are forwarded first.
-- After every lock the Programmer sends one NUL at the new rate. The module ignores NULs, and its
-  UART only flags a break after a valid character (see [Console autobaud](../README.md#console-autobaud)).
-
-The module answers a break whatever it is doing and drops the console output it still had
-queued, so a break costs the host that output. The Programmer only asks when it doesn't know the
-rate, when the output was unreadable anyway.
-
-Measured on a module behind the Programmer:
-
-| Step | Time |
-|---|---|
-| Reset into the application to lock (startup, port open, DTR edge, `AT+REBOOT`) | 43 ms after RESET_N is released (the boot `UU`) |
-| `AT+BAUD_RATE=CONSOLE,<n>`: `OK` drained to `UU` on the line (the module reopens its UART) | 0.14 to 1 ms |
-| `UU` start to retune | the `UU` (174 µs at 115200, 2.1 ms at 9600) plus up to 0.2 ms |
-| Break to the module's first `UU` edge, idle module | 0.06 to 0.45 ms (1.1 to 1.3 ms at 9600, where a break takes a 1.04 ms frame to detect); 3.4 to 5.6 ms at 115200 with MAVLink and INFO logs streaming |
-| Ask to lock (NUL, idle, break, `UU`), idle module | 1.2 to 2.1 ms (5.4 to 5.6 ms at 9600) |
-
-Module firmware 0.3.11-rc3 and earlier never says `UU`, and the Programmer doesn't look for those
-images' consoles. It never has to: at startup it compares the module's flash with its baked image
-before it looks for the console, and reflashes the module on any mismatch, so the console it looks
-for always runs the baked firmware. The exception is a module whose bootloader backdoor is off
-(the pass-through fallback above), which skips the image check; such a module must run firmware
-that has `AT+BOOTLOADER_PIN` and so says `UU`.
+- It never sends a break while SYNC is high (module may be asleep) or in the ROM bootloader.
+- A break makes the module drop its queued output, so the Programmer only asks when it doesn't
+  know the rate.
+- Console output reaches the host 1.5 ms late, so bytes misread before a rate change are dropped.
+- Lock takes about 2 ms (5 ms at 9600); the boot `UU` comes about 45 ms after reset.
 
 ### ROM bootloader through the Programmer
 
-A host-side ROM bootloader client can flash a module *through* the Programmer: it enters the
-bootloader with RTS deasserted and a DTR edge, and while SYNC is high the Programmer stays fully
-transparent and never injects traffic. The web console's **Enter bootloader** button works this
-way. Opening the port is itself a DTR edge (the OS asserts DTR and RTS), so it resets the module
-into its application; enter the bootloader after the port is open. If any tool flashes a
-different image, the Programmer reflashes its baked image at its next recheck (power-up, BOOTSEL
-tap, or failed console negotiation).
+A host-side ROM bootloader client can flash a module through the Programmer: enter the bootloader
+with RTS deasserted and a DTR edge, after the port is open (opening it resets the module into its
+application). While SYNC is high the Programmer is fully transparent. The web console's **Enter
+bootloader** button works this way. If a different image gets flashed, the Programmer restores its
+baked image at its next check (power-up, BOOTSEL tap, or failed console search).
 
 ## Troubleshooting (yellow blink / no green)
 
@@ -246,8 +185,8 @@ see per-attempt diagnostics. The Programmer re-prints its last diagnosis every ~
 | `No response ... RESET_N(GP26)=LOW (stuck in reset ...)` | Something is holding reset low with the Programmer's driver released: a wiring short or a drive conflict on ~SRST. |
 | `No response ... UART RX(GP29)=LOW (module TX not driving ...)` | Module unpowered, held in reset, or SUTX wiring wrong (RX should idle high when the module runs). |
 | `No response ... RESET_N=high, UART RX=high (link plausible)` | Lines look electrically sane; suspect TX leg (GP28 → SURX) or module-side UART config. |
-| `Device console not responding` | SBL/flash worked but the app's console said no `UU` at boot or after 3 breaks (see [Finding the console](#finding-the-console)). If it repeats on every boot with a CRC-verified image, the saved settings are the likely cause: hold BOOTSEL for 3 s to erase them (see [Buttons](#buttons)). |
-| `[ADSBee 1421 Programmer] Console not found; UART left at <baud> baud, asking again every 1 s.` | In pass-through, the console stopped answering breaks (unplugged, held in reset, or running firmware without `UU`). Host data still flows at that rate. |
+| `Device console not responding` | Flashing worked but the console sent no `UU` at boot or after 3 breaks. If it repeats on every boot with a CRC-verified image, the saved settings are the likely cause: hold BOOTSEL for 3 s to erase them (see [Buttons](#buttons)). |
+| `[ADSBee 1421 Programmer] Console not found; UART left at <baud> baud, asking again every 1 s.` | The console stopped answering (unplugged, in reset, or firmware without `UU`). Host data still flows at that rate. |
 | `Settings erase ARMED` / `Settings erased; ...` | A BOOTSEL long press was registered, and the Settings sectors were erased at the next bootloader entry. The device now boots with factory defaults. |
 
 Modules running pre-backdoor firmware can't be entered via SYNC at all: flash them once via
@@ -259,11 +198,8 @@ to rerun the check. See
 
 ## Limitations
 
-- Commands pipelined after `AT+BAUD_RATE=CONSOLE,<n>` in the same write are lost (the module
-  flushes its input when it reopens its UART). Wait for the `OK`.
-- Console output reaches the host 1.5 ms late (see [Finding the console](#finding-the-console)).
-- A break makes the module drop the console output it had queued. The Programmer only sends one
-  when it doesn't know the console's rate.
+- Commands sent right after `AT+BAUD_RATE=CONSOLE,<n>`, before its `OK`, are lost.
+- Console output reaches the host 1.5 ms late.
 - Status text (flash progress, negotiation results) appears on the same CDC port before
   pass-through starts; anything typed during those phases is ignored.
 - Opening the CDC port at 233495534 baud reboots the Programmer into its USB bootloader (see

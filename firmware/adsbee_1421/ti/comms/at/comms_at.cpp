@@ -74,9 +74,8 @@ CPP_AT_CALLBACK(CommsManager::ATBaudRateCallback) {
             }
             // All validation is done, so the command cannot fail: acknowledge at the OLD baud rate,
             // then switch. SetBaudRate() drains the TX line (including this OK) before reconfiguring,
-            // so the host reads the acknowledgment intact and then reopens its port at the new rate. Right
-            // after the switch it announces the new rate with "UU" (console_autobaud.hh), which the ADSBee 1421
-            // Programmer follows.
+            // so the host reads the acknowledgment intact and then reopens its port at the new rate. "UU"
+            // follows at the new rate (console_autobaud.hh).
             // Note the inversion vs the ADSBee 1090, which reconfigures before printing OK — atomic on
             // the RP2040 UART, but not across TI's UART2 close/reopen.
             CPP_AT_PRINTF("OK\r\n");
@@ -1265,12 +1264,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "BAUD_RATE",
      .min_args = 0,
      .max_args = 2,
-     .help_string = "AT+BAUD_RATE=CONSOLE,<baud [9600-3000000]>\r\n\tChange the console baud rate (any rate the "
-                    "UART generates within 2%, e.g. 57600, 115200, 1000000). Prints OK at the old baud rate, then "
-                    "switches and sends \"UU\" at the new rate. Behind the ADSBee 1421 Programmer keep the port open "
-                    "(it follows); wait for the OK before sending the next command. Takes effect immediately but "
-                    "persists across reboots only after AT+SETTINGS=SAVE. Boot default is 1000000; "
-                    "AT+SETTINGS=RESET restores it. A break on the console RX line gets \"UU\" at the current rate.\r\n\t"
+     .help_string = "AT+BAUD_RATE=CONSOLE,<baud [9600-3000000]>\r\n\tChange the console baud rate (within 2%, "
+                    "e.g. 57600, 115200). Prints OK at the old rate, then switches and sends \"UU\". Through the "
+                    "ADSBee 1421 Programmer, keep the port open and wait for OK before the next command. Persists only "
+                    "after AT+SETTINGS=SAVE. Boot default is 1000000; AT+SETTINGS=RESET restores it. A break on the "
+                    "console RX line gets \"UU\" at the current rate.\r\n\t"
                     "AT+BAUD_RATE?\r\n\tQuery the current console baud rate.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBaudRateCallback, comms_manager)},
     {.command = "BOOTLOADER_PIN",

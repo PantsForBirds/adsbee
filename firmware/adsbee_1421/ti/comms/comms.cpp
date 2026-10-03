@@ -38,20 +38,17 @@ static_assert(kRawReportChunkMaxTxBytes < CommsManager::kUartTxRingBytes, "A rep
 
 // Margin added to every baud-derived TX wait so tiny shortfalls don't get a zero-length budget.
 static const uint32_t kTxWaitMarginMs = 5;
-// Caps on the baud-derived waits. They only bind at low console rates (a worst-case report chunk takes ~1 s to clock
-// out at 9600 baud, a full TX ring ~8.5 s), where waiting the full time would stall reception, or run past the
-// watchdog in DrainConsoleTx(). What doesn't fit is dropped, as it is when the wait times out at any rate.
+// Caps on the baud-derived waits, so low console rates don't stall reception or trip the watchdog. Output that doesn't
+// fit is dropped.
 static const uint32_t kTxRingSpaceWaitMaxMs = 250;
 static const uint32_t kTxDrainWaitMaxMs = 2000;
 
-// SYNC wake trigger (Suspend(), Resume()): a host that holds the console RX line low through a SYNC sleep gets
-// ConsoleAutobaud::kAnswer on wake, as for any other break. The line must stay low for kWakeTriggerLowUs: far longer
-// than any low stretch in console traffic (a NUL byte is 0.94 ms at 9600 baud), and the RX pull-up keeps an
-// unconnected line high. Polled with CPUdelay() (4 cycles per loop at 48 MHz), which needs no clock.
+// A host holding console RX low through a SYNC sleep gets "UU" on wake, like a break. 5 ms is far longer than any low
+// stretch in console traffic. CPUdelay() runs 4 cycles per loop at 48 MHz.
 static const uint32_t kWakeTriggerLowUs = 5000;
 static const uint32_t kWakeTriggerPollUs = 100;
 
-// True if the console RX line stays low for timeout_us. One pin read when it is high.
+// True if the console RX line stays low for timeout_us.
 static bool ConsoleRxHeldLow(uint32_t timeout_us) {
     for (uint32_t waited_us = 0;; waited_us += kWakeTriggerPollUs) {
         if (GPIO_read(bsp.kSubGUARTRXPin) != 0) return false;
@@ -60,11 +57,8 @@ static bool ConsoleRxHeldLow(uint32_t timeout_us) {
     }
 }
 
-// Break detection. UART2CC26X2 never enables the PL011's break interrupt (only receive timeout, and overrun when
-// subscribed), so UART2_EVENT_BREAK never fires on its own, and its RX DMA copies only the data bits of a break's NUL
-// into the RX ring. The raw interrupt status still latches the break whatever the mask, so the main loop reads it:
-// one register read per loop. Clearing writes only the break bit, which the driver's ISR never touches (it clears the
-// bits it has enabled). See console_autobaud.hh for the repeated-break case.
+// Break detection. The UART2 driver never enables the break interrupt, so poll the raw interrupt status, which latches
+// a break regardless. The driver never clears this bit itself.
 static inline bool ConsoleBreakSeen() { return (HWREG(UART0_BASE + UART_O_RIS) & UART_INT_BE) != 0; }
 static inline void ClearConsoleBreak() { HWREG(UART0_BASE + UART_O_ICR) = UART_INT_BE; }
 
@@ -162,8 +156,7 @@ void CommsManager::DropQueuedConsoleTx() {
     // The write callback retires what already went out, synchronously.
     if (uart_tx_in_progress_) UART2_writeCancel(uart_handle_);
     uintptr_t key = HwiP_disable();
-    // Back to the start of the ring when nothing is in flight, so what comes next (the "UU") goes out in one write,
-    // back to back, rather than split at the ring's end.
+    // Restart at the ring's start so the "UU" that follows goes out in one write, unsplit.
     if (!uart_tx_in_progress_) uart_tx_head_ = 0;
     uart_tx_tail_ = uart_tx_head_;
     HwiP_restore(key);
@@ -254,9 +247,7 @@ bool CommsManager::Suspend() {
     // Release the PowerCC26XX_DISALLOW_STANDBY constraint that UART2_rxEnable() holds while RX is on,
     // so the MCU can reach STANDBY. TX is left intact so console logging still flushes before sleep.
     UART2_rxDisable(uart_handle_);
-    // A host holding RX low through the sleep (the SYNC wake trigger) is answered on wake (Resume()). It doesn't know
-    // the console rate, so drop the queued output instead of draining it before the sleep, which takes seconds at low
-    // rates and would delay the answer.
+    // A host holding RX low gets "UU" on wake (Resume()). It can't read queued output yet, so drop it.
     wake_trigger_ = ConsoleRxHeldLow(kWakeTriggerLowUs);
     if (wake_trigger_) DropQueuedConsoleTx();
     return true;
@@ -486,8 +477,7 @@ bool CommsManager::iface_getc(SettingsManager::SerialInterface iface, char& c) {
                 if (status != UART2_STATUS_SUCCESS || bytes_read != 1) {
                     return false;  // Failed to read character.
                 }
-                // A break's NUL. The break bit is set before the NUL reaches the RX ring, so a break that Update()
-                // hasn't answered yet is answered here.
+                // A break's NUL: answer the break now if Update() hasn't yet.
                 if (c == '\0' && ConsoleBreakSeen()) AnswerConsoleBreak();
                 if (!ConsoleAutobaud::IgnoredConsoleByte(c)) return true;
             }

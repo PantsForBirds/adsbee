@@ -63,12 +63,11 @@ TEST(MAVLinkUtils, HeartbeatFields) {
     EXPECT_EQ(hb.base_mode, 0);
     EXPECT_EQ(hb.custom_mode, 0u);
     EXPECT_EQ(hb.system_status, MAV_STATE_ACTIVE);
-    // Fixed at 3 by the MAVLink spec for both framings; 1 or 2 here is a malformed HEARTBEAT.
+    // Always 3, per the MAVLink spec.
     EXPECT_EQ(hb.mavlink_version, 3);
 }
 
-// Frames the heartbeat struct the way mavlink_msg_heartbeat_send_struct does on the device (the struct bytes are the
-// payload) and returns the wire bytes.
+// Frames the heartbeat as mavlink_msg_heartbeat_send_struct does on the device; returns the length.
 static uint16_t FrameHeartbeat(bool mavlink1, uint8_t* buf) {
     mavlink_heartbeat_t hb = MAVLINKHeartbeatMessage();
     mavlink_message_t msg = {};

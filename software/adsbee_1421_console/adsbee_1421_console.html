@@ -2094,8 +2094,7 @@
          * ADSBee 1421 Web Console.
          *
          * Talks to an ADSBee 1421 (TI CC1314R10) through the ADSBee 1421 Programmer over
-         * the Web Serial API. The Programmer's USB baud rate is virtual, so the port is
-         * opened at one fixed rate whatever rate the device's console runs at.
+         * the Web Serial API.
          * UI ported from the ADSBee ESP32 web interface
          * (firmware/modules/adsbee/firmware/adsbee_1090/esp/main/server/web/), with the
          * WebSocket transport replaced by a serial line router, and a firmware uploader
@@ -2106,12 +2105,8 @@
 
         // ─── Helpers ─────────────────────────────────────────────────────────────
 
-        // The firmware's console accepts any rate from 9600 to 3,000,000 baud that its UART
-        // generates within 2% (AT+BAUD_RATE; firmware/adsbee_1421/ti/comms/console_baud.hh).
-        // The page talks to it through the ADSBee 1421 Programmer, whose USB baud rate is
-        // virtual: the Programmer's UART runs at the console's rate (it locks onto it after
-        // every reset and follows every change on the open port), so the page opens the port
-        // at HOST_BAUD whatever rate the console is at.
+        // Console rate range (firmware/adsbee_1421/ti/comms/console_baud.hh). The Programmer's USB
+        // baud rate is virtual, so the port always opens at HOST_BAUD.
         const CONSOLE_BAUD_MIN = 9600;
         const CONSOLE_BAUD_MAX = 3000000;
         const isConsoleBaud = n => Number.isInteger(n) && n >= CONSOLE_BAUD_MIN && n <= CONSOLE_BAUD_MAX;
@@ -2123,11 +2118,7 @@
         const consoleBaudFromValues = v => v.preset === 'CUSTOM' ? parseInt(v.custom, 10) : parseInt(v.preset, 10);
         const HOST_BAUD = 1000000;
 
-        // How long to keep asking for the console after the port opens. Opening the port
-        // asserts DTR, which the ADSBee 1421 Programmer turns into a module reset; it then
-        // locks onto the console's rate (~0.1-0.2 s) before pass-through resumes, and the
-        // application takes ~0.8 s to boot. Each attempt is ~250 ms of quiet + 200 ms pause,
-        // so 8 attempts give the device ~3.6 s (a live device answers the first attempt).
+        // Opening the port resets the module, so keep asking for ~3.6 s (8 x ~450 ms) while it boots.
         const PROBE_ATTEMPTS = 8;
 
         const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
@@ -2349,10 +2340,8 @@
                     // The device does not echo; the local '> cmd' line above is the echo.
                     atQueue.send(command + '\r\n', { visible: true, terminator: 'quiet', quietMs: 500, timeoutMs: 15000 })
                         .catch(() => { /* visible commands print their own output/errors */ });
-                    // Console rate changes (AT+BAUD_RATE=CONSOLE,<n>, AT+SETTINGS=RESET, a reboot
-                    // back to the saved rate) need nothing here: the ADSBee 1421 Programmer follows
-                    // them on the open port. After AT+REBOOT, check the link once the device is
-                    // back and refresh the uptime card.
+                    // The Programmer follows console rate changes. After AT+REBOOT, recheck the link
+                    // and refresh the uptime card.
                     if (/^AT\+REBOOT\b/i.test(command.trim())) {
                         setTimeout(() => connectionUI.renegotiateAfterReset(), 1500);
                     }
@@ -4423,9 +4412,8 @@ function makeRxEnableEntry() {
             // ── Serial ──
             {
                 cmd: 'BAUD_RATE', label: 'Console Baud Rate', group: 'Serial',
-                help: `A common rate or any rate from ${CONSOLE_BAUD_MIN} to ${CONSOLE_BAUD_MAX}. Takes effect ` +
-                    'immediately, and the ADSBee 1421 Programmer follows it on the open port. Save persists it ' +
-                    '(AT+SETTINGS=SAVE); until then a reboot returns the module to its saved rate.',
+                help: `Any rate from ${CONSOLE_BAUD_MIN} to ${CONSOLE_BAUD_MAX}. Takes effect immediately; until ` +
+                    'saved, a reboot restores the saved rate.',
                 fields: [
                     {
                         id: 'preset', label: 'Baud', type: 'enum',
@@ -5270,8 +5258,7 @@ function makeRxEnableEntry() {
 
                     // Back to console mode. The device reboots at its saved console baud
                     // (settings persist across the flash unless the firmware's settings
-                    // version changed, in which case they reset to factory default), which
-                    // the ADSBee 1421 Programmer follows; check the link again.
+                    // version changed, in which case they reset to factory default); check the link.
                     serial.setSink(new LineSink(lineRouter));
                     this.active = false;
                     this._state = 'done';
@@ -5472,7 +5459,7 @@ function makeRxEnableEntry() {
                 this.btn.disabled = true;
                 try {
                     if (!port) port = await navigator.serial.requestPort();
-                    // Any rate works: the ADSBee 1421 Programmer's USB baud rate is virtual.
+                    // Any rate works: the Programmer's USB baud rate is virtual.
                     await serial.connect(port, HOST_BAUD);
                 } catch (e) {
                     if (e.name !== 'NotFoundError') {   // NotFoundError = user canceled the picker
@@ -5514,13 +5501,9 @@ function makeRxEnableEntry() {
                 return null;
             },
 
-            // Liveness check: keep asking AT+BAUD_RATE? for up to `attempts` rounds (the
-            // device may still be booting after the DTR reset that opening the port causes,
-            // and the ADSBee 1421 Programmer locks onto its console before pass-through
-            // resumes). Any legible reply proves the link works, and the rate the device
-            // reports is the console rate, whatever rate this page opened the port at.
-            // When it differs from the port's rate, a second consecutive legible reply is
-            // required, so a single stale line can't be mistaken for a live link.
+            // Liveness check: ask AT+BAUD_RATE? up to `attempts` times while the device boots.
+            // If the reported rate differs from the port's, require two replies in a row so a
+            // stale line isn't mistaken for a live link.
             //
             // Returns the device's rate, or null.
             async probe(attempts = PROBE_ATTEMPTS) {
@@ -5538,17 +5521,14 @@ function makeRxEnableEntry() {
                 return null;
             },
 
-            // The port's own rate means nothing (the ADSBee 1421 Programmer's USB baud rate is
-            // virtual), so only the console's rate is shown.
+            // Only the console's rate is shown; the port's rate is virtual.
             _announceLink(deviceBaud) {
                 tabController.notice(`Console link up: device console at ${deviceBaud} baud.`);
             },
 
-            // Link checks share one serial port, so they must never interleave with each
-            // other or with the bootloader check (connect + post-flash check, AT+REBOOT
-            // hook + auto-reconnect, ...). _exclusive() runs fn after any section already
-            // in flight; negotiate() additionally coalesces, so a second caller joins the
-            // running check instead of queueing another.
+            // Link checks and the bootloader check share one port and must not interleave.
+            // _exclusive() runs fn after any section in flight; negotiate() also coalesces, so
+            // a second caller joins the running check.
             _negChain: Promise.resolve(),
             _negotiation: null,
 
@@ -5558,9 +5538,7 @@ function makeRxEnableEntry() {
                 return p;
             },
 
-            // Confirm the link and show the console's rate. The device boots at its saved
-            // console baud (factory default 1,000,000) and the ADSBee 1421 Programmer finds
-            // it, so this only waits for the device to answer (see PROBE_ATTEMPTS).
+            // Confirm the link and show the console's rate.
             negotiate() {
                 if (this._negotiation) return this._negotiation;
                 this._negotiation = this._exclusive(() => this._negotiateImpl())
@@ -5579,9 +5557,7 @@ function makeRxEnableEntry() {
                 this._announceLink(baud);
             },
 
-            // After something reboots the device (AT+REBOOT, firmware flash, settings
-            // erase), it comes back at its saved rate, which the ADSBee 1421 Programmer
-            // follows; check that it answers again on the open port.
+            // After a reboot (AT+REBOOT, firmware flash, settings erase), check the device answers again.
             async renegotiateAfterReset() {
                 if (!serial.connected) return;
                 try {

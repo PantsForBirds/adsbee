@@ -248,11 +248,8 @@ bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManage
 
     if (any_locally_decoded_active && all_locally_decoded_done &&
         timestamp_ms - last_locally_decoded_report_timestamp_ms_ >= kCSBeeReportingIntervalMs) {
-        // Rounds start on reporting ticks (every kRawReportingCheckIntervalMs or slower), so a round usually starts a
-        // little after its interval is up. Advance the schedule by one interval rather than to the current time so that
-        // lateness doesn't accumulate and the MAVLink and GDL90 heartbeats keep an average rate of 1 Hz. If the schedule
-        // fell a whole interval behind (a long round, a stalled main loop), restart it from now instead of sending
-        // rounds back to back to catch up.
+        // Advance by one interval, not to now, so tick lateness doesn't accumulate and heartbeats average 1 Hz. If a
+        // whole interval behind, restart from now rather than sending rounds back to back.
         last_locally_decoded_report_timestamp_ms_ += kCSBeeReportingIntervalMs;
         if (timestamp_ms - last_locally_decoded_report_timestamp_ms_ >= kCSBeeReportingIntervalMs) {
             last_locally_decoded_report_timestamp_ms_ = timestamp_ms;

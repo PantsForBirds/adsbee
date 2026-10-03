@@ -64,8 +64,7 @@ add_executable(adsbee_1421_programmer
 pico_generate_pio_header(adsbee_1421_programmer ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
 pico_generate_pio_header(adsbee_1421_programmer ${CMAKE_CURRENT_LIST_DIR}/autobaud_edges.pio)
 
-# tusb_config.h lives at the project root; TinyUSB picks it up from the include path. console_baud.hh (the console
-# baud range) is shared with the module firmware.
+# tusb_config.h lives at the project root; TinyUSB picks it up from the include path. ../ti/comms: console_baud.hh.
 target_include_directories(adsbee_1421_programmer PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_CURRENT_LIST_DIR}/../ti/comms)
 
 target_link_libraries(adsbee_1421_programmer
