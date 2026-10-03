@@ -945,30 +945,30 @@
 
 
 <h1 id="contributing-to-these-docs">Contributing to these docs<a class="headerlink" href="#contributing-to-these-docs" title="Permanent link">&para;</a></h1>
-<p>These docs live in the <a href="https://github.com/PantsForBirds/adsbee/tree/main/docs"><code>docs/</code> folder of the ADSBee repository</a> and are built with <a href="https://www.mkdocs.org/">MkDocs</a> and the <a href="https://squidfunk.github.io/mkdocs-material/">Material for MkDocs</a> theme. Anyone can suggest a change with a pull request.</p>
+<p>These docs live in the <a href="https://github.com/PantsForBirds/adsbee/tree/main/docs"><code>docs/</code> folder of the ADSBee repository</a> and are built with <a href="https://www.mkdocs.org/">MkDocs</a> and <a href="https://squidfunk.github.io/mkdocs-material/">Material for MkDocs</a>. Anyone can suggest a change with a pull request.</p>
 <h2 id="suggest-a-change-from-your-browser">Suggest a change from your browser<a class="headerlink" href="#suggest-a-change-from-your-browser" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Open the page you want to change and click the <strong>Edit this page</strong> button (the pencil icon at the top right of the page). It opens the page's Markdown source on GitHub.</li>
-<li>GitHub asks you to fork the repository if you don't have write access. Make your edits in the GitHub editor.</li>
-<li>Click <strong>Commit changes</strong>, choose to create a new branch, and open a pull request against <code>main</code>.</li>
-<li>A maintainer reviews the pull request. Once it is merged, the <code>latest</code> version of the docs is rebuilt automatically.</li>
+<li>Click <strong>Edit this page</strong> (the pencil icon at the top right) to open the page's Markdown source on GitHub.</li>
+<li>Fork the repository if GitHub asks, and edit the page.</li>
+<li>Click <strong>Commit changes</strong>, create a new branch, and open a pull request against <code>main</code>.</li>
+<li>Once a maintainer merges it, the <code>latest</code> docs rebuild automatically.</li>
 </ol>
 <h2 id="preview-the-docs-locally">Preview the docs locally<a class="headerlink" href="#preview-the-docs-locally" title="Permanent link">&para;</a></h2>
-<p>To work on bigger changes (new pages, images, navigation), clone the repository and preview the site on your computer. You need Python 3.</p>
+<p>For bigger changes (new pages, images, navigation), preview the site on your computer. You need Python 3.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/PantsForBirds/adsbee.git
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>adsbee
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>docs/requirements.txt
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>mkdocs<span class="w"> </span>serve
 </code></pre></div>
-<p>Then open <a href="http://127.0.0.1:8000/">http://127.0.0.1:8000/</a> in a browser. The preview reloads as you edit files. Before opening a pull request, check that the site builds without warnings:</p>
+<p>Open <a href="http://127.0.0.1:8000/">http://127.0.0.1:8000/</a>; it reloads as you edit. Before opening a pull request, check that the site builds without warnings:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mkdocs<span class="w"> </span>build<span class="w"> </span>--strict
 </code></pre></div>
 <h2 id="where-things-go">Where things go<a class="headerlink" href="#where-things-go" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Pages are Markdown files under <code>docs/</code>, and the navigation is the <code>nav</code> section of <code>mkdocs.yml</code> at the repository root. Add new pages there.</li>
-<li>Images go in <code>docs/assets/</code>, in the folder for the section they belong to. Link them with a relative path, for example <code>![Alt text](../assets/guides/my-image.png)</code>.</li>
-<li>Link to other pages with relative paths to their Markdown files (<code>../guides/update-firmware.md</code>), so the links keep working in every docs version.</li>
-<li>Topics that are already documented in a README in the repository (such as building the firmware) should link to that README on GitHub instead of copying it.</li>
+<li>Pages are Markdown files under <code>docs/</code>. Add new pages to the <code>nav</code> section of <code>mkdocs.yml</code>.</li>
+<li>Images go in the matching section folder under <code>docs/assets/</code>, linked with a relative path, e.g. <code>![Alt text](../assets/guides/my-image.png)</code>.</li>
+<li>Link to other pages by relative path to their Markdown files (<code>../guides/update-firmware.md</code>) so links work in every docs version.</li>
+<li>Topics already covered by a README in the repository (such as building the firmware) should link to it on GitHub instead of copying it.</li>
 <li>
 <p>Use admonitions for notes and warnings:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>!!! warning
@@ -978,12 +978,12 @@
 </li>
 </ul>
 <h2 id="docs-versions">Docs versions<a class="headerlink" href="#docs-versions" title="Permanent link">&para;</a></h2>
-<p>The site keeps a copy of the docs for each firmware release. The version selector at the top of the page switches between them.</p>
+<p>The version selector at the top of the page switches between docs versions.</p>
 <ul>
-<li><code>latest</code> is built from the <code>main</code> branch every time <code>docs/</code> or <code>mkdocs.yml</code> changes.</li>
-<li>Each final firmware release gets its own version, named after its tag: <code>adsbee_1090-0.9.1</code> becomes <code>1090-0.9.1</code>, and <code>adsbee_1421-0.3.11</code> becomes <code>1421-0.3.11</code>. Release candidate tags (<code>-rc</code>) don't get a docs version.</li>
+<li><code>latest</code> is built from <code>main</code> whenever <code>docs/</code> or <code>mkdocs.yml</code> changes.</li>
+<li>Each final firmware release gets a version named after its tag: <code>adsbee_1090-0.9.1</code> becomes <code>1090-0.9.1</code>, <code>adsbee_1421-0.3.11</code> becomes <code>1421-0.3.11</code>. Release candidates (<code>-rc</code>) don't.</li>
 </ul>
-<p>Publishing is handled by the <code>docs</code> GitHub Actions workflow (<code>.github/workflows/docs.yml</code>) with <a href="https://github.com/jimporter/mike">mike</a>.</p>
+<p>Publishing is done by <code>.github/workflows/docs.yml</code> with <a href="https://github.com/jimporter/mike">mike</a>.</p>
 
 
 
