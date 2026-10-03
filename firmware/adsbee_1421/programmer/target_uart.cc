@@ -3,6 +3,7 @@
 #include "board.hh"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 #include "hardware/uart.h"
 #include "pico/stdlib.h"
 #include "status.hh"
@@ -18,6 +19,9 @@ static uint8_t rx_ring[kRxRingSize];
 static volatile uint32_t rx_head = 0;  // Written by IRQ.
 static volatile uint32_t rx_tail = 0;  // Written by consumer.
 static volatile uint32_t rx_drops = 0;
+static volatile uint32_t rx_errors = 0;  // Framing and break errors.
+
+static uint32_t current_baud = 0;
 
 static uint8_t tx_ring[kTxRingSize];
 static uint32_t tx_head = 0;
@@ -25,7 +29,9 @@ static uint32_t tx_tail = 0;
 
 static void OnUartRx() {
     while (uart_is_readable(kUart)) {
-        uint8_t byte = uart_getc(kUart);
+        uint32_t data = uart_get_hw(kUart)->dr;
+        if (data & (UART_UARTDR_FE_BITS | UART_UARTDR_BE_BITS)) rx_errors = rx_errors + 1;
+        uint8_t byte = (uint8_t)data;
         uint32_t head = rx_head;
         if (head - rx_tail >= kRxRingSize) {
             rx_drops = rx_drops + 1;  // Ring full: drop newest.
@@ -37,6 +43,7 @@ static void OnUartRx() {
 }
 
 void TargetUartInit(uint32_t baud) {
+    current_baud = baud;
     uart_init(kUart, baud);
     gpio_set_function(kPinUartTx, GPIO_FUNC_UART);
     gpio_set_function(kPinUartRx, GPIO_FUNC_UART);
@@ -52,8 +59,23 @@ void TargetUartInit(uint32_t baud) {
 }
 
 void TargetUartSetBaud(uint32_t baud) {
+    current_baud = baud;
     uart_set_baudrate(kUart, baud);
     TargetUartFlushInput();
+}
+
+uint32_t TargetUartGetBaud() { return current_baud; }
+
+void TargetUartHoldTxLow(bool hold) {
+    if (hold) {
+        tx_tail = tx_head;
+        uart_tx_wait_blocking(kUart);  // Let the byte on the wire finish.
+        gpio_put(kPinUartTx, 0);
+        gpio_set_dir(kPinUartTx, GPIO_OUT);
+        gpio_set_function(kPinUartTx, GPIO_FUNC_SIO);
+    } else {
+        gpio_set_function(kPinUartTx, GPIO_FUNC_UART);
+    }
 }
 
 size_t TargetUartRead(uint8_t* buf, size_t max_len) {
@@ -64,6 +86,16 @@ size_t TargetUartRead(uint8_t* buf, size_t max_len) {
     }
     return count;
 }
+
+void TargetUartPollRx() {
+    uint32_t interrupts = save_and_disable_interrupts();
+    OnUartRx();
+    restore_interrupts(interrupts);
+}
+
+uint32_t TargetUartRxReceived() { return rx_head; }
+
+uint32_t TargetUartRxConsumed() { return rx_tail; }
 
 int TargetUartReadByteTimeout(uint32_t timeout_ms) {
     absolute_time_t deadline = delayed_by_ms(get_absolute_time(), timeout_ms);
@@ -109,3 +141,11 @@ void TargetUartFlushInput() {
 }
 
 uint32_t TargetUartRxDropCount() { return rx_drops; }
+
+uint32_t TargetUartTakeRxErrors() {
+    static uint32_t taken = 0;  // The IRQ only increments rx_errors, so the difference is exact.
+    uint32_t total = rx_errors;
+    uint32_t count = total - taken;
+    taken = total;
+    return count;
+}

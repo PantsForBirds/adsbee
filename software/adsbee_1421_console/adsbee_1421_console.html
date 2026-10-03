@@ -2093,8 +2093,8 @@
         /**
          * ADSBee 1421 Web Console.
          *
-         * Talks to an ADSBee 1421 (TI CC1314R10) over the Web Serial API, probing the
-         * firmware's baud whitelist to find the device's saved console rate.
+         * Talks to an ADSBee 1421 (TI CC1314R10) through the ADSBee 1421 Programmer over
+         * the Web Serial API.
          * UI ported from the ADSBee ESP32 web interface
          * (firmware/modules/adsbee/firmware/adsbee_1090/esp/main/server/web/), with the
          * WebSocket transport replaced by a serial line router, and a firmware uploader
@@ -2105,24 +2105,21 @@
 
         // ─── Helpers ─────────────────────────────────────────────────────────────
 
-        // Console baud rates the firmware supports (the AT+BAUD_RATE whitelist), ordered
-        // factory-default-first for probing. The device boots at its saved console baud
-        // (persisted via AT+SETTINGS=SAVE; factory default 1,000,000), so it may be at
-        // any of these — connect() sweeps the list until the device answers, preferring
-        // the rate that worked last session (localStorage).
-        const BAUD_CANDIDATES = [1000000, 921600, 460800, 230400, 115200];
-        const FACTORY_BAUD = BAUD_CANDIDATES[0];
-        const LAST_BAUD_KEY = 'adsbee1421LastBaud';
+        // Console rate range (firmware/adsbee_1421/ti/comms/console_baud.hh). The Programmer's USB
+        // baud rate is virtual, so the port always opens at HOST_BAUD.
+        const CONSOLE_BAUD_MIN = 9600;
+        const CONSOLE_BAUD_MAX = 3000000;
+        const isConsoleBaud = n => Number.isInteger(n) && n >= CONSOLE_BAUD_MIN && n <= CONSOLE_BAUD_MAX;
+        // Rates offered in the Settings tab; any other rate in range is a custom one.
+        const CONSOLE_BAUD_PRESETS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 2000000, 3000000];
+        // Settings form values for a console rate, and back.
+        const consoleBaudValues = baud => Number.isInteger(baud)
+            ? { preset: CONSOLE_BAUD_PRESETS.includes(baud) ? String(baud) : 'CUSTOM', custom: baud } : null;
+        const consoleBaudFromValues = v => v.preset === 'CUSTOM' ? parseInt(v.custom, 10) : parseInt(v.preset, 10);
+        const HOST_BAUD = 1000000;
 
-        // How long to keep probing one rate before trying the next. Opening or reopening
-        // the port asserts DTR, which is wired (directly, or via the ADSBee 1421 Programmer's
-        // adapter emulation) to RESET_N, so the device is typically rebooting when the
-        // first probe goes out (~0.8 s app boot). Behind the Programmer, the Programmer
-        // itself then spends ~1–1.5 s re-negotiating the device to the host's rate
-        // before pass-through resumes. Each attempt is ~250 ms of quiet + 200 ms pause,
-        // so 6 attempts ≈ 2.7 s per rate; the device only pays this at rates it is NOT
-        // at (a live device answers the first attempt).
-        const PROBE_ATTEMPTS_PER_RATE = 6;
+        // Opening the port resets the module, so keep asking for ~3.6 s (8 x ~450 ms) while it boots.
+        const PROBE_ATTEMPTS = 8;
 
         const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
@@ -2195,7 +2192,7 @@
         const kTrailAllMaxPoints = 100;
 
         // Map display options persist across reloads. Storage can throw (private mode,
-        // disabled cookies), so both sides are defensive — matching LAST_BAUD_KEY below.
+        // disabled cookies), so both sides are defensive.
         function readMapFlag(key, dflt) {
             try {
                 const v = localStorage.getItem(key);
@@ -2343,24 +2340,10 @@
                     // The device does not echo; the local '> cmd' line above is the echo.
                     atQueue.send(command + '\r\n', { visible: true, terminator: 'quiet', quietMs: 500, timeoutMs: 15000 })
                         .catch(() => { /* visible commands print their own output/errors */ });
-                    // Commands that change (or may change) the console baud need follow-up
-                    // so a hand-typed command cannot desync the link:
-                    // - AT+BAUD_RATE=CONSOLE,<n>: OK arrives at the old rate, then the
-                    //   device switches — reopen at <n> (fall back to a sweep on failure).
-                    // - AT+REBOOT: the device comes back at its saved rate — re-sweep
-                    //   (near-instant when the rate is unchanged, the common case).
-                    // - AT+SETTINGS=RESET: applies the default baud after printing OK.
-                    const cmd = command.trim();
-                    const baudMatch = /^AT\+BAUD_RATE=CONSOLE,(\d+)\s*$/i.exec(cmd);
-                    if (baudMatch) {
-                        const baud = parseInt(baudMatch[1], 10);
-                        if (BAUD_CANDIDATES.includes(baud) && baud !== serial.currentBaud) {
-                            setTimeout(() => connectionUI.followManualBaudChange(baud), 750);
-                        }
-                    } else if (/^AT\+REBOOT\b/i.test(cmd)) {
+                    // The Programmer follows console rate changes. After AT+REBOOT, recheck the link
+                    // and refresh the uptime card.
+                    if (/^AT\+REBOOT\b/i.test(command.trim())) {
                         setTimeout(() => connectionUI.renegotiateAfterReset(), 1500);
-                    } else if (/^AT\+SETTINGS=RESET\s*$/i.test(cmd)) {
-                        setTimeout(() => connectionUI.renegotiateAfterReset(), 750);
                     }
                 } else {
                     appendToTerminal('\x1b[31mNot connected. Click Connect to open a serial port.\x1b[0m\n');
@@ -2499,14 +2482,14 @@
                 this.reader = null;
                 this.sink = null;
                 this.connected = false;
-                this.currentBaud = FACTORY_BAUD;
+                this.currentBaud = HOST_BAUD;
                 this.onDisconnect = null;
                 this._closing = false;
                 this._readLoopPromise = null;
                 this._encoder = new TextEncoder();
             }
 
-            async connect(port, baud = FACTORY_BAUD) {
+            async connect(port, baud = HOST_BAUD) {
                 await port.open({ baudRate: baud });
                 this.port = port;
                 this.currentBaud = baud;
@@ -2522,26 +2505,6 @@
                 // (awake, no bootloader backdoor), DTR deasserted = RESET_N released. Neither
                 // is an edge the Programmer acts on, so parking never resets or sleeps the module.
                 try { await port.setSignals(SIGNALS_RUN); } catch (_) { }
-                this._readLoopPromise = this._readLoop();
-            }
-
-            // Close and reopen the same port at a different baud rate (Web Serial has no
-            // live baud-change API). Suppresses the lost-port path; callers install a
-            // fresh LineSink afterwards since the decoder state is stale.
-            async reopenAt(baud) {
-                if (!this.port) throw new Error('Not connected');
-                this._closing = true;
-                try { await this.reader?.cancel(); } catch (_) { }
-                try { await this._readLoopPromise; } catch (_) { }
-                try { this.writer?.releaseLock(); } catch (_) { }
-                this.writer = null;
-                try { await this.port.close(); } catch (_) { }
-                await this.port.open({ baudRate: baud });
-                this.currentBaud = baud;
-                this.writer = this.port.writable.getWriter();
-                this.connected = true;
-                this._closing = false;
-                try { await this.port.setSignals(SIGNALS_RUN); } catch (_) { }
                 this._readLoopPromise = this._readLoop();
             }
 
@@ -4448,26 +4411,28 @@ function makeRxEnableEntry() {
             makeRxPositionEntry(),
             // ── Serial ──
             {
-                cmd: 'BAUD_RATE', label: 'Console Baud Rate', group: 'Serial', disconnects: true,
-                help: 'Takes effect immediately; the page follows the link to the new rate.',
-                fields: [{
-                    id: 'baud', label: 'Baud', type: 'enum',
-                    options: BAUD_CANDIDATES.map(String),
-                }],
+                cmd: 'BAUD_RATE', label: 'Console Baud Rate', group: 'Serial',
+                help: `Any rate from ${CONSOLE_BAUD_MIN} to ${CONSOLE_BAUD_MAX}. Takes effect immediately; until ` +
+                    'saved, a reboot restores the saved rate.',
+                fields: [
+                    {
+                        id: 'preset', label: 'Baud', type: 'enum',
+                        options: [...CONSOLE_BAUD_PRESETS.map(String), { value: 'CUSTOM', label: 'Custom…' }],
+                    },
+                    {
+                        id: 'custom', label: 'Custom baud', type: 'int', min: CONSOLE_BAUD_MIN, max: CONSOLE_BAUD_MAX,
+                        visibleIf: v => v.preset === 'CUSTOM',
+                    },
+                ],
                 parse(lines) {
                     const m = lines[0] && lines[0].match(/^BAUD_RATE=CONSOLE,(\d+)/);
-                    return m ? { baud: m[1] } : null;
+                    return m ? consoleBaudValues(parseInt(m[1], 10)) : null;
                 },
-                build(v) { return [`AT+BAUD_RATE=CONSOLE,${v.baud}`]; },
-                // The device switches rate right after acknowledging, so the port has to be
-                // reopened before AT+SETTINGS=SAVE can persist the new rate.
-                async afterWrite(v) {
-                    const baud = parseInt(v.baud, 10);
-                    if (baud === serial.currentBaud) return;
-                    await new Promise(r => setTimeout(r, 750));
-                    await connectionUI.followManualBaudChange(baud);
-                    if (serial.currentBaud !== baud) throw new Error('Link lost after baud change.');
+                parseJson(raw) {
+                    const baud = Array.isArray(raw) ? raw[0] : raw;
+                    return consoleBaudValues(typeof baud === 'number' ? baud : parseInt(baud, 10));
                 },
+                build(v) { return [`AT+BAUD_RATE=CONSOLE,${consoleBaudFromValues(v)}`]; },
             },
             // ── System ──
             {
@@ -5062,7 +5027,7 @@ function makeRxEnableEntry() {
                 this.setStatus('Checking for the ROM bootloader...');
                 try {
                     // Take the port away from the console for the duration of the check. Let a
-                    // baud sweep that is still running (e.g. after a Cancel restarted the
+                    // link check that is still running (e.g. after a Cancel restarted the
                     // device) finish first, so its AT probes don't land in the bootloader.
                     this.active = true;
                     await connectionUI._exclusive(() => { }).catch(() => { });
@@ -5293,8 +5258,7 @@ function makeRxEnableEntry() {
 
                     // Back to console mode. The device reboots at its saved console baud
                     // (settings persist across the flash unless the firmware's settings
-                    // version changed, in which case they reset to factory default) —
-                    // re-sweep to find it.
+                    // version changed, in which case they reset to factory default); check the link.
                     serial.setSink(new LineSink(lineRouter));
                     this.active = false;
                     this._state = 'done';
@@ -5495,9 +5459,8 @@ function makeRxEnableEntry() {
                 this.btn.disabled = true;
                 try {
                     if (!port) port = await navigator.serial.requestPort();
-                    // Open at the most likely rate (last session's, else factory default)
-                    // so the sweep's first probe needs no reopen.
-                    await serial.connect(port, this._sweepOrder()[0]);
+                    // Any rate works: the Programmer's USB baud rate is virtual.
+                    await serial.connect(port, HOST_BAUD);
                 } catch (e) {
                     if (e.name !== 'NotFoundError') {   // NotFoundError = user canceled the picker
                         appendToTerminal(`\x1b[31mFailed to open serial port: ${e.message}\x1b[0m\n`);
@@ -5520,11 +5483,11 @@ function makeRxEnableEntry() {
 
             _setConnectedIndicators() {
                 this.dot.className = 'status-dot connected';
-                this.dot.title = `Connected (${serial.currentBaud} 8N1)`;
+                this.dot.title = `Connected (device console at the rate the ADSBee 1421 Programmer locked onto)`;
             },
 
             // One AT+BAUD_RATE? round trip (silent-success: body line, no OK). Returns
-            // the whitelisted rate the device says its console is at, or null when
+            // the rate the device says its console is at, or null when
             // nothing legible came back within the window.
             async _queryDeviceBaud() {
                 try {
@@ -5532,26 +5495,18 @@ function makeRxEnableEntry() {
                         { expect: /^BAUD_RATE=CONSOLE,\d+/, terminator: 'quiet', quietMs: 250, timeoutMs: 700 });
                     for (const l of lines) {
                         const n = parseInt(l.split(',')[1], 10);
-                        if (BAUD_CANDIDATES.includes(n)) return n;
+                        if (isConsoleBaud(n)) return n;
                     }
                 } catch (_) { }
                 return null;
             },
 
-            // Liveness check at the current host rate: keep asking AT+BAUD_RATE? for up
-            // to `attempts` rounds (the device may still be booting after the DTR reset
-            // that opening the port causes, or a bridge may still be bringing it up).
-            //
-            // Any legible reply proves the link works, and the rate the device reports
-            // is the console rate, whatever rate this page opened the port at. Behind a
-            // USB bridge (the ADSBee 1421 Programmer) the host's baud is virtual and the
-            // Programmer retunes the device on its own. When the device's rate and the
-            // port's rate differ, a second consecutive legible reply is required, so a
-            // single stale line buffered from an earlier rate can't be mistaken for a
-            // live link.
+            // Liveness check: ask AT+BAUD_RATE? up to `attempts` times while the device boots.
+            // If the reported rate differs from the port's, require two replies in a row so a
+            // stale line isn't mistaken for a live link.
             //
             // Returns the device's rate, or null.
-            async probe(attempts = PROBE_ATTEMPTS_PER_RATE) {
+            async probe(attempts = PROBE_ATTEMPTS) {
                 let unconfirmed = null;
                 for (let i = 0; i < attempts; i++) {
                     const n = await this._queryDeviceBaud();
@@ -5566,57 +5521,14 @@ function makeRxEnableEntry() {
                 return null;
             },
 
-            async _reopenWithSink(baud) {
-                await serial.reopenAt(baud);
-                serial.setSink(new LineSink(lineRouter));
-            },
-
-            // Probe order: the rate that worked last session, then the rate currently
-            // open, then the remaining candidates factory-default-first.
-            _sweepOrder() {
-                const order = [];
-                const last = parseInt(localStorage.getItem(LAST_BAUD_KEY) ?? '', 10);
-                for (const b of [last, serial.currentBaud, ...BAUD_CANDIDATES]) {
-                    if (BAUD_CANDIDATES.includes(b) && !order.includes(b)) order.push(b);
-                }
-                return order;
-            },
-
-            // Find the device: probe patiently at each candidate host rate in turn.
-            // Reopening the port at the next candidate resets the device again (DTR),
-            // so a rate is only abandoned after the device has had time to come back.
-            // Returns the rate the device reports, or null.
-            async sweep() {
-                for (const baud of this._sweepOrder()) {
-                    if (baud !== serial.currentBaud) await this._reopenWithSink(baud);
-                    const found = await this.probe();
-                    if (found !== null) {
-                        // Only remember a rate the host itself opened successfully.
-                        if (found === serial.currentBaud) {
-                            try { localStorage.setItem(LAST_BAUD_KEY, String(found)); } catch (_) { }
-                        }
-                        return found;
-                    }
-                }
-                return null;
-            },
-
+            // Only the console's rate is shown; the port's rate is virtual.
             _announceLink(deviceBaud) {
-                if (deviceBaud === serial.currentBaud) {
-                    tabController.notice(`Console link at ${deviceBaud} baud.`);
-                } else {
-                    tabController.notice(
-                        `Console link up: device console at ${deviceBaud} baud ` +
-                        `(host port opened at ${serial.currentBaud} — a bridge is retuning the device independently).`);
-                }
+                tabController.notice(`Console link up: device console at ${deviceBaud} baud.`);
             },
 
-            // Negotiations share one serial port, so they must never interleave: each
-            // reopens the port at its own candidate rates, and two running at once
-            // (connect + post-flash re-sweep, AT+REBOOT hook + auto-reconnect, ...) can
-            // each mistake the other's rate for its own. _exclusive() runs fn after any
-            // section already in flight; negotiate() additionally coalesces, so a
-            // second caller joins the running sweep instead of queueing another.
+            // Link checks and the bootloader check share one port and must not interleave.
+            // _exclusive() runs fn after any section in flight; negotiate() also coalesces, so
+            // a second caller joins the running check.
             _negChain: Promise.resolve(),
             _negotiation: null,
 
@@ -5626,10 +5538,7 @@ function makeRxEnableEntry() {
                 return p;
             },
 
-            // Lock onto whatever rate the device is at. The device boots at its saved
-            // console baud (factory default 1,000,000), so there is nothing to negotiate
-            // up to — just find it (each rate is given time for a post-reset boot, see
-            // PROBE_ATTEMPTS_PER_RATE).
+            // Confirm the link and show the console's rate.
             negotiate() {
                 if (this._negotiation) return this._negotiation;
                 this._negotiation = this._exclusive(() => this._negotiateImpl())
@@ -5639,18 +5548,16 @@ function makeRxEnableEntry() {
 
             // Body of negotiate(); only call from inside an _exclusive() section.
             async _negotiateImpl() {
-                const baud = await this.sweep();
+                const baud = await this.probe();
                 if (baud === null) {
                     tabController.notice(
-                        `No response from the device at any supported baud rate (${BAUD_CANDIDATES.join(', ')}). Is it connected and running?`);
+                        'No response from the device. Is it connected through the ADSBee 1421 Programmer and running?');
                     return;
                 }
                 this._announceLink(baud);
             },
 
-            // After something reboots the device (AT+REBOOT, firmware flash, settings
-            // reset), it comes back at its saved rate — usually the one already in use,
-            // so the sweep starts there and is near-instant in the common case.
+            // After a reboot (AT+REBOOT, firmware flash, settings erase), check the device answers again.
             async renegotiateAfterReset() {
                 if (!serial.connected) return;
                 try {
@@ -5661,29 +5568,6 @@ function makeRxEnableEntry() {
                 } catch (_) { }
             },
 
-            // Follow a hand-typed AT+BAUD_RATE=CONSOLE,<n>: the device has already
-            // switched by the time this runs; reopen at the announced rate and fall back
-            // to a full sweep if it doesn't answer there.
-            followManualBaudChange(baud) {
-                if (!serial.connected) return Promise.resolve();
-                return this._exclusive(async () => {
-                    if (!serial.connected) return;
-                    try {
-                        await this._reopenWithSink(baud);
-                        const found = await this.probe();
-                        if (found !== null) {
-                            if (found === serial.currentBaud) {
-                                try { localStorage.setItem(LAST_BAUD_KEY, String(found)); } catch (_) { }
-                            }
-                            this._announceLink(found);
-                        } else {
-                            await this._negotiateImpl();
-                        }
-                        this._setConnectedIndicators();
-                    } catch (_) { }
-                });
-            },
-
             async disconnect() {
                 this._wantReconnect = false;
                 if (tabController.active === 'map' && serial.connected) {
@@ -5691,8 +5575,7 @@ function makeRxEnableEntry() {
                     try { await tabController.enterConsoleMode(++tabController.gen); } catch (_) { }
                 }
                 // The device keeps its current baud rate (it boots at its saved rate, so
-                // there is no "default" to restore) — other tools can find it by probing
-                // the whitelist, and this page remembers the rate for next session.
+                // there is no "default" to restore).
                 atQueue.abortAll('Disconnected');
                 await serial.disconnect();
                 // A bootloader check only describes the device on the other end of the port

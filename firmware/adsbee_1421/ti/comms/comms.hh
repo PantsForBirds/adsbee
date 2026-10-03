@@ -13,6 +13,8 @@ extern "C" {
 #include "aircraft_dictionary_config.hh"
 #include "bsp.hh"
 #include "composite_array.hh"
+#include "console_autobaud.hh"
+#include "console_baud.hh"
 #include "cpp_at.hh"
 #include "settings.hh"
 
@@ -48,17 +50,9 @@ class CommsManager {
         uint32_t uart_timeout_us = 0;  // Timeout for blocking reads, in microseconds.
     };
 
-    // Console baud rates selectable via AT+BAUD_RATE. The stored rate is applied at boot by
-    // SettingsManager::Apply() and persisted via AT+SETTINGS=SAVE; the default is
-    // SettingsManager::Settings::kDefaultUARTBaudRate (1,000,000).
-    static constexpr uint32_t kAllowedBaudRates[] = {115200, 230400, 460800, 921600, 1000000};
-
-    static inline bool IsAllowedBaudRate(uint32_t baud) {
-        for (uint32_t allowed : kAllowedBaudRates) {
-            if (baud == allowed) return true;
-        }
-        return false;
-    }
+    // Console baud rates selectable via AT+BAUD_RATE (console_baud.hh). Applied at boot by SettingsManager::Apply();
+    // default SettingsManager::Settings::kDefaultUARTBaudRate (1,000,000).
+    static constexpr bool IsAllowedBaudRate(uint32_t baud) { return ConsoleBaud::IsSupported(baud); }
 
     CommsManager(CommsManagerConfig config);
 
@@ -79,6 +73,13 @@ class CommsManager {
      * @retval True if the UART RX was re-enabled successfully, false otherwise.
      */
     bool Resume();
+
+    // Sends "UU" at the console's current rate (console_autobaud.hh).
+    void AnnounceConsoleRate();
+    // Call after SettingsManager::Apply(): announces the rate unless Apply() already did.
+    void AnnounceBootRate() {
+        if (!rate_announced_) AnnounceConsoleRate();
+    }
 
     /**
      * Blocks until all queued console TX bytes have physically left the wire. Two stages are needed:
@@ -124,7 +125,7 @@ class CommsManager {
      * already queued at the old baud) have left the wire before switching, so the host reads them
      * intact. RAM-only until persisted with AT+SETTINGS=SAVE; SettingsManager::Apply() re-applies the
      * stored rate at boot.
-     * @param[in] baud New baud rate; must be one of kAllowedBaudRates.
+     * @param[in] baud New baud rate; must pass IsAllowedBaudRate().
      * @retval True if the baud rate was changed, false if baud was invalid.
      */
     bool SetBaudRate(uint32_t baud);
@@ -253,6 +254,11 @@ class CommsManager {
     // Opens the console UART at the given baud rate and enables RX. Used by Init() and SetBaudRate().
     bool OpenUART(uint32_t baud);
 
+    // Drops the console output queued in the TX ring (what the UART is shifting out still goes).
+    void DropQueuedConsoleTx();
+    // Answers a break on console RX: drops queued output and sends "UU".
+    void AnswerConsoleBreak();
+
     /**
      * Starts a UART2 write for the contiguous segment at the head of the TX ring, if the ring is non-empty. Sets
      * uart_tx_in_progress_ accordingly. Must be called either with HWIs disabled (main loop) or from the UART write
@@ -280,6 +286,8 @@ class CommsManager {
     CppAT at_parser_;
 
     UART2_Handle uart_handle_ = nullptr;
+    bool rate_announced_ = false;  // AnnounceConsoleRate() ran since boot.
+    bool wake_trigger_ = false;    // Suspend() saw RX held low; Resume() answers it.
 
     // Software TX ring. Producer: iface_write (main loop) advances uart_tx_tail_. Consumer: KickTx() hands the
     // contiguous segment at uart_tx_head_ to UART2_write; uart_write_callback (HWI context) advances uart_tx_head_ by

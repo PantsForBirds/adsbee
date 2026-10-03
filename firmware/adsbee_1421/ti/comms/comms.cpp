@@ -15,6 +15,8 @@
 #include DeviceFamily_constructPath(inc/hw_memmap.h)
 #include DeviceFamily_constructPath(driverlib/sys_ctrl.h)
 #include DeviceFamily_constructPath(driverlib/uart.h)
+#include DeviceFamily_constructPath(driverlib/cpu.h)
+#include <ti/drivers/GPIO.h>
 #include <ti/drivers/dpl/HwiP.h>
 /* clang-format on */
 
@@ -36,6 +38,29 @@ static_assert(kRawReportChunkMaxTxBytes < CommsManager::kUartTxRingBytes, "A rep
 
 // Margin added to every baud-derived TX wait so tiny shortfalls don't get a zero-length budget.
 static const uint32_t kTxWaitMarginMs = 5;
+// Caps on the baud-derived waits, so low console rates don't stall reception or trip the watchdog. Output that doesn't
+// fit is dropped.
+static const uint32_t kTxRingSpaceWaitMaxMs = 250;
+static const uint32_t kTxDrainWaitMaxMs = 2000;
+
+// A host holding console RX low through a SYNC sleep gets "UU" on wake, like a break. 5 ms is far longer than any low
+// stretch in console traffic. CPUdelay() runs 4 cycles per loop at 48 MHz.
+static const uint32_t kWakeTriggerLowUs = 5000;
+static const uint32_t kWakeTriggerPollUs = 100;
+
+// True if the console RX line stays low for timeout_us.
+static bool ConsoleRxHeldLow(uint32_t timeout_us) {
+    for (uint32_t waited_us = 0;; waited_us += kWakeTriggerPollUs) {
+        if (GPIO_read(bsp.kSubGUARTRXPin) != 0) return false;
+        if (waited_us >= timeout_us) return true;
+        CPUdelay(kWakeTriggerPollUs * 48 / 4);
+    }
+}
+
+// Break detection. The UART2 driver never enables the break interrupt, so poll the raw interrupt status, which latches
+// a break regardless. The driver never clears this bit itself.
+static inline bool ConsoleBreakSeen() { return (HWREG(UART0_BASE + UART_O_RIS) & UART_INT_BE) != 0; }
+static inline void ClearConsoleBreak() { HWREG(UART0_BASE + UART_O_ICR) = UART_INT_BE; }
 
 CommsManager::CommsManager(CommsManagerConfig config)
     : config_(config), at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)) {}
@@ -80,7 +105,9 @@ bool CommsManager::WaitForTxRingSpace(uint16_t num_bytes) {
     // Budget: time for the shortfall to clock out at the current baud rate, doubled, plus margin. Bounded so a wedged
     // UART degrades to dropped output rather than a frozen main loop.
     uint32_t shortfall = num_bytes - TxRingFreeBytes();
-    uint32_t deadline_ms = get_time_since_boot_ms() + 2 * TxBytesToMs(shortfall) + kTxWaitMarginMs;
+    uint32_t wait_ms = 2 * TxBytesToMs(shortfall) + kTxWaitMarginMs;
+    uint32_t deadline_ms =
+        get_time_since_boot_ms() + (wait_ms < kTxRingSpaceWaitMaxMs ? wait_ms : kTxRingSpaceWaitMaxMs);
     while (TxRingFreeBytes() < num_bytes && get_time_since_boot_ms() < deadline_ms) {
         // Safety net: if a write callback was ever lost, restart the drain instead of timing out.
         if (!uart_tx_in_progress_ && uart_tx_head_ != uart_tx_tail_) {
@@ -120,6 +147,27 @@ bool CommsManager::Init() {
     return true;
 }
 
+void CommsManager::AnnounceConsoleRate() {
+    rate_announced_ = true;
+    iface_write(SettingsManager::SerialInterface::kConsole, ConsoleAutobaud::kAnswer, ConsoleAutobaud::kAnswerLen);
+}
+
+void CommsManager::DropQueuedConsoleTx() {
+    // The write callback retires what already went out, synchronously.
+    if (uart_tx_in_progress_) UART2_writeCancel(uart_handle_);
+    uintptr_t key = HwiP_disable();
+    // Restart at the ring's start so the "UU" that follows goes out in one write, unsplit.
+    if (!uart_tx_in_progress_) uart_tx_head_ = 0;
+    uart_tx_tail_ = uart_tx_head_;
+    HwiP_restore(key);
+}
+
+void CommsManager::AnswerConsoleBreak() {
+    ClearConsoleBreak();
+    DropQueuedConsoleTx();
+    AnnounceConsoleRate();
+}
+
 bool CommsManager::SetBaudRate(uint32_t baud) {
     if (!IsAllowedBaudRate(baud)) {
         return false;
@@ -156,6 +204,8 @@ bool CommsManager::SetBaudRate(uint32_t baud) {
     }
     // Discard any garbage clocked in at the mismatched rate (e.g. a trailing newline from the host).
     UART2_flushRx(uart_handle_);
+    ClearConsoleBreak();  // Bytes at the old rate can read as a break at a much higher one.
+    AnnounceConsoleRate();
 
     // Mirror the live value so settings queries display it; AT+SETTINGS=SAVE persists it and
     // SettingsManager::Apply() re-applies it at boot.
@@ -171,8 +221,9 @@ bool CommsManager::DrainConsoleTx(uint32_t timeout_margin_ms) {
 
     // Software side: wait for the TX ring to empty and the last CALLBACK-mode write to complete. Budget
     // is what the queued bytes need at the current baud rate (doubled) plus the caller's margin.
+    uint32_t wait_ms = 2 * TxBytesToMs(TxRingUsedBytes() + kPrintfBufferMaxSize);
     uint32_t deadline_ms =
-        get_time_since_boot_ms() + 2 * TxBytesToMs(TxRingUsedBytes() + kPrintfBufferMaxSize) + timeout_margin_ms;
+        get_time_since_boot_ms() + (wait_ms < kTxDrainWaitMaxMs ? wait_ms : kTxDrainWaitMaxMs) + timeout_margin_ms;
     while ((uart_tx_in_progress_ || uart_tx_head_ != uart_tx_tail_) && get_time_since_boot_ms() < deadline_ms) {
         // Safety net: restart the drain if a write callback was ever lost.
         if (!uart_tx_in_progress_) {
@@ -196,12 +247,17 @@ bool CommsManager::Suspend() {
     // Release the PowerCC26XX_DISALLOW_STANDBY constraint that UART2_rxEnable() holds while RX is on,
     // so the MCU can reach STANDBY. TX is left intact so console logging still flushes before sleep.
     UART2_rxDisable(uart_handle_);
+    // A host holding RX low gets "UU" on wake (Resume()). It can't read queued output yet, so drop it.
+    wake_trigger_ = ConsoleRxHeldLow(kWakeTriggerLowUs);
+    if (wake_trigger_) DropQueuedConsoleTx();
     return true;
 }
 
 bool CommsManager::Resume() {
     // Re-arm console UART reception after wake.
     UART2_rxEnable(uart_handle_);
+    if (wake_trigger_ || ConsoleRxHeldLow(kWakeTriggerLowUs)) AnswerConsoleBreak();
+    wake_trigger_ = false;
     return true;
 }
 
@@ -216,6 +272,7 @@ bool CommsManager::Update() {
         HwiP_restore(key);
     }
 
+    if (ConsoleBreakSeen()) AnswerConsoleBreak();
     UpdateAT();
     ReportQueuedRawPackets();
 
@@ -414,15 +471,17 @@ bool CommsManager::iface_getc(SettingsManager::SerialInterface iface, char& c) {
         //     return false;  // No chars to read.
         //     break;
         case SettingsManager::kConsole: {
-            if (UART2_getRxCount(uart_handle_) == 0) {
-                return false;  // No chars to read.
+            while (UART2_getRxCount(uart_handle_) != 0) {
+                size_t bytes_read;
+                int_fast16_t status = UART2_read(uart_handle_, &c, 1, &bytes_read);
+                if (status != UART2_STATUS_SUCCESS || bytes_read != 1) {
+                    return false;  // Failed to read character.
+                }
+                // A break's NUL: answer the break now if Update() hasn't yet.
+                if (c == '\0' && ConsoleBreakSeen()) AnswerConsoleBreak();
+                if (!ConsoleAutobaud::IgnoredConsoleByte(c)) return true;
             }
-            size_t bytes_read;
-            int_fast16_t status = UART2_read(uart_handle_, &c, 1, &bytes_read);
-            if (status == UART2_STATUS_SUCCESS && bytes_read == 1) {
-                return true;
-            }
-            return false;  // Failed to read character.
+            return false;  // No chars to read.
             break;
         }
         case SettingsManager::kNumSerialInterfaces:

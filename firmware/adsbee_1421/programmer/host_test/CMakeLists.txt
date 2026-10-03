@@ -32,15 +32,22 @@ set_target_properties(libgtest PROPERTIES IMPORTED_LOCATION ${ADSBEE_MODULES_DIR
 target_link_libraries(host_test PRIVATE libgtest Threads::Threads)
 
 target_sources(host_test PRIVATE
+    ../autobaud.cc
+    ../rate_watch.cc
     ../modem_lines.cc
+    test_autobaud.cc
+    test_console_baud.cc
+    test_rate_watch.cc
     test_cdc_text.cc
     test_host_line_coding.cc
     test_modem_lines.cc
 )
 
+# console_baud.hh and console_autobaud.hh, shared with the module firmware.
 target_include_directories(host_test PRIVATE
     ${ADSBEE_MODULES_DIR}/googletest/googletest/include
     ..
+    ../../ti/comms
 )
 
 # The Programmer's reboot-to-BOOTSEL baud must match the ADSBee 1090's PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE.

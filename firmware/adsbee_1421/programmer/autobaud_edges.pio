@@ -1,0 +1,20 @@
+;
+; Edge timer on the UART RX pin (edge_capture.cc). X counts down every 2 cycles; each edge pushes X. Start with X = ~0,
+; at `high` if the line is high, else at `low`.
+;
+
+.program autobaud_edges
+
+rise:
+    in x, 32            ; Rising edge.
+public high:
+    jmp x-- high_pin    ; Both outcomes continue at high_pin: X just counts.
+high_pin:
+    jmp pin high
+    in x, 32            ; Falling edge.
+.wrap_target
+public low:
+    jmp x-- low_pin
+low_pin:
+    jmp pin rise
+.wrap

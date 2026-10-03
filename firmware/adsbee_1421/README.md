@@ -15,6 +15,24 @@ Developer Kit.
 - [m1421 datasheet](../../word/exports/datasheet_adsbee_m1421.pdf): pinout and the AT command
   reference.
 
+## Console autobaud
+
+The console runs at its saved baud rate: any rate from 9600 to 3,000,000, default 1,000,000
+(`AT+BAUD_RATE=CONSOLE,<baud>`, then `AT+SETTINGS=SAVE`). It sends `UU` at its current rate:
+
+- after every rate change (the `OK` goes out at the old rate, `UU` at the new one);
+- at every boot;
+- when it receives a break on its RX line (SURX, pin 20). Queued output is dropped first.
+
+`UU` has an edge at every bit, so a host can measure the rate from it. The
+[ADSBee 1421 Programmer](programmer/README.md#finding-the-console) uses this to follow the console.
+
+- Wait for the `OK` of `AT+BAUD_RATE=CONSOLE,<n>` before sending the next command.
+- The console ignores NUL bytes (each break arrives as one).
+- Send a NUL before each break: on the CC1314, a break that directly follows another goes unnoticed.
+- A terminal connected directly shows `UU` as text.
+- Firmware 0.3.11-rc3 and earlier doesn't send `UU`.
+
 ## Reflashing over UART: the SYNC bootloader backdoor
 
 The m1421 can be reflashed over its console UART with no debugger and no button presses. Every
@@ -98,8 +116,8 @@ serial port through to the module, emulating a TTL USB-UART adapter wired as abo
 - **DTR assert edge → 50 ms RESET_N pulse**, with SYNC taken from RTS at the edge and held for
   250 ms after the pulse so the ROM samples it. The reset is edge-triggered, so a terminal that
   holds DTR asserted doesn't hold the module in reset.
-- The host's baud rate is applied to the Programmer's UART, so a host tool can run the
-  bootloader protocol through the Programmer at whatever rate it likes.
+- The host's baud rate is virtual: the Programmer talks to the ROM bootloader at 1,000,000 baud
+  (the ROM auto-bauds), whatever rate the host opened the port at.
 
 Any host tool that can set RTS and DTR can therefore put the module into the bootloader and
 reflash it through the Programmer remotely, with no buttons or jumpers. The Programmer ignores

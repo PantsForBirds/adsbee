@@ -2,6 +2,7 @@
 
 #include "board.hh"
 #include "bootsel.hh"
+#include "console_lock.hh"
 #include "host_line_coding.hh"
 #include "modem_lines.hh"
 #include "pico/bootrom.h"
@@ -11,39 +12,20 @@
 #include "target_uart.hh"
 #include "tusb.h"
 
-static volatile bool bridge_active = false;
-static volatile uint32_t host_baud = 0;
-static volatile uint32_t expected_console_baud = kConsoleBaud;
-static volatile bool baud_change_pending = false;
-static ModemLines lines;  // Only touched from tud_task() callbacks and the bridge loop.
+// Main loop and tud_task() callbacks only; never touched from interrupts.
+static bool bridge_active = false;
+static ModemLines lines;
 
 static uint32_t NowMs() { return to_ms_since_boot(get_absolute_time()); }
 
-static constexpr bool IsConsoleOrBootloaderBaud(uint32_t baud) {
-    if (baud == kBootloaderBaud) return true;
-    for (uint32_t candidate : kConsoleBaudCandidates) {
-        if (baud == candidate) return true;
-    }
-    return false;
-}
-static_assert(!IsConsoleOrBootloaderBaud(kRebootToBootselBaud),
-              "The reboot-to-BOOTSEL baud must not be a rate pass-through tools use");
+static_assert(kRebootToBootselBaud != kBootloaderBaud && !ConsoleBaud::IsSupported(kRebootToBootselBaud),
+              "The reboot-to-BOOTSEL baud must not be a rate the module uses");
 
 extern "C" void tud_cdc_line_coding_cb(uint8_t itf, const cdc_line_coding_t* coding) {
     (void)itf;
-    switch (ClassifyHostBaud(coding->bit_rate)) {
-        case HostBaudAction::kIgnore:
-            return;
-        case HostBaudAction::kRebootToBootsel:
-            // Checked in every Programmer state, including while it flashes the module: an interrupted flash is redone
-            // by the CRC check on the next boot. Does not return, so the magic baud never reaches host_baud or the UART.
-            reset_usb_boot(0, 0);
-            return;
-        case HostBaudAction::kApply:
-            host_baud = coding->bit_rate;
-            if (bridge_active) baud_change_pending = true;
-            return;
-    }
+    // The USB baud is virtual; only the magic baud does anything. Checked in every state, even mid-flash: the next
+    // boot's CRC check redoes an interrupted flash.
+    if (ClassifyHostBaud(coding->bit_rate) == HostBaudAction::kRebootToBootsel) reset_usb_boot(0, 0);
 }
 
 extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
@@ -56,67 +38,102 @@ extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
     TargetSetSync(lines.SyncHigh(NowMs()));
 }
 
-uint32_t BridgeHostBaud() { return host_baud; }
-
-void BridgeSetExpectedConsoleBaud(uint32_t baud) { expected_console_baud = baud; }
+// Forwards the console bytes in the RX ring up to `limit` (TargetUartRxReceived()'s count) to the host.
+static void ForwardConsole(uint32_t limit) {
+    uint8_t buf[64];
+    int32_t pending = (int32_t)(limit - TargetUartRxConsumed());
+    while (pending > 0) {
+        size_t len = TargetUartRead(buf, pending < (int32_t)sizeof(buf) ? (size_t)pending : sizeof(buf));
+        if (len == 0) break;
+        pending -= (int32_t)len;
+        size_t written = 0;
+        while (written < len) {
+            written += tud_cdc_write(buf + written, (uint32_t)(len - written));
+            if (written < len) {
+                tud_cdc_write_flush();
+                tud_task();  // FIFO full: let USB drain.
+            }
+        }
+    }
+}
 
 BridgeExit BridgeRun() {
     StatusSet(Status::kPassthrough);
-    baud_change_pending = false;
     lines.Start();
+    RateWatch& watch = ConsoleWatch();
+    watch.Start(TargetUartGetBaud(), time_us_64());
+    (void)TargetUartTakeRxErrors();
     bridge_active = true;
 
     absolute_time_t next_bootsel_poll = get_absolute_time();
     uint8_t buf[64];
+    bool was_locking = false;
+    bool was_unknown = false;
 
     while (true) {
         tud_task();
         StatusUpdate();
         TargetUartPumpTx();
 
-        if (baud_change_pending) {
-            baud_change_pending = false;
-            TargetUartSetBaud(host_baud);
-        }
-
         if (lines.reset_pending()) {
-            bool sync_low_at_reset = !lines.reset_sync_high();
-            TargetPulseReset();  // SYNC already holds the level latched at the DTR edge.
-            lines.OnResetDone(NowMs());
-            // A reset with SYNC low reboots into the app, whose console comes up at its saved
-            // baud (factory default 1 M). If the host's line coding differs from the rate the
-            // console was last negotiated to, hand back to the caller to re-negotiate. A host
-            // whose rate matches is assumed in sync; a device saved at some other rate is
-            // recovered by the host probing (line-coding changes retune the Programmer's UART live) or
-            // by the BOOTSEL recheck.
-            if (sync_low_at_reset && host_baud != 0 && host_baud != expected_console_baud) {
-                bridge_active = false;
-                return BridgeExit::kHostResetTarget;
+            // SYNC high: the ROM bootloader at kBootloaderBaud (or the app, if the backdoor is off; the watch
+            // follows it). SYNC low: the app at its saved rate; lock onto its boot "UU".
+            TargetUartHoldTxLow(false);  // Ends a break in progress.
+            if (lines.reset_sync_high()) {
+                TargetPulseReset();  // SYNC already holds the level latched at the DTR edge.
+                lines.OnResetDone(NowMs());
+                if (TargetUartGetBaud() != kBootloaderBaud) TargetUartSetBaud(kBootloaderBaud);
+                watch.OnBootloaderReset(kBootloaderBaud, time_us_64());
+            } else {
+                TargetResetIntoApp();
+                lines.OnResetDone(NowMs());
+                watch.OnAppReset(time_us_64());
             }
+            (void)TargetUartTakeRxErrors();
+            continue;
         }
 
-        TargetSetSync(lines.SyncHigh(NowMs()));  // Ends the post-reset backdoor hold.
+        bool sync_high = lines.SyncHigh(NowMs());
+        TargetSetSync(sync_high);  // Ends the post-reset backdoor hold.
 
-        // Device -> host.
-        size_t len = TargetUartRead(buf, sizeof(buf));
-        if (len > 0) {
-            size_t written = 0;
-            while (written < len) {
-                written += tud_cdc_write(buf + written, (uint32_t)(len - written));
-                tud_cdc_write_flush();
-                if (written < len) tud_task();  // FIFO full: let USB drain.
-            }
-        } else {
-            tud_cdc_write_flush();
+        TargetUartPollRx();
+        watch.OnRxErrors(TargetUartTakeRxErrors());
+        RateWatch::Action action = watch.Poll(time_us_64(), sync_high, TargetUartRxReceived());
+        if (action.kind == RateWatch::Action::kRetune) ForwardConsole(action.keep);  // Arrived before the change.
+        ConsoleWatchApply(action);
+        bool locking = watch.HoldHostData();
+        if (locking != was_locking) {
+            StatusSet(locking ? Status::kNegotiating : Status::kPassthrough);
+            was_locking = locking;
         }
+        bool unknown = watch.phase() == RateWatch::Phase::kUnknown;
+        if (unknown && !was_unknown) {
+            CdcPrintf(
+                "\r\n[ADSBee 1421 Programmer] Console not found; UART left at %lu baud, asking again every "
+                "%lu s.\r\n",
+                (unsigned long)TargetUartGetBaud(), (unsigned long)(RateWatch::kUnknownAskIntervalMs / 1000));
+        }
+        was_unknown = unknown;
 
-        // Host -> device. Only take what the UART TX ring can hold so the CDC FIFO provides
-        // natural backpressure to the host.
-        size_t tx_free = TargetUartTxFree();
-        if (tx_free > 0 && tud_cdc_available()) {
-            uint32_t take = (uint32_t)(tx_free < sizeof(buf) ? tx_free : sizeof(buf));
-            uint32_t got = tud_cdc_read(buf, take);
-            if (got > 0) TargetUartWriteNonblocking(buf, got);
+        // Device -> host, kConsoleDelayUs after arrival. Held while a rate hint resolves; dropped during an ask or
+        // reset, since they arrive at the wrong rate.
+        if (watch.DropConsoleData()) {
+            while (TargetUartRead(buf, sizeof(buf)) > 0) {
+            }
+        } else if (!watch.HoldConsoleData()) {
+            ForwardConsole(watch.Forwardable());
+        }
+        tud_cdc_write_flush();
+
+        // Host -> device. Only take what the UART TX ring can hold so the CDC FIFO provides natural backpressure to
+        // the host. Held during a lock.
+        if (!watch.HoldHostData()) {
+            size_t take = TargetUartTxFree();
+            if (take > sizeof(buf)) take = sizeof(buf);
+            if (take > 0 && tud_cdc_available()) {
+                size_t len = tud_cdc_read(buf, (uint32_t)take);
+                TargetUartWriteNonblocking(buf, len);
+            }
         }
 
         if (absolute_time_diff_us(get_absolute_time(), next_bootsel_poll) <= 0) {
@@ -124,8 +141,9 @@ BridgeExit BridgeRun() {
             BootselEvent event = PollBootsel();
             if (event != BootselEvent::kNone) {
                 while (GetBootselButton()) sleep_ms(20);
-                sleep_ms(50);  // Debounce the release.
+                sleep_ms(50);   // Debounce the release.
                 PollBootsel();  // Consume the release so the next loop's poll sees no stale edge.
+                TargetUartHoldTxLow(false);
                 bridge_active = false;
                 return event == BootselEvent::kLongPress ? BridgeExit::kEraseSettings : BridgeExit::kRecheck;
             }

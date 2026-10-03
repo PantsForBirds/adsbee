@@ -10,7 +10,7 @@
 //   magenta blink erase + program
 //   blue blink    post-program CRC verify
 //   blue          console baud negotiation
-//   green         pass-through at 1 Mbaud
+//   green         pass-through
 //   red           error (before automatic retry)
 
 enum class Status {
@@ -29,6 +29,6 @@ void StatusInit();
 void StatusSet(Status status);
 void StatusUpdate();  // Advances blink phase; call from every wait/poll loop.
 
-// printf to the USB CDC port; silently dropped when no host terminal is connected. Used only
-// outside pass-through, so status text never mixes with bridged traffic.
+// printf to the USB CDC port; silently dropped when no host terminal is connected. Used outside
+// pass-through, and in pass-through only for the "Console not found" warning.
 void CdcPrintf(const char* format, ...) __attribute__((format(printf, 1, 2)));

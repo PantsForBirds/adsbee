@@ -130,6 +130,7 @@ int main(void) {
     subg_radio.Init();
     adsbee.FeedWatchdog();
     settings_manager.Apply();
+    comms_manager.AnnounceBootRate();  // "UU" at the saved console rate (console_autobaud.hh).
 
     leds.FlashLED(bsp.k1090LEDPin, 100);  // Flash the LED for 100ms.
     CycleCounter::Enable();  // CPU-cost stats in AT+RX_STATS.

@@ -137,6 +137,12 @@ Then load `ti/build/<Config>/adsbee_1421.hex` (or `.elf`) via GDB or the J-Link 
 > ([`programmer/`](programmer/)) does this automatically, and any host tool that drives
 > RTS → SYNC and DTR → RESET_N can do it through the Programmer. See [Reflashing over UART: the SYNC bootloader backdoor](README.md#reflashing-over-uart-the-sync-bootloader-backdoor).
 
+## Console autobaud
+
+`comms/console_autobaud.hh` holds the `UU` answer and the NUL rule. `CommsManager` sends `UU` after
+`SetBaudRate()`, at boot (`AnnounceBootRate()`), and on a break (`AnswerConsoleBreak()`, polled in
+`Update()`). See [Console autobaud](README.md#console-autobaud).
+
 ## SYNC low-power sleep
 
 An external host can force the CC1314 into **STANDBY** (deep sleep, SRAM retained) by driving the

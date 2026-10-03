@@ -248,7 +248,12 @@ bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManage
 
     if (any_locally_decoded_active && all_locally_decoded_done &&
         timestamp_ms - last_locally_decoded_report_timestamp_ms_ >= kCSBeeReportingIntervalMs) {
-        last_locally_decoded_report_timestamp_ms_ = timestamp_ms;
+        // Advance by one interval, not to now, so tick lateness doesn't accumulate and heartbeats average 1 Hz. If a
+        // whole interval behind, restart from now rather than sending rounds back to back.
+        last_locally_decoded_report_timestamp_ms_ += kCSBeeReportingIntervalMs;
+        if (timestamp_ms - last_locally_decoded_report_timestamp_ms_ >= kCSBeeReportingIntervalMs) {
+            last_locally_decoded_report_timestamp_ms_ = timestamp_ms;
+        }
         csbee_overrun_reported_ = false;
         mavlink1_overrun_reported_ = false;
         mavlink2_overrun_reported_ = false;
@@ -633,12 +638,7 @@ bool CommsManager::ReportMAVLINK(ReportSink* sinks, uint16_t num_sinks, uint8_t 
 
     // Send the HEARTBEAT once at the start of each round.
     if (uid_index == 0) {
-        mavlink_heartbeat_t heartbeat_msg = {.custom_mode = 0,
-                                             .type = MAV_TYPE_ADSB,
-                                             .autopilot = MAV_AUTOPILOT_INVALID,
-                                             .base_mode = 0,
-                                             .system_status = MAV_STATE_ACTIVE,
-                                             .mavlink_version = mavlink_version};
+        mavlink_heartbeat_t heartbeat_msg = MAVLINKHeartbeatMessage();
         for (uint16_t i = 0; i < num_sinks; i++) {
             mavlink_msg_heartbeat_send_struct(static_cast<mavlink_channel_t>(sinks[i]), &heartbeat_msg);
         }

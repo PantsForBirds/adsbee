@@ -11,8 +11,16 @@
 
 void TargetUartInit(uint32_t baud);
 void TargetUartSetBaud(uint32_t baud);  // Also flushes stale RX input.
+uint32_t TargetUartGetBaud();          // Rate last requested with TargetUartInit() / TargetUartSetBaud().
+// Holds TX low for a break, or hands it back to the UART. Holding discards queued TX bytes.
+void TargetUartHoldTxLow(bool hold);
 
 size_t TargetUartRead(uint8_t* buf, size_t max_len);  // Nonblocking, from the RX ring.
+// Moves the RX FIFO into the ring now, so arrival times are accurate (the RX interrupt can lag 32 bit times).
+void TargetUartPollRx();
+// Free-running counts of the bytes put into the RX ring and taken out of it (read or flushed).
+uint32_t TargetUartRxReceived();
+uint32_t TargetUartRxConsumed();
 // Blocks up to timeout_ms for one byte, servicing USB (tud_task) and the status LED while
 // waiting; returns -1 on timeout. The wait keeps USB alive through multi-second erase commands.
 int TargetUartReadByteTimeout(uint32_t timeout_ms);
@@ -24,3 +32,5 @@ size_t TargetUartTxFree();     // Space left in the software TX ring.
 
 void TargetUartFlushInput();
 uint32_t TargetUartRxDropCount();
+// Framing and break errors since the last call (a sign of a wrong rate).
+uint32_t TargetUartTakeRxErrors();
