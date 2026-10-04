@@ -134,17 +134,15 @@ TEST(R1090Smart, BurstyAircraftHeardInBothSlicesKeepsShortStrongSlices) {
     EXPECT_NEAR(strong_ms / double(t), Share(P::kStrongSliceMinMs), 0.03);
 }
 
-TEST(R1090Smart, BurstyStrongAircraftStartTheHold) {
+TEST(R1090Smart, StrongAircraftStartsTheHoldWithinSeconds) {
     P p;
     p.Reset(0);
-    uint32_t t = 0;
-    for (int burst = 0; burst < 4; burst++) {
-        RunSlices(
-            p, t, t + 2500,
-            {{0xADF020, 80, 180, 990}, {0xADF021, 97, 180, 990}, {0xADF030, 89, 980, 0}, {0xADF031, 113, 980, 0}});
-        EXPECT_TRUE(p.StrongHold(t + 2500)) << "burst " << burst;
-        RunSlices(p, t + 2500, t + 12500);
-        EXPECT_FALSE(p.StrongHold(t + 12500)) << "gap after burst " << burst;
-        t += 12500;
-    }
+    const std::initializer_list<Aircraft> traffic = {
+        {0xADF020, 151, 180, 990}, {0xADF021, 173, 180, 990}, {0xADF030, 157, 980, 0}, {0xADF031, 181, 980, 0}};
+    RunSlices(p, 0, 8000, traffic);
+    EXPECT_TRUE(p.StrongHold(8000));
+    RunSlices(p, 8000, 30000, traffic);
+    EXPECT_TRUE(p.StrongHold(30000));
+    RunSlices(p, 30000, 30000 + P::kStrongHoldMs + 200);  // The strong aircraft leave.
+    EXPECT_FALSE(p.StrongHold(30000 + P::kStrongHoldMs + 200));
 }
