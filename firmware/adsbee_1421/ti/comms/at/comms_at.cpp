@@ -1392,7 +1392,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "a hard reset and a retry of the same config; rx_cfg_error = 1 while the selected config "
                     "is rejected and the 1090 MHz receiver is down; smart_* = MODE_S_SMART time in each slice "
                     "type, slice switches, longest switch, failed switches, valid frames per slice type, and "
-                    "STRONG-slice frames from aircraft not heard in MODE_S slices).\r\n\tAT+RX_STATS=RESET\r\n\t"
+                    "STRONG-slice frames from aircraft heard much better in STRONG slices).\r\n\tAT+RX_STATS=RESET\r\n\t"
                     "Reset all Rx stats counters.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxStatsCallback, comms_manager)},
     {.command = "SETTINGS",
