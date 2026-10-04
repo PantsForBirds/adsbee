@@ -811,15 +811,10 @@ void ADSBee::UpdateSmartSlices() {
     // LR_IRQ is disarmed around the commands, as for the RX re-arm above.
     GPIO_disableInt(bsp.kLR2021IrqPin);
     const uint32_t start_cycles = CycleCounter::Now();
-    static uint8_t fifo_buf[LR2021::kRxFifoMaxDepthBytes];
-    uint16_t fifo_len = 0;
-    const bool ok = lr2021.SetOokADSBStrong(!smart_policy.strong(), r1090_gain_, fifo_buf, &fifo_len);
+    const bool ok = lr2021.SetOokADSBStrong(!smart_policy.strong(), r1090_gain_);
     const uint32_t switch_us = CycleCounter::Since(start_cycles) / 48;
     GPIO_clearInt(bsp.kLR2021IrqPin);
     GPIO_enableInt(bsp.kLR2021IrqPin);
-    if (fifo_len > 0) {
-        ParseLR2021RxFifo(fifo_buf, fifo_len, get_time_since_boot_us());
-    }
     if (!ok) {
         smart_switch_fail_count++;
         ApplyReceiverConfig();  // Back to a known state in a MODE_S slice.

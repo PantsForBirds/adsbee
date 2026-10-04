@@ -349,28 +349,8 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     return true;
 }
 
-bool LR2021::SetOokADSBStrong(bool strong, uint8_t agc_gain, uint8_t* rx_buf, uint16_t* rx_len_bytes) {
-    *rx_len_bytes = 0;
-    // Reconfigure from standby, as SetOokADSB does. Standby XOSC keeps the crystal running for a fast restart.
-    if (!SetStandby(kSysStandbyXosc)) {
-        return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetStandby");
-    }
-    // Standby can cut a packet short and leave part of it in the FIFO, which would misalign every later read. Hand
-    // back the whole packets and clear the rest.
-    FifoLevelRsp level = {};
-    if (!GetRxFifoLevel(&level)) {
-        return SequenceStepFailed("LR2021::SetOokADSBStrong", "GetRxFifoLevel");
-    }
-    uint16_t whole = level.level < kRxFifoMaxDepthBytes ? level.level : kRxFifoMaxDepthBytes;
-    whole -= whole % kOokFifoPacketLenBytes;
-    if (whole > 0 && !ReadRxFifo(rx_buf, whole)) {
-        return SequenceStepFailed("LR2021::SetOokADSBStrong", "ReadRxFifo");
-    }
-    *rx_len_bytes = whole;
-    GetAndClearIrqRsp irq_rsp;
-    if (!ClearRxFifo() || !ClearFifoIrqFlags(0x3F, 0) || !GetAndClearIrq(&irq_rsp)) {
-        return SequenceStepFailed("LR2021::SetOokADSBStrong", "clearing the FIFO");
-    }
+bool LR2021::SetOokADSBStrong(bool strong, uint8_t agc_gain) {
+    // Both take effect in RX, so the receiver keeps running and the FIFO stays aligned.
     if (!SetAgcGainManual(LR2021OokAdsb::StrongGainStep(strong, agc_gain))) {
         return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetAgcGainManual");
     }
@@ -378,9 +358,6 @@ bool LR2021::SetOokADSBStrong(bool strong, uint8_t agc_gain, uint8_t* rx_buf, ui
     if (!WriteRegMemMask32(LR2021OokAdsb::kOokDetectRegAddr, LR2021OokAdsb::kOokDetectThresholdMask,
                            LR2021OokAdsb::OokDetectThresholdRegValue(threshold))) {
         return SequenceStepFailed("LR2021::SetOokADSBStrong", "setting the OOK detection threshold");
-    }
-    if (!SetRxAdv(0xFFFFFF)) {
-        return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetRxAdv");
     }
     return CheckLastCommandStatus("LR2021::SetOokADSBStrong");
 }
