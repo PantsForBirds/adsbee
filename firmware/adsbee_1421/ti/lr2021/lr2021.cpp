@@ -351,7 +351,7 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
 
 bool LR2021::SetOokADSBStrong(bool strong, uint8_t agc_gain, uint8_t* rx_buf, uint16_t* rx_len_bytes) {
     *rx_len_bytes = 0;
-    // Gain and threshold only take effect from standby. Standby XOSC keeps the crystal running for a fast restart.
+    // Reconfigure from standby, as SetOokADSB does. Standby XOSC keeps the crystal running for a fast restart.
     if (!SetStandby(kSysStandbyXosc)) {
         return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetStandby");
     }
