@@ -62,10 +62,10 @@ TEST(R1090Smart, AircraftHeardInBothSlicesKeepsShortStrongSlices) {
 }
 
 TEST(R1090Smart, StrongAircraftLengthensStrongSlices) {
-    // MODE_S still decodes about half the frames of a strong aircraft; it is a strong aircraft all the same.
+    // MODE_S still decodes a few frames of a strong aircraft; it is a strong aircraft all the same.
     P p;
     p.Reset(0);
-    const uint32_t strong_ms = RunSlices(p, 0, 100000, {{0xADF003, 150, 550, 990}, {0xADF004, 150, 950, 0}});
+    const uint32_t strong_ms = RunSlices(p, 0, 100000, {{0xADF003, 150, 180, 990}, {0xADF004, 150, 950, 0}});
     // Mostly long STRONG slices; the hold can lapse briefly while few frames have been counted.
     EXPECT_GT(strong_ms / 100000.0, 0.85 * Share(P::kStrongSliceMaxMs));
     EXPECT_LT(strong_ms / 100000.0, Share(P::kStrongSliceMaxMs) + 0.01);
@@ -111,4 +111,40 @@ TEST(R1090Smart, ResetEndsTheHold) {
     p.Reset(200);
     EXPECT_FALSE(p.strong());
     EXPECT_FALSE(p.StrongHold(201));
+}
+
+TEST(R1090Smart, BurstyAircraftHeardInBothSlicesKeepsShortStrongSlices) {
+    // Eight aircraft both settings decode, in 2.5 s bursts with 10 s gaps (few frames per aircraft per decay period).
+    P p;
+    p.Reset(0);
+    uint32_t strong_ms = 0, t = 0;
+    for (int burst = 0; burst < 8; burst++) {
+        strong_ms += RunSlices(p, t, t + 2500,
+                               {{0xADF010, 80, 980, 990},
+                                {0xADF011, 83, 980, 990},
+                                {0xADF012, 89, 980, 990},
+                                {0xADF013, 97, 980, 990},
+                                {0xADF014, 101, 980, 990},
+                                {0xADF015, 107, 980, 990},
+                                {0xADF016, 113, 980, 990},
+                                {0xADF017, 127, 980, 990}});
+        strong_ms += RunSlices(p, t + 2500, t + 12500);
+        t += 12500;
+    }
+    EXPECT_NEAR(strong_ms / double(t), Share(P::kStrongSliceMinMs), 0.03);
+}
+
+TEST(R1090Smart, BurstyStrongAircraftStartTheHold) {
+    P p;
+    p.Reset(0);
+    uint32_t t = 0;
+    for (int burst = 0; burst < 4; burst++) {
+        RunSlices(
+            p, t, t + 2500,
+            {{0xADF020, 80, 180, 990}, {0xADF021, 97, 180, 990}, {0xADF030, 89, 980, 0}, {0xADF031, 113, 980, 0}});
+        EXPECT_TRUE(p.StrongHold(t + 2500)) << "burst " << burst;
+        RunSlices(p, t + 2500, t + 12500);
+        EXPECT_FALSE(p.StrongHold(t + 12500)) << "gap after burst " << burst;
+        t += 12500;
+    }
 }

@@ -14,8 +14,8 @@ class R1090SmartPolicy {
     static constexpr uint32_t kStrongHoldMs = 5000;
     // A strong aircraft is decoded at least this much more often (percent) per second of STRONG slices than per
     // second of MODE_S slices.
-    static constexpr uint32_t kStrongRateRatioPct = 150;
-    // Per-aircraft counts and slice times are halved this often, so they follow the recent past.
+    static constexpr uint32_t kStrongRateRatioPct = 300;
+    // Per-aircraft scores are halved this often, so they follow the recent past.
     static constexpr uint32_t kDecayMs = 5000;
     // Decodes this soon after a switch may have been captured in the previous slice, so they don't count.
     static constexpr uint32_t kSettleMs = 3;
@@ -31,7 +31,6 @@ class R1090SmartPolicy {
         slice_start_ms_ = now_ms;
         last_decay_ms_ = now_ms;
         have_strong_ = false;
-        time_ms_[0] = time_ms_[1] = 0;
         for (Aircraft& a : aircraft_) a = {};
     }
 
@@ -51,16 +50,13 @@ class R1090SmartPolicy {
     // Returns the slice length in ms that just ended.
     uint32_t Switched(uint32_t now_ms) {
         uint32_t len = now_ms - slice_start_ms_;
-        time_ms_[strong_] += len;
         strong_ = !strong_;
         slice_start_ms_ = now_ms;
         if (now_ms - last_decay_ms_ >= kDecayMs) {
             last_decay_ms_ = now_ms;
-            time_ms_[0] /= 2;
-            time_ms_[1] /= 2;
             for (Aircraft& a : aircraft_) {
-                a.n[0] /= 2;
-                a.n[1] /= 2;
+                a.score[0] /= 2;
+                a.score[1] /= 2;
             }
         }
         return len;
@@ -69,14 +65,16 @@ class R1090SmartPolicy {
     // A valid frame from icao was decoded now. Returns true if it comes from a strong aircraft.
     bool OnValid(uint32_t icao, uint32_t now_ms) {
         if (now_ms - slice_start_ms_ < kSettleMs) return false;
+        // Each frame scores the inverse of its slice type's share of the time, so an aircraft both settings hear
+        // scores the same in both however the split changes.
+        const uint32_t strong_len = StrongHold(now_ms) ? strong_slice_max_ms : strong_slice_min_ms;
+        const uint32_t cycle_x16 = 16 * (weak_slice_ms + strong_len);
+        const uint32_t weak_weight = cycle_x16 / weak_slice_ms;
         Aircraft& a = Find(icao, now_ms);
-        a.n[strong_]++;
+        a.score[strong_] += strong_ ? cycle_x16 / strong_len : weak_weight;
         if (!strong_) return false;
-        // Rates per ms of slice time, compared without division. The current slice counts toward the STRONG time, and
-        // at least one long slice of it is assumed so a single early frame doesn't look like a high rate.
-        uint64_t strong_ms = time_ms_[1] + (now_ms - slice_start_ms_);
-        if (strong_ms < strong_slice_max_ms) strong_ms = strong_slice_max_ms;
-        if (100 * uint64_t(a.n[1]) * time_ms_[0] <= uint64_t(kStrongRateRatioPct) * a.n[0] * strong_ms) return false;
+        // One extra MODE_S frame keeps the first few frames from tipping it.
+        if (100 * uint64_t(a.score[1]) <= uint64_t(kStrongRateRatioPct) * (a.score[0] + weak_weight)) return false;
         have_strong_ = true;
         last_strong_ms_ = now_ms;
         return true;
@@ -85,8 +83,8 @@ class R1090SmartPolicy {
    private:
     struct Aircraft {
         uint32_t icao;
-        uint32_t last_ms;  // 0 marks an empty entry.
-        uint32_t n[2];     // Valid frames in MODE_S [0] and STRONG [1] slices.
+        uint32_t last_ms;   // 0 marks an empty entry.
+        uint32_t score[2];  // Weighted valid frames in MODE_S [0] and STRONG [1] slices.
     };
 
     // Returns the entry for icao, taking over an empty or the least recently heard one if needed.
@@ -110,6 +108,5 @@ class R1090SmartPolicy {
     uint32_t last_decay_ms_ = 0;
     bool have_strong_ = false;
     uint32_t last_strong_ms_ = 0;
-    uint32_t time_ms_[2] = {0, 0};  // Decayed time in MODE_S [0] and STRONG [1] slices.
     Aircraft aircraft_[kNumAircraft] = {};
 };
