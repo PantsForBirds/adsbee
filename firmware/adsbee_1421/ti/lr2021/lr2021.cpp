@@ -349,10 +349,27 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     return true;
 }
 
-bool LR2021::SetOokADSBStrong(bool strong, uint8_t agc_gain) {
+bool LR2021::SetOokADSBStrong(bool strong, uint8_t agc_gain, uint8_t* rx_buf, uint16_t* rx_len_bytes) {
+    *rx_len_bytes = 0;
     // Gain and threshold only take effect from standby. Standby XOSC keeps the crystal running for a fast restart.
     if (!SetStandby(kSysStandbyXosc)) {
         return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetStandby");
+    }
+    // Standby can cut a packet short and leave part of it in the FIFO, which would misalign every later read. Hand
+    // back the whole packets and clear the rest.
+    FifoLevelRsp level = {};
+    if (!GetRxFifoLevel(&level)) {
+        return SequenceStepFailed("LR2021::SetOokADSBStrong", "GetRxFifoLevel");
+    }
+    uint16_t whole = level.level < kRxFifoMaxDepthBytes ? level.level : kRxFifoMaxDepthBytes;
+    whole -= whole % kOokFifoPacketLenBytes;
+    if (whole > 0 && !ReadRxFifo(rx_buf, whole)) {
+        return SequenceStepFailed("LR2021::SetOokADSBStrong", "ReadRxFifo");
+    }
+    *rx_len_bytes = whole;
+    GetAndClearIrqRsp irq_rsp;
+    if (!ClearRxFifo() || !ClearFifoIrqFlags(0x3F, 0) || !GetAndClearIrq(&irq_rsp)) {
+        return SequenceStepFailed("LR2021::SetOokADSBStrong", "clearing the FIFO");
     }
     if (!SetAgcGainManual(LR2021OokAdsb::StrongGainStep(strong, agc_gain))) {
         return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetAgcGainManual");

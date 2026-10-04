@@ -1162,8 +1162,9 @@ class LR2021 {
      */
     bool SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_t agc_gain, uint8_t rx_boost = 0);
     // Switches a receiver configured by SetOokADSB between the MODE_S and MODE_S_STRONG gain and threshold
-    // (MODE_S_SMART slices). agc_gain is the MODE_S gain (0 = auto).
-    bool SetOokADSBStrong(bool strong, uint8_t agc_gain);
+    // (MODE_S_SMART slices). agc_gain is the MODE_S gain (0 = auto). Whole packets left in the FIFO are copied to
+    // rx_buf (kRxFifoMaxDepthBytes) for the caller to parse.
+    bool SetOokADSBStrong(bool strong, uint8_t agc_gain, uint8_t* rx_buf, uint16_t* rx_len_bytes);
 
 
     /**
