@@ -1165,7 +1165,6 @@ class LR2021 {
     // (MODE_S_SMART slices) while it stays in RX. agc_gain is the MODE_S gain (0 = auto).
     bool SetOokADSBStrong(bool strong, uint8_t agc_gain);
 
-
     /**
      * Sets the Ook modulation parameters.
      */
