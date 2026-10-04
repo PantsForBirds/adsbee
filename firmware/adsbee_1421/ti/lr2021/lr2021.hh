@@ -1161,6 +1161,10 @@ class LR2021 {
      * @param[in] rx_boost       LF RX path boost level (0 = off .. 7 = max), clamped to kBoostMax.
      */
     bool SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_t agc_gain, uint8_t rx_boost = 0);
+    // Switches a receiver configured by SetOokADSB between the MODE_S and MODE_S_STRONG gain and threshold
+    // (MODE_S_SMART slices). agc_gain is the MODE_S gain (0 = auto).
+    bool SetOokADSBStrong(bool strong, uint8_t agc_gain);
+
 
     /**
      * Sets the Ook modulation parameters.
@@ -1275,6 +1279,9 @@ class LR2021 {
 
    private:
     friend class LR2021TestAccessor;
+
+    // Chip default OOK detection threshold, read back by SetOokADSB.
+    uint8_t ook_default_threshold_ = 0x61;
 
     // System firmware command opcodes (§5.6.1, 0x01xx group).
     static constexpr uint16_t kOpcodeGetStatus = 0x0100;

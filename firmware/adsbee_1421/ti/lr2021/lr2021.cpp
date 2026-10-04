@@ -269,12 +269,9 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
             return SequenceStepFailed("LR2021::SetOokADSB", "SetOokDetector");
         }
     } else {
-        // MODE_S_STRONG detects on preamble chips 6-15 (see lr2021_ook_adsb.hh); the other modes use
-        // the whole preamble. Both patterns end at chip 15, so the capture starts at message bit 0.
-        const bool strong_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong;
-        const uint16_t pattern = strong_mode ? LR2021OokAdsb::kStrongPattern : LR2021OokAdsb::kModeSPattern;
-        const uint8_t pattern_len_chips =
-            strong_mode ? LR2021OokAdsb::kStrongPatternLenChips : LR2021OokAdsb::kModeSPatternLenChips;
+        // The other modes detect on the whole preamble, so the capture starts at message bit 0.
+        const uint16_t pattern = LR2021OokAdsb::kModeSPattern;
+        const uint8_t pattern_len_chips = LR2021OokAdsb::kModeSPatternLenChips;
         if (!SetOokDetector(pattern,  // Preamble pattern (LSB-first chips)
                             (test_len_chips ? test_len_chips : pattern_len_chips) - 1,  // Field is N-1
                             0,                                   // No pattern repetition
@@ -311,18 +308,29 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         return SequenceStepFailed("LR2021::SetOokADSB", "SetDioIrqConfig for the IRQ line");
     }
 
-    if (!SetAgcGainManual(agc_gain)) {  // 0 = auto, 1..15 manual (13 = max).
+    // MODE_S_SMART starts in its MODE_S slice; SetOokADSBStrong switches it.
+    const bool strong_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong;
+    // 0 = auto, 1..15 manual (13 = max).
+    if (!SetAgcGainManual(LR2021OokAdsb::StrongGainStep(strong_mode, agc_gain))) {
         return SequenceStepFailed("LR2021::SetOokADSB", "SetAgcGainManual");
     }
-    // MODE_S raises the AGC trigger so packets up to -45 dBm keep their whole preamble (lr2021_ook_adsb.hh). DF17
-    // and MODE_S_STRONG keep the chip default. Manual gain (agc_gain != 0) leaves the AGC off.
-    if (agc_gain == 0 && preamble_mode == SettingsManager::kR1090PreambleModeModeS &&
+    // MODE_S and MODE_S_SMART raise the AGC trigger so packets up to about -40 dBm keep their whole preamble
+    // (lr2021_ook_adsb.hh). With the AGC off the trigger has no effect, so SMART can keep it in STRONG slices.
+    const bool standard_agc = preamble_mode == SettingsManager::kR1090PreambleModeModeS ||
+                              preamble_mode == SettingsManager::kR1090PreambleModeModeSSmart;
+    if (agc_gain == 0 && standard_agc &&
         !WriteRegMemMask32(LR2021OokAdsb::kAgcConfigRegAddr, LR2021OokAdsb::kAgcTriggerMask,
                            LR2021OokAdsb::AgcTriggerRegValue(LR2021OokAdsb::kAgcTriggerStandardPreamble))) {
         return SequenceStepFailed("LR2021::SetOokADSB", "setting the AGC trigger");
     }
-    // MODE_S_STRONG raises the OOK detection threshold so its short pattern doesn't trigger on noise.
-    if (preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong &&
+    // The chip sets its default OOK threshold from the RX bandwidth; SMART restores it in MODE_S slices.
+    uint32_t ook_detect_reg = 0;
+    if (!ReadRegMem32(LR2021OokAdsb::kOokDetectRegAddr, &ook_detect_reg, 1)) {
+        return SequenceStepFailed("LR2021::SetOokADSB", "reading the OOK detection threshold");
+    }
+    ook_default_threshold_ = LR2021OokAdsb::OokDetectThresholdFromReg(ook_detect_reg);
+    // MODE_S_STRONG raises the OOK detection threshold above the noise floor of its low gain.
+    if (strong_mode &&
         !WriteRegMemMask32(LR2021OokAdsb::kOokDetectRegAddr, LR2021OokAdsb::kOokDetectThresholdMask,
                            LR2021OokAdsb::OokDetectThresholdRegValue(LR2021OokAdsb::kOokDetectThresholdStrong))) {
         return SequenceStepFailed("LR2021::SetOokADSB", "setting the OOK detection threshold");
@@ -339,6 +347,25 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     }
 
     return true;
+}
+
+bool LR2021::SetOokADSBStrong(bool strong, uint8_t agc_gain) {
+    // Gain and threshold only take effect from standby. Standby XOSC keeps the crystal running for a fast restart.
+    if (!SetStandby(kSysStandbyXosc)) {
+        return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetStandby");
+    }
+    if (!SetAgcGainManual(LR2021OokAdsb::StrongGainStep(strong, agc_gain))) {
+        return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetAgcGainManual");
+    }
+    const uint8_t threshold = strong ? LR2021OokAdsb::kOokDetectThresholdStrong : ook_default_threshold_;
+    if (!WriteRegMemMask32(LR2021OokAdsb::kOokDetectRegAddr, LR2021OokAdsb::kOokDetectThresholdMask,
+                           LR2021OokAdsb::OokDetectThresholdRegValue(threshold))) {
+        return SequenceStepFailed("LR2021::SetOokADSBStrong", "setting the OOK detection threshold");
+    }
+    if (!SetRxAdv(0xFFFFFF)) {
+        return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetRxAdv");
+    }
+    return CheckLastCommandStatus("LR2021::SetOokADSBStrong");
 }
 
 #ifdef HARDWARE_UNIT_TESTS

@@ -45,6 +45,7 @@ target_sources(host_test PRIVATE
     ${ADSBEE_COMMON_DIR}/utils/crc/crc.cpp  # crc32_ieee_802_3 for Settings::IsValid(), and the Mode S CRC.
     test_lr2021_ook_adsb.cc
     test_lr2021_status_tracker.cc
+    test_r1090_smart.cc
     test_packet_decoder.cc
     test_settings.cc
 )

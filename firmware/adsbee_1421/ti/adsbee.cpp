@@ -212,6 +212,7 @@ bool ADSBee::ApplyReceiverConfigInner() {
     }
     receiver_config_rejected_ = false;
     config_rejected_backoff_ms_ = 0;
+    smart_policy.Reset(get_time_since_boot_ms());  // The config starts MODE_S_SMART in a MODE_S slice.
     // Arm the LR2021 IRQ rising-edge interrupt now that the chip side is routing kIrqRxFifo to it.
     // Clear any stale latched edge first: neither GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
     // The BUSY callback is registered here too, but its interrupt stays disarmed until a chain frame
@@ -592,6 +593,12 @@ void ADSBee::IngestAndForwardPackets() {
         // dictionary didn't know what to do with them.
         if (decoded_packet.is_valid) {
             lr2021_frames_since_valid_ = 0;  // Healthy stream: reset the validity watchdog.
+            if (r1090_preamble_mode_ == SettingsManager::kR1090PreambleModeModeSSmart) {
+                (smart_policy.strong() ? smart_strong_valid : smart_weak_valid)++;
+                if (smart_policy.OnValid(decoded_packet.icao_address, get_time_since_boot_ms())) {
+                    smart_strong_only++;
+                }
+            }
             // Counted, not logged: at high packet rates a per-packet CONSOLE_ERROR here floods the UART
             // TX ring and stalls the main loop -- the very thing that makes the queue overflow.
             if (comms_manager.mode_s_packet_reporting_queue.IsFull()) {
@@ -784,11 +791,41 @@ bool ADSBee::UpdateLR2021() {
         ApplyReceiverConfig();  // Stamps lr2021_last_recovery_ms_ for the backoff.
     }
 
+    if (r1090_preamble_mode_ == SettingsManager::kR1090PreambleModeModeSSmart && receiver_config_ok_ &&
+        !lr2021.fifo_overflow_pending) {
+        UpdateSmartSlices();
+    }
+
     uint32_t elapsed_us = get_time_since_boot_us() - start_us;
     if (elapsed_us > max_lr2021_us) {
         max_lr2021_us = elapsed_us;
     }
     return success;
+}
+
+void ADSBee::UpdateSmartSlices() {
+    uint32_t now_ms = get_time_since_boot_ms();
+    if (!smart_policy.SliceDone(now_ms)) {
+        return;
+    }
+    // LR_IRQ is disarmed around the commands, as for the RX re-arm above.
+    GPIO_disableInt(bsp.kLR2021IrqPin);
+    const uint32_t start_cycles = CycleCounter::Now();
+    const bool ok = lr2021.SetOokADSBStrong(!smart_policy.strong(), r1090_gain_);
+    const uint32_t switch_us = CycleCounter::Since(start_cycles) / 48;
+    GPIO_clearInt(bsp.kLR2021IrqPin);
+    GPIO_enableInt(bsp.kLR2021IrqPin);
+    if (!ok) {
+        smart_switch_fail_count++;
+        ApplyReceiverConfig();  // Back to a known state in a MODE_S slice.
+        return;
+    }
+    const bool was_strong = smart_policy.strong();
+    (was_strong ? smart_strong_ms : smart_weak_ms) += smart_policy.Switched(now_ms);
+    smart_switch_count++;
+    if (switch_us > smart_switch_max_us) {
+        smart_switch_max_us = switch_us;
+    }
 }
 
 void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us) {

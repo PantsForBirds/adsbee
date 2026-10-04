@@ -3,6 +3,7 @@
 #include "aircraft_dictionary.hh"
 #include "bsp.hh"
 #include "lr2021.hh"
+#include "r1090_smart.hh"
 #include "settings.hh"
 
 class ADSBee {
@@ -127,6 +128,17 @@ class ADSBee {
     // Reported and reset via AT+RX_STATS.
     uint32_t lr2021_drain_max_us = 0;
 
+    // MODE_S_SMART slice policy and time split, reported and reset via AT+RX_STATS.
+    R1090SmartPolicy smart_policy;
+    uint32_t smart_weak_ms = 0;    // Time in MODE_S slices.
+    uint32_t smart_strong_ms = 0;  // Time in MODE_S_STRONG slices.
+    uint32_t smart_switch_count = 0;
+    uint32_t smart_switch_max_us = 0;  // Longest slice switch (SPI commands, receiver not listening).
+    uint32_t smart_switch_fail_count = 0;
+    uint32_t smart_weak_valid = 0;  // Valid frames decoded in each slice type.
+    uint32_t smart_strong_valid = 0;
+    uint32_t smart_strong_only = 0;  // STRONG-slice frames from aircraft not heard in MODE_S slices.
+
     SettingsManager::RxPosition rx_position;
     bool rx_position_available = false;
 
@@ -141,6 +153,8 @@ class ADSBee {
     // which gates Mode S surface position decoding. Ported from the ADSBee 1090.
     void UpdateRxPosition();
     bool UpdateLR2021();
+    // MODE_S_SMART: switches the receiver between MODE_S and MODE_S_STRONG when a slice ends.
+    void UpdateSmartSlices();
     // Splits a drained LR2021 RX FIFO payload into per-packet Mode S frames and enqueues them for
     // decoding. rx_buf points at the drain payload (valid until FinishRxDrain() / ReleaseSlot()).
     // mlat_timestamp_us stamps every packet in the batch (IRQ-edge time for chain slots, parse time

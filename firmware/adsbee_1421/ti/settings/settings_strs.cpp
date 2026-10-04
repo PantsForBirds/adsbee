@@ -24,7 +24,8 @@ const char SettingsManager::kR1090PreambleModeStrs[SettingsManager::kNumR1090Pre
                                                   [SettingsManager::kR1090PreambleModeStrMaxLen] = {
                                                       "DF17",           // Preamble chips 8-15 + DF17 header bits.
                                                       "MODE_S",         // Standard preamble, raised AGC trigger.
-                                                      "MODE_S_STRONG",  // Preamble chips 6-15, raised OOK threshold.
+                                                      "MODE_S_STRONG",  // Standard preamble, fixed low gain.
+                                                      "MODE_S_SMART",   // Time slices of MODE_S and MODE_S_STRONG.
 };
 
 const char SettingsManager::RxPosition::kPositionSourceStrs[SettingsManager::RxPosition::kNumPositionSources]

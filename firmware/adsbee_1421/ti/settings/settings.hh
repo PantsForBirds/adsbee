@@ -79,10 +79,11 @@ class SettingsManager {
     enum R1090PreambleMode : uint8_t {
         kR1090PreambleModeDF17 = 0,    // Preamble chips 8-15 + DF17 header bits: DF17 frames only. Factory default.
         kR1090PreambleModeModeS = 1,   // Standard preamble, raised AGC trigger: every downlink format,
-                                       // weak signals up to about -45 dBm.
-        kR1090PreambleModeModeSStrong = 2,  // Preamble chips 6-15, raised OOK threshold: strong signals, about
-                                            // -50 to -20 dBm, where the LR2021 gain control blanks the preamble
-                                            // start. Signals above about -15 dBm are not decoded.
+                                       // weak signals up to about -40 dBm.
+        kR1090PreambleModeModeSStrong = 2,  // Standard preamble, fixed low gain, raised OOK threshold: every
+                                            // downlink format, strong signals from about -45 to 0 dBm.
+        kR1090PreambleModeModeSSmart = 3,   // Time slices of MODE_S and MODE_S_STRONG; STRONG slices grow while
+                                            // aircraft only they decode are around.
         kNumR1090PreambleModes
     };
     static constexpr uint16_t kR1090PreambleModeStrMaxLen = 30;

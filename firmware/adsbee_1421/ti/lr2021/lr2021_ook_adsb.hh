@@ -35,20 +35,9 @@ static constexpr uint16_t kModeSPatternLastChip = 15;
 static constexpr uint16_t kModeSPattern = PreambleChipsPattern(kModeSPatternFirstChip, kModeSPatternLastChip);
 static constexpr uint8_t kModeSPatternLenChips = kModeSPatternLastChip - kModeSPatternFirstChip + 1;
 
-// Strong-signal detector: preamble chips 6-15. From about -52 dBm the AGC cuts the gain during the preamble and the
-// demodulator outputs nothing for about 4.5 us, so the standard pattern can't match. Weak packets make this pattern
-// sync late inside the data, so it only suits strong signals.
-static constexpr uint16_t kStrongPatternFirstChip = 6;
-static constexpr uint16_t kStrongPatternLastChip = 15;
-static constexpr uint16_t kStrongPattern = PreambleChipsPattern(kStrongPatternFirstChip, kStrongPatternLastChip);
-static constexpr uint8_t kStrongPatternLenChips = kStrongPatternLastChip - kStrongPatternFirstChip + 1;
-
 static_assert(kModeSPattern == 0x0285, "Standard pattern must match the Semtech ADS-B pattern 0x285.");
 static_assert(PreambleChipsPatternIsValid(kModeSPatternFirstChip, kModeSPatternLastChip),
               "Standard pattern must start with a transition.");
-static_assert(kStrongPattern == 0x000A, "Strong pattern: chips 6-15 = 0101000000 (LSB first).");
-static_assert(PreambleChipsPatternIsValid(kStrongPatternFirstChip, kStrongPatternLastChip),
-              "Strong pattern must start with a transition.");
 
 // DF17 detector: preamble chips 8-15, then the first four downlink format (DF) bits "1000" (16 chips, the maximum).
 // The capture starts at message bit 4; the RX path puts the four consumed bits back in front.
@@ -93,7 +82,7 @@ inline void ReconstructDF17Frame(const uint8_t* capture, uint16_t capture_len_by
 }
 
 // The LR2021 rejects odd-length detector patterns (CMD_PERR), which leaves the receiver unconfigured.
-static_assert(kModeSPatternLenChips % 2 == 0 && kStrongPatternLenChips % 2 == 0 && kDF17PatternLenChips % 2 == 0,
+static_assert(kModeSPatternLenChips % 2 == 0 && kDF17PatternLenChips % 2 == 0,
               "Detector patterns must have an even number of chips.");
 
 // LR2021 AGC configuration register (undocumented; found by bench testing). Bits 23:16 set the input level at which
@@ -104,9 +93,17 @@ static constexpr uint32_t kAgcTriggerShift = 16;
 // Chip default: the AGC acts from about -53 dBm and blanks the start of the preamble, so the standard detector misses
 // packets from -50 dBm up.
 static constexpr uint8_t kAgcTriggerDefault = 0x10;
-// MODE_S trigger: packets up to -45 dBm keep full gain and their whole preamble. MODE_S_STRONG needs the chip
-// default because it relies on the blanking.
+// MODE_S trigger: packets up to about -40 dBm keep full gain and their whole preamble.
 static constexpr uint8_t kAgcTriggerStandardPreamble = 0x40;
+
+// MODE_S_STRONG runs with the AGC off at this fixed gain step, so no gain change blanks the preamble and strong
+// packets don't saturate the receiver.
+static constexpr uint8_t kStrongGainStep = 5;
+
+// SetAgcGainManual step (0 = AGC): STRONG uses kStrongGainStep unless a manual gain is set.
+constexpr uint8_t StrongGainStep(bool strong, uint8_t agc_gain) {
+    return (strong && agc_gain == 0) ? kStrongGainStep : agc_gain;
+}
 
 constexpr uint32_t AgcTriggerRegValue(uint8_t trigger) {
     return (static_cast<uint32_t>(trigger) << kAgcTriggerShift) & kAgcTriggerMask;
@@ -117,12 +114,16 @@ constexpr uint32_t AgcTriggerRegValue(uint8_t trigger) {
 static constexpr uint32_t kOokDetectRegAddr = 0xF30E14;
 static constexpr uint32_t kOokDetectThresholdMask = 0x07F00000;
 static constexpr uint32_t kOokDetectThresholdShift = 20;
-// MODE_S_STRONG threshold (about -70 dB). At the chip default the short pattern matches noise often enough to trip the
-// validity watchdog, and noise triggers extra captures right after strong packets.
-static constexpr uint8_t kOokDetectThresholdStrong = 0x04;
+// MODE_S_STRONG threshold (about -74 dB), a few dB above the noise floor at kStrongGainStep. The chip default is far
+// below it.
+static constexpr uint8_t kOokDetectThresholdStrong = 0x00;
 
 constexpr uint32_t OokDetectThresholdRegValue(uint8_t threshold) {
     return (static_cast<uint32_t>(threshold) << kOokDetectThresholdShift) & kOokDetectThresholdMask;
+}
+
+constexpr uint8_t OokDetectThresholdFromReg(uint32_t reg) {
+    return static_cast<uint8_t>((reg & kOokDetectThresholdMask) >> kOokDetectThresholdShift);
 }
 
 }  // namespace LR2021OokAdsb

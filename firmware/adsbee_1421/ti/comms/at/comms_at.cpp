@@ -363,7 +363,9 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 "dma_timeouts=%lu,report_q_ovf=%lu,"
                 "validity_reconfigs=%lu,stale_edges=%lu,uat_len_mismatch=%lu,uat_report_q_ovf=%lu,"
                 "parse_max_cyc=%lu,decode_max_cyc=%lu,loop_max_cyc=%lu,loop_avg_cyc=%lu,cpu_1090_pm=%lu,"
-                "cfg_perrs=%lu,rx_cfg_error=%u",
+                "cfg_perrs=%lu,rx_cfg_error=%u,smart_weak_ms=%lu,smart_strong_ms=%lu,smart_switches=%lu,"
+                "smart_switch_max_us=%lu,smart_switch_fails=%lu,smart_weak_valid=%lu,smart_strong_valid=%lu,"
+                "smart_strong_only=%lu",
                 stats.pkt_rx, stats.crc_error, stats.len_error, stats.pbl_det, stats.sync_ok, stats.sync_fail,
                 stats.timeout, (unsigned long)adsbee.lr2021_fifo_full_count,
                 (unsigned long)packet_decoder.raw_queue_overflow_count,
@@ -389,7 +391,11 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)(adsbee.loop_total_cycles
                                     ? adsbee.rx1090_total_cycles * 1000 / adsbee.loop_total_cycles
                                     : 0),
-                (unsigned long)adsbee.lr2021_config_perr_count, adsbee.ReceiverConfigRejected() ? 1u : 0u);
+                (unsigned long)adsbee.lr2021_config_perr_count, adsbee.ReceiverConfigRejected() ? 1u : 0u,
+                (unsigned long)adsbee.smart_weak_ms, (unsigned long)adsbee.smart_strong_ms,
+                (unsigned long)adsbee.smart_switch_count, (unsigned long)adsbee.smart_switch_max_us,
+                (unsigned long)adsbee.smart_switch_fail_count, (unsigned long)adsbee.smart_weak_valid,
+                (unsigned long)adsbee.smart_strong_valid, (unsigned long)adsbee.smart_strong_only);
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -436,6 +442,14 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.loop_total_cycles = 0;
             adsbee.loop_count = 0;
             adsbee.rx1090_total_cycles = 0;
+            adsbee.smart_weak_ms = 0;
+            adsbee.smart_strong_ms = 0;
+            adsbee.smart_switch_count = 0;
+            adsbee.smart_switch_max_us = 0;
+            adsbee.smart_switch_fail_count = 0;
+            adsbee.smart_weak_valid = 0;
+            adsbee.smart_strong_valid = 0;
+            adsbee.smart_strong_only = 0;
             CPP_AT_SUCCESS();
             break;
         }
@@ -1335,10 +1349,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "R1090_PREAMBLE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S MODE_S_STRONG DF17]>\r\n\tSet the 1090MHz Mode S "
-                    "receiver mode. MODE_S: every downlink format, up to about -45 dBm. MODE_S_STRONG: strong "
-                    "signals, about -50 to -20 dBm; signals above about -15 dBm are not decoded. DF17: DF17 "
-                    "frames only. Levels measured on a devkit.\r\n\t"
+     .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S MODE_S_STRONG MODE_S_SMART DF17]>\r\n\tSet the 1090MHz "
+                    "Mode S receiver mode. MODE_S: every downlink format, up to about -40 dBm. MODE_S_STRONG: "
+                    "strong signals, about -45 to 0 dBm. MODE_S_SMART: alternates between MODE_S and "
+                    "MODE_S_STRONG, with more STRONG time while strong aircraft are around. DF17: DF17 frames "
+                    "only. Levels measured on a devkit.\r\n\t"
                     "AT+R1090_PREAMBLE?\r\n\tQuery the current preamble mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATR1090PreambleCallback, comms_manager)},
     {.command = "R1090_RX_BOOST",
@@ -1375,7 +1390,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "max/avg; cpu_1090_pm = per mille of main loop time in the 1090 receive and decode path; "
                     "cfg_perrs = receiver config attempts the LR2021 answered with CMD_PERR, each followed by "
                     "a hard reset and a retry of the same config; rx_cfg_error = 1 while the selected config "
-                    "is rejected and the 1090 MHz receiver is down).\r\n\tAT+RX_STATS=RESET\r\n\t"
+                    "is rejected and the 1090 MHz receiver is down; smart_* = MODE_S_SMART time in each slice "
+                    "type, slice switches, longest switch, failed switches, valid frames per slice type, and "
+                    "STRONG-slice frames from aircraft not heard in MODE_S slices).\r\n\tAT+RX_STATS=RESET\r\n\t"
                     "Reset all Rx stats counters.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxStatsCallback, comms_manager)},
     {.command = "SETTINGS",

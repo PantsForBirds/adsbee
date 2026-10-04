@@ -20,7 +20,8 @@ TEST(Settings, R1090PreambleModesAreNumberedContiguously) {
     static_assert(SM::kR1090PreambleModeDF17 == 0, "0 is DF17.");
     static_assert(SM::kR1090PreambleModeModeS == 1, "1 is MODE_S.");
     static_assert(SM::kR1090PreambleModeModeSStrong == 2, "2 is MODE_S_STRONG.");
-    EXPECT_EQ(SM::kNumR1090PreambleModes, 3);
+    static_assert(SM::kR1090PreambleModeModeSSmart == 3, "3 is MODE_S_SMART (appended, no version bump).");
+    EXPECT_EQ(SM::kNumR1090PreambleModes, 4);
     for (uint16_t i = 0; i < SM::kNumR1090PreambleModes; i++) {
         EXPECT_STRNE(SM::kR1090PreambleModeStrs[i], "") << "mode " << i << " has a name";
     }
@@ -34,6 +35,7 @@ TEST(Settings, R1090PreambleModeNamesSelectTheirModes) {
     EXPECT_EQ(ModeForName("DF17"), SM::kR1090PreambleModeDF17);
     EXPECT_EQ(ModeForName("MODE_S"), SM::kR1090PreambleModeModeS);
     EXPECT_EQ(ModeForName("MODE_S_STRONG"), SM::kR1090PreambleModeModeSStrong);
+    EXPECT_EQ(ModeForName("MODE_S_SMART"), SM::kR1090PreambleModeModeSSmart);
     EXPECT_EQ(ModeForName("MODE_S_SW_CRC"), -1);
     EXPECT_EQ(ModeForName("MODE_S_PREAMBLE"), -1);
     EXPECT_EQ(ModeForName("MODE_S_WEAK"), -1);
@@ -46,6 +48,14 @@ TEST(Settings, VersionRenumberedModesIsCurrent) {
     SM::Settings settings;
     settings.Stamp();
     EXPECT_TRUE(settings.IsValid());
+}
+
+TEST(Settings, SmartModeIsStoredUnderTheCurrentVersion) {
+    SM::Settings settings;
+    settings.r1090_preamble_mode = SM::kR1090PreambleModeModeSSmart;
+    settings.Stamp();
+    EXPECT_TRUE(settings.IsValid());
+    EXPECT_EQ(settings.r1090_preamble_mode, SM::kR1090PreambleModeModeSSmart);
 }
 
 TEST(Settings, BlobFromBeforeTheRenumberingIsRejected) {

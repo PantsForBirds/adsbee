@@ -1,5 +1,5 @@
-// LR2021 Mode S detector patterns (lr2021_ook_adsb.hh), checked against a chip-level model of a Mode S packet,
-// including the AGC blanking the first 9 chips of a strong one.
+// LR2021 Mode S detector patterns and settings (lr2021_ook_adsb.hh), checked against a chip-level model of a Mode S
+// packet.
 #include <random>
 #include <vector>
 
@@ -42,13 +42,10 @@ TEST(LR2021OokAdsb, PatternsMatchThePreamble) {
                                                    0x57, 0x60, 0x98});
     EXPECT_EQ(Window(chips, 0, kPreambleNumChips), kPreambleChips);
     EXPECT_EQ(Window(chips, kModeSPatternFirstChip, kModeSPatternLenChips), kModeSPattern);
-    EXPECT_EQ(Window(chips, kStrongPatternFirstChip, kStrongPatternLenChips), kStrongPattern);
-    // Both patterns end on the last preamble chip, so the capture starts at message bit 0.
+    // The pattern ends on the last preamble chip, so the capture starts at message bit 0.
     EXPECT_EQ(kModeSPatternFirstChip + kModeSPatternLenChips, kPreambleNumChips);
-    EXPECT_EQ(kStrongPatternFirstChip + kStrongPatternLenChips, kPreambleNumChips);
     // SetOokDetector maximum.
     EXPECT_LE(kModeSPatternLenChips, 16);
-    EXPECT_LE(kStrongPatternLenChips, 16);
 }
 
 TEST(LR2021OokAdsb, PatternValidity) {
@@ -64,7 +61,8 @@ TEST(LR2021OokAdsb, PatternValidity) {
     EXPECT_EQ(PreambleChipsPattern(0, 9), 0b1010000101);
 }
 
-// AGC blanking zeroes the first 9 chips: the standard pattern then misses by 3 chips, the strong pattern by 1.
+// AGC blanking zeroes the first 9 chips of a strong packet and the standard pattern then misses by 3 chips, which is
+// why MODE_S_STRONG runs with the AGC off.
 TEST(LR2021OokAdsb, AgcBlanking) {
     std::vector<uint8_t> chips = ModeSChips({0x5D, 0xAB, 0xCD, 0xEF, 0x00, 0x00, 0x00});
     for (size_t i = 0; i < 9; i++) {
@@ -73,21 +71,15 @@ TEST(LR2021OokAdsb, AgcBlanking) {
     EXPECT_EQ(ChipErrors(Window(chips, kModeSPatternFirstChip, kModeSPatternLenChips), kModeSPattern,
                          kModeSPatternLenChips),
               3);
-    EXPECT_EQ(ChipErrors(Window(chips, kStrongPatternFirstChip, kStrongPatternLenChips), kStrongPattern,
-                         kStrongPatternLenChips),
-              1);
 }
 
-// Without blanking, the strong pattern also matches within one chip 7 chips early, so it syncs late on weak signals.
-TEST(LR2021OokAdsb, StrongPatternAliasOnCleanPreamble) {
-    std::vector<uint8_t> chips(7, 0);  // Silence before the packet.
-    std::vector<uint8_t> packet = ModeSChips({0x8D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
-    chips.insert(chips.end(), packet.begin(), packet.end());
-    const size_t true_first = 7 + kStrongPatternFirstChip;
-    EXPECT_EQ(ChipErrors(Window(chips, true_first, kStrongPatternLenChips), kStrongPattern, kStrongPatternLenChips),
-              0);
-    EXPECT_EQ(
-        ChipErrors(Window(chips, true_first - 7, kStrongPatternLenChips), kStrongPattern, kStrongPatternLenChips), 1);
+TEST(LR2021OokAdsb, StrongGainStep) {
+    EXPECT_EQ(StrongGainStep(true, 0), kStrongGainStep);  // AGC off at the fixed STRONG step.
+    EXPECT_EQ(StrongGainStep(false, 0), 0);               // MODE_S keeps the AGC.
+    EXPECT_EQ(StrongGainStep(true, 9), 9);                // A manual gain wins in both.
+    EXPECT_EQ(StrongGainStep(false, 9), 9);
+    EXPECT_GE(kStrongGainStep, 1);
+    EXPECT_LE(kStrongGainStep, 13);
 }
 
 TEST(LR2021OokAdsb, AgcTriggerRegValue) {
@@ -98,11 +90,14 @@ TEST(LR2021OokAdsb, AgcTriggerRegValue) {
 }
 
 TEST(LR2021OokAdsb, OokDetectThresholdRegValue) {
-    EXPECT_EQ(OokDetectThresholdRegValue(kOokDetectThresholdStrong), 0x00400000u);
+    EXPECT_EQ(OokDetectThresholdRegValue(kOokDetectThresholdStrong), 0x00000000u);
+    EXPECT_EQ(OokDetectThresholdRegValue(0x04), 0x00400000u);
     EXPECT_EQ(OokDetectThresholdRegValue(0x61), 0x06100000u);  // Chip value read back at 3076 kHz.
     // Never touches the pattern length in bits 3:0 of the same register.
     EXPECT_EQ(OokDetectThresholdRegValue(0x7F) & 0xF, 0u);
     EXPECT_EQ(OokDetectThresholdRegValue(0xFF) & ~kOokDetectThresholdMask, 0u);
+    EXPECT_EQ(OokDetectThresholdFromReg(0xA610000F), 0x61);  // MODE_S register read back.
+    EXPECT_EQ(OokDetectThresholdFromReg(0xA000000F), kOokDetectThresholdStrong);
 }
 
 // The DF17 pattern matches only at the end of a DF 16/17 preamble: six quiet chips never occur inside data.
