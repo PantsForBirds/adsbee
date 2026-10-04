@@ -272,33 +272,31 @@ void preamble_detector_program_init(
 
 
 ; SAMPLE SUBROUTINE
-; Samples 5x and uses a biased majority vote to determine whether it's HI or LO.
+; Samples 5x, 3 cycles apart, and calls the period HI if at least 2 samples were HI (weak pulses are narrow at the
+; comparator).
 ; @param[in] y Goes back to end_of_0 if y = 0, goes back to end_of_1 otherwise.
-; @retval x x=1 if >=2/3 samples were LO, x=0 otherwise.
+; @retval x x=1 if the sampling period was LO, x=0 if it was HI.
 sample:
-    set x 2 [7]         ; 5:13 | (x+1) = number of samples to take (added delay 7)
-    mov osr !null [7]   ; 14:22 | OSR = 0b1111111111111111111111 (added delay 7)
+    set x 4 [7]         ; (x+1) = number of samples to take
+    mov osr !null [7]   ; OSR = all ones
 public sample_set_vote_threshold:
-    ;out null 27 [2]         ; 23:25 | OSR = 0b11111 (5/5 bits required to classify sampling period as HI, it's hard to get LO samples so we fudge it)
-    ; out null 28 [2]         ; 23:25 | OSR = 0b1111 (4/5 bits required to classify sampling period as HI)
-    out null 29 [2]         ; 23:25 | OSR = 0b111 (3/3 bits required to classify sampling period as HI)
-    ; out null 30 [2]         ; 23:25 | OSR = 0b11 (2/3 bits required to classify sampling period as HI)
+    out null 30 [2]     ; OSR = 2 ones: empty after 2 HI samples
 ; One sample takes 3 cycles.
 sample_wrap_target:
-    jmp pin sample_hi side 1 ; 8+3n
+    jmp pin sample_hi side 1
 sample_lo:
-    jmp sample_wrap side 0 ; 9+3n
+    jmp sample_wrap side 0
 sample_hi:
-    out null 1 side 0 ; 9+3n
+    out null 1 side 0
 sample_wrap:
-    jmp x-- sample_wrap_target ; 10+3n
-    jmp !osre sample_net_lo [1] ; 17:19 | if OSR not empty → net LO (dead mov x,pins removed, 2 cycles redistributed)
+    jmp x-- sample_wrap_target
+    jmp !osre sample_net_lo     ; if OSR not empty -> net LO
 
 sample_net_hi:
-    set x 0 [1]                 ; 20-21
-    jmp sample_return           ; 22
+    set x 0
+    jmp sample_return
 sample_net_lo:
-    set x 1 [2]                 ; 20-22
+    set x 1 [1]
     
 sample_return:
     jmp !y end_of_0             ; 22 | End of 0
@@ -326,7 +324,7 @@ start_of_1:
 ;     jmp x-- start_of_1_wait_loop   ; 0 | Decrement, loop back, or fall through on x=0
 
 ; DUMB WAIT
-    nop [7] ;side 1
+    nop [3] ;side 1
 
 falling_edge_1:
     mov x !null side 0          ; 1
@@ -349,7 +347,7 @@ start_of_0:                     ; We are 0.25 bits into a 0 - signal is LO
 ;     jmp x-- start_of_0_wait_loop
 
 ; DUMB WAIT
-    nop [7] ;side 1
+    nop [3] ;side 1
 
 rising_edge_0:
     in null, 1 [1] side 0       ; 1:2 | Emit a 0, sleep 3/4 of a bit
@@ -394,13 +392,6 @@ static inline void message_demodulator_program_init(
         sm_config_set_sideset_pins(&c, recovered_clk_pin); 
     }
 
-    // Alter the sample vote threshold based on RF frontend version.
-    // Default is out null 28 [2] (4/5 HI samples required). For V3+ use out null 29 [2] (3/5 HI samples required).
-    //if (bsp.r1090_rf_frontend_version >= SettingsManager::DeviceInfo::kADSBee1090RFFrontendV3) {
-    //    pio->instr_mem[offset + message_demodulator_offset_sample_set_vote_threshold] =
-    //    pio_encode_out(pio_null, 29) | pio_encode_delay(2);
-    //}
-
     // Park at initial_entry so the SM waits for the demod pin instead of free-running from the top of the program.
     pio_sm_init(pio, sm, offset + message_demodulator_offset_initial_entry, &c);
 }
@@ -421,28 +412,28 @@ static inline void message_demodulator_program_init(
 ; Allow side-setting the out_pin for debugging. 1x output pin can be optionally side-set.
 .side_set 1 opt
 
-; SAMPLE SUBROUTINE (unchanged from message_demodulator, 33 cycles)
-; Samples 3x and uses a biased majority vote to determine whether it's HI or LO.
+; SAMPLE SUBROUTINE (same as message_demodulator)
+; Samples 5x and calls the period HI if at least 2 samples were HI.
 ; @retval x x=1 if the sampling period was LO, x=0 if it was HI.
 sample:
-    set x 2 [7]         ; 5:13 | (x+1) = number of samples to take
-    mov osr !null [7]   ; 14:22 | OSR = all ones
+    set x 4 [7]         ; (x+1) = number of samples to take
+    mov osr !null [7]   ; OSR = all ones
 public sample_set_vote_threshold:
-    out null 29 [2]     ; 23:25 | OSR = 0b111 (3/3 bits required to classify sampling period as HI)
+    out null 30 [2]     ; OSR = 2 ones: empty after 2 HI samples
 sample_wrap_target:
-    jmp pin sample_hi side 1 ; 8+3n
+    jmp pin sample_hi side 1
 sample_lo:
-    jmp sample_wrap side 0 ; 9+3n
+    jmp sample_wrap side 0
 sample_hi:
-    out null 1 side 0 ; 9+3n
+    out null 1 side 0
 sample_wrap:
-    jmp x-- sample_wrap_target ; 10+3n
-    jmp !osre sample_net_lo [1] ; 17:19 | if OSR not empty -> net LO
+    jmp x-- sample_wrap_target
+    jmp !osre sample_net_lo     ; if OSR not empty -> net LO
 sample_net_hi:
-    set x 0 [1]                 ; 20-21
-    jmp sample_return           ; 22
+    set x 0
+    jmp sample_return
 sample_net_lo:
-    set x 1 [2]                 ; 20-22
+    set x 1 [1]
 sample_return:                  ; 4 cycles (message_demodulator uses 3 here, compensated by the shorter nop below)
     mov osr, ::pins             ; 23 | Bit-reversed IN pins: OSR bit 31 = demod pin (IN pin 0).
     out y, 1                    ; 24 | y = demod pin (OSR shifts left, so out yields bit 31).
@@ -450,13 +441,13 @@ sample_return:                  ; 4 cycles (message_demodulator uses 3 here, com
     jmp !x start_of_1           ; 26 | HI sample -> next bit is a 1, otherwise fall through to a 0.
 
 start_of_0:                     ; We are ~0.25 bits into a 0 - signal is LO
-    nop [6]                     ; 7 cycles (message_demodulator: 8) | DUMB WAIT
+    nop [2]                     ; One cycle shorter than message_demodulator (sample_return is longer) | DUMB WAIT
 rising_edge_0:
     in null, 1 [1] side 0       ; 1:2 | Emit a 0.
     jmp sample [1]              ; 3:4
 
 start_of_1:
-    nop [6]                     ; 7 cycles (message_demodulator: 8) | DUMB WAIT
+    nop [2]                     ; One cycle shorter than message_demodulator (sample_return is longer) | DUMB WAIT
 falling_edge_1:
     mov x !null side 0          ; 1
     in x, 1                     ; 2 | Emit a 1.
