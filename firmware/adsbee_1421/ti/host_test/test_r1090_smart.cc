@@ -132,8 +132,10 @@ TEST_F(R1090Smart, StrongAircraftComesFirstAmongWeakOnes) {
 TEST_F(R1090Smart, StrongAircraftIsFoundWithinSecondsAndForgottenAfterItLeaves) {
     P p;
     p.Reset(0, 0);
-    const std::initializer_list<Aircraft> traffic = {
-        {0xADF020, 151, 180, 990, -30}, {0xADF021, 173, 180, 990, -30}, {0xADF030, 157, 980, 0}, {0xADF031, 181, 980, 0}};
+    const std::initializer_list<Aircraft> traffic = {{0xADF020, 151, 180, 990, -30},
+                                                     {0xADF021, 173, 180, 990, -30},
+                                                     {0xADF030, 157, 980, 0},
+                                                     {0xADF031, 181, 980, 0}};
     RunSlices(p, 0, 10000, traffic);
     EXPECT_EQ(p.strong_pct(), P::kStrongPct);
     RunSlices(p, 10000, 30000, traffic);
