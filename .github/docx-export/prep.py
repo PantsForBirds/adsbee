@@ -39,7 +39,8 @@ def explicit_headers(doc, parts):
             tag = "w:hdr" if kind == "header" else "w:ftr"
             parts[f"word/{name}"] = (
                 f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<{tag} xmlns:w="{W_NS}">'
-                f'<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:p></{tag}>'
+                f'<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/>'
+                f'<w:rPr><w:sz w:val="2"/></w:rPr></w:pPr></w:p></{tag}>'
             ).encode()
             nonlocal rels, types
             rels = rels.replace("</Relationships>", f'<Relationship Id="{rid}" Type="{REL_NS}/{kind}" '
@@ -225,6 +226,58 @@ def symbol_runs(xml):
     return re.sub(r"<w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t(?: [^>]*)?>[^<]*</w:t></w:r>", run, xml, flags=re.S)
 
 
+def style_spacing(styles):
+    """styleId -> (before, after) in twips, following basedOn and the document defaults."""
+    defaults = re.search(r"<w:pPrDefault>.*?</w:pPrDefault>", styles, re.S)
+    own, based = {}, {}
+    for m in re.finditer(r'<w:style [^>]*w:type="paragraph"[^>]*w:styleId="([^"]+)".*?</w:style>', styles, re.S):
+        sp = re.search(r"<w:spacing [^>]*/>", m.group(0))
+        own[m.group(1)] = sp.group(0) if sp else ""
+        b = re.search(r'<w:basedOn w:val="([^"]+)"', m.group(0))
+        based[m.group(1)] = b.group(1) if b else None
+
+    def value(sid, attr):
+        seen = set()
+        while sid and sid not in seen:
+            seen.add(sid)
+            v = re.search(rf'w:{attr}="(\d+)"', own.get(sid, ""))
+            if v:
+                return int(v.group(1))
+            sid = based.get(sid)
+        v = re.search(rf'<w:spacing [^>]*w:{attr}="(\d+)"', defaults.group(0)) if defaults else None
+        return int(v.group(1)) if v else 0
+    return lambda sid: (value(sid, "before"), value(sid, "after"))
+
+
+def after_columns(doc, styles):
+    """After a continuous section break that ends a multi-column section, Word places the next paragraph
+    about 8pt higher than LibreOffice (measured on the datasheet title pages). That matches dropping the
+    section-break paragraph's space after from the next paragraph's space before."""
+    spacing = style_spacing(styles)
+    end = re.compile(r'<w:p\b[^>]*><w:pPr>((?:(?!</w:pPr>).)*<w:sectPr\b(?:(?!</w:sectPr>).)*'
+                     r'<w:cols [^>]*w:num="[2-9]"(?:(?!</w:sectPr>).)*</w:sectPr>)</w:pPr></w:p>(<w:p\b[^>]*>)', re.S)
+    out, pos = [], 0
+    for m in end.finditer(doc):
+        nxt = SECT_RE.search(doc, m.end())
+        if not nxt or '<w:type w:val="continuous"/>' not in nxt.group(0):
+            continue
+        sect_style = re.search(r'<w:pStyle w:val="([^"]+)"', m.group(1))
+        cut = spacing(sect_style.group(1) if sect_style else "Normal")[1]
+        ppr = re.match(r"<w:pPr>(?:(?!</w:pPr>).)*</w:pPr>", doc[m.end():], re.S)
+        if not ppr or "<w:spacing " in ppr.group(0):
+            continue  # direct spacing: leave it
+        style = re.search(r'<w:pStyle w:val="([^"]+)"', ppr.group(0))
+        before = spacing(style.group(1) if style else "Normal")[0]
+        new_ppr = ppr.group(0).replace("<w:pPr>", "<w:pPr>", 1)
+        # w:spacing goes after pStyle, keepNext, keepLines, pageBreakBefore, framePr, widowControl,
+        # numPr, suppressLineNumbers, pBdr, shd, tabs, suppressAutoHyphens
+        anchor = re.search(r"<w:(?:ind|contextualSpacing|jc|outlineLvl|rPr|sectPr)\b|</w:pPr>", new_ppr)
+        new_ppr = new_ppr[:anchor.start()] + f'<w:spacing w:before="{max(0, before - cut)}"/>' + new_ppr[anchor.start():]
+        out += [doc[pos:m.end()], new_ppr]
+        pos = m.end() + len(ppr.group(0))
+    return "".join(out) + doc[pos:]
+
+
 def main(src, dst):
     with zipfile.ZipFile(src) as zin:
         infos = zin.infolist()
@@ -235,6 +288,7 @@ def main(src, dst):
     doc = parts["word/document.xml"].decode()
     doc = page_break_to_section_break(doc)
     doc = toc_tab_size(doc)
+    doc = after_columns(doc, parts["word/styles.xml"].decode())
     doc = explicit_headers(doc, parts)
     doc = table_indent(doc)
     doc = cell_margins(doc, parts["word/styles.xml"].decode())
