@@ -28,11 +28,13 @@ class R1090SmartPolicy {
     // Aircraft are checked once heard for this long, so a lucky first frame doesn't start a check.
     static constexpr uint32_t kMinAgeMs = 1000;
     // A MODE_S-slice capture at least this strong (LR2021 RSSI of its one bits, dBm) may come from an aircraft MODE_S
-    // decodes poorly: STRONG gets the check share for kBoostMs, at most once per kBoostIntervalMs. With the AGC this
-    // RSSI tops out near -60 dBm from about where MODE_S starts to lose frames.
+    // decodes poorly: STRONG gets the check share for kBoostMs. With the AGC this RSSI tops out near -60 dBm from about
+    // where MODE_S starts to lose frames, so aircraft both settings decode trigger it too: the wait before the next
+    // boost doubles from kBoostIntervalMs up to kBoostIntervalMaxMs, and starts over once an aircraft needs STRONG.
     static constexpr int32_t kStrongRssiDbm = -61;
     static constexpr uint32_t kBoostMs = 3000;
     static constexpr uint32_t kBoostIntervalMs = 10000;
+    static constexpr uint32_t kBoostIntervalMaxMs = 80000;
     // Frames captured this soon after a switch may have been received with the previous slice's settings.
     static constexpr uint32_t kSettleUs = 500;
     static constexpr uint16_t kNumAircraft = 32;
@@ -56,6 +58,7 @@ class R1090SmartPolicy {
         prev_switch_us_ = now_us;
         for (Aircraft& a : aircraft_) a = {};
         boosted_ = false;
+        boost_interval_ms_ = kBoostIntervalMs;
         strong_pct_ = probe_strong_pct;
         slice_ms_ = SliceLenMs(false);
     }
@@ -95,12 +98,13 @@ class R1090SmartPolicy {
 
     // True while a capture's RSSI could change the split (a MODE_S slice without a strong aircraft or a boost).
     bool WantsRssi(uint32_t now_ms) const {
-        return !strong_ && strong_pct_ == probe_strong_pct && (!boosted_ || now_ms - boost_ms_ >= kBoostIntervalMs);
+        return !strong_ && strong_pct_ == probe_strong_pct && (!boosted_ || now_ms - boost_ms_ >= boost_interval_ms_);
     }
 
     // A capture in a MODE_S slice had this RSSI. Returns true if it starts a boost.
     bool OnRssi(int32_t rssi_dbm, uint32_t now_ms) {
         if (rssi_dbm < strong_rssi_dbm || !WantsRssi(now_ms)) return false;
+        if (boosted_ && boost_interval_ms_ < kBoostIntervalMaxMs) boost_interval_ms_ *= 2;
         boost_ms_ = now_ms;
         boosted_ = true;
         slice_ms_ = now_ms - slice_start_ms_;  // End this MODE_S slice now.
@@ -121,8 +125,8 @@ class R1090SmartPolicy {
         if (since_us < kSettleUs) return false;
         // Each frame scores the inverse of its slice type's share of the time, so the scores compare decode rates.
         Aircraft& a = Find(icao, now_ms);
-        // A check scores frames only once the split gives it its STRONG time.
-        if (a.state == kChecking && strong_pct_ < check_strong_pct) return false;
+        // A check scores frames only while the split gives it the check share.
+        if (a.state == kChecking && strong_pct_ != check_strong_pct) return false;
         a.score[in_strong] += Weight(in_strong);
         if (in_strong && a.state == kChecking) a.check_frames++;
         UpdateState(a, now_ms);
@@ -153,7 +157,9 @@ class R1090SmartPolicy {
     void UpdateState(Aircraft& a, uint32_t now_ms) {
         switch (a.state) {
             case kUnknown:
-                if (now_ms - a.first_ms >= min_age_ms && a.score[1] > rate_ratio * uint64_t(a.score[0])) {
+                // No checks while another aircraft holds the STRONG share: too few MODE_S frames to compare.
+                if (strong_pct_ != strong_share_pct && now_ms - a.first_ms >= min_age_ms &&
+                    a.score[1] > rate_ratio * uint64_t(a.score[0])) {
                     a.state = kChecking;
                     a.check_ms = now_ms;
                     a.check_frames = 0;
@@ -190,6 +196,7 @@ class R1090SmartPolicy {
                 any_strong = true;
             }
         }
+        if (any_strong) boost_interval_ms_ = kBoostIntervalMs;
         strong_pct_ = any_strong ? strong_share_pct : any_checking ? check_strong_pct : probe_strong_pct;
     }
 
@@ -231,5 +238,6 @@ class R1090SmartPolicy {
     uint32_t rand_ = 1;
     bool boosted_ = false;
     uint32_t boost_ms_ = 0;
+    uint32_t boost_interval_ms_ = kBoostIntervalMs;
     Aircraft aircraft_[kNumAircraft] = {};
 };
