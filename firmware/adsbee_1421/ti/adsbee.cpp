@@ -212,7 +212,8 @@ bool ADSBee::ApplyReceiverConfigInner() {
     }
     receiver_config_rejected_ = false;
     config_rejected_backoff_ms_ = 0;
-    smart_policy.Reset(get_time_since_boot_ms());  // The config starts MODE_S_SMART in a MODE_S slice.
+    // The config starts MODE_S_SMART in a MODE_S slice.
+    smart_policy.Reset(get_time_since_boot_ms(), get_time_since_boot_us());
     // Arm the LR2021 IRQ rising-edge interrupt now that the chip side is routing kIrqRxFifo to it.
     // Clear any stale latched edge first: neither GPIO_setConfig nor GPIO_enableInt clears EVFLAGS.
     // The BUSY callback is registered here too, but its interrupt stays disarmed until a chain frame
@@ -595,7 +596,8 @@ void ADSBee::IngestAndForwardPackets() {
             lr2021_frames_since_valid_ = 0;  // Healthy stream: reset the validity watchdog.
             if (r1090_preamble_mode_ == SettingsManager::kR1090PreambleModeModeSSmart) {
                 (smart_policy.strong() ? smart_strong_valid : smart_weak_valid)++;
-                if (smart_policy.OnValid(decoded_packet.icao_address, get_time_since_boot_ms())) {
+                const uint32_t frame_us = decoded_packet.raw.mlat_48mhz_64bit_counts / 48;
+                if (smart_policy.OnValid(decoded_packet.icao_address, frame_us, get_time_since_boot_ms())) {
                     smart_strong_only++;
                 }
             }
@@ -791,8 +793,10 @@ bool ADSBee::UpdateLR2021() {
         ApplyReceiverConfig();  // Stamps lr2021_last_recovery_ms_ for the backoff.
     }
 
+    // Switch right after a completed drain, so every frame parsed before the switch was captured before it.
     if (r1090_preamble_mode_ == SettingsManager::kR1090PreambleModeModeSSmart && receiver_config_ok_ &&
-        !lr2021.fifo_overflow_pending) {
+        !lr2021.fifo_overflow_pending &&
+        (drain_result == LR2021::DrainResult::kDataReady || drain_result == LR2021::DrainResult::kNoData)) {
         UpdateSmartSlices();
     }
 
@@ -821,7 +825,7 @@ void ADSBee::UpdateSmartSlices() {
         return;
     }
     const bool was_strong = smart_policy.strong();
-    (was_strong ? smart_strong_ms : smart_weak_ms) += smart_policy.Switched(now_ms);
+    (was_strong ? smart_strong_ms : smart_weak_ms) += smart_policy.Switched(now_ms, get_time_since_boot_us());
     smart_switch_count++;
     if (switch_us > smart_switch_max_us) {
         smart_switch_max_us = switch_us;

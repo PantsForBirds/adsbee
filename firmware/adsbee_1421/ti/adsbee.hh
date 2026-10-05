@@ -137,7 +137,7 @@ class ADSBee {
     uint32_t smart_switch_fail_count = 0;
     uint32_t smart_weak_valid = 0;  // Valid frames decoded in each slice type.
     uint32_t smart_strong_valid = 0;
-    uint32_t smart_strong_only = 0;  // STRONG-slice frames from strong aircraft (R1090SmartPolicy::OnValid).
+    uint32_t smart_strong_only = 0;  // Frames from aircraft that need STRONG (R1090SmartPolicy::OnValid).
 
     SettingsManager::RxPosition rx_position;
     bool rx_position_available = false;

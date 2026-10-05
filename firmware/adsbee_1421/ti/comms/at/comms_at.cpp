@@ -1351,8 +1351,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 1,
      .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S MODE_S_STRONG MODE_S_SMART DF17]>\r\n\tSet the 1090MHz "
                     "Mode S receiver mode. MODE_S: every downlink format, up to about -40 dBm. MODE_S_STRONG: "
-                    "strong signals, about -45 to 0 dBm. MODE_S_SMART: alternates between MODE_S and "
-                    "MODE_S_STRONG, with more STRONG time while strong aircraft are around. DF17: DF17 frames "
+                    "strong signals, about -45 to 0 dBm. MODE_S_SMART: MODE_S with short MODE_S_STRONG slices, and "
+                    "more STRONG time while aircraft only STRONG hears well are around. DF17: DF17 frames "
                     "only. Levels measured on a devkit.\r\n\t"
                     "AT+R1090_PREAMBLE?\r\n\tQuery the current preamble mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATR1090PreambleCallback, comms_manager)},
@@ -1392,7 +1392,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "a hard reset and a retry of the same config; rx_cfg_error = 1 while the selected config "
                     "is rejected and the 1090 MHz receiver is down; smart_* = MODE_S_SMART time in each slice "
                     "type, slice switches, longest switch, failed switches, valid frames per slice type, and "
-                    "STRONG-slice frames from aircraft heard much better in STRONG slices).\r\n\tAT+RX_STATS=RESET\r\n\t"
+                    "frames from aircraft that need STRONG).\r\n\tAT+RX_STATS=RESET\r\n\t"
                     "Reset all Rx stats counters.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxStatsCallback, comms_manager)},
     {.command = "SETTINGS",

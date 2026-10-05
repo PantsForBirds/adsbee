@@ -4370,7 +4370,7 @@ function makeRxEnableEntry() {
                 help: 'DF17 (default) receives DF17 frames only. '
                     + 'MODE_S decodes every downlink format up to about -40 dBm. '
                     + 'MODE_S_STRONG decodes strong signals, about -45 to 0 dBm, for a receiver next to a transmitter. '
-                    + 'MODE_S_SMART alternates between the two, with more STRONG time while strong aircraft are around. '
+                    + 'MODE_S_SMART runs MODE_S with short STRONG slices and gives STRONG time to aircraft only it hears well. '
                     + 'Levels measured on a devkit.',
                 fields: [{
                     id: 'mode', label: 'Mode', type: 'enum',
