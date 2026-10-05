@@ -17,10 +17,15 @@ class R1090SmartPolicy {
     static constexpr uint32_t kCheckMinMs = 2000;
     static constexpr uint32_t kCheckMaxMs = 10000;
     static constexpr uint32_t kCheckQuietMs = 1000;
+    // A "not strong" verdict can be checked again this long after its check started.
+    static constexpr uint32_t kRetryMs = 5000;
     // STRONG share while any aircraft needs STRONG: nearby aircraft come first, weak ones keep short MODE_S slices.
     static constexpr uint32_t kStrongPct = 90;
     // An aircraft looks strong when STRONG slices decode it this many times more often per second than MODE_S slices.
     static constexpr uint32_t kRateRatio = 3;
+    // A check calls it strong when STRONG decodes it at least this often (x2) per second as MODE_S: when unsure, nearby
+    // aircraft come first.
+    static constexpr uint32_t kStrongRatioX2 = 2;
     // Strong aircraft keep the STRONG share until this long after their last frame.
     static constexpr uint32_t kHoldMs = 5000;
     // Per-aircraft scores are halved this often, so they follow the recent past.
@@ -33,8 +38,8 @@ class R1090SmartPolicy {
     // boost doubles from kBoostIntervalMs up to kBoostIntervalMaxMs, and starts over once an aircraft needs STRONG.
     static constexpr int32_t kStrongRssiDbm = -61;
     static constexpr uint32_t kBoostMs = 3000;
-    static constexpr uint32_t kBoostIntervalMs = 10000;
-    static constexpr uint32_t kBoostIntervalMaxMs = 80000;
+    static constexpr uint32_t kBoostIntervalMs = 5000;
+    static constexpr uint32_t kBoostIntervalMaxMs = 20000;
     // Frames captured this soon after a switch may have been received with the previous slice's settings.
     static constexpr uint32_t kSettleUs = 500;
     static constexpr uint16_t kNumAircraft = 32;
@@ -44,6 +49,7 @@ class R1090SmartPolicy {
     uint32_t check_strong_pct = kCheckStrongPct;
     uint32_t strong_share_pct = kStrongPct;
     uint32_t rate_ratio = kRateRatio;
+    uint32_t strong_ratio_x2 = kStrongRatioX2;
     uint32_t decay_ms = kDecayMs;
     uint32_t min_age_ms = kMinAgeMs;
     uint32_t check_min_ms = kCheckMinMs;
@@ -146,20 +152,22 @@ class R1090SmartPolicy {
         uint8_t check_frames;
     };
 
+    bool Boosting(uint32_t now_ms) const { return boosted_ && now_ms - boost_ms_ < kBoostMs; }
+
     uint32_t Weight(bool strong) const {
         const uint32_t pct = strong ? strong_pct_ : 100 - strong_pct_;
         return 1600 / (pct ? pct : 1);
     }
 
     // A few frames in short STRONG slices weigh a lot, so an aircraft that looks strong there is checked with fresh
-    // scores and more STRONG time: it needs STRONG if STRONG decodes it at least 2.5x as often as MODE_S, until MODE_S
-    // decodes it at least 2/3 as often as STRONG.
+    // scores and more STRONG time (see kStrongRatioX2), until MODE_S decodes it at least 2/3 as often as STRONG.
     void UpdateState(Aircraft& a, uint32_t now_ms) {
         switch (a.state) {
             case kUnknown:
-                // No checks while another aircraft holds the STRONG share: too few MODE_S frames to compare.
+                // No checks while another aircraft holds the STRONG share: too few MODE_S frames to compare. During a
+                // boost (a strong capture was seen) STRONG decoding it as well as MODE_S is enough to check it.
                 if (strong_pct_ != strong_share_pct && now_ms - a.first_ms >= min_age_ms &&
-                    a.score[1] > rate_ratio * uint64_t(a.score[0])) {
+                    a.score[1] > (Boosting(now_ms) ? 1 : rate_ratio) * uint64_t(a.score[0])) {
                     a.state = kChecking;
                     a.check_ms = now_ms;
                     a.check_frames = 0;
@@ -168,7 +176,7 @@ class R1090SmartPolicy {
                 break;
             case kChecking:
                 if (a.check_frames >= kCheckFrames && now_ms - a.check_ms >= check_min_ms) {
-                    a.state = 2 * uint64_t(a.score[1]) >= 5 * uint64_t(a.score[0]) ? kStrong : kNotStrong;
+                    a.state = 2 * uint64_t(a.score[1]) >= strong_ratio_x2 * uint64_t(a.score[0]) ? kStrong : kNotStrong;
                     a.score[0] = a.score[1] = 0;  // A strong aircraft starts fresh scores for its exit test.
                 }
                 break;
@@ -182,7 +190,7 @@ class R1090SmartPolicy {
     }
 
     void UpdateSplit(uint32_t now_ms) {
-        bool any_strong = false, any_checking = boosted_ && now_ms - boost_ms_ < kBoostMs;
+        bool any_strong = false, any_checking = Boosting(now_ms);
         for (Aircraft& a : aircraft_) {
             if (a.state == kChecking) {
                 if (now_ms - a.check_ms >= kCheckMaxMs) {
@@ -190,7 +198,7 @@ class R1090SmartPolicy {
                 } else if (now_ms - a.last_ms < kCheckQuietMs) {
                     any_checking = true;  // A check pauses while its aircraft is silent.
                 }
-            } else if (a.state == kNotStrong && now_ms - a.check_ms >= kCheckMaxMs) {
+            } else if (a.state == kNotStrong && now_ms - a.check_ms >= kRetryMs) {
                 a.state = kUnknown;  // May be checked again.
             } else if (a.state == kStrong && a.last_ms != 0 && now_ms - a.last_ms < kHoldMs) {
                 any_strong = true;
