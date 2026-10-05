@@ -1,5 +1,7 @@
 // MODE_S_SMART slice policy (r1090_smart.hh).
+#include <algorithm>
 #include <cstdlib>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "r1090_smart.hh"
@@ -225,4 +227,37 @@ TEST_F(R1090Smart, BurstyAircraftHeardInBothSlicesKeepTheProbeSplit) {
         total_ms += t;
     }
     EXPECT_LT(strong_ms / double(total_ms), Share(P::kProbeStrongPct) + 0.07);
+}
+
+TEST_F(R1090Smart, StrongCaptureFindsANewStrongAircraftWithinSeconds) {
+    // Among weak aircraft, a new strong one is usually first caught in a 3 % STRONG slice only after several seconds;
+    // its strong captures in MODE_S slices start a check at once. A check that misses waits for the next boost.
+    std::vector<uint32_t> ms;
+    for (uint32_t seed = 1; seed <= 11; seed++) {
+        rand_state = seed;
+        P p;
+        p.Reset(0, 0);
+        RunSlices(p, 0, 10000, {{0xADF030, 157, 980, 0}, {0xADF031, 181, 980, 0}});
+        uint32_t t = 10000;
+        while (p.strong_pct() != P::kStrongPct && t < 60000) {
+            RunSlices(p, t, t + 100,
+                      {{0xADF030, 157, 980, 0}, {0xADF031, 181, 980, 0}, {0xADF032, 149, 180, 990, -30}});
+            t += 100;
+        }
+        ms.push_back(t - 10000);
+    }
+    std::sort(ms.begin(), ms.end());
+    EXPECT_LT(ms[ms.size() / 2], 6000u);
+    EXPECT_LT(ms.back(), 30000u);
+}
+
+TEST_F(R1090Smart, StrongCapturesFromAircraftBothSettingsDecodeBackOff) {
+    // Aircraft near enough to reach the RSSI limit, which both settings decode, keep triggering boosts; the wait
+    // between boosts doubles, so they cost little STRONG time after the first minutes.
+    P p;
+    p.Reset(0, 0);
+    const std::initializer_list<Aircraft> traffic = {
+        {0xADF040, 151, 980, 980, -60}, {0xADF041, 173, 980, 980, -60}, {0xADF042, 157, 950, 0}};
+    RunSlices(p, 0, 120000, traffic);
+    EXPECT_LT(RunSlices(p, 120000, 600000, traffic) / 480000.0, Share(P::kProbeStrongPct) + 0.03);
 }
