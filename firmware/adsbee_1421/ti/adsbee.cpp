@@ -797,7 +797,7 @@ bool ADSBee::UpdateLR2021() {
     if (r1090_preamble_mode_ == SettingsManager::kR1090PreambleModeModeSSmart && receiver_config_ok_ &&
         !lr2021.fifo_overflow_pending &&
         (drain_result == LR2021::DrainResult::kDataReady || drain_result == LR2021::DrainResult::kNoData)) {
-        UpdateSmartSlices();
+        UpdateSmartSlices(drain_result == LR2021::DrainResult::kDataReady);
     }
 
     uint32_t elapsed_us = get_time_since_boot_us() - start_us;
@@ -807,8 +807,19 @@ bool ADSBee::UpdateLR2021() {
     return success;
 }
 
-void ADSBee::UpdateSmartSlices() {
+void ADSBee::UpdateSmartSlices(bool new_data) {
     uint32_t now_ms = get_time_since_boot_ms();
+    if (new_data && smart_policy.WantsRssi(now_ms)) {
+        // The chip keeps the status of the last packet, which the drain just read.
+        LR2021::OokPacketStatus status;
+        GPIO_disableInt(bsp.kLR2021IrqPin);
+        const bool ok = lr2021.GetOokPacketStatus(&status);
+        GPIO_clearInt(bsp.kLR2021IrqPin);
+        GPIO_enableInt(bsp.kLR2021IrqPin);
+        if (ok && smart_policy.OnRssi(-int32_t(status.rssi_high) / 2, now_ms)) {
+            smart_boost_count++;
+        }
+    }
     if (!smart_policy.SliceDone(now_ms)) {
         return;
     }

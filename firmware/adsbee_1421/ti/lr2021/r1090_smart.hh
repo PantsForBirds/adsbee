@@ -12,9 +12,10 @@ class R1090SmartPolicy {
     static constexpr uint32_t kProbeStrongPct = 3;
     // STRONG share while an aircraft that looks strong in those slices is checked with fresh scores.
     static constexpr uint32_t kCheckStrongPct = 50;
-    // A check decides after kCheckMinMs and this many STRONG frames from the aircraft, or gives up after kCheckMaxMs.
-    static constexpr uint8_t kCheckFrames = 4;
-    static constexpr uint32_t kCheckMinMs = 1000;
+    // A check decides after kCheckMinMs and this many STRONG frames from the aircraft (sooner if MODE_S hears it
+    // better), or gives up after kCheckMaxMs.
+    static constexpr uint8_t kCheckFrames = 6;
+    static constexpr uint32_t kCheckMinMs = 2000;
     static constexpr uint32_t kCheckMaxMs = 10000;
     // STRONG share while any aircraft needs STRONG: nearby aircraft come first, weak ones keep short MODE_S slices.
     static constexpr uint32_t kStrongPct = 90;
@@ -26,6 +27,12 @@ class R1090SmartPolicy {
     static constexpr uint32_t kDecayMs = 20000;
     // Aircraft are checked once heard for this long, so a lucky first frame doesn't start a check.
     static constexpr uint32_t kMinAgeMs = 1000;
+    // A MODE_S-slice capture at least this strong (LR2021 RSSI of its one bits, dBm) may come from an aircraft MODE_S
+    // decodes poorly: STRONG gets the check share for kBoostMs, at most once per kBoostIntervalMs. With the AGC this
+    // RSSI tops out near -60 dBm from about where MODE_S starts to lose frames.
+    static constexpr int32_t kStrongRssiDbm = -61;
+    static constexpr uint32_t kBoostMs = 3000;
+    static constexpr uint32_t kBoostIntervalMs = 10000;
     // Frames captured this soon after a switch may have been received with the previous slice's settings.
     static constexpr uint32_t kSettleUs = 500;
     static constexpr uint16_t kNumAircraft = 32;
@@ -38,6 +45,7 @@ class R1090SmartPolicy {
     uint32_t decay_ms = kDecayMs;
     uint32_t min_age_ms = kMinAgeMs;
     uint32_t check_min_ms = kCheckMinMs;
+    int32_t strong_rssi_dbm = kStrongRssiDbm;
 
     // Starts a MODE_S slice (call after every full receiver config).
     void Reset(uint32_t now_ms, uint32_t now_us) {
@@ -47,6 +55,7 @@ class R1090SmartPolicy {
         switch_us_ = now_us;
         prev_switch_us_ = now_us;
         for (Aircraft& a : aircraft_) a = {};
+        boosted_ = false;
         strong_pct_ = probe_strong_pct;
         slice_ms_ = SliceLenMs(false);
     }
@@ -77,12 +86,25 @@ class R1090SmartPolicy {
             for (Aircraft& a : aircraft_) {
                 a.score[0] /= 2;
                 a.score[1] /= 2;
-                if (a.state == kNotStrong) a.state = kUnknown;  // May be checked again.
             }
         }
         UpdateSplit(now_ms);
         slice_ms_ = SliceLenMs(strong_);
         return len;
+    }
+
+    // True while a capture's RSSI could change the split (a MODE_S slice without a strong aircraft or a boost).
+    bool WantsRssi(uint32_t now_ms) const {
+        return !strong_ && strong_pct_ == probe_strong_pct && (!boosted_ || now_ms - boost_ms_ >= kBoostIntervalMs);
+    }
+
+    // A capture in a MODE_S slice had this RSSI. Returns true if it starts a boost.
+    bool OnRssi(int32_t rssi_dbm, uint32_t now_ms) {
+        if (rssi_dbm < strong_rssi_dbm || !WantsRssi(now_ms)) return false;
+        boost_ms_ = now_ms;
+        boosted_ = true;
+        slice_ms_ = now_ms - slice_start_ms_;  // End this MODE_S slice now.
+        return true;
     }
 
     // A valid frame from icao, captured at frame_us, was decoded at now_ms. Returns true if the aircraft needs STRONG.
@@ -139,8 +161,11 @@ class R1090SmartPolicy {
                 }
                 break;
             case kChecking:
-                if (a.check_frames >= kCheckFrames && now_ms - a.check_ms >= check_min_ms) {
+                if (now_ms - a.check_ms < check_min_ms) break;
+                if (a.check_frames >= kCheckFrames) {
                     a.state = a.score[1] >= 2 * uint64_t(a.score[0]) ? kStrong : kNotStrong;
+                } else if (a.score[0] > a.score[1]) {
+                    a.state = kNotStrong;  // MODE_S hears it better: no need to wait for STRONG frames.
                 }
                 break;
             case kStrong:
@@ -152,7 +177,7 @@ class R1090SmartPolicy {
     }
 
     void UpdateSplit(uint32_t now_ms) {
-        bool any_strong = false, any_checking = false;
+        bool any_strong = false, any_checking = boosted_ && now_ms - boost_ms_ < kBoostMs;
         for (Aircraft& a : aircraft_) {
             if (a.state == kChecking) {
                 if (now_ms - a.check_ms < kCheckMaxMs) {
@@ -160,6 +185,8 @@ class R1090SmartPolicy {
                 } else {
                     a.state = kNotStrong;
                 }
+            } else if (a.state == kNotStrong && now_ms - a.check_ms >= kCheckMaxMs) {
+                a.state = kUnknown;  // May be checked again.
             } else if (a.state == kStrong && a.last_ms != 0 && now_ms - a.last_ms < kHoldMs) {
                 any_strong = true;
             }
@@ -203,5 +230,7 @@ class R1090SmartPolicy {
     uint32_t switch_us_ = 0;
     uint32_t prev_switch_us_ = 0;
     uint32_t rand_ = 1;
+    bool boosted_ = false;
+    uint32_t boost_ms_ = 0;
     Aircraft aircraft_[kNumAircraft] = {};
 };

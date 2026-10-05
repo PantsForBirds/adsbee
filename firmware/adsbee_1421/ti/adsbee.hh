@@ -137,6 +137,7 @@ class ADSBee {
     uint32_t smart_switch_fail_count = 0;
     uint32_t smart_weak_valid = 0;  // Valid frames decoded in each slice type.
     uint32_t smart_strong_valid = 0;
+    uint32_t smart_boost_count = 0;  // Strong MODE_S-slice captures that gave STRONG more time.
     uint32_t smart_strong_only = 0;  // Frames from aircraft that need STRONG (R1090SmartPolicy::OnValid).
 
     SettingsManager::RxPosition rx_position;
@@ -154,7 +155,7 @@ class ADSBee {
     void UpdateRxPosition();
     bool UpdateLR2021();
     // MODE_S_SMART: switches the receiver between MODE_S and MODE_S_STRONG when a slice ends.
-    void UpdateSmartSlices();
+    void UpdateSmartSlices(bool new_data);
     // Splits a drained LR2021 RX FIFO payload into per-packet Mode S frames and enqueues them for
     // decoding. rx_buf points at the drain payload (valid until FinishRxDrain() / ReleaseSlot()).
     // mlat_timestamp_us stamps every packet in the batch (IRQ-edge time for chain slots, parse time

@@ -365,7 +365,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 "parse_max_cyc=%lu,decode_max_cyc=%lu,loop_max_cyc=%lu,loop_avg_cyc=%lu,cpu_1090_pm=%lu,"
                 "cfg_perrs=%lu,rx_cfg_error=%u,smart_weak_ms=%lu,smart_strong_ms=%lu,smart_switches=%lu,"
                 "smart_switch_max_us=%lu,smart_switch_fails=%lu,smart_weak_valid=%lu,smart_strong_valid=%lu,"
-                "smart_strong_only=%lu",
+                "smart_strong_only=%lu,smart_boosts=%lu",
                 stats.pkt_rx, stats.crc_error, stats.len_error, stats.pbl_det, stats.sync_ok, stats.sync_fail,
                 stats.timeout, (unsigned long)adsbee.lr2021_fifo_full_count,
                 (unsigned long)packet_decoder.raw_queue_overflow_count,
@@ -395,7 +395,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)adsbee.smart_weak_ms, (unsigned long)adsbee.smart_strong_ms,
                 (unsigned long)adsbee.smart_switch_count, (unsigned long)adsbee.smart_switch_max_us,
                 (unsigned long)adsbee.smart_switch_fail_count, (unsigned long)adsbee.smart_weak_valid,
-                (unsigned long)adsbee.smart_strong_valid, (unsigned long)adsbee.smart_strong_only);
+                (unsigned long)adsbee.smart_strong_valid, (unsigned long)adsbee.smart_strong_only,
+                (unsigned long)adsbee.smart_boost_count);
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -450,6 +451,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.smart_weak_valid = 0;
             adsbee.smart_strong_valid = 0;
             adsbee.smart_strong_only = 0;
+            adsbee.smart_boost_count = 0;
             CPP_AT_SUCCESS();
             break;
         }
@@ -1392,7 +1394,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "a hard reset and a retry of the same config; rx_cfg_error = 1 while the selected config "
                     "is rejected and the 1090 MHz receiver is down; smart_* = MODE_S_SMART time in each slice "
                     "type, slice switches, longest switch, failed switches, valid frames per slice type, and "
-                    "frames from aircraft that need STRONG).\r\n\tAT+RX_STATS=RESET\r\n\t"
+                    "frames from aircraft that need STRONG, strong MODE_S captures that gave STRONG more time).\r\n\tAT+RX_STATS=RESET\r\n\t"
                     "Reset all Rx stats counters.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxStatsCallback, comms_manager)},
     {.command = "SETTINGS",
