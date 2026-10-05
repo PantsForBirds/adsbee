@@ -351,6 +351,10 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
 
 bool LR2021::SetOokADSBStrong(bool strong, uint8_t agc_gain) {
     // Both take effect in RX, so the receiver keeps running and the FIFO stays aligned.
+    // The AGC resumes from the current gain step and takes about 3 ms to climb from the STRONG step: start it at max.
+    if (!strong && agc_gain == 0 && !SetAgcGainManual(LR2021OokAdsb::kMaxGainStep)) {
+        return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetAgcGainManual");
+    }
     if (!SetAgcGainManual(LR2021OokAdsb::StrongGainStep(strong, agc_gain))) {
         return SequenceStepFailed("LR2021::SetOokADSBStrong", "SetAgcGainManual");
     }

@@ -99,6 +99,7 @@ static constexpr uint8_t kAgcTriggerStandardPreamble = 0x40;
 // MODE_S_STRONG runs with the AGC off at this fixed gain step, so no gain change blanks the preamble and strong
 // packets don't saturate the receiver.
 static constexpr uint8_t kStrongGainStep = 5;
+static constexpr uint8_t kMaxGainStep = 13;
 
 // SetAgcGainManual step (0 = AGC): STRONG uses kStrongGainStep unless a manual gain is set.
 constexpr uint8_t StrongGainStep(bool strong, uint8_t agc_gain) {
