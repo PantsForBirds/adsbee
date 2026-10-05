@@ -93,34 +93,26 @@ TEST(R1090Smart, AircraftHeardInBothSlicesKeepsTheProbeSplit) {
     EXPECT_NEAR(RunSlices(p, 10000, 100000, {{0xADF002, 150, 950, 950}}) / 90000.0, Share(P::kProbeStrongPct), 0.02);
 }
 
-TEST(R1090Smart, OnlyStrongAircraftProbeWeak) {
+TEST(R1090Smart, StrongAircraftGetsMostOfTheTime) {
     // MODE_S still decodes a few frames of a strong aircraft; it needs STRONG all the same.
     P p;
     p.Reset(0, 0);
     RunSlices(p, 0, 20000, {{0xADF003, 149, 180, 990}});
-    EXPECT_EQ(p.strong_pct(), 100 - P::kProbeWeakPct);
-    EXPECT_NEAR(RunSlices(p, 20000, 100000, {{0xADF003, 149, 180, 990}}) / 80000.0, Share(100 - P::kProbeWeakPct),
-                0.01);
+    EXPECT_EQ(p.strong_pct(), P::kStrongPct);
+    EXPECT_NEAR(RunSlices(p, 20000, 100000, {{0xADF003, 149, 180, 990}}) / 80000.0, Share(P::kStrongPct), 0.01);
 }
 
-TEST(R1090Smart, MixedSplitFollowsTheAircraftCounts) {
+TEST(R1090Smart, StrongAircraftComesFirstAmongWeakOnes) {
     P p;
     p.Reset(0, 0);
-    RunSlices(p, 0, 40000, {{0xADF004, 149, 180, 990}, {0xADF005, 141, 950, 0}});
-    EXPECT_EQ(p.strong_pct(), 50u);
-    p.Reset(0, 0);
-    RunSlices(p, 0, 40000,
-              {{0xADF004, 149, 180, 990}, {0xADF005, 141, 950, 0}, {0xADF006, 131, 950, 0}, {0xADF007, 163, 950, 0}});
-    EXPECT_EQ(p.strong_pct(), 25u);
-    p.Reset(0, 0);
-    RunSlices(p, 0, 40000,
+    RunSlices(p, 0, 30000,
               {{0xADF004, 149, 180, 990},
                {0xADF005, 141, 950, 0},
                {0xADF006, 131, 950, 0},
                {0xADF007, 163, 950, 0},
                {0xADF008, 173, 950, 0},
                {0xADF009, 113, 950, 0}});
-    EXPECT_EQ(p.strong_pct(), P::kMixedMinPct);
+    EXPECT_EQ(p.strong_pct(), P::kStrongPct);
 }
 
 TEST(R1090Smart, StrongAircraftIsFoundWithinSecondsAndForgottenAfterItLeaves) {
@@ -128,10 +120,10 @@ TEST(R1090Smart, StrongAircraftIsFoundWithinSecondsAndForgottenAfterItLeaves) {
     p.Reset(0, 0);
     const std::initializer_list<Aircraft> traffic = {
         {0xADF020, 151, 180, 990}, {0xADF021, 173, 180, 990}, {0xADF030, 157, 980, 0}, {0xADF031, 181, 980, 0}};
-    RunSlices(p, 0, 15000, traffic);
-    EXPECT_EQ(p.strong_pct(), 50u);
-    RunSlices(p, 15000, 30000, traffic);
-    EXPECT_EQ(p.strong_pct(), 50u);
+    RunSlices(p, 0, 10000, traffic);
+    EXPECT_EQ(p.strong_pct(), P::kStrongPct);
+    RunSlices(p, 10000, 30000, traffic);
+    EXPECT_EQ(p.strong_pct(), P::kStrongPct);
     RunSlices(p, 30000, 30000 + P::kHoldMs + 200,
               {{0xADF030, 157, 980, 0}, {0xADF031, 181, 980, 0}});  // The strong aircraft leave.
     EXPECT_EQ(p.strong_pct(), P::kProbeStrongPct);
@@ -185,7 +177,7 @@ TEST(R1090Smart, ResetForgetsTheAircraft) {
     P p;
     p.Reset(0, 0);
     RunSlices(p, 0, 20000, {{0xADF007, 149, 0, 990}});
-    EXPECT_EQ(p.strong_pct(), 100 - P::kProbeWeakPct);
+    EXPECT_EQ(p.strong_pct(), P::kStrongPct);
     p.Reset(20000, 20000000);
     EXPECT_FALSE(p.strong());
     EXPECT_EQ(p.strong_pct(), P::kProbeStrongPct);

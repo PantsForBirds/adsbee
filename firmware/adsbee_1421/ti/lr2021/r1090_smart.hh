@@ -1,7 +1,7 @@
 #pragma once
 
-// MODE_S_SMART time-slice policy: each cycle is split between MODE_S and MODE_S_STRONG slices by the aircraft that
-// need each one. Header-only with no SDK dependencies, so the host tests can run it.
+// MODE_S_SMART time-slice policy: mostly MODE_S with short MODE_S_STRONG slices, and mostly STRONG while an aircraft
+// needs it (nearby aircraft matter most). Header-only with no SDK dependencies, so the host tests can run it.
 
 #include <cstdint>
 
@@ -11,24 +11,21 @@ class R1090SmartPolicy {
     // STRONG share of a cycle (percent) while no aircraft needs STRONG: short slices that find strong aircraft.
     static constexpr uint32_t kProbeStrongPct = 3;
     // STRONG share while an aircraft that looks strong in those slices is checked with fresh scores.
-    static constexpr uint32_t kCheckStrongPct = 20;
+    static constexpr uint32_t kCheckStrongPct = 50;
     // A check decides after kCheckMinMs and this many STRONG frames from the aircraft, or gives up after kCheckMaxMs.
     static constexpr uint8_t kCheckFrames = 4;
-    static constexpr uint32_t kCheckMinMs = 2000;
+    static constexpr uint32_t kCheckMinMs = 1000;
     static constexpr uint32_t kCheckMaxMs = 10000;
-    // MODE_S share while only aircraft that need STRONG are heard: short slices that find weak aircraft.
-    static constexpr uint32_t kProbeWeakPct = 5;
-    // With both kinds of aircraft, STRONG gets the strong aircraft's share of them, within these bounds.
-    static constexpr uint32_t kMixedMinPct = 20;
-    static constexpr uint32_t kMixedMaxPct = 80;
-    // An aircraft looks like it needs a setting when the other one decodes it this many times less often per second.
+    // STRONG share while any aircraft needs STRONG: nearby aircraft come first, weak ones keep short MODE_S slices.
+    static constexpr uint32_t kStrongPct = 90;
+    // An aircraft looks strong when STRONG slices decode it this many times more often per second than MODE_S slices.
     static constexpr uint32_t kRateRatio = 3;
-    // Aircraft count toward the split until this long after their last frame.
+    // Strong aircraft keep the STRONG share until this long after their last frame.
     static constexpr uint32_t kHoldMs = 5000;
     // Per-aircraft scores are halved this often, so they follow the recent past.
     static constexpr uint32_t kDecayMs = 20000;
-    // Aircraft count toward the split once heard for this long, so their scores cover a few seconds.
-    static constexpr uint32_t kMinAgeMs = 3000;
+    // Aircraft are checked once heard for this long, so a lucky first frame doesn't start a check.
+    static constexpr uint32_t kMinAgeMs = 1000;
     // Frames captured this soon after a switch may have been received with the previous slice's settings.
     static constexpr uint32_t kSettleUs = 500;
     static constexpr uint16_t kNumAircraft = 32;
@@ -36,12 +33,11 @@ class R1090SmartPolicy {
     uint32_t cycle_ms = kCycleMs;
     uint32_t probe_strong_pct = kProbeStrongPct;
     uint32_t check_strong_pct = kCheckStrongPct;
-    uint32_t probe_weak_pct = kProbeWeakPct;
-    uint32_t mixed_min_pct = kMixedMinPct;
-    uint32_t mixed_max_pct = kMixedMaxPct;
+    uint32_t strong_share_pct = kStrongPct;
     uint32_t rate_ratio = kRateRatio;
     uint32_t decay_ms = kDecayMs;
     uint32_t min_age_ms = kMinAgeMs;
+    uint32_t check_min_ms = kCheckMinMs;
 
     // Starts a MODE_S slice (call after every full receiver config).
     void Reset(uint32_t now_ms, uint32_t now_us) {
@@ -129,8 +125,6 @@ class R1090SmartPolicy {
         return 1600 / (pct ? pct : 1);
     }
 
-    bool NeedsWeak(const Aircraft& a) const { return uint64_t(a.score[0]) > uint64_t(rate_ratio) * a.score[1]; }
-
     // A few frames in short STRONG slices weigh a lot, so an aircraft that looks strong there is checked with fresh
     // scores and more STRONG time: it needs STRONG if its STRONG rate is at least twice MODE_S's, until MODE_S's is
     // the higher one.
@@ -145,7 +139,7 @@ class R1090SmartPolicy {
                 }
                 break;
             case kChecking:
-                if (a.check_frames >= kCheckFrames && now_ms - a.check_ms >= kCheckMinMs) {
+                if (a.check_frames >= kCheckFrames && now_ms - a.check_ms >= check_min_ms) {
                     a.state = a.score[1] >= 2 * uint64_t(a.score[0]) ? kStrong : kNotStrong;
                 }
                 break;
@@ -158,32 +152,19 @@ class R1090SmartPolicy {
     }
 
     void UpdateSplit(uint32_t now_ms) {
-        uint32_t n_strong = 0, n_weak = 0, n_checking = 0;
+        bool any_strong = false, any_checking = false;
         for (Aircraft& a : aircraft_) {
             if (a.state == kChecking) {
                 if (now_ms - a.check_ms < kCheckMaxMs) {
-                    n_checking++;
+                    any_checking = true;
                 } else {
                     a.state = kNotStrong;
                 }
-                continue;
-            }
-            if (a.last_ms == 0 || now_ms - a.last_ms >= kHoldMs || now_ms - a.first_ms < min_age_ms) continue;
-            if (a.state == kStrong) {
-                n_strong++;
-            } else if (NeedsWeak(a)) {
-                n_weak++;
+            } else if (a.state == kStrong && a.last_ms != 0 && now_ms - a.last_ms < kHoldMs) {
+                any_strong = true;
             }
         }
-        if (n_strong == 0) {
-            strong_pct_ = n_checking ? check_strong_pct : probe_strong_pct;
-        } else if (n_weak == 0) {
-            strong_pct_ = 100 - probe_weak_pct;
-        } else {
-            strong_pct_ = 100 * n_strong / (n_strong + n_weak);
-            if (strong_pct_ < mixed_min_pct) strong_pct_ = mixed_min_pct;
-            if (strong_pct_ > mixed_max_pct) strong_pct_ = mixed_max_pct;
-        }
+        strong_pct_ = any_strong ? strong_share_pct : any_checking ? check_strong_pct : probe_strong_pct;
     }
 
     // The longer slice of each cycle varies by up to +-10 % at random, so short slices don't lock onto periodic
