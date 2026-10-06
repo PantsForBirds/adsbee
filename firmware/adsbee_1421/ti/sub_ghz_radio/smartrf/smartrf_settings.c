@@ -20,7 +20,7 @@
 // Preamble Count: 1 Bit
 // Preamble Mode: Send 0 as the first preamble bit
 // RX Filter BW: 2185.1 kHz
-// Symbol Rate: 1042.17987 kBaud
+// Symbol Rate: 1041.66718 kBaud
 // Sync Word: 0xacdda4e2
 // Sync Word Length: 32 Bits
 // TX Power: 13 dBm
@@ -90,7 +90,7 @@ rfc_CMD_PROP_RADIO_DIV_SETUP_t RF_cmdPropRadioDivSetup = {.commandNo = 0x3807,
                                                           .modulation.deviation = 0x4E2,
                                                           .modulation.deviationStepSz = 0x0,
                                                           .symbolRate.preScale = 0xF,
-                                                          .symbolRate.rateWord = 0xA6BFB,
+                                                          .symbolRate.rateWord = 0xA6AAB,
                                                           .symbolRate.decimMode = 0x0,
                                                           .rxBw = 0x64,
                                                           .preamConf.nPreamBytes = 0x0,
