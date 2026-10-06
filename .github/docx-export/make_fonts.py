@@ -59,9 +59,7 @@ def symbol(src, out):
     os2 = f["OS/2"]
     os2.ulCodePageRange1, os2.ulCodePageRange2 = 1 << 31, 0  # symbol character set
     os2.usFirstCharIndex, os2.usLastCharIndex = min(sym.cmap), max(sym.cmap)
-    # SymbolMT's descent and its ascent as Word's bullet lines measure it (the font says 2059; with that,
-    # each bullet line comes out about 0.15pt shorter than in Word).
-    set_vmetrics(f, 2085 / 2048, 450 / 2048)
+    set_vmetrics(f, 2059 / 2048, 450 / 2048)
     # SymbolMT's bullet spans 0.103-0.460 em above the baseline, Standard Symbols PS's 0.155-0.518.
     move_glyph(f, "bullet", -0.055)
     set_names(f, "Symbol")
