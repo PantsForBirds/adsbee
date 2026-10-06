@@ -1,5 +1,4 @@
-# Exports word/*.docx to word/exports/<name>.pdf with LibreOffice, set up to match Word's layout
-# (substitute fonts from make_fonts.py, docx adjustments in prep.py, both in .github/docx-export).
+# Exports word/*.docx to word/exports/<name>.pdf with LibreOffice, set up to match Word's layout (microslop).
 #   pull_request -> docx changed in the PR whose PDF is older than the docx; PDFs are committed to the
 #                   PR branch (artifact only for forks)
 #   workflow_dispatch -> all docx; committed to the chosen branch (artifact only on the default branch)
@@ -18,15 +17,12 @@ concurrency:
 
 jobs:
   export:
-    # Pinned so the LibreOffice version (and layout) only changes on purpose.
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
       PUSH: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && github.ref_name != github.event.repository.default_branch) }}
       BRANCH: ${{ github.head_ref || github.ref_name }}
-      LO_VERSION: 26.8.1.1
-      LO_SHA256: 30903df3b9f61360d9660cd707de48cd2831469114492a5008ed58a0ac77d044
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,84 +56,19 @@ jobs:
           echo "Exporting: ${docs[*]:-none}"
           echo "docs=${docs[*]}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-python@v5
+      # LibreOffice, Word substitute fonts and docx adjustments: https://github.com/CoolNamesAllTaken/microslop
+      - uses: pantsforbirds-claud/microslop@1d79d8c921e697a7b323a3d891de957728fb2fef
         if: steps.select.outputs.docs != ''
         with:
-          python-version: "3.12"
+          files: ${{ steps.select.outputs.docs }}
+          output-dir: word/exports
 
-      # LibreOffice from The Document Foundation, pinned so the layout only changes on purpose.
-      - name: Cache LibreOffice
-        if: steps.select.outputs.docs != ''
-        uses: actions/cache@v4
-        with:
-          path: ~/lo.tar.gz
-          key: libreoffice-${{ env.LO_VERSION }}
-
-      - name: Install LibreOffice
-        if: steps.select.outputs.docs != ''
-        run: |
-          if [ ! -f ~/lo.tar.gz ]; then
-            curl -fsSL -o ~/lo.tar.gz "https://downloadarchive.documentfoundation.org/libreoffice/old/$LO_VERSION/deb/x86_64/LibreOffice_${LO_VERSION}_Linux_x86-64_deb.tar.gz"
-          fi
-          echo "$LO_SHA256  $HOME/lo.tar.gz" | sha256sum -c
-          mkdir -p "$RUNNER_TEMP/lo"
-          tar xzf ~/lo.tar.gz -C "$RUNNER_TEMP/lo" --strip-components=1
-          sudo dpkg -i "$RUNNER_TEMP"/lo/DEBS/*.deb > /dev/null
-          echo "SOFFICE=$(ls /opt/libreoffice*/program/soffice)" >> "$GITHUB_ENV"
-
-      - name: Install fonts
-        if: steps.select.outputs.docs != ''
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-crosextra-carlito fonts-liberation fonts-dejavu-core
-          # Source fonts for the generated substitutes (unpacked only, so their fontconfig rules stay out)
-          src="$RUNNER_TEMP/fontsrc"
-          mkdir -p "$src" ~/.local/share/fonts/docx-export ~/.config/fontconfig
-          (cd "$RUNNER_TEMP" && apt-get download fonts-urw-base35 fonts-droid-fallback)
-          for deb in "$RUNNER_TEMP"/*.deb; do dpkg -x "$deb" "$RUNNER_TEMP/debs"; done
-          cp "$RUNNER_TEMP/debs/usr/share/fonts/opentype/urw-base35/StandardSymbolsPS.otf" \
-            "$RUNNER_TEMP"/debs/usr/share/fonts/opentype/urw-base35/NimbusMonoPS-*.otf \
-            "$RUNNER_TEMP/debs/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf" \
-            /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf "$src/"
-          gf=https://raw.githubusercontent.com/google/fonts/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl
-          for style in Regular Italic Light Medium SemiBold SemiBoldItalic Bold BoldItalic; do
-            curl -fsSL -o ~/.local/share/fonts/Poppins-$style.ttf "$gf/poppins/Poppins-$style.ttf"
-          done
-          cp ~/.local/share/fonts/Poppins-Regular.ttf "$src/"
-          curl -fsSL -o "$src/Inconsolata[wdth,wght].ttf" "$gf/inconsolata/Inconsolata%5Bwdth,wght%5D.ttf"
-          pip install --quiet fonttools==4.66.1 uharfbuzz==0.56.2
-          python .github/docx-export/make_fonts.py "$src" ~/.local/share/fonts/docx-export
-          cp .github/docx-export/fonts.conf ~/.config/fontconfig/fonts.conf
-          fc-cache -f
-          # Fail if a Word font has no intended substitute.
-          check() { echo "$1 -> $(fc-match "$1")"; fc-match -f '%{family}' "$1" | tr , '\n' | grep -qx "$2"; }
-          check Calibri Carlito
-          check "Calibri Light" Carlito
-          check Poppins Poppins
-          check "Poppins SemiBold" "Poppins SemiBold"
-          check "Docx Poppins Label" "Docx Poppins Label"
-          check Symbol Symbol
-          check Consolas "Docx Consolas"
-          check "Segoe UI Symbol" "Docx Segoe Symbol"
-          check SimSun "Docx SimSun"
-          check DengXian "Docx DengXian"
-          check "Times New Roman" "Liberation Serif"
-          check "Docx Courier New" "Docx Courier New"
-          check "Docx Courier Label" "Docx Courier Label"
-          check Arial "Liberation Sans"
-
-      - name: Export
+      - name: Collect PDFs
         if: steps.select.outputs.docs != ''
         env:
           DOCS: ${{ steps.select.outputs.docs }}
         run: |
-          "$SOFFICE" --version
-          # Convert adjusted copies (prep.py); the committed docx stay as they are.
-          mkdir -p "$RUNNER_TEMP/prep" "$RUNNER_TEMP/pdfs"
-          for doc in $DOCS; do
-            python .github/docx-export/prep.py "$doc" "$RUNNER_TEMP/prep/$(basename "$doc")"
-          done
-          "$SOFFICE" --headless --convert-to pdf --outdir word/exports "$RUNNER_TEMP"/prep/*.docx
+          mkdir -p "$RUNNER_TEMP/pdfs"
           for doc in $DOCS; do
             cp "word/exports/$(basename "$doc" .docx).pdf" "$RUNNER_TEMP/pdfs/"
           done
