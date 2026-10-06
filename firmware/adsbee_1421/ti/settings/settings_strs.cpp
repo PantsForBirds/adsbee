@@ -26,6 +26,7 @@ const char SettingsManager::kR1090PreambleModeStrs[SettingsManager::kNumR1090Pre
                                                       "MODE_S",         // Standard preamble, raised AGC trigger.
                                                       "MODE_S_STRONG",  // Standard preamble, fixed low gain.
                                                       "MODE_S_SMART",   // Time slices of MODE_S and MODE_S_STRONG.
+                                                      "MODE_S_WIDE",    // Standard preamble, fixed gain, no saturation blanking.
 };
 
 const char SettingsManager::RxPosition::kPositionSourceStrs[SettingsManager::RxPosition::kNumPositionSources]

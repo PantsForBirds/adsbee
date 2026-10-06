@@ -82,6 +82,14 @@ TEST(LR2021OokAdsb, StrongGainStep) {
     EXPECT_LE(kStrongGainStep, 13);
 }
 
+TEST(LR2021OokAdsb, WideGainStep) {
+    EXPECT_EQ(WideGainStep(0), kWideGainStep);  // Fixed gain unless a manual gain is set.
+    EXPECT_EQ(WideGainStep(9), 9);
+    EXPECT_GE(kWideGainStep, 1);
+    EXPECT_LE(kWideGainStep, kMaxGainStep);
+    EXPECT_EQ(kFrontEndModeNoSaturationBlanking & ~kFrontEndModeMask, 0u);  // Only bits 7:0 are written.
+}
+
 TEST(LR2021OokAdsb, AgcTriggerRegValue) {
     EXPECT_EQ(AgcTriggerRegValue(kAgcTriggerDefault), 0x00100000u);
     EXPECT_EQ(AgcTriggerRegValue(kAgcTriggerStandardPreamble), 0x00400000u);

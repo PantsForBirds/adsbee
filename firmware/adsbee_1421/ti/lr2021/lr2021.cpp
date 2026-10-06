@@ -289,7 +289,8 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     // latency.
     static_assert(GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeS) == kOokFifoPacketLenBytes &&
                       GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeDF17) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes,
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes &&
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSWide) == kOokFifoPacketLenBytes,
                   "IRQ drain threshold math assumes 14-byte FIFO packets in every preamble mode.");
     uint8_t rx_fifo_flags = kFifoIrqFlagFifoHigh | kFifoIrqFlagFifoOverflow;
     uint8_t tx_fifo_flags = 0x0;
@@ -310,9 +311,17 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
 
     // MODE_S_SMART starts in its MODE_S slice; SetOokADSBStrong switches it.
     const bool strong_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong;
+    const bool wide_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeSWide;
     // 0 = auto, 1..15 manual (13 = max).
-    if (!SetAgcGainManual(LR2021OokAdsb::StrongGainStep(strong_mode, agc_gain))) {
+    const uint8_t gain_step =
+        wide_mode ? LR2021OokAdsb::WideGainStep(agc_gain) : LR2021OokAdsb::StrongGainStep(strong_mode, agc_gain);
+    if (!SetAgcGainManual(gain_step)) {
         return SequenceStepFailed("LR2021::SetOokADSB", "SetAgcGainManual");
+    }
+    if (wide_mode &&
+        !WriteRegMemMask32(LR2021OokAdsb::kFrontEndRegAddr, LR2021OokAdsb::kFrontEndModeMask,
+                           LR2021OokAdsb::kFrontEndModeNoSaturationBlanking)) {
+        return SequenceStepFailed("LR2021::SetOokADSB", "turning off saturation blanking");
     }
     // MODE_S and MODE_S_SMART raise the AGC trigger so packets up to about -40 dBm keep their whole preamble
     // (lr2021_ook_adsb.hh). With the AGC off the trigger has no effect, so SMART can keep it in STRONG slices.

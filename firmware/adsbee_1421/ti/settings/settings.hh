@@ -84,6 +84,8 @@ class SettingsManager {
                                             // downlink format, strong signals from about -45 to 0 dBm.
         kR1090PreambleModeModeSSmart = 3,   // Time slices of MODE_S and MODE_S_STRONG; STRONG slices grow while
                                             // aircraft only they decode are around.
+        kR1090PreambleModeModeSWide = 4,    // Standard preamble, fixed gain without saturation blanking: every
+                                            // downlink format, about -80 to 0 dBm.
         kNumR1090PreambleModes
     };
     static constexpr uint16_t kR1090PreambleModeStrMaxLen = 30;

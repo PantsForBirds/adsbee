@@ -101,6 +101,18 @@ static constexpr uint8_t kAgcTriggerStandardPreamble = 0x40;
 static constexpr uint8_t kStrongGainStep = 5;
 static constexpr uint8_t kMaxGainStep = 13;
 
+// MODE_S_WIDE: undocumented front-end register (found by bench testing). Bits 7:0 select how the receiver reacts to
+// a strong input; the chip default 0x75 runs the AGC and blanks the demodulator while the ADC saturates. 0x18 stops
+// both, so a fixed high gain decodes Mode S pulses from about -80 dBm to well into saturation.
+static constexpr uint32_t kFrontEndRegAddr = 0xF30150;
+static constexpr uint32_t kFrontEndModeMask = 0x000000FF;
+static constexpr uint8_t kFrontEndModeNoSaturationBlanking = 0x18;
+// Fixed gain for MODE_S_WIDE: step 13 gets as weak, but at 0 dBm it decodes only every other frame.
+static constexpr uint8_t kWideGainStep = 12;
+
+// SetAgcGainManual step for MODE_S_WIDE unless a manual gain is set.
+constexpr uint8_t WideGainStep(uint8_t agc_gain) { return agc_gain == 0 ? kWideGainStep : agc_gain; }
+
 // SetAgcGainManual step (0 = AGC): STRONG uses kStrongGainStep unless a manual gain is set.
 constexpr uint8_t StrongGainStep(bool strong, uint8_t agc_gain) {
     return (strong && agc_gain == 0) ? kStrongGainStep : agc_gain;

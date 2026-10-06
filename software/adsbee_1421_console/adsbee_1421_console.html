@@ -4371,10 +4371,11 @@ function makeRxEnableEntry() {
                     + 'MODE_S decodes every downlink format up to about -40 dBm. '
                     + 'MODE_S_STRONG decodes strong signals, about -45 to 0 dBm, for a receiver next to a transmitter. '
                     + 'MODE_S_SMART runs MODE_S with short STRONG slices, and mostly STRONG while an aircraft only STRONG hears well is around. '
+                    + 'MODE_S_WIDE decodes every downlink format from about -80 to 0 dBm. '
                     + 'Levels measured on a devkit.',
                 fields: [{
                     id: 'mode', label: 'Mode', type: 'enum',
-                    options: ['DF17', 'MODE_S', 'MODE_S_STRONG', 'MODE_S_SMART'],
+                    options: ['DF17', 'MODE_S', 'MODE_S_STRONG', 'MODE_S_SMART', 'MODE_S_WIDE'],
                 }],
             },
             {

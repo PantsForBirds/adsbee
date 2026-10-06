@@ -21,7 +21,8 @@ TEST(Settings, R1090PreambleModesAreNumberedContiguously) {
     static_assert(SM::kR1090PreambleModeModeS == 1, "1 is MODE_S.");
     static_assert(SM::kR1090PreambleModeModeSStrong == 2, "2 is MODE_S_STRONG.");
     static_assert(SM::kR1090PreambleModeModeSSmart == 3, "3 is MODE_S_SMART (appended, no version bump).");
-    EXPECT_EQ(SM::kNumR1090PreambleModes, 4);
+    static_assert(SM::kR1090PreambleModeModeSWide == 4, "4 is MODE_S_WIDE (appended, no version bump).");
+    EXPECT_EQ(SM::kNumR1090PreambleModes, 5);
     for (uint16_t i = 0; i < SM::kNumR1090PreambleModes; i++) {
         EXPECT_STRNE(SM::kR1090PreambleModeStrs[i], "") << "mode " << i << " has a name";
     }
@@ -36,6 +37,7 @@ TEST(Settings, R1090PreambleModeNamesSelectTheirModes) {
     EXPECT_EQ(ModeForName("MODE_S"), SM::kR1090PreambleModeModeS);
     EXPECT_EQ(ModeForName("MODE_S_STRONG"), SM::kR1090PreambleModeModeSStrong);
     EXPECT_EQ(ModeForName("MODE_S_SMART"), SM::kR1090PreambleModeModeSSmart);
+    EXPECT_EQ(ModeForName("MODE_S_WIDE"), SM::kR1090PreambleModeModeSWide);
     EXPECT_EQ(ModeForName("MODE_S_SW_CRC"), -1);
     EXPECT_EQ(ModeForName("MODE_S_PREAMBLE"), -1);
     EXPECT_EQ(ModeForName("MODE_S_WEAK"), -1);
