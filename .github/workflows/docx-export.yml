@@ -96,6 +96,7 @@ jobs:
           (cd "$RUNNER_TEMP" && apt-get download fonts-urw-base35 fonts-droid-fallback)
           for deb in "$RUNNER_TEMP"/*.deb; do dpkg -x "$deb" "$RUNNER_TEMP/debs"; done
           cp "$RUNNER_TEMP/debs/usr/share/fonts/opentype/urw-base35/StandardSymbolsPS.otf" \
+            "$RUNNER_TEMP"/debs/usr/share/fonts/opentype/urw-base35/NimbusMonoPS-*.otf \
             "$RUNNER_TEMP/debs/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf" \
             /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf "$src/"
           gf=https://raw.githubusercontent.com/google/fonts/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl
@@ -104,7 +105,7 @@ jobs:
           done
           cp ~/.local/share/fonts/Poppins-Regular.ttf "$src/"
           curl -fsSL -o "$src/Inconsolata[wdth,wght].ttf" "$gf/inconsolata/Inconsolata%5Bwdth,wght%5D.ttf"
-          pip install --quiet fonttools==4.66.1
+          pip install --quiet fonttools==4.66.1 uharfbuzz==0.56.2
           python .github/docx-export/make_fonts.py "$src" ~/.local/share/fonts/docx-export
           cp .github/docx-export/fonts.conf ~/.config/fontconfig/fonts.conf
           fc-cache -f
@@ -121,7 +122,8 @@ jobs:
           check SimSun "Docx SimSun"
           check DengXian "Docx DengXian"
           check "Times New Roman" "Liberation Serif"
-          check "Courier New" "Liberation Mono"
+          check "Docx Courier New" "Docx Courier New"
+          check "Docx Courier Label" "Docx Courier Label"
           check Arial "Liberation Sans"
 
       - name: Export

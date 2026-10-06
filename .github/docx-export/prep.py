@@ -2,7 +2,7 @@
 
 usage: prep.py IN.docx OUT.docx
 """
-import re, sys, zipfile
+import functools, re, subprocess, sys, zipfile
 
 ZWSP = "\u200b"
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -108,15 +108,38 @@ def toc_tab_size(doc):
     return re.sub(r"<w:p\b(?:(?!</w:p>).)*</w:p>", para, doc, flags=re.S)
 
 
+LABEL_FONTS = {"Poppins": "Docx Poppins Label", "Courier New": "Docx Courier Label"}
+
+
 def label_fonts(numbering):
-    """Body-size list numbers in Poppins use a variant without descent (see make_fonts.py)."""
+    """Body-size list numbers and bullets use font variants without descent (see make_fonts.py)."""
     def lvl(m):
         l = m.group(0)
         sz = re.search(r'<w:sz w:val="(\d+)"', l)
-        if sz and int(sz.group(1)) <= 22:
-            l = re.sub(r'(w:(?:ascii|hAnsi)=)"Poppins"', r'\1"Docx Poppins Label"', l)
+        if not sz or int(sz.group(1)) <= 22:
+            for font, label in LABEL_FONTS.items():
+                l = re.sub(rf'(w:(?:ascii|hAnsi)=)"{font}"', rf'\1"{label}"', l)
         return l
     return re.sub(r"<w:lvl\b.*?</w:lvl>", lvl, numbering, flags=re.S)
+
+
+def font_names(xml):
+    """LibreOffice's built-in replacement table maps Courier New to Liberation Mono when that is
+    installed, before fontconfig is asked, so name the substitute (make_fonts.py) directly."""
+    return re.sub(r'(w:(?:ascii|hAnsi|cs|eastAsia)=)"Courier New"', r'\1"Docx Courier New"', xml)
+
+
+def page_break_bullets(doc):
+    """A list paragraph holding only a page break shows no bullet in Word. LibreOffice shows one at the
+    bottom of the page; turn the numbering off there."""
+    def para(m):
+        p = m.group(0)
+        runs = re.sub(r"<w:pPr>.*?</w:pPr>", "", p, flags=re.S)
+        if "<w:numPr>" not in p or 'w:type="page"' not in runs or re.search(r"<w:(?:t|drawing|pict|sym|tab)\b", runs):
+            return p
+        return re.sub(r"<w:numPr>.*?</w:numPr>", '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr>', p,
+                      flags=re.S)
+    return re.sub(r"<w:p\b(?:(?!</w:p>).)*</w:p>", para, doc, flags=re.S)
 
 
 def cell_margins(doc, styles):
@@ -278,6 +301,173 @@ def after_columns(doc, styles):
     return "".join(out) + doc[pos:]
 
 
+class Styles:
+    """Run and paragraph properties from styles.xml (basedOn chains, document defaults, theme fonts)."""
+
+    def __init__(self, styles, theme):
+        self.styles, self.default_para = {}, "Normal"
+        for m in re.finditer(r'<w:style [^>]*w:type="(\w+)"[^>]*w:styleId="([^"]+)".*?</w:style>', styles, re.S):
+            based = re.search(r'<w:basedOn w:val="([^"]+)"', m.group(0))
+            self.styles[m.group(2)] = (m.group(0), based.group(1) if based else None)
+            if m.group(1) == "paragraph" and 'w:default="1"' in m.group(0)[:m.group(0).find(">")]:
+                self.default_para = m.group(2)
+        d = re.search(r"<w:docDefaults>.*?</w:docDefaults>", styles, re.S)
+        self.defaults = d.group(0) if d else ""
+        self.theme = {}
+        for kind in ("major", "minor"):
+            f = re.search(rf'<a:{kind}Font><a:latin typeface="([^"]*)"', theme)
+            if f:
+                self.theme[kind + "HAnsi"] = f.group(1)
+
+    def chain(self, sid):
+        seen = []
+        while sid in self.styles and sid not in seen:
+            seen.append(sid)
+            sid = self.styles[sid][1]
+        return [self.styles[s][0] for s in seen]
+
+    @staticmethod
+    def first(xmls, tag, pattern):
+        """First match of pattern inside <tag>...</tag> of the first xml that has it."""
+        for x in xmls:
+            for block in re.findall(rf"<w:{tag}>(.*?)</w:{tag}>", x, re.S):
+                m = re.search(pattern, block)
+                if m:
+                    return m
+        return None
+
+
+@functools.lru_cache(maxsize=None)
+def hb_font(family, bold, italic):
+    """HarfBuzz font for a Word font name, as fontconfig substitutes it (as LibreOffice will)."""
+    try:
+        import uharfbuzz as hb
+        path = subprocess.run(["fc-match", "-f", "%{file}", f"{family}:weight={200 if bold else 80}"
+                               f":slant={100 if italic else 0}"], capture_output=True, text=True, check=True).stdout
+        with open(path, "rb") as f:
+            return hb.Font(hb.Face(hb.Blob(f.read())))
+    except Exception:
+        return None
+
+
+def shaped_width(font, text, size):
+    """Advance width in twips of text in font at size (half-points), with kerning and ligatures."""
+    import uharfbuzz as hb
+    buf = hb.Buffer()
+    buf.add_str(text)
+    buf.guess_segment_properties()
+    hb.shape(font, buf)
+    if any(i.codepoint == 0 for i in buf.glyph_infos):
+        return None  # glyph missing: LibreOffice would use a fallback font
+    return sum(p.x_advance for p in buf.glyph_positions) / font.face.upem * size * 10
+
+
+def text_width(runs, styles, pstyle):
+    """Width in twips of the runs' text on one line, or None if it can't be measured."""
+    segs = []
+    for r in runs:
+        rpr = re.search(r"<w:rPr>(.*?)</w:rPr>", r, re.S)
+        rpr = rpr.group(1) if rpr else ""
+        if re.search(r"<w:(?:tab|ptab|br|cr|drawing|pict|object|sym|fldChar|instrText|footnoteReference|"
+                     r"endnoteReference)\b", r) or re.search(r"<w:(?:caps|smallCaps|spacing|w|vertAlign|position)\b",
+                                                             rpr):
+            return None
+        text = "".join(re.findall(r"<w:t(?: [^>]*)?>([^<]*)</w:t>", r)).replace(ZWSP, "")
+        if not text:
+            continue
+        text = text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", '"')
+        rstyle = re.search(r'<w:rStyle w:val="([^"]+)"', rpr)
+        xmls = [f"<w:rPr>{rpr}</w:rPr>"] + (styles.chain(rstyle.group(1)) if rstyle else []) \
+            + styles.chain(pstyle) + [styles.defaults]
+        font = styles.first(xmls, "rPr", r'<w:rFonts [^>]*?w:(ascii(?:Theme)?)="([^"]+)"')
+        if not font:
+            return None
+        family = styles.theme.get(font.group(2)) if font.group(1) == "asciiTheme" else font.group(2)
+        sz = styles.first(xmls, "rPr", r'<w:sz w:val="(\d+)"')
+
+        def on(tag):
+            m = styles.first(xmls, "rPr", rf'<w:{tag}(?: w:val="(\w+)")?/>')
+            return bool(m) and m.group(1) not in ("0", "false", "off")
+        font = hb_font(family, on("b"), on("i")) if family else None
+        if not font or not sz:
+            return None
+        segs.append([font, text, int(sz.group(1))])
+    if segs:
+        segs[-1][1] = segs[-1][1].rstrip(" ")
+    widths = [shaped_width(*seg) for seg in segs]
+    return None if None in widths else sum(widths)
+
+
+def one_line_widows(doc, styles):
+    """LibreOffice moves a paragraph back to the previous page only if it fits there as currently
+    formatted. A one-line paragraph that LibreOffice once formatted at the top of the next page beside a
+    header object (the bee) has two lines there, and widow/orphan control keeps it from splitting, so it
+    stays on that page (1090 title page). Widow control has no effect on a paragraph Word sets on one
+    line, so turn it off for body paragraphs that measure one line. Measured with the substitute fonts
+    and HarfBuzz; trailing spaces don't count."""
+    tables, depth, start = [], 0, 0  # spans of tables and text boxes
+    for m in re.finditer(r"</?w:(?:tbl|txbxContent)>", doc):
+        if m.group(0)[1] != "/":
+            depth += 1
+            start = m.start() if depth == 1 else start
+        else:
+            depth -= 1
+            if depth == 0:
+                tables.append((start, m.end()))
+    sects = [(m.start(), m.group(0)) for m in SECT_RE.finditer(doc)]
+
+    def avail(pos):
+        sp = next((s for p, s in sects if p >= pos), sects[-1][1] if sects else "")
+        w = re.search(r'<w:pgSz [^>]*w:w="(\d+)"', sp)
+        lm = re.search(r'<w:pgMar [^>]*w:left="(\d+)"', sp)
+        rm = re.search(r'<w:pgMar [^>]*w:right="(\d+)"', sp)
+        if not (w and lm and rm) or 'w:equalWidth="0"' in sp:
+            return None
+        cols = re.search(r'<w:cols [^>]*w:num="(\d+)"', sp)
+        n = int(cols.group(1)) if cols else 1
+        space = re.search(r'<w:cols [^>]*w:space="(\d+)"', sp)
+        space = int(space.group(1)) if space else 720
+        return (int(w.group(1)) - int(lm.group(1)) - int(rm.group(1)) - (n - 1) * space) / n
+
+    out, pos, ti = [], 0, 0
+    for m in re.finditer(r"<w:p\b[^>]*>((?:(?!</w:p>).)*)</w:p>", doc, re.S):
+        while ti < len(tables) and tables[ti][1] <= m.start():
+            ti += 1
+        if ti < len(tables) and tables[ti][0] <= m.start() or "<w:p " in m.group(1) or "<w:p>" in m.group(1):
+            continue
+        ppr = re.match(r"<w:pPr>.*?</w:pPr>", m.group(1), re.S)
+        ppr = ppr.group(0) if ppr else ""
+        if "<w:widowControl" in ppr or "<w:numPr>" in ppr or "<w:framePr" in ppr:
+            continue
+        pstyle = re.search(r'<w:pStyle w:val="([^"]+)"', ppr)
+        pstyle = pstyle.group(1) if pstyle else styles.default_para
+        pxmls = [ppr] + styles.chain(pstyle) + [styles.defaults]
+        if styles.first(pxmls, "pPr", r"<w:(?:numPr|widowControl)\b"):
+            continue
+        width = avail(m.start())
+        if width is None:
+            continue
+        ind = styles.first(pxmls, "pPr", r"<w:ind [^>]*/>")
+        for attr, sign in (("(?:left|start)", -1), ("(?:right|end)", -1), ("firstLine", -1), ("hanging", 1)):
+            v = re.search(rf'w:{attr}="(-?\d+)"', ind.group(0)) if ind else None
+            width += sign * int(v.group(1)) if v else 0
+        runs = re.findall(r"<w:r\b[^>]*>.*?</w:r>", m.group(1)[len(ppr):], re.S)
+        text = text_width(runs, styles, pstyle) if runs else None
+        if not text or text > width - 10:  # 0.5pt to spare
+            continue
+        p = m.group(0)
+        if ppr:
+            # widowControl follows pStyle, keepNext, keepLines, pageBreakBefore, framePr
+            anchor = re.search(r"<w:(?!pStyle|keepNext|keepLines|pageBreakBefore|framePr)\w+\b|</w:pPr>", ppr[7:])
+            i = m.start(1) - m.start() + 7 + anchor.start()
+        else:
+            i = m.start(1) - m.start()
+        new = '<w:widowControl w:val="0"/>' if ppr else '<w:pPr><w:widowControl w:val="0"/></w:pPr>'
+        out += [doc[pos:m.start()], p[:i], new, p[i:]]
+        pos = m.end()
+    return "".join(out) + doc[pos:]
+
+
 def main(src, dst):
     with zipfile.ZipFile(src) as zin:
         infos = zin.infolist()
@@ -288,17 +478,22 @@ def main(src, dst):
     doc = parts["word/document.xml"].decode()
     doc = page_break_to_section_break(doc)
     doc = toc_tab_size(doc)
+    doc = page_break_bullets(doc)
     doc = after_columns(doc, parts["word/styles.xml"].decode())
     doc = explicit_headers(doc, parts)
     doc = table_indent(doc)
     doc = cell_margins(doc, parts["word/styles.xml"].decode())
-    parts["word/document.xml"] = doc.encode()
     theme = parts.get("word/theme/theme1.xml", b"").decode()
+    doc = one_line_widows(doc, Styles(parts["word/styles.xml"].decode(), theme))
+    parts["word/document.xml"] = doc.encode()
     for name in list(parts):
         if re.fullmatch(r"word/(document|styles|numbering|header\d*|footer\d*|footnotes|endnotes)\.xml", name):
             parts[name] = theme_east_asia(parts[name].decode(), theme).encode()
     if "word/numbering.xml" in parts:
         parts["word/numbering.xml"] = label_fonts(parts["word/numbering.xml"].decode()).encode()
+    for name in list(parts):
+        if re.fullmatch(r"word/(document|styles|numbering|header\d*|footer\d*|footnotes|endnotes)\.xml", name):
+            parts[name] = font_names(parts[name].decode()).encode()
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
         for i in infos:
             zout.writestr(i, parts.pop(i.filename))

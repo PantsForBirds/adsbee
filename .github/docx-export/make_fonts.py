@@ -6,7 +6,10 @@ SRCDIR holds the free source fonts (see docx-export.yml). Each substitute keeps 
 takes the line metrics of the Word font it replaces, so lines get the same height as in Word:
 
 - Symbol: URW Standard Symbols PS (Adobe Symbol widths) with a symbol cmap (U+F020-F0FF), for list
-  bullets such as U+F0B7. Metrics of Word's SymbolMT.
+  bullets such as U+F0B7. Metrics of Word's SymbolMT, bullet moved down to SymbolMT's position.
+- Docx Courier New: URW Nimbus Mono PS (thin strokes and round "o" like Courier New, same advance),
+  Courier New metrics. Liberation Mono is metric-compatible but much heavier, which shows in "o" bullets.
+- Docx Courier Label: Nimbus Mono PS for list bullets, without descent (see prep.py).
 - Docx Consolas: Inconsolata at the width where its advance matches Consolas, Consolas metrics.
 - Docx Poppins Label: Poppins for body-size list numbers, without descent (see prep.py).
 - Docx Segoe Symbol: DejaVu Sans symbols (check marks), Segoe UI Symbol metrics.
@@ -14,6 +17,8 @@ takes the line metrics of the Word font it replaces, so lines get the same heigh
 """
 import sys
 from fontTools import subset
+from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._c_m_a_p import cmap_format_4
 from fontTools.varLib.instancer import instantiateVariableFont
@@ -54,9 +59,23 @@ def symbol(src, out):
     os2 = f["OS/2"]
     os2.ulCodePageRange1, os2.ulCodePageRange2 = 1 << 31, 0  # symbol character set
     os2.usFirstCharIndex, os2.usLastCharIndex = min(sym.cmap), max(sym.cmap)
-    set_vmetrics(f, 2059 / 2048, 450 / 2048)
+    # SymbolMT's descent and its ascent as Word's bullet lines measure it (the font says 2059; with that,
+    # each bullet line comes out about 0.15pt shorter than in Word).
+    set_vmetrics(f, 2085 / 2048, 450 / 2048)
+    # SymbolMT's bullet spans 0.103-0.460 em above the baseline, Standard Symbols PS's 0.155-0.518.
+    move_glyph(f, "bullet", -0.055)
     set_names(f, "Symbol")
     f.save(out)
+
+
+def move_glyph(f, name, dy):
+    """Shift a CFF glyph up by dy em."""
+    cs = f["CFF "].cff.topDictIndex[0].CharStrings
+    old = cs[name]
+    width = f["hmtx"][name][0]
+    pen = T2CharStringPen(None if width == old.private.defaultWidthX else width - old.private.nominalWidthX, None)
+    f.getGlyphSet()[name].draw(TransformPen(pen, (1, 0, 0, 1, 0, round(dy * f["head"].unitsPerEm))))
+    cs[name] = pen.getCharString(private=old.private, globalSubrs=old.globalSubrs)
 
 
 def consolas(src, out):
@@ -77,7 +96,7 @@ def consolas(src, out):
     f.save(out)
 
 
-def shim(src, out, family, asc, desc, unicodes=None):
+def shim(src, out, family, asc, desc, unicodes=None, style="Regular"):
     f = TTFont(src)
     if unicodes:
         opts = subset.Options()
@@ -87,7 +106,7 @@ def shim(src, out, family, asc, desc, unicodes=None):
         sub.populate(unicodes=unicodes)
         sub.subset(f)
     set_vmetrics(f, asc, desc)
-    set_names(f, family)
+    set_names(f, family, style)
     f.save(out)
 
 
@@ -96,6 +115,10 @@ if __name__ == "__main__":
     symbol(f"{src}/StandardSymbolsPS.otf", f"{out}/DocxSymbol.otf")
     consolas(f"{src}/Inconsolata[wdth,wght].ttf", f"{out}/DocxConsolas.ttf")
     shim(f"{src}/Poppins-Regular.ttf", f"{out}/DocxPoppinsLabel.ttf", "Docx Poppins Label", 1135 / 1000, 0)
+    for style in ("Regular", "Bold", "Italic", "BoldItalic"):
+        shim(f"{src}/NimbusMonoPS-{style}.otf", f"{out}/DocxCourierNew-{style}.otf", "Docx Courier New",
+             1705 / 2048, 615 / 2048, style=style.replace("BoldI", "Bold I"))
+    shim(f"{src}/NimbusMonoPS-Regular.otf", f"{out}/DocxCourierLabel.otf", "Docx Courier Label", 1705 / 2048, 0)
     symbols = [*range(0x2190, 0x2200), *range(0x2600, 0x27C0), *range(0x2B00, 0x2C00)]
     shim(f"{src}/DejaVuSans.ttf", f"{out}/DocxSegoeSymbol.ttf", "Docx Segoe Symbol", 2210 / 2048, 514 / 2048,
          symbols)
