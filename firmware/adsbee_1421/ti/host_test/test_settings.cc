@@ -19,21 +19,42 @@ static int ModeForName(const char* name) {
 TEST(Settings, R1090PreambleModesAreNumberedContiguously) {
     static_assert(SM::kR1090PreambleModeDF17 == 0, "0 is DF17.");
     static_assert(SM::kR1090PreambleModeModeS == 1, "1 is MODE_S.");
-    static_assert(SM::kR1090PreambleModeModeSStrong == 2, "2 is MODE_S_STRONG.");
-    EXPECT_EQ(SM::kNumR1090PreambleModes, 3);
+    EXPECT_EQ(SM::kNumR1090PreambleModes, 2);
     for (uint16_t i = 0; i < SM::kNumR1090PreambleModes; i++) {
         EXPECT_STRNE(SM::kR1090PreambleModeStrs[i], "") << "mode " << i << " has a name";
     }
 }
 
-TEST(Settings, R1090PreambleModeFactoryDefaultIsDF17) {
-    EXPECT_EQ(SM::Settings().r1090_preamble_mode, SM::kR1090PreambleModeDF17);
+TEST(Settings, R1090PreambleModeFactoryDefaultIsModeS) {
+    EXPECT_EQ(SM::Settings().r1090_preamble_mode, SM::kR1090PreambleModeModeS);
+}
+
+TEST(Settings, RemovedR1090PreambleModesLoadAsModeS) {
+    EXPECT_EQ(SM::R1090PreambleModeFromStored(0), SM::kR1090PreambleModeDF17);
+    EXPECT_EQ(SM::R1090PreambleModeFromStored(1), SM::kR1090PreambleModeModeS);
+    EXPECT_EQ(SM::R1090PreambleModeFromStored(2), SM::kR1090PreambleModeModeS);  // MODE_S_STRONG
+    EXPECT_EQ(SM::R1090PreambleModeFromStored(3), SM::kR1090PreambleModeModeS);  // MODE_S_SMART (pre-release)
+    EXPECT_EQ(SM::R1090PreambleModeFromStored(4), SM::kR1090PreambleModeModeS);  // MODE_S_WIDE (pre-release)
+    EXPECT_EQ(SM::R1090PreambleModeFromStored(0xFF), SM::kR1090PreambleModeModeS);
+}
+
+TEST(Settings, StoredStrongBlobIsKept) {
+    // A version 4 blob saved by 0.3.11-rc4 with MODE_S_STRONG stays valid, so the other settings survive.
+    SM::Settings settings;
+    settings.baud_rates[0] = 115200;
+    reinterpret_cast<uint8_t&>(settings.r1090_preamble_mode) = 2;
+    settings.Stamp();
+    EXPECT_TRUE(settings.IsValid());
+    EXPECT_EQ(SM::R1090PreambleModeFromStored(settings.r1090_preamble_mode), SM::kR1090PreambleModeModeS);
+    EXPECT_EQ(settings.baud_rates[0], 115200u);
 }
 
 TEST(Settings, R1090PreambleModeNamesSelectTheirModes) {
     EXPECT_EQ(ModeForName("DF17"), SM::kR1090PreambleModeDF17);
     EXPECT_EQ(ModeForName("MODE_S"), SM::kR1090PreambleModeModeS);
-    EXPECT_EQ(ModeForName("MODE_S_STRONG"), SM::kR1090PreambleModeModeSStrong);
+    EXPECT_EQ(ModeForName("MODE_S_STRONG"), -1);
+    EXPECT_EQ(ModeForName("MODE_S_SMART"), -1);
+    EXPECT_EQ(ModeForName("MODE_S_WIDE"), -1);
     EXPECT_EQ(ModeForName("MODE_S_SW_CRC"), -1);
     EXPECT_EQ(ModeForName("MODE_S_PREAMBLE"), -1);
     EXPECT_EQ(ModeForName("MODE_S_WEAK"), -1);
@@ -61,6 +82,6 @@ TEST(Settings, BlobFromBeforeTheRenumberingIsRejected) {
 TEST(Settings, TornOrChangedBlobIsRejected) {
     SM::Settings settings;
     settings.Stamp();
-    settings.r1090_preamble_mode = SM::kR1090PreambleModeModeSStrong;  // Changed after stamping: stale CRC.
+    settings.r1090_preamble_mode = SM::kR1090PreambleModeDF17;  // Changed after stamping: stale CRC.
     EXPECT_FALSE(settings.IsValid());
 }
