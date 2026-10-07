@@ -57,11 +57,14 @@ jobs:
           echo "docs=${docs[*]}" >> "$GITHUB_OUTPUT"
 
       # LibreOffice, Word substitute fonts and docx adjustments: https://github.com/CoolNamesAllTaken/microslop
-      - uses: pantsforbirds-claud/microslop@1d79d8c921e697a7b323a3d891de957728fb2fef
+      # Pinned to main (no release tag yet); LO 26.8.1.1 with the microslop layout patches.
+      - uses: CoolNamesAllTaken/microslop@cace4b47c6b2e8ebc30506ef7f57dda8586885c5
         if: steps.select.outputs.docs != ''
         with:
           files: ${{ steps.select.outputs.docs }}
           output-dir: word/exports
+          lo-url: https://github.com/CoolNamesAllTaken/microslop/releases/download/libreoffice-26.8.1.1-ms1/libreoffice-26.8.1.1-ms1-linux-x86_64.tar.gz
+          lo-sha256: 349cb98fde5887377b6fc6bb08e3f0ad5d47b44a4f2e9722cedb715c67066980
 
       - name: Collect PDFs
         if: steps.select.outputs.docs != ''
