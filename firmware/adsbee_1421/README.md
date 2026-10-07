@@ -180,7 +180,7 @@ Stops anyone reflashing the module by holding SYNC high through a reset.
 
 | Command | Effect |
 |---|---|
-| `AT+BOOTLOADER_PIN?` | `BOOTLOADER_PIN=1` if the backdoor is on, `0` if off, plus the raw `BL_CONFIG` word. No password. |
+| `AT+BOOTLOADER_PIN?` | `BOOTLOADER_PIN=1` if the backdoor is on, `0` if off, plus the raw `BL_CONFIG` word. No password. `AT+SETTINGS?JSON` also reports it (`"BOOTLOADER_PIN":[1]`, read-only). |
 | `AT+BOOTLOADER_PIN=0,DEADBEE` | Turns the backdoor off. |
 | `AT+BOOTLOADER_PIN=1,DEADBEE` | Turns it back on (SYNC, active high). |
 | `AT+BOOTLOADER_PIN=<0\|1>,DEADBEE,DRYRUN` | Shows the current and new value; writes nothing. |

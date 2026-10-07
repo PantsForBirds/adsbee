@@ -805,7 +805,9 @@ CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
 // Each value is an array ordered to match the web settings GUI's field list for that
 // command (the writable AT= args plus query-only extras like position availability),
 // using the same value representations as the individual AT queries (enum strings, 0/1
-// booleans). Emitted in multiple printf calls to stay under kPrintfBufferMaxSize.
+// booleans). BOOTLOADER_PIN is read-only here: the live CCFG backdoor state, as AT+BOOTLOADER_PIN?
+// reports it, which is not a saved setting (AT+SETTINGS=SAVE/LOAD/RESET don't touch it).
+// Emitted in multiple printf calls to stay under kPrintfBufferMaxSize.
 // Keep in sync with SETTINGS_SCHEMA_1421 in
 // software/adsbee_1421_console/adsbee_1421_console.html when adding commands. No
 // settings on this product hold user-entered strings, so no JSON escaping is needed.
@@ -822,6 +824,7 @@ static void PrintSettingsJSON() {
 
     CPP_AT_PRINTF("SETTINGS={");
     CPP_AT_PRINTF("\"BAUD_RATE\":[%lu],", (unsigned long)comms_manager.GetBaudRate());
+    CPP_AT_PRINTF("\"BOOTLOADER_PIN\":[%d],", CcfgBootloader::BackdoorEnabled(CcfgBootloader::ReadBlConfig()));
     CPP_AT_PRINTF("\"LOG_LEVEL\":[\"%s\"],", SettingsManager::kConsoleLogLevelStrs[s.log_level]);
     CPP_AT_PRINTF("\"LR_ENABLE\":[%d],", adsbee.LR2021IsEnabled());
     CPP_AT_PRINTF("\"MAVLINK_ID\":[%d,%d],", s.mavlink_system_id, s.mavlink_component_id);
@@ -1284,8 +1287,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
          "ADSBee 1421 Programmer and other SYNC-based tools can no longer enter the bootloader to reflash the "
          "module; the only ways back are AT+BOOTLOADER_PIN=1,DEADBEE from the running firmware, or JTAG. Flashing "
          "an image writes that image's CCFG (enabled in every release). DRYRUN shows the change without writing "
-         "flash.\r\n\tAT+BOOTLOADER_PIN?\r\n\tQuery the live CCFG setting (no password).\r\n\t"
-         "BOOTLOADER_PIN=<enabled>",
+         "flash.\r\n\tAT+BOOTLOADER_PIN?\r\n\tQuery the live CCFG setting (no password; also in "
+         "AT+SETTINGS?JSON).\r\n\tBOOTLOADER_PIN=<enabled>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBootloaderPinCallback, comms_manager)},
     {.command = "DEVICE_INFO",
      .min_args = 0,
@@ -1383,7 +1386,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "flash.\r\n\tAT+SETTINGS=<op [LOAD SAVE RESET]>\r\n\t"
                     "Display nonvolatile settings.\r\n\tAT+SETTINGS?\r\n\t+SETTINGS=...\r\n\tDump settings in AT "
                     "command format.\r\n\tAT+SETTINGS?DUMP\r\n\t+SETTINGS=...\r\n\tDump settings as a "
-                    "single-line JSON object keyed by AT command.\r\n\tAT+SETTINGS?JSON\r\n\tSETTINGS={...}",
+                    "single-line JSON object keyed by AT command, plus the read-only live BOOTLOADER_PIN "
+                    "state.\r\n\tAT+SETTINGS?JSON\r\n\tSETTINGS={...}",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATSettingsCallback, comms_manager)},
     {.command = "SUBG_MODE",
      .min_args = 0,

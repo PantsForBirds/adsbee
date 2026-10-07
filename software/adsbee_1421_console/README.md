@@ -48,6 +48,10 @@ Programmer (`firmware/adsbee_1421/programmer/`) and click **Connect**.
   `AT+SETTINGS=SAVE`; **Refresh** re-reads everything from the device and discards
   edits. Settings are read in one `AT+SETTINGS?JSON` dump (retried if incomplete;
   older firmware is queried per command), out of the terminal's view.
+  The **Bootloader Pin** row reads the live CCFG backdoor state from the same dump
+  (read-only key `BOOTLOADER_PIN`; firmware whose dump lacks the key shows it as
+  unknown). Changing it sends `AT+BOOTLOADER_PIN=<0|1>,DEADBEE` after you type
+  the password, then re-reads the dump.
   A console baud change takes effect immediately; **Save** persists it.
   Entering the tab from the Live Map tab first restores the persisted
   `PROTOCOL_OUT`/`LOG_LEVEL` so the form shows saved values, not the map stream's
