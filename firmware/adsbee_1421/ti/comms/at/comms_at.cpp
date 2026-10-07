@@ -1336,7 +1336,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 1,
      .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S DF17]>\r\n\tSet the 1090MHz Mode S receiver mode. MODE_S "
-                    "(default): every downlink format, about -80 to 0 dBm. DF17: DF17 frames only.\r\n\t"
+                    "(default): every downlink format, -90 to 0 dBm. DF17: DF17 frames only.\r\n\t"
                     "AT+R1090_PREAMBLE?\r\n\tQuery the current preamble mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATR1090PreambleCallback, comms_manager)},
     {.command = "R1090_RX_BOOST",
