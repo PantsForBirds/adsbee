@@ -1288,7 +1288,7 @@
 </table>
 <h2 id="adsbee-m1421-or-adsbee-1090">ADSBee m1421 or ADSBee 1090?<a class="headerlink" href="#adsbee-m1421-or-adsbee-1090" title="Permanent link">&para;</a></h2>
 <p>ADSBee 1421 doesn’t replace the <a href="../../adsbee-1090/">ADSBee 1090</a> family; they have very different architectures and are good at different things.</p>
-<p>To get good dynamic range (receiving very close and very far away aircraft at the same time), the LR2021 is tuned by default to listen for only one Mode S packet type: Downlink Format 17, aka ADS-B. It’s great at seeing where planes are, but you won’t receive squawk codes, and you’ll receive fewer non-ADS-B packets. That’s usually fine for detect and avoid, but can be a drawback for data gathering. You can switch the receiver to the full Mode S preamble to receive all Mode S packet types, at the cost of dynamic range (close-in aircraft can have poor reception).</p>
+<p>By default the LR2021 receives every Mode S packet type, from weak signals near -80 dBm up to 0 dBm. A DF17 mode listens for ADS-B (Downlink Format 17) only, which leaves out squawk codes and other non-ADS-B packets.</p>
 <p>In its high-throughput configuration, the LR2021 also doesn’t provide per-packet timestamps or RSSI, so m1421 doesn’t support multilateration (MLAT) out of the box.</p>
 <table>
 <thead>
@@ -1523,7 +1523,7 @@
 </tr>
 <tr>
 <td><code>AT+R1090_PREAMBLE=&lt;mode&gt;</code></td>
-<td>DF17 (default, best dynamic range), MODE_S_PREAMBLE (all Mode S packet types), or MODE_S_SW_CRC.</td>
+<td>MODE_S (default, every Mode S packet type) or DF17 (ADS-B only).</td>
 </tr>
 <tr>
 <td><code>AT+R1090_GAIN=&lt;step&gt;</code></td>
