@@ -4444,15 +4444,27 @@ function makeRxEnableEntry() {
         ];
 
         // AtQueue already serializes commands and hides matched response lines from the
-        // terminal, so the transport adapter is a thin wrapper.
+        // terminal, so the transport adapter is a thin wrapper. It also hands every settings
+        // dump to the bootloader pin card, which reads its read-only BOOTLOADER_PIN key.
+        const SETTINGS_DUMP = { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/ };
         const settings1421Transport = {
             sendCommand(cmd, opts = {}) {
                 if (!serial.connected) return Promise.reject(new Error('Not connected.'));
-                return atQueue.send(cmd + '\r\n', {
+                const reply = atQueue.send(cmd + '\r\n', {
                     expect: opts.expect || null,
                     terminator: opts.terminator || 'ok',
                     quietMs: opts.quietMs ?? 350,
                     timeoutMs: opts.timeoutMs ?? 5000,
+                });
+                if (cmd !== SETTINGS_DUMP.command) return reply;
+                return reply.then(lines => {
+                    const json = SettingsEngine.parseBulkLines(lines, SETTINGS_DUMP.expect);
+                    if (json) bootloaderPinCard.fromDump(json);
+                    return lines;
+                }, e => {
+                    // Firmware without the dump answers ERROR.
+                    if (/^ERROR/.test(e.message)) bootloaderPinCard.fromDump(null);
+                    throw e;
                 });
             },
         };
@@ -4465,24 +4477,22 @@ function makeRxEnableEntry() {
                     this.engine = new SettingsEngine({
                         schema: SETTINGS_SCHEMA_1421,
                         transport: settings1421Transport,
-                        bulkQuery: { command: 'AT+SETTINGS?JSON', expect: /^SETTINGS=/ },
+                        bulkQuery: SETTINGS_DUMP,
                         formEl: document.getElementById('settings-form'),
                         statusEl: document.getElementById('settings-status'),
                         saveBtn: document.getElementById('settings-save-btn'),
                         refreshBtn: document.getElementById('settings-refresh-btn'),
                     });
                     this.engine.render();
+                    // Filled in from each settings dump the engine reads (see settings1421Transport).
                     bootloaderPinCard.render(document.getElementById('settings-form'));
-                    document.getElementById('settings-refresh-btn')
-                        .addEventListener('click', () => bootloaderPinCard.refresh());
                 }
                 if (!serial.connected) {
                     document.getElementById('settings-status').textContent = 'Connect to load settings.';
                     bootloaderPinCard.show(null, '');
                     return;
                 }
-                this.engine.refresh().catch(e => console.error('Settings refresh error:', e))
-                    .then(() => bootloaderPinCard.refresh());
+                this.engine.refresh().catch(e => console.error('Settings refresh error:', e));
             },
 
             // AtQueue keeps serving the rest of the page; just stop issuing new
@@ -4494,10 +4504,10 @@ function makeRxEnableEntry() {
 
         // Bootloader pin (AT+BOOTLOADER_PIN): the SYNC backdoor in CCFG (customer configuration) flash. Not in the
         // settings schema: it isn't a saved setting, and each change is a CCFG write the user confirms by typing the
-        // password.
+        // password. Its state is read from the AT+SETTINGS?JSON dump (read-only key BOOTLOADER_PIN).
         const BOOTLOADER_PIN_PASSWORD = 'DEADBEE';
         const bootloaderPinCard = {
-            enabled: null,  // true/false from AT+BOOTLOADER_PIN?, null when unknown
+            enabled: null,  // true/false from the settings dump, null when unknown
             busy: false,
             els: null,
 
@@ -4541,17 +4551,26 @@ function makeRxEnableEntry() {
                 this.els.status.classList.toggle('error', isError);
             },
 
+            // json: a parsed AT+SETTINGS?JSON dump, or null when the firmware has no dump.
+            fromDump(json) {
+                const v = json && Array.isArray(json.BOOTLOADER_PIN) ? json.BOOTLOADER_PIN[0] : undefined;
+                if (v === 0 || v === 1) this.show(v === 1, '');
+                else this.show(null, 'unknown: this firmware\'s settings dump doesn\'t include it (update the firmware)');
+            },
+
+            // Re-reads the state through the settings dump (after a write).
             async refresh() {
-                if (!this.els || this.busy) return;
+                if (!this.els) return;
                 if (!serial.connected) { this.show(null, ''); return; }
                 try {
-                    const lines = await settings1421Transport.sendCommand('AT+BOOTLOADER_PIN?',
-                        { expect: /^BOOTLOADER_PIN=/, terminator: 'ok', timeoutMs: 3000 });
-                    const m = lines.length ? /^BOOTLOADER_PIN=([01])/.exec(lines[0]) : null;
-                    if (!m) throw new Error('No BOOTLOADER_PIN response (firmware before 0.3.11-rc4?)');
-                    this.show(m[1] === '1', '');
+                    // The transport passes a complete dump to fromDump().
+                    const lines = await settings1421Transport.sendCommand(SETTINGS_DUMP.command,
+                        { expect: SETTINGS_DUMP.expect, terminator: 'ok', timeoutMs: 3000 });
+                    if (!SettingsEngine.parseBulkLines(lines, SETTINGS_DUMP.expect)) {
+                        this.show(null, 'the settings dump arrived incomplete; press Refresh', true);
+                    }
                 } catch (e) {
-                    this.show(null, e.message, true);
+                    if (!/^ERROR/.test(e.message)) this.show(null, e.message, true);
                 }
             },
 
