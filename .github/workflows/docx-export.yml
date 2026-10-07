@@ -58,7 +58,7 @@ jobs:
 
       # LibreOffice, Word substitute fonts and docx adjustments: https://github.com/CoolNamesAllTaken/microslop
       # Pinned to main (no release tag yet); LO 26.8.1.1 with the microslop layout patches.
-      - uses: CoolNamesAllTaken/microslop@cace4b47c6b2e8ebc30506ef7f57dda8586885c5
+      - uses: CoolNamesAllTaken/microslop@3fcdcade7b7de2d682476202a95159101a50624d
         if: steps.select.outputs.docs != ''
         with:
           files: ${{ steps.select.outputs.docs }}
