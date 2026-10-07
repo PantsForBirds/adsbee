@@ -1157,7 +1157,7 @@ class LR2021 {
     /**
      * Sets the LR2021 to ADS-B (Mode S) reception mode.
      * @param[in] preamble_mode  How reception is triggered (standard preamble vs. DF17 header).
-     * @param[in] agc_gain       Manual LF-frontend AGC gain step (0 = auto, 1..15; 13 = max).
+     * @param[in] agc_gain       Manual LF-frontend AGC gain step (1..15; 13 = max). 0 = AGC in DF17, step 13 in MODE_S.
      * @param[in] rx_boost       LF RX path boost level (0 = off .. 7 = max), clamped to kBoostMax.
      */
     bool SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_t agc_gain, uint8_t rx_boost = 0);

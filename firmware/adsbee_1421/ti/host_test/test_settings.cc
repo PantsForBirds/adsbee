@@ -17,43 +17,38 @@ static int ModeForName(const char* name) {
 }
 
 TEST(Settings, R1090PreambleModesAreNumberedContiguously) {
-    static_assert(SM::kR1090PreambleModeDF17 == 0, "0 is DF17.");
-    static_assert(SM::kR1090PreambleModeModeS == 1, "1 is MODE_S.");
-    static_assert(SM::kR1090PreambleModeModeSStrong == 2, "2 is MODE_S_STRONG.");
-    EXPECT_EQ(SM::kNumR1090PreambleModes, 3);
+    static_assert(SM::kR1090PreambleModeModeS == 0, "0 is MODE_S.");
+    static_assert(SM::kR1090PreambleModeDF17 == 1, "1 is DF17.");
+    EXPECT_EQ(SM::kNumR1090PreambleModes, 2);
     for (uint16_t i = 0; i < SM::kNumR1090PreambleModes; i++) {
         EXPECT_STRNE(SM::kR1090PreambleModeStrs[i], "") << "mode " << i << " has a name";
     }
 }
 
-TEST(Settings, R1090PreambleModeFactoryDefaultIsDF17) {
-    EXPECT_EQ(SM::Settings().r1090_preamble_mode, SM::kR1090PreambleModeDF17);
+TEST(Settings, R1090PreambleModeFactoryDefaultIsModeS) {
+    EXPECT_EQ(SM::Settings().r1090_preamble_mode, SM::kR1090PreambleModeModeS);
 }
 
 TEST(Settings, R1090PreambleModeNamesSelectTheirModes) {
-    EXPECT_EQ(ModeForName("DF17"), SM::kR1090PreambleModeDF17);
     EXPECT_EQ(ModeForName("MODE_S"), SM::kR1090PreambleModeModeS);
-    EXPECT_EQ(ModeForName("MODE_S_STRONG"), SM::kR1090PreambleModeModeSStrong);
-    EXPECT_EQ(ModeForName("MODE_S_SW_CRC"), -1);
-    EXPECT_EQ(ModeForName("MODE_S_PREAMBLE"), -1);
-    EXPECT_EQ(ModeForName("MODE_S_WEAK"), -1);
+    EXPECT_EQ(ModeForName("DF17"), SM::kR1090PreambleModeDF17);
+    EXPECT_EQ(ModeForName("mode_s"), -1);
     EXPECT_EQ(ModeForName(""), -1);
 }
 
-TEST(Settings, VersionRenumberedModesIsCurrent) {
-    // Version 4 renumbered R1090PreambleMode; anything stored under version 3 used the old numbers.
-    EXPECT_EQ(kSettingsVersion, 4u);
+TEST(Settings, VersionNumberingModesIsCurrent) {
+    // Version 5 numbers R1090PreambleMode as above.
+    EXPECT_EQ(kSettingsVersion, 5u);
     SM::Settings settings;
     settings.Stamp();
     EXPECT_TRUE(settings.IsValid());
 }
 
-TEST(Settings, BlobFromBeforeTheRenumberingIsRejected) {
-    // Valid version 3 blob holding the old MODE_S_STRONG value (3).
+TEST(Settings, BlobFromAnOlderVersionIsRejected) {
+    // A valid version 4 blob (0.3.11-rc4) fails the check, so Load() resets to factory defaults.
     SM::Settings settings;
     settings.Stamp();
-    settings.settings_version = 3;
-    reinterpret_cast<uint8_t&>(settings.r1090_preamble_mode) = 3;
+    settings.settings_version = 4;
     settings.crc = settings.ComputeCRC();
     EXPECT_FALSE(settings.IsValid());
 }
@@ -61,6 +56,6 @@ TEST(Settings, BlobFromBeforeTheRenumberingIsRejected) {
 TEST(Settings, TornOrChangedBlobIsRejected) {
     SM::Settings settings;
     settings.Stamp();
-    settings.r1090_preamble_mode = SM::kR1090PreambleModeModeSStrong;  // Changed after stamping: stale CRC.
+    settings.r1090_preamble_mode = SM::kR1090PreambleModeDF17;  // Changed after stamping: stale CRC.
     EXPECT_FALSE(settings.IsValid());
 }

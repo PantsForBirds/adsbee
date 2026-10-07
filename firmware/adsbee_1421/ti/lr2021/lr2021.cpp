@@ -269,12 +269,9 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
             return SequenceStepFailed("LR2021::SetOokADSB", "SetOokDetector");
         }
     } else {
-        // MODE_S_STRONG detects on preamble chips 6-15 (see lr2021_ook_adsb.hh); the other modes use
-        // the whole preamble. Both patterns end at chip 15, so the capture starts at message bit 0.
-        const bool strong_mode = preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong;
-        const uint16_t pattern = strong_mode ? LR2021OokAdsb::kStrongPattern : LR2021OokAdsb::kModeSPattern;
-        const uint8_t pattern_len_chips =
-            strong_mode ? LR2021OokAdsb::kStrongPatternLenChips : LR2021OokAdsb::kModeSPatternLenChips;
+        // MODE_S detects on the whole preamble, so the capture starts at message bit 0.
+        const uint16_t pattern = LR2021OokAdsb::kModeSPattern;
+        const uint8_t pattern_len_chips = LR2021OokAdsb::kModeSPatternLenChips;
         if (!SetOokDetector(pattern,  // Preamble pattern (LSB-first chips)
                             (test_len_chips ? test_len_chips : pattern_len_chips) - 1,  // Field is N-1
                             0,                                   // No pattern repetition
@@ -291,8 +288,7 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
     // flag (it reads the level unconditionally), so sub-threshold packets still flow with loop
     // latency.
     static_assert(GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeS) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeDF17) == kOokFifoPacketLenBytes &&
-                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeModeSStrong) == kOokFifoPacketLenBytes,
+                      GetOokRxPacketLenBytes(SettingsManager::kR1090PreambleModeDF17) == kOokFifoPacketLenBytes,
                   "IRQ drain threshold math assumes 14-byte FIFO packets in every preamble mode.");
     uint8_t rx_fifo_flags = kFifoIrqFlagFifoHigh | kFifoIrqFlagFifoOverflow;
     uint8_t tx_fifo_flags = 0x0;
@@ -311,21 +307,14 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
         return SequenceStepFailed("LR2021::SetOokADSB", "SetDioIrqConfig for the IRQ line");
     }
 
-    if (!SetAgcGainManual(agc_gain)) {  // 0 = auto, 1..15 manual (13 = max).
+    // DF17: 0 = AGC, 1..15 manual (13 = max). MODE_S: fixed gain, with the saturation blanking off.
+    if (!SetAgcGainManual(df17_mode ? agc_gain : LR2021OokAdsb::ModeSGainStep(agc_gain))) {
         return SequenceStepFailed("LR2021::SetOokADSB", "SetAgcGainManual");
     }
-    // MODE_S raises the AGC trigger so packets up to -45 dBm keep their whole preamble (lr2021_ook_adsb.hh). DF17
-    // and MODE_S_STRONG keep the chip default. Manual gain (agc_gain != 0) leaves the AGC off.
-    if (agc_gain == 0 && preamble_mode == SettingsManager::kR1090PreambleModeModeS &&
-        !WriteRegMemMask32(LR2021OokAdsb::kAgcConfigRegAddr, LR2021OokAdsb::kAgcTriggerMask,
-                           LR2021OokAdsb::AgcTriggerRegValue(LR2021OokAdsb::kAgcTriggerStandardPreamble))) {
-        return SequenceStepFailed("LR2021::SetOokADSB", "setting the AGC trigger");
-    }
-    // MODE_S_STRONG raises the OOK detection threshold so its short pattern doesn't trigger on noise.
-    if (preamble_mode == SettingsManager::kR1090PreambleModeModeSStrong &&
-        !WriteRegMemMask32(LR2021OokAdsb::kOokDetectRegAddr, LR2021OokAdsb::kOokDetectThresholdMask,
-                           LR2021OokAdsb::OokDetectThresholdRegValue(LR2021OokAdsb::kOokDetectThresholdStrong))) {
-        return SequenceStepFailed("LR2021::SetOokADSB", "setting the OOK detection threshold");
+    if (!df17_mode &&
+        !WriteRegMemMask32(LR2021OokAdsb::kFrontEndRegAddr, LR2021OokAdsb::kFrontEndModeMask,
+                           LR2021OokAdsb::kFrontEndModeNoSaturationBlanking)) {
+        return SequenceStepFailed("LR2021::SetOokADSB", "turning off saturation blanking");
     }
 
     uint32_t rx_timeout = 0xFFFFFF;  // Continuous Rx mode (no timeout).

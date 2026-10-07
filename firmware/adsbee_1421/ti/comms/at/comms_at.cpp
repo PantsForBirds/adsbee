@@ -1330,15 +1330,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 1,
      .help_string = "AT+R1090_GAIN=<gain_step [0=auto, 1-15, 13=max; default AUTO]>\r\n\tSet the 1090MHz LF-frontend AGC "
-                    "gain.\r\n\tAT+R1090_GAIN?\r\n\tQuery the current gain.",
+                    "gain. AUTO is the AGC in DF17 and step 13 in MODE_S.\r\n\tAT+R1090_GAIN?\r\n\tQuery the current gain.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATR1090GainCallback, comms_manager)},
     {.command = "R1090_PREAMBLE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S MODE_S_STRONG DF17]>\r\n\tSet the 1090MHz Mode S "
-                    "receiver mode. MODE_S: every downlink format, up to about -45 dBm. MODE_S_STRONG: strong "
-                    "signals, about -50 to -20 dBm; signals above about -15 dBm are not decoded. DF17: DF17 "
-                    "frames only. Levels measured on a devkit.\r\n\t"
+     .help_string = "AT+R1090_PREAMBLE=<mode [MODE_S DF17]>\r\n\tSet the 1090MHz Mode S receiver mode. MODE_S "
+                    "(default): every downlink format, about -80 to 0 dBm. DF17: DF17 frames only.\r\n\t"
                     "AT+R1090_PREAMBLE?\r\n\tQuery the current preamble mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATR1090PreambleCallback, comms_manager)},
     {.command = "R1090_RX_BOOST",
