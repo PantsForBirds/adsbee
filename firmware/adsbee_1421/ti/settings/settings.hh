@@ -15,7 +15,7 @@
 #endif
 
 // Change this when settings format changes! A mismatched version resets all settings to factory defaults on boot.
-static constexpr uint32_t kSettingsVersion = 4;
+static constexpr uint32_t kSettingsVersion = 5;
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 // Leading word of a valid settings blob. Deliberately not 0x00000000 or 0xFFFFFFFF so that blank,
@@ -76,14 +76,10 @@ class SettingsManager {
 
     // How the LR2021 detects 1090 MHz Mode S packets. Stored in flash: renumbering needs a kSettingsVersion bump.
     enum R1090PreambleMode : uint8_t {
-        kR1090PreambleModeDF17 = 0,   // Preamble chips 8-15 + DF17 header bits: DF17 frames only.
-        kR1090PreambleModeModeS = 1,  // Whole preamble, fixed gain: every downlink format. Factory default.
+        kR1090PreambleModeModeS = 0,  // Whole preamble, fixed gain: every downlink format. Factory default.
+        kR1090PreambleModeDF17 = 1,   // Preamble chips 8-15 + DF17 header bits: DF17 frames only.
         kNumR1090PreambleModes
     };
-    // Stored values of removed modes (MODE_S_STRONG = 2, and 3/4 from pre-release builds) load as MODE_S.
-    static constexpr R1090PreambleMode R1090PreambleModeFromStored(uint8_t stored) {
-        return stored == kR1090PreambleModeDF17 ? kR1090PreambleModeDF17 : kR1090PreambleModeModeS;
-    }
     static constexpr uint16_t kR1090PreambleModeStrMaxLen = 30;
     static const char kR1090PreambleModeStrs[kNumR1090PreambleModes][kR1090PreambleModeStrMaxLen];
 

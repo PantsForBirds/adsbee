@@ -139,7 +139,6 @@ bool SettingsManager::Load() {
         return WriteSettingsToFlash(settings);
     }
 
-    settings.r1090_preamble_mode = R1090PreambleModeFromStored(settings.r1090_preamble_mode);
     return true;
 }
 
