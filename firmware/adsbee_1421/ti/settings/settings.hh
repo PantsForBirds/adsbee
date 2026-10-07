@@ -15,7 +15,7 @@
 #endif
 
 // Change this when settings format changes! A mismatched version resets all settings to factory defaults on boot.
-static constexpr uint32_t kSettingsVersion = 4;
+static constexpr uint32_t kSettingsVersion = 5;
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 // Leading word of a valid settings blob. Deliberately not 0x00000000 or 0xFFFFFFFF so that blank,
@@ -75,14 +75,9 @@ class SettingsManager {
     static const char kSubGHzModeStrs[kNumSubGHzRadioModes][kSubGHzModeStrMaxLen];
 
     // How the LR2021 detects 1090 MHz Mode S packets. Stored in flash: renumbering needs a kSettingsVersion bump.
-    // Signal levels below are approximate.
     enum R1090PreambleMode : uint8_t {
-        kR1090PreambleModeDF17 = 0,    // Preamble chips 8-15 + DF17 header bits: DF17 frames only. Factory default.
-        kR1090PreambleModeModeS = 1,   // Standard preamble, raised AGC trigger: every downlink format,
-                                       // weak signals up to about -45 dBm.
-        kR1090PreambleModeModeSStrong = 2,  // Preamble chips 6-15, raised OOK threshold: strong signals, about
-                                            // -50 to -20 dBm, where the LR2021 gain control blanks the preamble
-                                            // start. Signals above about -15 dBm are not decoded.
+        kR1090PreambleModeModeS = 0,  // Whole preamble, fixed gain: every downlink format. Factory default.
+        kR1090PreambleModeDF17 = 1,   // Preamble chips 8-15 + DF17 header bits: DF17 frames only.
         kNumR1090PreambleModes
     };
     static constexpr uint16_t kR1090PreambleModeStrMaxLen = 30;
@@ -148,7 +143,7 @@ class SettingsManager {
         // ADSBee settings
         bool r1090_rx_enabled = true;
         uint32_t watchdog_timeout_sec = kDefaultWatchdogTimeoutSec;
-        R1090PreambleMode r1090_preamble_mode = R1090PreambleMode::kR1090PreambleModeDF17;
+        R1090PreambleMode r1090_preamble_mode = R1090PreambleMode::kR1090PreambleModeModeS;
         uint8_t r1090_gain = 0;      // 0 = auto AGC, 1..15 manual (13 = max). Default: auto.
         uint8_t r1090_rx_boost = 0;  // LF RX path boost, 0 (off) .. 7 (max).
         // AT+LR_ENABLE: false = LR2021 held in reset with the CC1314-side bus pins parked hi-Z
