@@ -1250,7 +1250,7 @@
 </tr>
 <tr>
 <td><strong>Dynamic range</strong></td>
-<td>Mode S: 90dB<br>UAT: 87dB</td>
+<td>Mode S: -90 to 0 dBm<br>UAT: 87 dB</td>
 </tr>
 <tr>
 <td><strong>Simultaneous aircraft tracks</strong></td>
@@ -1288,7 +1288,7 @@
 </table>
 <h2 id="adsbee-m1421-or-adsbee-1090">ADSBee m1421 or ADSBee 1090?<a class="headerlink" href="#adsbee-m1421-or-adsbee-1090" title="Permanent link">&para;</a></h2>
 <p>ADSBee 1421 doesn’t replace the <a href="../../adsbee-1090/">ADSBee 1090</a> family; they have very different architectures and are good at different things.</p>
-<p>By default the LR2021 receives every Mode S packet type, from weak signals near -80 dBm up to 0 dBm. A DF17 mode listens for ADS-B (Downlink Format 17) only, which leaves out squawk codes and other non-ADS-B packets.</p>
+<p>By default the LR2021 receives every Mode S packet type, from weak signals at -90 dBm up to 0 dBm. A DF17 mode listens for ADS-B (Downlink Format 17) only, which leaves out squawk codes and other non-ADS-B packets.</p>
 <p>In its high-throughput configuration, the LR2021 also doesn’t provide per-packet timestamps or RSSI, so m1421 doesn’t support multilateration (MLAT) out of the box.</p>
 <table>
 <thead>
