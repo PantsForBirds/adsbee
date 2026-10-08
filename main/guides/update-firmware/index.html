@@ -936,7 +936,7 @@
 <p><img alt="The ADSBee showing up as the RPI-RP2 USB mass storage device" src="../../assets/guides/rpi-rp2-mass-storage.png" /></p>
 </li>
 <li>
-<p>Go to the <a href="https://github.com/PantsForBirds/adsbee/releases">ADSBee Firmware Releases</a> page and download the most recent firmware release. All you need is the file ending in “.uf2” (e.g. “combined.uf2”).</p>
+<p>Go to the <a href="https://github.com/PantsForBirds/adsbee/releases">ADSBee Firmware Releases</a> page and download the most recent firmware release. All you need is the file ending in “.uf2” (e.g. “adsbee_1090-0.9.1-rc7.uf2”, or “combined.uf2” in older releases).</p>
 </li>
 <li>Drag and drop the .uf2 file into the ADSBee USB mass storage device and wait for it to finish loading. The USB mass storage device should automatically eject when the firmware update is complete.</li>
 <li>Leave the ADSBee plugged in to your computer while it updates the firmware stored on the ESP32. This should take about a minute; the indicator lights may do some funky things while the firmware is being upgraded. When the orange NETWORK LED begins flashing regularly (at about 5Hz), indicating stable communication between the RP2040 and the ESP32, the firmware update has completed and your device can be unplugged or used as usual.</li>
@@ -947,7 +947,7 @@
 <ol>
 <li>Open your device’s webpage (on the ADSBee’s access point or by accessing its IP address / hostname on your network).</li>
 <li>Scroll down to the bottom of the page and click the “Download Settings” button. This will download all of the ADSBee’s configured settings as a text file of AT commands, called “adsbee_2026-01-10T09-44-56-324Z.settings” or similar (the timestamp will be set to your local time when you downloaded the file).</li>
-<li>Click the “Upload Firmware” button and select your firmware file (should be called “adsbee_1090.ota”).</li>
+<li>Click the “Upload Firmware” button and select your firmware file (e.g. “adsbee_1090-0.9.1-rc7.ota”, or “adsbee_1090.ota” in older releases).</li>
 <li>Wait for the device to erase its inactive firmware page and flash the contents of the .ota file. In rare occasions, the update may fail (network issues, etc). The device will not be “bricked”, simply refresh the page and try uploading again.</li>
 <li>If settings have been wiped (e.g. a major settings version update has occurred), click the “Upload Settings” button to restore your settings using the .settings file you downloaded earlier.</li>
 </ol>
