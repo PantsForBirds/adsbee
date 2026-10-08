@@ -122,7 +122,7 @@ jobs:
         node-version: '22'
     - name: Run web UI tests
       working-directory: firmware/adsbee_1090/esp/main/server/web
-      run: node --test test/ota_updater.test.js test/settings_drift.test.js
+      run: node --test test/ota_updater.test.js test/settings_drift.test.js test/terminal_paste.test.js
 
   esp_target_build:
     runs-on: ubuntu-latest

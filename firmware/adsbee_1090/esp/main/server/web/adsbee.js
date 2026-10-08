@@ -4,6 +4,20 @@ const METRIC_UNITS = {
     'num_remote_id_aircraft': 'drones',
 };
 
+// Input types that take no typed or pasted text.
+const NON_TEXT_INPUT_TYPES = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+
+/**
+ * True when target is a text box other than the console terminal's hidden input. The terminal's document-wide
+ * copy/paste handlers leave these alone so pasting into settings and feed fields works.
+ */
+function isOtherTextEntry(target, terminalInput) {
+    if (!target || target === terminalInput) return false;
+    if (target.isContentEditable) return true;
+    if (target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return true;
+    return target.tagName === 'INPUT' && !NON_TEXT_INPUT_TYPES.has((target.type || 'text').toLowerCase());
+}
+
 class ConsoleWebSocket {
     constructor(url) {
         this.url = url;
@@ -1607,4 +1621,8 @@ class AircraftTable {
             row.classList.toggle('trail-active', row.dataset.key === hex);
         }
     }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { isOtherTextEntry };
 }
