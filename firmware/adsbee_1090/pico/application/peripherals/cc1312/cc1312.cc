@@ -83,20 +83,28 @@ bool CC1312::Init(bool spi_already_initialized) {
         }
     }
 
+    // The CC1312 application serves SPI ~0.5 s after reset (it blinks its LED first). Probe quietly until it answers
+    // so the boot doesn't produce a burst of failed status reads.
     uint32_t bootup_comms_wait_begin_timestamp_ms = get_time_since_boot_ms();
-    bool established_comms = false;
+    bool application_ready = false;
     while (get_time_since_boot_ms() - bootup_comms_wait_begin_timestamp_ms < kBootupMaxCommsWaitIntervalMs) {
-        // Wait for CC1312 to be ready for comms.
-        if (Update()) {
-            established_comms = true;
-            break;  // Successfully updated CC1312.
+        if (ProbeApplication()) {
+            application_ready = true;
+            break;
         }
+        sleep_ms(kBootupProbeIntervalMs);
     }
-    if (!established_comms) {
-        CONSOLE_ERROR("CC1312::Init", "Failed to establish communication with CC1312 after bootup within %d ms.",
+    if (!application_ready) {
+        CONSOLE_ERROR("CC1312::Init", "CC1312 application did not respond within %u ms after boot.",
                       kBootupMaxCommsWaitIntervalMs);
         return false;
     }
+    if (!Update()) {
+        CONSOLE_ERROR("CC1312::Init", "Failed to read CC1312 status after boot.");
+        return false;
+    }
+    CONSOLE_INFO("CC1312::Init", "CC1312 application ready %u ms after boot.",
+                 get_time_since_boot_ms() - bootup_comms_wait_begin_timestamp_ms);
 
     CONSOLE_INFO("CC1312::Init", "CC1312 initialized successfully.");
 
@@ -104,6 +112,8 @@ bool CC1312::Init(bool spi_already_initialized) {
 }
 
 bool CC1312::Update() {
+    // Report a lost link once; reads fail fast and quietly while it stays down (see SPILinkGate).
+    bool link_was_down = adsbee.subg_radio.IsLinkDown();
     // Query CC1312's device status.
     if (adsbee.subg_radio.Read(ObjectDictionary::Address::kAddrDeviceStatus, device_status)) {
         // We only update the device_status vars exposed publicly here. Other reads of device_status are for
@@ -133,7 +143,7 @@ bool CC1312::Update() {
         }
 
     } else {
-        CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 status.");
+        if (!link_was_down) CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 status.");
         return false;
     }
 
@@ -158,6 +168,26 @@ bool CC1312::ApplicationIsUpToDate() {
     CONSOLE_PRINTF("CC1312::ApplicationIsUpToDate: Application binary flashed successfully, CRC32 matches: 0x%x.\r\n",
                    table_crc);
     return true;
+}
+
+bool CC1312::ProbeApplication() {
+    static SPICoprocessorPacket::SCReadRequestPacket request_packet;
+    static SPICoprocessorPacket::SCResponsePacket response_packet;
+    const uint16_t len = sizeof(ObjectDictionary::SubGHzDeviceStatus);
+    request_packet.cmd = ObjectDictionary::SCCommand::kCmdReadFromSlave;
+    request_packet.addr = ObjectDictionary::Address::kAddrDeviceStatus;
+    request_packet.offset = 0;
+    request_packet.len = len;
+    request_packet.PopulateCRC();
+    if (SPIWriteBlocking(request_packet.GetBuf(), request_packet.GetBufLenBytes()) < 0) return false;
+    if (!SPIWaitForHandshake()) return false;  // Application not serving SPI yet.
+    response_packet.data_len_bytes = len;
+    if (SPIReadBlocking(response_packet.GetBuf(),
+                        SPICoprocessorPacket::SCResponsePacket::GetBufLenForPayloadLenBytes(len)) < 0) {
+        return false;
+    }
+    return response_packet.IsValid() && response_packet.cmd == ObjectDictionary::SCCommand::kCmdDataBlock &&
+           response_packet.data_len_bytes == len;
 }
 
 bool CC1312::BootloaderCommandBankErase() {
