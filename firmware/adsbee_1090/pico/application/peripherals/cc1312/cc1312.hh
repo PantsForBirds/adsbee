@@ -23,6 +23,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
 
     static const uint32_t kBootupMaxCommsWaitIntervalMs =
         5000;  // How long to wait for the CC1312 to boot up and be ready for comms before giving up.
+    static const uint32_t kBootupProbeIntervalMs = 20;  // Pause between application readiness probes after boot.
 
     struct BootloaderCCFGConfig {
         // Note: Struct only includes the CCFG fields that we are interested in.
@@ -259,6 +260,13 @@ class CC1312 : public SPICoprocessorSlaveInterface {
      * @retval True if the application is up to date, false otherwise.
      */
     bool ApplicationIsUpToDate();
+
+    /**
+     * Sends one device status read request and checks for a valid reply, without retries or console output. Used to
+     * detect when the CC1312 application is ready for comms after a reset.
+     * @retval True if the CC1312 application answered, false otherwise.
+     */
+    bool ProbeApplication();
 
     /**
      * Erases all user-accessible flash memory on the CC1312 using the bootloader COMMAND_BANK_ERASE command, including

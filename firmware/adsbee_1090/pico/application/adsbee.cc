@@ -235,13 +235,14 @@ bool ADSBee::Update() {
 
     // Update sub-GHz radio.
     if (config_.has_subg && subg_radio.IsEnabled()) {
+        bool subg_link_was_down = subg_radio.IsLinkDown();
         if (subg_radio.Update()) {
             // Sub-GHz radio comms successful.
             subg_radio_last_update_timestamp_ms_ = get_time_since_boot_ms();
         } else {
             // Sub-GHz radio comms failed. Log an error and restart if enough time has elapsed since the last successful
             // Sub-GHz radio comms.
-            CONSOLE_ERROR("ADSBee::Update", "Failed to update sub-GHz radio.");
+            if (!subg_link_was_down) CONSOLE_ERROR("ADSBee::Update", "Failed to update sub-GHz radio.");
 
             if (get_time_since_boot_ms() - subg_radio_last_update_timestamp_ms_ >= kSubGRadioFailRebootIntervalMs) {
                 // Too much time elapsed since last valid SubG radio comms. Reboot it.
