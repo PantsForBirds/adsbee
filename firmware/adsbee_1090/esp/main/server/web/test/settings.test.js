@@ -202,3 +202,25 @@ test('a save whose re-read fails still reports the save', async () => {
     await engine.save();
     assert.match(engine.statusEl.textContent, /^Saved 1 setting\. Could not read settings: Timeout/);
 });
+
+test('WiFi passwords the device would reject are caught before anything is written', async () => {
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [DUMP];
+        if (cmd === 'AT+WIFI_STA=0,,12345' || cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    const err = (cmd) => document.getElementById(`settings-error-${cmd}-pwd`).textContent;
+    input('WIFI_AP', 'pwd').value = 'short';
+    input('WIFI_STA', 'pwd').value = 'sixsix';
+    await engine.save();
+    assert.deepStrictEqual(t.sent, ['AT+SETTINGS?JSON']);
+    assert.strictEqual(err('WIFI_AP'), 'Minimum 8 characters.');
+    assert.match(err('WIFI_STA'), /8-63 characters/);
+
+    input('WIFI_AP', 'pwd').value = 'yummyflowers';
+    input('WIFI_STA', 'pwd').value = '12345';  // 5 character WEP key
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+WIFI_STA=0,,12345', 'AT+SETTINGS=SAVE']);
+});

@@ -354,7 +354,7 @@ void ADSBeeServer::SPIReceiveTask() {
 }
 
 bool ADSBeeServer::ReportGDL90() {
-    if (!settings_manager.settings.core_network_settings.wifi_ap_enabled) {
+    if (!comms_manager.WiFiAccessPointIsRunning()) {
         return true;  // Nothing to do.
     }
 
@@ -460,7 +460,7 @@ bool ADSBeeServer::ReportGDL90() {
 }
 
 bool ADSBeeServer::ReportGDL90UplinkDataMessage(const DecodedUATUplinkPacket& uplink_packet) {
-    if (!settings_manager.settings.core_network_settings.wifi_ap_enabled) {
+    if (!comms_manager.WiFiAccessPointIsRunning()) {
         return true;  // Nothing to do.
     }
 

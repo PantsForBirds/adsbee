@@ -180,6 +180,11 @@ class CommsManager {
     bool WiFiAccessPointHasClients() { return num_wifi_clients_ > 0; }
 
     /**
+     * Returns whether the access point was started. False when it is disabled or its stored settings were rejected.
+     */
+    bool WiFiAccessPointIsRunning() { return wifi_ap_running_; }
+
+    /**
      * Send a raw UDP message to all statiosn that are connected to the ESP32 while operating in access point mode.
      */
     bool WiFiAccessPointSendMessageToAllStations(NetworkMessage& message);
@@ -311,6 +316,7 @@ class CommsManager {
     uint32_t ethernet_link_up_timestamp_ms_ = 0;  // This will loop every 49.7 days or so.
 
     // WiFi AP private variables.
+    bool wifi_ap_running_ = false;
     esp_netif_t* wifi_ap_netif_ = nullptr;
     NetworkClient wifi_clients_list_[SettingsManager::Settings::kWiFiMaxNumClients] = {0, 0, 0};
     uint16_t num_wifi_clients_ = 0;
