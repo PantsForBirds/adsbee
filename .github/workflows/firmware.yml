@@ -135,28 +135,35 @@ jobs:
       with:
         submodules: 'recursive'
     - name: Build ESP32 firmware
-      uses: espressif/esp-idf-ci-action@v1
-      with:
-        esp_idf_version: release-v5.4
-        target: esp32s3
-        path: firmware/adsbee_1090/esp
+      # Same path as a local build: the esp-idf image pinned by digest in compose.yml, with its IDF
+      # version checked against esp/dependencies.lock.
+      working-directory: firmware/adsbee_1090
+      run: ./build.sh esp
+    - name: Check ESP-IDF component pins
+      # The build re-solves dependencies.lock when the manifest or the IDF version changed. A pinned
+      # build leaves it untouched.
+      run: |
+        if ! git diff --exit-code -- firmware/adsbee_1090/esp/dependencies.lock; then
+          echo "::error::The ESP32 build changed firmware/adsbee_1090/esp/dependencies.lock (diff above). Update the pins together; see \"ESP-IDF and component versions\" in firmware/README.md."
+          exit 1
+        fi
     - name: Upload ESP32 firmware
       uses: actions/upload-artifact@v4
       with:
         name: adsbee_esp.bin
-        path: firmware/adsbee_1090/esp/build/adsbee_esp.bin
+        path: firmware/adsbee_1090/esp/build/Release/adsbee_esp.bin
         retention-days: 1
     - name: Upload ESP32 bootloader
       uses: actions/upload-artifact@v4
       with:
         name: bootloader.bin
-        path: firmware/adsbee_1090/esp/build/bootloader/bootloader.bin
+        path: firmware/adsbee_1090/esp/build/Release/bootloader/bootloader.bin
         retention-days: 1
     - name: Upload ESP32 partition table
       uses: actions/upload-artifact@v4
       with:
         name: partition-table.bin
-        path: firmware/adsbee_1090/esp/build/partition_table/partition-table.bin
+        path: firmware/adsbee_1090/esp/build/Release/partition_table/partition-table.bin
         retention-days: 1
 
   ti_target_build:

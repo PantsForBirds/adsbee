@@ -17,7 +17,6 @@ source ../scripts/uf2_flash_lib.sh
 
 # Number of parallel build jobs.
 jobs=$(nproc 2>/dev/null || echo 4)
-required_esp_idf_version="v5.5.2"
 
 debug=false
 if [ "$1" = "-d" ]; then
@@ -41,14 +40,18 @@ check_version_sync() {
     fi
 }
 
+# The ESP-IDF build is pinned by the esp-idf image digest in compose.yml, and esp/dependencies.lock
+# records the IDF version it resolves against. Fails if the two disagree.
 check_esp_idf_version() {
-    echo "=== Checking ESP-IDF version (required: $required_esp_idf_version) ==="
-    local idf_version
+    local required_esp_idf_version idf_version
+    required_esp_idf_version="v$(sed -n '/^  idf:/,/^[^ ]/s/^    version: *//p' esp/dependencies.lock)"
+    echo "=== Checking ESP-IDF version (esp/dependencies.lock: $required_esp_idf_version) ==="
     idf_version=$(docker compose run --rm esp-idf bash -c "idf.py --version")
     echo "ESP-IDF reported by container: $idf_version"
     if [[ "$idf_version" != *"$required_esp_idf_version"* ]]; then
         echo "ERROR: ESP-IDF version mismatch. Expected $required_esp_idf_version."
-        echo "Update compose.yml to pin the esp-idf image tag to $required_esp_idf_version."
+        echo "The esp-idf image in compose.yml and esp/dependencies.lock must be updated together;"
+        echo "see \"ESP-IDF and component versions\" in firmware/README.md."
         exit 1
     fi
 }

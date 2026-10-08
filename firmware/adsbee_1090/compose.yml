@@ -18,7 +18,10 @@ services:
   # ESP-IDF VS Code extension running on the host.
   # The RP2040 and CC1312 are debugged over JLink GDB from their Docker containers.
   esp-idf:
-    image: espressif/idf:v5.5.2
+    # Pinned by digest: the release-v5.4 tag moves with every ESP-IDF branch commit. This is the
+    # single source of the ESP-IDF version for build.sh and CI (firmware.yml). To change it, see
+    # "ESP-IDF and component versions" in firmware/README.md.
+    image: espressif/idf:release-v5.4@sha256:6e4ec15a2b5eb1cda9047b03b6b55bb9eb246a73702b5f26e5169fa9d5d42ece
     volumes:
       - ./esp:/firmware/adsbee_1090/esp
       - ../common:/firmware/common
