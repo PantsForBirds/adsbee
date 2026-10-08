@@ -1372,6 +1372,15 @@ body {
     margin: 0;
 }
 
+.feed-map-row {
+    margin-bottom: 12px;
+    font-size: 0.9em;
+}
+
+.feed-map-row a {
+    color: #ffcb00;
+}
+
 .feed-modal-buttons {
     display: flex;
     gap: 12px;
@@ -2164,6 +2173,9 @@ body.dark-mode #map .leaflet-tile-pane {
                 <div class="feed-field">
                     <label>Protocol</label>
                     <select id="feed-protocol"></select>
+                </div>
+                <div id="feed-map-row" class="feed-map-row" style="display:none;">
+                    <a id="feed-map-link" target="_blank" rel="noopener">View this receiver on the whereplane.xyz map</a>
                 </div>
             </div>
             <div class="feed-modal-buttons">
@@ -3782,6 +3794,21 @@ const METRIC_UNITS = {
     'num_remote_id_aircraft': 'drones',
 };
 
+// whereplane.xyz shows one receiver's traffic at globe.whereplane.xyz/?feed=<uuid> (tar1090). The uuid is the one the
+// device sends when a Beast feed connects (BeastReporter::BuildFeedStartFrame): MMMMMMMM-MMMM-MMMM-NNNN-NNNNNNNNNNNN,
+// where M and N are both the 16 hex digit receiver ID.
+const WHEREPLANE_FEED_HOST = 'feed.whereplane.xyz';
+const BEAST_FEED_PROTOCOLS = new Set(['BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK']);
+
+/** Map URL for this receiver on whereplane.xyz, or null unless the feed is a Beast feed to feed.whereplane.xyz. */
+function whereplaneMapUrl(uri, protocol, receiverId) {
+    if (String(uri).trim().toLowerCase() !== WHEREPLANE_FEED_HOST || !BEAST_FEED_PROTOCOLS.has(protocol)) return null;
+    const id = String(receiverId).toLowerCase();
+    if (!/^[0-9a-f]{16}$/.test(id)) return null;
+    const uuid = `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(0, 4)}-${id.slice(4)}`;
+    return `https://globe.whereplane.xyz/?feed=${uuid}`;
+}
+
 class ConsoleWebSocket {
     constructor(url) {
         this.url = url;
@@ -4270,6 +4297,7 @@ class FeedEditor {
                 port: parseInt(args[2], 10) || 0,
                 active: args[3] === '1',
                 protocol: args[4],
+                receiver_id: args[5] ?? '',
             };
         } catch (e) {
             statusEl.textContent = `Error: ${e.message}`;
@@ -4284,8 +4312,21 @@ class FeedEditor {
         sel.innerHTML = FeedEditor.PROTOCOLS
             .map(p => `<option value="${p}"${p === current.protocol ? ' selected' : ''}>${p}</option>`)
             .join('');
+        FeedEditor.receiverId = current.receiver_id;
+        document.getElementById('feed-uri').oninput = FeedEditor.updateMapLink;
+        sel.onchange = FeedEditor.updateMapLink;
+        FeedEditor.updateMapLink();
         statusEl.textContent = '';
         document.getElementById('feed-form').style.display = '';
+    }
+
+    // Shows the whereplane.xyz map link while the form describes a Beast feed to whereplane.
+    static updateMapLink() {
+        const url = whereplaneMapUrl(document.getElementById('feed-uri').value,
+            document.getElementById('feed-protocol').value, FeedEditor.receiverId);
+        const link = document.getElementById('feed-map-link');
+        if (url) link.href = url;
+        document.getElementById('feed-map-row').style.display = url ? '' : 'none';
     }
 
     static close() {

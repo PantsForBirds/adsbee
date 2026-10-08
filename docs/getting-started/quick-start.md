@@ -156,6 +156,8 @@ Want to check the status of your feed? Use the links below to see your feed stat
   - Click the status icon in the bottom left of the homepage: <https://adsb.fi/>
 - ADSB.lol
   - <https://api.adsb.lol/0/me>
+- whereplane.xyz
+  - In the web interface, click the `feed.whereplane.xyz` feed card and use the map link in the feed editor. It opens `https://globe.whereplane.xyz/?feed=<receiver uuid>`, which shows only the aircraft your ADSBee feeds.
 
 ## 🛜 Join an External WiFi Network { #join-external-wifi }
 
