@@ -3794,21 +3794,6 @@ const METRIC_UNITS = {
     'num_remote_id_aircraft': 'drones',
 };
 
-// whereplane.xyz shows one receiver's traffic at globe.whereplane.xyz/?feed=<uuid> (tar1090). The uuid is the one the
-// device sends when a Beast feed connects (BeastReporter::BuildFeedStartFrame): MMMMMMMM-MMMM-MMMM-NNNN-NNNNNNNNNNNN,
-// where M and N are both the 16 hex digit receiver ID.
-const WHEREPLANE_FEED_HOST = 'feed.whereplane.xyz';
-const BEAST_FEED_PROTOCOLS = new Set(['BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK']);
-
-/** Map URL for this receiver on whereplane.xyz, or null unless the feed is a Beast feed to feed.whereplane.xyz. */
-function whereplaneMapUrl(uri, protocol, receiverId) {
-    if (String(uri).trim().toLowerCase() !== WHEREPLANE_FEED_HOST || !BEAST_FEED_PROTOCOLS.has(protocol)) return null;
-    const id = String(receiverId).toLowerCase();
-    if (!/^[0-9a-f]{16}$/.test(id)) return null;
-    const uuid = `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(0, 4)}-${id.slice(4)}`;
-    return `https://globe.whereplane.xyz/?feed=${uuid}`;
-}
-
 class ConsoleWebSocket {
     constructor(url) {
         this.url = url;
@@ -4267,6 +4252,21 @@ class MetricsWebSocket {
             this.ws.close(code, reason);
         }
     }
+}
+
+// whereplane.xyz shows one receiver's traffic at globe.whereplane.xyz/?feed=<uuid> (tar1090). The uuid is the one the
+// device sends when a Beast feed connects (BeastReporter::BuildFeedStartFrame): MMMMMMMM-MMMM-MMMM-NNNN-NNNNNNNNNNNN,
+// where M and N are both the 16 hex digit receiver ID.
+const WHEREPLANE_FEED_HOST = 'feed.whereplane.xyz';
+const BEAST_FEED_PROTOCOLS = new Set(['BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK']);
+
+/** Map URL for this receiver on whereplane.xyz, or null unless the feed is a Beast feed to feed.whereplane.xyz. */
+function whereplaneMapUrl(uri, protocol, receiverId) {
+    if (String(uri).trim().toLowerCase() !== WHEREPLANE_FEED_HOST || !BEAST_FEED_PROTOCOLS.has(protocol)) return null;
+    const id = String(receiverId).toLowerCase();
+    if (!/^[0-9a-f]{16}$/.test(id)) return null;
+    const uuid = `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(0, 4)}-${id.slice(4)}`;
+    return `https://globe.whereplane.xyz/?feed=${uuid}`;
 }
 
 class FeedEditor {
