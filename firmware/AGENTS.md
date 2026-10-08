@@ -73,7 +73,8 @@ bash build.sh [-d] [target]
 
 **Build order matters**: ESP32 must build before RP2040 (RP2040 embeds the other binaries).
 
-**Primary output**: `pico/build/Release/application/combined.uf2`
+**Primary output**: `pico/build/Release/application/combined.uf2`, plus version-stamped copies
+`adsbee_1090-<version>.uf2` and `adsbee_1090-<version>.ota` (the release assets)
 
 ---
 

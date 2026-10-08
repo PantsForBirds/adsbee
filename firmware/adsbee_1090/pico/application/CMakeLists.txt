@@ -200,6 +200,17 @@ if (ON_EMBEDDED_DEVICE)
     pico_set_linker_script(combined ${COMBINED_LINKER_SCRIPT})
     pico_add_uf2_output(combined)
 
+    # Version-stamped copies for releases, named like the ADSBee 1421 artifacts.
+    set(FW_VERSION_OBJECT_DICTIONARY "${ADSBEE_COMMON_DIR}/coprocessor/object_dictionary.cpp")
+    include("${CMAKE_SOURCE_DIR}/../../adsbee_1421/cmake/fw_version.cmake")
+    set(ARTIFACT_BASE "adsbee_1090-${FW_VERSION}")
+    add_custom_command(TARGET combined POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy combined.uf2 ${ARTIFACT_BASE}.uf2
+        COMMAND ${CMAKE_COMMAND} -E copy adsbee_1090.ota ${ARTIFACT_BASE}.ota
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Creating version-stamped copies (${ARTIFACT_BASE})"
+    )
+
 else()
     # Build for testing on host.
     foreach(_test_tgt IN ITEMS host_test host_test_fpu)

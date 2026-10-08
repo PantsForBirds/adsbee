@@ -81,7 +81,7 @@ jobs:
       run: |
         mkdir dist
         if [ "$PRODUCT" = adsbee_1090 ]; then
-          cp artifacts/firmware/adsbee_1090.ota artifacts/firmware/combined.uf2 dist/
+          cp "artifacts/firmware/adsbee_1090-$VERSION.ota" "artifacts/firmware/adsbee_1090-$VERSION.uf2" dist/
         else
           cp "artifacts/adsbee_1421-$VERSION.hex/adsbee_1421-$VERSION.hex" dist/
           cp "artifacts/adsbee_1421-$VERSION.elf/adsbee_1421-$VERSION.elf" dist/

@@ -95,14 +95,14 @@ the exit status is 1 if any device failed.
 
 Console: the RP2040's USB serial port (baud rate ignored).
 
-`flash combined.uf2`:
+`flash adsbee_1090-<version>.uf2` (or a local build's `combined.uf2`):
 
 1. Sends `AT+BOOT_USB_UF2=1DEADBEE`.
 2. Waits for `2e8a:0003` on the same USB port and mounts its RPI-RP2 drive (desktop automounter,
    else `udisksctl mount`).
 3. Copies the image, waits for the app, prints `AT+DEVICE_INFO?`.
 
-The RP2040 then updates the ESP32 and CC1312 from `combined.uf2`. `flash file.ota --host NAME`
+The RP2040 then updates the ESP32 and CC1312 from the image. `flash file.ota --host NAME`
 uploads over WiFi with `ci/test_usb_and_ota_flash/ota_upload.py` (needs `websockets`). The full CI
 flash → OTA → partition-flip test is `ci/test_usb_and_ota_flash/test_ota.py --serial`.
 

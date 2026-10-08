@@ -103,9 +103,9 @@ GDL90 is the open data format used by EFB apps, so a tablet connected to Winglet
 
 ## Firmware and Getting Started
 
-Winglet uses the same firmware image as the ADSBee 1090U: one `combined.uf2` file that updates the RP2040, the ESP32-S3, and the sub-GHz radio together. The firmware recognizes Winglet by its part number and automatically sets up its built-in u-blox MAX-M10 GNSS receiver. Winglet support, GNSS support, and experimental Remote ID reception first appeared in the [ADSBee 1090 firmware 0.9.1 release candidates](https://github.com/PantsForBirds/adsbee/releases), and they’re under active development on the main branch.
+Winglet uses the same firmware image as the ADSBee 1090U: one `.uf2` file (`adsbee_1090-<version>.uf2`, or `combined.uf2` in older releases) that updates the RP2040, the ESP32-S3, and the sub-GHz radio together. The firmware recognizes Winglet by its part number and automatically sets up its built-in u-blox MAX-M10 GNSS receiver. Winglet support, GNSS support, and experimental Remote ID reception first appeared in the [ADSBee 1090 firmware 0.9.1 release candidates](https://github.com/PantsForBirds/adsbee/releases), and they’re under active development on the main branch.
 
-Configuring and updating a Winglet works the same way as on the 1090U: use the web interface (which now has a full settings GUI) or the AT command console over USB, and update firmware by copying `combined.uf2` over USB or with an OTA update through the web interface. The [Quick Start guide](../getting-started/quick-start.md) walks through all of it. A couple of useful commands:
+Configuring and updating a Winglet works the same way as on the 1090U: use the web interface (which now has a full settings GUI) or the AT command console over USB, and update firmware by copying the release `.uf2` file over USB or with an OTA update through the web interface. The [Quick Start guide](../getting-started/quick-start.md) walks through all of it. A couple of useful commands:
 
 ```
 AT+DEVICE_INFO?     # part code and firmware version

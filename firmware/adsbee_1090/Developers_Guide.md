@@ -120,14 +120,14 @@ The CI/CD pipeline:
 2. Builds CC1312 firmware → uploads as artifact
 3. Downloads both artifacts
 4. Builds RP2040 firmware with embedded binaries
-5. Produces `combined.uf2` in the firmware artifact
+5. Uploads `adsbee_1090-<version>.uf2` and `adsbee_1090-<version>.ota` as the firmware artifact
 
 **To get the latest build**:
 1. Push changes to your branch
 2. Go to GitHub Actions tab
 3. Find your workflow run
 4. Download "firmware" artifact
-5. Extract and flash `combined.uf2`
+5. Extract and flash `adsbee_1090-<version>.uf2`
 
 ### SPI Communication Protocol
 
