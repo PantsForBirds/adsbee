@@ -67,7 +67,8 @@ bash build.sh [-d] [target]
 | `clean` | Remove all build directories |
 
 **Requires Docker.** Three images are used:
-- `espressif/idf:v5.5.2` — ESP32-S3 (ESP-IDF)
+- `espressif/idf:release-v5.4@sha256:…` — ESP32-S3 (ESP-IDF 5.4.4, pinned by digest in `compose.yml`;
+  see "ESP-IDF and component versions" in `firmware/README.md`)
 - `coolnamesalltaken/pico-docker:latest` — RP2040 (Pico SDK + host tests)
 - `coolnamesalltaken/ti-lpf2:latest` — CC1312 (TI SimpleLink SDK)
 
