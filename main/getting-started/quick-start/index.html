@@ -1479,7 +1479,7 @@
 <ol>
 <li><a href="#connect-to-cli">Connect to the CLI</a> via the method of you choosing.</li>
 <li>Run the command <code>AT+WIFI_STA?</code> to check your current WiFi station settings.</li>
-<li>Enter the network credentials for your WiFi network with <code>AT+WIFI_STA=&lt;enabled&gt;,&lt;ssid&gt;,&lt;password&gt;</code>. In this case, replace <code>&lt;enabled&gt;</code> with <code>1</code>, <code>&lt;ssid&gt;</code> with the SSID of your network, and <code>&lt;password&gt;</code> with your WPA passkey. Note that values should be comma separated, with no spaces in between! No quotes are required around any values.</li>
+<li>Enter the network credentials for your WiFi network with <code>AT+WIFI_STA=&lt;enabled&gt;,&lt;ssid&gt;,&lt;password&gt;</code>. In this case, replace <code>&lt;enabled&gt;</code> with <code>1</code>, <code>&lt;ssid&gt;</code> with the SSID of your network, and <code>&lt;password&gt;</code> with your WPA passkey (8-63 characters). Note that values should be comma separated, with no spaces in between! No quotes are required around any values.</li>
 <li>Save the settings with <code>AT+SETTINGS=SAVE</code>. If you’d like, you can verify that they were saved by calling <code>AT+SETTINGS?</code>.</li>
 <li>Apply the new WiFi settings by restarting the device with <code>AT+REBOOT</code>.</li>
 </ol>
