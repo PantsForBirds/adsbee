@@ -88,7 +88,7 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
         case WIFI_EVENT_STA_START: {
             // Never log WiFi passwords: the console log reaches the web UI.
             CONSOLE_INFO("CommsManager::WiFiInit", "WiFi Station started. SSID:%s", wifi_sta_ssid);
-            ESP_ERROR_CHECK(esp_wifi_connect());
+            connect_to_wifi();
             // Note: wifi_sta_has_ip_ will get filled in by the IP event handler if an IP is issued.
             break;
         }
@@ -175,7 +175,36 @@ void CommsManager::WiFiAccessPointTask(void* pvParameters) {
     close(sock);
 }
 
+// WPA2 needs 8-63 characters; an empty password means an open network. Stations also accept WEP keys (5 or 13).
+static bool WiFiPasswordIsValid(const char* password, bool is_station) {
+    size_t len = strnlen(password, SettingsManager::Settings::kWiFiPasswordMaxLen + 1);
+    return len == 0 || (len >= 8 && len <= SettingsManager::Settings::kWiFiPasswordMaxLen) ||
+           (is_station && (len == 5 || len == 13));
+}
+
+// Logs a failed WiFi driver call and returns false instead of aborting, so a bad stored setting can't boot loop the
+// ESP32.
+static bool WiFiCheck(esp_err_t err, const char* what) {
+    if (err != ESP_OK) {
+        CONSOLE_ERROR("CommsManager::WiFiInit", "%s failed: %s.", what, esp_err_to_name(err));
+        return false;
+    }
+    return true;
+}
+
 bool CommsManager::WiFiInit() {
+    // Locals so a rejected interface doesn't change the settings comparison in SettingsManager::Apply().
+    bool ap_enabled = wifi_ap_enabled, sta_enabled = wifi_sta_enabled;
+    if (ap_enabled && !WiFiPasswordIsValid(wifi_ap_password, false)) {
+        CONSOLE_ERROR("CommsManager::WiFiInit", "WiFi AP disabled: password must be 8-63 characters.");
+        ap_enabled = false;
+    }
+    if (sta_enabled && !WiFiPasswordIsValid(wifi_sta_password, true)) {
+        CONSOLE_ERROR("CommsManager::WiFiInit",
+                      "WiFi station disabled: password must be 8-63 characters or a 5 or 13 character WEP key.");
+        sta_enabled = false;
+    }
+
     esp_netif_t* wifi_ap_netif_ = esp_netif_create_default_wifi_ap();
     assert(wifi_ap_netif_);
     esp_netif_t* wifi_sta_netif_ = esp_netif_create_default_wifi_sta();
@@ -193,19 +222,9 @@ bool CommsManager::WiFiInit() {
         IPInit();
     }
 
-    wifi_mode_t wifi_mode;
-    if (wifi_ap_enabled && wifi_sta_enabled) {
-        wifi_mode = WIFI_MODE_APSTA;
-    } else if (wifi_ap_enabled) {
-        wifi_mode = WIFI_MODE_AP;
-    } else {
-        wifi_mode = WIFI_MODE_STA;
-    }
-    ESP_ERROR_CHECK(esp_wifi_set_mode(wifi_mode));
-
     wifi_was_initialized_ = true;
 
-    if (wifi_ap_enabled) {
+    if (ap_enabled) {
         // Access Point Configuration
         wifi_config_t wifi_config_ap = {};
 
@@ -221,10 +240,12 @@ bool CommsManager::WiFiInit() {
         }
         wifi_config_ap.ap.max_connection = SettingsManager::Settings::kWiFiMaxNumClients;
 
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config_ap));
+        // The mode must include the AP before its config can be set.
+        ap_enabled = WiFiCheck(esp_wifi_set_mode(sta_enabled ? WIFI_MODE_APSTA : WIFI_MODE_AP), "Setting WiFi mode") &&
+                     WiFiCheck(esp_wifi_set_config(WIFI_IF_AP, &wifi_config_ap), "WiFi AP config");
     }
 
-    if (wifi_sta_enabled) {
+    if (sta_enabled) {
         // Station Configuration
         wifi_config_t wifi_config_sta = {};
 
@@ -232,19 +253,28 @@ bool CommsManager::WiFiInit() {
         strncpy((char*)(wifi_config_sta.sta.password), wifi_sta_password,
                 SettingsManager::Settings::kWiFiPasswordMaxLen + 1);
 
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta));
+        sta_enabled = WiFiCheck(esp_wifi_set_mode(ap_enabled ? WIFI_MODE_APSTA : WIFI_MODE_STA), "Setting WiFi mode") &&
+                      WiFiCheck(esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta), "WiFi station config");
     }
 
-    if (!wifi_ap_enabled && !wifi_sta_enabled) {
-        ESP_ERROR_CHECK(esp_wifi_stop());
+    if (!ap_enabled && !sta_enabled) {
+        esp_wifi_stop();
         CONSOLE_INFO("CommsManager::WiFiInit", "WiFi disabled.");
         return true;
     }
 
-    ESP_ERROR_CHECK(esp_wifi_start());
+    // Drop an interface whose config was rejected above.
+    if (!WiFiCheck(esp_wifi_set_mode(ap_enabled && sta_enabled ? WIFI_MODE_APSTA
+                                     : ap_enabled              ? WIFI_MODE_AP
+                                                               : WIFI_MODE_STA),
+                   "Setting WiFi mode") ||
+        !WiFiCheck(esp_wifi_start(), "Starting WiFi")) {
+        esp_wifi_stop();
+        return false;
+    }
     HeapDiagnostics::Mark("wifi_start");
 
-    if (wifi_ap_enabled) {
+    if (ap_enabled) {
         CONSOLE_INFO("CommsManager::WiFiInit", "WiFi AP started. SSID:%s", wifi_ap_ssid);
         // Lazily create the AP broadcast queue now that the AP is actually enabled (see the CommsManager constructor).
         if (wifi_ap_message_queue_ == nullptr) {
@@ -252,7 +282,7 @@ bool CommsManager::WiFiInit() {
         }
         xTaskCreate(wifi_access_point_task, "wifi_ap_task", kWiFiAPTaskStackSizeBytes, &wifi_ap_task_handle, kWiFiAPTaskPriority, NULL);
     }
-    if (wifi_sta_enabled) {
+    if (sta_enabled) {
         CONSOLE_INFO("CommsManager::WiFiInit", "WiFi Station started. SSID:%s", wifi_sta_ssid);
     }
 

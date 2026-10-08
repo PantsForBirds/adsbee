@@ -1687,6 +1687,16 @@ CPP_AT_CALLBACK(CommsManager::ATWatchdogCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+// WPA2 needs 8-63 characters; an empty password means an open network.
+static bool WiFiAPPasswordIsValid(std::string_view password) {
+    return password.empty() || (password.length() >= 8 && password.length() <= 63);
+}
+
+// Stations also accept WEP keys (5 or 13 characters).
+static bool WiFiSTAPasswordIsValid(std::string_view password) {
+    return WiFiAPPasswordIsValid(password) || password.length() == 5 || password.length() == 13;
+}
+
 CPP_AT_CALLBACK(CommsManager::ATWiFiAPCallback) {
     SettingsManager::Settings::CoreNetworkSettings& cns = settings_manager.settings.core_network_settings;
     switch (op) {
@@ -1698,6 +1708,9 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiAPCallback) {
             break;
         }
         case '=': {
+            if (CPP_AT_HAS_ARG(2) && !WiFiAPPasswordIsValid(args[2])) {
+                CPP_AT_ERROR("WiFi AP password must be 8-63 characters.");
+            }
             if (CPP_AT_HAS_ARG(0)) {
                 CPP_AT_TRY_ARG2NUM(0, cns.wifi_ap_enabled);
                 CPP_AT_CMD_PRINTF(": wifi_ap_enabled=%d\r\n", cns.wifi_ap_enabled);
@@ -1744,6 +1757,9 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiSTACallback) {
             break;
         }
         case '=': {
+            if (CPP_AT_HAS_ARG(2) && !WiFiSTAPasswordIsValid(args[2])) {
+                CPP_AT_ERROR("WiFi station password must be 8-63 characters (or a 5 or 13 character WEP key).");
+            }
             if (CPP_AT_HAS_ARG(0)) {
                 CPP_AT_TRY_ARG2NUM(0, cns.wifi_sta_enabled);
                 CPP_AT_CMD_PRINTF(": wifi_sta_enabled=%d\r\n", cns.wifi_sta_enabled);
@@ -2018,12 +2034,14 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 4,
      .help_string =
          "Set WiFi access point params.\r\n\tAT+WIFI_AP=<enabled>,<ap_ssid>,<ap_pwd>,<ap_channel>\r\n\t"
+         "ap_pwd: 8-63 characters.\r\n\t"
          "Get WiFi access point params.\r\n\tAT+WIFI_AP?\r\n\t+WIFI_AP=<enabled>,<ap_ssid>,<ap_pwd>,<ap_channel>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiAPCallback, comms_manager)},
     {.command = "WIFI_STA",
      .min_args = 0,
      .max_args = 3,
      .help_string = "Set WiFi station params.\r\n\tAT+WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>\r\n\t"
+                    "sta_pwd: 8-63 characters, or a 5 or 13 character WEP key.\r\n\t"
                     "Get WiFi station params.\r\n\tAT+WIFI_STA?\r\n\t+WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiSTACallback, comms_manager)},
 };
