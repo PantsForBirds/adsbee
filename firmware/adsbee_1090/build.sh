@@ -58,20 +58,24 @@ check_esp_idf_version() {
 
 build_esp() {
     check_esp_idf_version
+    # The container mounts esp/ without .git, so ESP-IDF cannot run git describe for the app version
+    # (esp_app_desc_t::version). Use the same describe arguments ESP-IDF uses, from the host.
+    local project_ver
+    project_ver=$(git describe --always --tags --dirty 2>/dev/null || echo 1)
     if [ "$debug" = true ]; then
         echo "=== Building ESP32-S3 firmware (Debug) ==="
         # sdkconfig_debug is auto-generated on first run by layering sdkconfig.debug on top of sdkconfig.
         # Delete esp/sdkconfig_debug to force regeneration (e.g. after base sdkconfig changes).
         docker compose run --rm esp-idf bash -c "
             cd /firmware/adsbee_1090/esp &&
-            idf.py -B build/Debug -D CMAKE_BUILD_TYPE=Debug -D SDKCONFIG=\"\$(pwd)/sdkconfig_debug\" -D \"SDKCONFIG_DEFAULTS=\$(pwd)/sdkconfig;\$(pwd)/sdkconfig.debug\" build
+            idf.py -B build/Debug -D PROJECT_VER=\"$project_ver\" -D CMAKE_BUILD_TYPE=Debug -D SDKCONFIG=\"\$(pwd)/sdkconfig_debug\" -D \"SDKCONFIG_DEFAULTS=\$(pwd)/sdkconfig;\$(pwd)/sdkconfig.debug\" build
         "
         echo "=== ESP32-S3 build complete (Debug): esp/build/Debug/adsbee_esp.bin ==="
     else
         echo "=== Building ESP32-S3 firmware ==="
         docker compose run --rm esp-idf bash -c "
             cd /firmware/adsbee_1090/esp &&
-            idf.py -B build/Release build
+            idf.py -B build/Release -D PROJECT_VER=\"$project_ver\" build
         "
         echo "=== ESP32-S3 build complete: esp/build/Release/adsbee_esp.bin ==="
     fi
