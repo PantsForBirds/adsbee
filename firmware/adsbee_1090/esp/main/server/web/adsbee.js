@@ -476,6 +476,21 @@ class MetricsWebSocket {
     }
 }
 
+// whereplane.xyz shows one receiver's traffic at globe.whereplane.xyz/?feed=<uuid> (tar1090). The uuid is the one the
+// device sends when a Beast feed connects (BeastReporter::BuildFeedStartFrame): MMMMMMMM-MMMM-MMMM-NNNN-NNNNNNNNNNNN,
+// where M and N are both the 16 hex digit receiver ID.
+const WHEREPLANE_FEED_HOST = 'feed.whereplane.xyz';
+const BEAST_FEED_PROTOCOLS = new Set(['BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK']);
+
+/** Map URL for this receiver on whereplane.xyz, or null unless the feed is a Beast feed to feed.whereplane.xyz. */
+function whereplaneMapUrl(uri, protocol, receiverId) {
+    if (String(uri).trim().toLowerCase() !== WHEREPLANE_FEED_HOST || !BEAST_FEED_PROTOCOLS.has(protocol)) return null;
+    const id = String(receiverId).toLowerCase();
+    if (!/^[0-9a-f]{16}$/.test(id)) return null;
+    const uuid = `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(0, 4)}-${id.slice(4)}`;
+    return `https://globe.whereplane.xyz/?feed=${uuid}`;
+}
+
 class FeedEditor {
     static PROTOCOLS = ['NONE', 'RAW', 'BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK',
         'CSBEE', 'MAVLINK1', 'MAVLINK2', 'GDL90', 'AIRCRAFT_JSON'];
@@ -505,8 +520,21 @@ class FeedEditor {
         sel.innerHTML = FeedEditor.PROTOCOLS
             .map(p => `<option value="${p}"${p === current.protocol ? ' selected' : ''}>${p}</option>`)
             .join('');
+        FeedEditor.receiverId = current.receiver_id;
+        document.getElementById('feed-uri').oninput = FeedEditor.updateMapLink;
+        sel.onchange = FeedEditor.updateMapLink;
+        FeedEditor.updateMapLink();
         statusEl.textContent = '';
         document.getElementById('feed-form').style.display = '';
+    }
+
+    // Shows the whereplane.xyz map link while the form describes a Beast feed to whereplane.
+    static updateMapLink() {
+        const url = whereplaneMapUrl(document.getElementById('feed-uri').value,
+            document.getElementById('feed-protocol').value, FeedEditor.receiverId);
+        const link = document.getElementById('feed-map-link');
+        if (url) link.href = url;
+        document.getElementById('feed-map-row').style.display = url ? '' : 'none';
     }
 
     static close() {
@@ -1607,4 +1635,8 @@ class AircraftTable {
             row.classList.toggle('trail-active', row.dataset.key === hex);
         }
     }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { whereplaneMapUrl };
 }
