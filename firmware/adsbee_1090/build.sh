@@ -112,6 +112,7 @@ build_pico() {
     echo "=== RP2040 Pico build complete ==="
     echo "  Firmware: pico/build/$build_type/application/combined.uf2"
     echo "  OTA:      pico/build/$build_type/application/adsbee_1090.ota"
+    echo "  Release copies: pico/build/$build_type/application/adsbee_1090-<version>.{uf2,ota}"
 }
 
 build_test() {

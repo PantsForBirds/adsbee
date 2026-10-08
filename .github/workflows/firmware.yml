@@ -194,6 +194,8 @@ jobs:
       - esp_target_build
       - ti_target_build
     if: needs.changes.outputs.adsbee_1090 == 'true'
+    outputs:
+      version: ${{ steps.fwver.outputs.version }}
 
     steps:
     - name: Checkout repository
@@ -232,13 +234,25 @@ jobs:
     - name: Build
       working-directory: firmware/adsbee_1090/pico/build
       run: cmake --build . --config Release --target all -j 22
+    - name: Extract firmware version
+      id: fwver
+      run: |
+        dict=firmware/common/coprocessor/object_dictionary.cpp
+        maj=$(grep -oP 'kFirmwareVersionMajor\s*=\s*\K[0-9]+' "$dict")
+        min=$(grep -oP 'kFirmwareVersionMinor\s*=\s*\K[0-9]+' "$dict")
+        pat=$(grep -oP 'kFirmwareVersionPatch\s*=\s*\K[0-9]+' "$dict")
+        rc=$(grep -oP 'kFirmwareVersionReleaseCandidate\s*=\s*\K[0-9]+' "$dict")
+        if [ "$rc" -eq 0 ]; then ver="$maj.$min.$pat"; else ver="$maj.$min.$pat-rc$rc"; fi
+        echo "Firmware version: $ver"
+        echo "version=$ver" >> "$GITHUB_OUTPUT"
     - name: upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: firmware
+        if-no-files-found: error
         path: |
-          firmware/adsbee_1090/pico/build/application/combined.uf2
-          firmware/adsbee_1090/pico/build/application/adsbee_1090.ota
+          firmware/adsbee_1090/pico/build/application/adsbee_1090-${{ steps.fwver.outputs.version }}.uf2
+          firmware/adsbee_1090/pico/build/application/adsbee_1090-${{ steps.fwver.outputs.version }}.ota
 
   hardware_test:
     runs-on: [self-hosted, adsbee-hardware]
@@ -302,8 +316,8 @@ jobs:
         fi
         .venv/bin/python3 ci/test_usb_and_ota_flash/test_ota.py \
           "${target[@]}" \
-          --uf2 firmware/adsbee_1090/pico/build/application/combined.uf2 \
-          --ota-fw firmware/adsbee_1090/pico/build/application/adsbee_1090.ota \
+          --uf2 "firmware/adsbee_1090/pico/build/application/adsbee_1090-$ver.uf2" \
+          --ota-fw "firmware/adsbee_1090/pico/build/application/adsbee_1090-$ver.ota" \
           --expected-version "$ver"
 
   adsbee_1421_build:

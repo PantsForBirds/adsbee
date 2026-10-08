@@ -285,9 +285,9 @@ class Capture:
 class Adsbee1090U(Receiver):
     """ADSBee 1090U: RP2040 + ESP32 + CC1312. USB CDC console on the RP2040 (baud ignored).
 
-    combined.uf2: reboots into BOOTSEL (AT+BOOT_USB_UF2) and copies the image to the RPI-RP2 drive
-    on the same USB port; the RP2040 then updates the ESP32 and CC1312. .ota files go over WiFi via
-    ci/test_usb_and_ota_flash/ota_upload.py.
+    .uf2 (adsbee_1090-<version>.uf2 or combined.uf2): reboots into BOOTSEL (AT+BOOT_USB_UF2) and copies
+    the image to the RPI-RP2 drive on the same USB port; the RP2040 then updates the ESP32 and CC1312.
+    .ota files go over WiFi via ci/test_usb_and_ota_flash/ota_upload.py.
     """
 
     model = "adsbee_1090u"

@@ -91,7 +91,10 @@ def release_name(product, version):
 
 def asset_names(product, version):
     if product == "adsbee_1090":
-        return ["adsbee_1090.ota", "combined.uf2"]
+        return [
+            "adsbee_1090-{}.ota".format(version),
+            "adsbee_1090-{}.uf2".format(version),
+        ]
     return [
         "adsbee_1421-{}.hex".format(version),
         "adsbee_1421-{}.elf".format(version),

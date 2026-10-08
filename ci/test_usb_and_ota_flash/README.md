@@ -44,16 +44,16 @@ directory is meant to be invoked as a unit, not split apart.
 
 ```bash
 # Full test: USB flash, then OTA, with health checks at each stage.
-python3 test_ota.py --uf2 combined.uf2 --ota-fw adsbee_1090.ota
+python3 test_ota.py --uf2 adsbee_1090-<version>.uf2 --ota-fw adsbee_1090-<version>.ota
 
 # USB flash + health check only; skip OTA steps.
-python3 test_ota.py --usb-only --uf2 combined.uf2
+python3 test_ota.py --usb-only --uf2 adsbee_1090-<version>.uf2
 
 # OTA upload + health check only; device must already be running base firmware.
-python3 test_ota.py --ota-only --ota-fw adsbee_1090.ota
+python3 test_ota.py --ota-only --ota-fw adsbee_1090-<version>.ota
 
 # Several RP2040 boards attached: select one by USB serial (`adsbee-hil discover`).
-python3 test_ota.py --serial E000000000000001 --uf2 combined.uf2 --ota-fw adsbee_1090.ota
+python3 test_ota.py --serial E000000000000001 --uf2 adsbee_1090-<version>.uf2 --ota-fw adsbee_1090-<version>.ota
 ```
 
 Run `python3 test_ota.py --help` for the full flag list (`--port`/`--host` for

@@ -18,13 +18,13 @@ Steps:
   5. Confirm the device booted the new partition       [full test / --ota-only].
 
 Usage (full test):
-  python3 test_ota.py --uf2 combined.uf2 --ota-fw adsbee_1090.ota
+  python3 test_ota.py --uf2 adsbee_1090-<version>.uf2 --ota-fw adsbee_1090-<version>.ota
 
 Usage (USB flash + health check only):
-  python3 test_ota.py --usb-only --uf2 combined.uf2
+  python3 test_ota.py --usb-only --uf2 adsbee_1090-<version>.uf2
 
 Usage (OTA upload + health check only, device already running base firmware):
-  python3 test_ota.py --ota-only --ota-fw adsbee_1090.ota
+  python3 test_ota.py --ota-only --ota-fw adsbee_1090-<version>.ota
 
 On a bench with several boards, select the device with --serial <USB serial> (see ci/hil).
 """
@@ -98,7 +98,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--uf2", metavar="FILE",
-                        help="combined.uf2 to flash (required unless --ota-only)")
+                        help="adsbee_1090-<version>.uf2 (or combined.uf2) to flash (required unless --ota-only)")
     parser.add_argument("-o", "--ota-fw", metavar="FILE",
                         help="candidate .ota for OTA test")
     mode = parser.add_mutually_exclusive_group()

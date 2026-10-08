@@ -102,7 +102,8 @@ bash firmware/adsbee_1090/build.sh test AircraftJSON  # run filtered tests
 | ESP32 (Release) | `firmware/adsbee_1090/esp/build/Release/adsbee_esp.bin` |
 | CC1312 | `firmware/adsbee_1090/ti/sub_ghz_radio/build/sub_ghz_radio.bin` |
 
-The `combined.uf2` embeds all three binaries. See [Developers_Guide.md](adsbee_1090/Developers_Guide.md) for flashing instructions.
+The `combined.uf2` embeds all three binaries. The build also writes version-stamped copies next to it,
+`adsbee_1090-<version>.uf2` and `adsbee_1090-<version>.ota`, which CI publishes. See [Developers_Guide.md](adsbee_1090/Developers_Guide.md) for flashing instructions.
 
 ---
 
@@ -179,11 +180,12 @@ Releases are drafted by CI from release tags (`.github/workflows/release.yml`):
 
    | Product | Release name | Assets |
    |---|---|---|
-   | adsbee_1090 | `ADSBee 1090 Firmware 0.9.1 Release Candidate 4` | `adsbee_1090.ota`, `combined.uf2` |
+   | adsbee_1090 | `ADSBee 1090 Firmware 0.9.1 Release Candidate 4` | `adsbee_1090-<version>.ota`, `adsbee_1090-<version>.uf2` |
    | adsbee_1421 | `ADSBee 1421 Firmware Version 0.3.11 Release Candidate 3` | `adsbee_1421-<version>.hex`, `adsbee_1421-<version>.elf`, `adsbee_1421_programmer-fw<version>.uf2` |
 
    Stable releases drop "Release Candidate N". The body has release-notes placeholders and a CI block
    (run link, commit, asset SHA-256s). The 1421 ELF keeps debug info for decoding crash addresses.
+   ADSBee 1090 releases up to 0.9.1-rc6 name their assets `adsbee_1090.ota` and `combined.uf2`.
 3. Write the release notes in the draft on GitHub and publish it.
 
 Re-running the workflow (or re-pushing the tag) on a draft replaces its assets and CI block and keeps
