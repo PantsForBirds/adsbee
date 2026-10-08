@@ -229,7 +229,7 @@ void CommsManager::GetIP6AddrStrs(esp_netif_t* netif, char* link_local, char* gl
             dest = global;
         }
         if (dest != nullptr) {
-            snprintf(dest, len, IPV6STR, IPV62STR(addrs[i]));
+            inet_ntop(AF_INET6, addrs[i].addr, dest, len);
         }
     }
 }
@@ -299,9 +299,10 @@ void CommsManager::IPEventHandler(void* arg, esp_event_base_t event_base, int32_
             } else if (routable && event->esp_netif == wifi_sta_netif_) {
                 wifi_sta_has_ip6_ = true;
             }
-            CONSOLE_INFO("CommsManager::IPEventHandler", "%s got IPv6 address " IPV6STR " (%s).",
-                         esp_netif_get_desc(event->esp_netif), IPV62STR(event->ip6_info.ip),
-                         routable ? "global" : "link-local");
+            char addr_str[ObjectDictionary::kIP6AddrStrLen + 1];
+            inet_ntop(AF_INET6, event->ip6_info.ip.addr, addr_str, sizeof(addr_str));
+            CONSOLE_INFO("CommsManager::IPEventHandler", "%s got IPv6 address %s (%s).",
+                         esp_netif_get_desc(event->esp_netif), addr_str, routable ? "global" : "link-local");
             break;
         }
         case IP_EVENT_ETH_LOST_IP: {

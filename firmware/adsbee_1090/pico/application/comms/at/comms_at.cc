@@ -1168,7 +1168,7 @@ CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
             CPP_AT_PRINTF("IP Mode: %s\r\n", SettingsManager::IPModeToStr(settings_manager.settings.ip_mode));
             CPP_AT_PRINTF("Ethernet: %s\r\n", network_info.ethernet_enabled ? "ENABLED" : "DISABLED");
             if (!network_info.ethernet_has_ip) {
-                CPP_AT_PRINTF("\tNo IP address assigned.\r\n");
+                CPP_AT_PRINTF("\tNo IPv4 address assigned.\r\n");
             } else {
                 CPP_AT_PRINTF("\tIP Address: %s\r\n", network_info.ethernet_ip);
                 CPP_AT_PRINTF("\tSubnet Mask: %s\r\n", network_info.ethernet_netmask);
@@ -1179,7 +1179,7 @@ CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
             CPP_AT_PRINTF("WiFi Station: %s\r\n", network_info.wifi_sta_enabled ? "ENABLED" : "DISABLED");
             CPP_AT_PRINTF("\tSSID: %s\r\n", network_info.wifi_sta_ssid);
             if (!network_info.wifi_sta_has_ip) {
-                CPP_AT_PRINTF("\tNo IP address assigned.\r\n");
+                CPP_AT_PRINTF("\tNo IPv4 address assigned.\r\n");
             } else {
                 CPP_AT_PRINTF("\tIP Address: %s\r\n", network_info.wifi_sta_ip);
                 CPP_AT_PRINTF("\tSubnet Mask: %s\r\n", network_info.wifi_sta_netmask);
