@@ -46,12 +46,35 @@ The build system uses Docker Compose with three pre-built containers — no loca
 | Service | Image | Builds |
 |---------|-------|--------|
 | `pico-docker` | `coolnamesalltaken/pico-docker:latest` | RP2040 firmware, host tests, 1421 programmer |
-| `esp-idf` | `espressif/idf:v5.5.2` | ESP32-S3 firmware |
+| `esp-idf` | `espressif/idf:release-v5.4@sha256:6e4e…` (ESP-IDF 5.4.4, pinned by digest) | ESP32-S3 firmware |
 | `ti-lpf2` | `coolnamesalltaken/ti-lpf2:latest` | TI CC1312 firmware, CC1314 (adsbee_1421) firmware |
 
 Each product has its own compose file (`firmware/adsbee_1090/compose.yml`,
 `firmware/adsbee_1421/compose.yml`). The build scripts handle the required build order
 (for adsbee_1090: ESP32 → CC1312 → RP2040) automatically.
+
+### ESP-IDF and component versions
+
+The ADSBee 1090 ESP32-S3 build is pinned in three places, which change together:
+
+- `firmware/adsbee_1090/compose.yml`: the `esp-idf` image, pinned by digest. CI (`firmware.yml`)
+  builds through `build.sh` with the same image, so local and release builds use the same ESP-IDF.
+- `firmware/adsbee_1090/esp/main/idf_component.yml`: exact (`==`) versions of managed components.
+- `firmware/adsbee_1090/esp/dependencies.lock`: the resolved IDF and component versions and hashes.
+  `managed_components/` is downloaded from it at build time and is not committed.
+
+`build.sh esp` fails if the container's ESP-IDF differs from the lock file, and CI fails if a build
+changes `dependencies.lock`.
+
+To update a pin:
+
+1. ESP-IDF: pick a tag from [espressif/idf](https://hub.docker.com/r/espressif/idf/tags), get its
+   digest (`docker buildx imagetools inspect espressif/idf:<tag>`) and set
+   `image: espressif/idf:<tag>@sha256:<digest>` in `compose.yml`.
+2. Components: edit the version in `idf_component.yml`.
+3. Regenerate the lock in the new image and commit it with the change:
+   `cd firmware/adsbee_1090 && docker compose run --rm esp-idf bash -c "cd /firmware/adsbee_1090/esp && idf.py -B build/Release update-dependencies"`
+4. Rebuild (`./build.sh esp`) and test on hardware; an ESP-IDF change ships new ESP32 firmware.
 
 ---
 
@@ -220,6 +243,6 @@ docker compose run --rm ti-lpf2 bash       # CC1312 container
 
 ```bash
 docker image rm coolnamesalltaken/pico-docker:latest
-docker image rm espressif/idf:v5.5.2
+docker image rm espressif/idf:release-v5.4  # or by digest; see `docker image ls --digests`
 docker image rm coolnamesalltaken/ti-lpf2:latest
 ```

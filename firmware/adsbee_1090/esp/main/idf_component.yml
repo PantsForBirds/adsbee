@@ -1,17 +1,8 @@
 ## IDF Component Manager Manifest File
+# Exact versions only. dependencies.lock records the resolved versions and hashes and CI fails if a
+# build changes it. To update a pin, see "ESP-IDF and component versions" in firmware/README.md.
 dependencies:
-  espressif/mdns: "*"
-  ## Required IDF version
+  espressif/mdns: "==1.4.3"
+  ## Required IDF version. The exact IDF build is pinned by the esp-idf image in ../compose.yml.
   idf:
-    version: ">=4.1.0"
-  # # Put list of dependencies here
-  # # For components maintained by Espressif:
-  # component: "~1.0.0"
-  # # For 3rd party components:
-  # username/component: ">=1.0.0,<2.0.0"
-  # username2/component2:
-  #   version: "~1.0.0"
-  #   # For transient dependencies `public` flag can be set.
-  #   # `public` flag doesn't have an effect dependencies of the `main` component.
-  #   # All dependencies of `main` are public by default.
-  #   public: true
+    version: ">=5.4"
