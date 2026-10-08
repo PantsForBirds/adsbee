@@ -49,7 +49,9 @@ bool SettingsManager::Apply() {
     if (comms_manager.wifi_sta_enabled != settings.core_network_settings.wifi_sta_enabled ||
         (comms_manager.wifi_sta_enabled &&
          (strcmp(comms_manager.wifi_sta_ssid, settings.core_network_settings.wifi_sta_ssid) != 0 ||
-          strcmp(comms_manager.wifi_sta_password, settings.core_network_settings.wifi_sta_password) != 0))) {
+          strcmp(comms_manager.wifi_sta_password, settings.core_network_settings.wifi_sta_password) != 0 ||
+          memcmp(comms_manager.wifi_sta_extra_networks, settings.wifi_sta_extra_networks,
+                 sizeof(settings.wifi_sta_extra_networks)) != 0))) {
         wifi_sta_restart_required = true;
     }
 
@@ -59,6 +61,8 @@ bool SettingsManager::Apply() {
             SettingsManager::Settings::kWiFiSSIDMaxLen + 1);
     strncpy(comms_manager.wifi_sta_password, settings.core_network_settings.wifi_sta_password,
             SettingsManager::Settings::kWiFiPasswordMaxLen + 1);
+    memcpy(comms_manager.wifi_sta_extra_networks, settings.wifi_sta_extra_networks,
+           sizeof(settings.wifi_sta_extra_networks));
 
     // Restart network interfaces if necessary.
     if (ethernet_restart_required) {

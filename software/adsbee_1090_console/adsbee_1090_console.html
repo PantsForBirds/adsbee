@@ -5933,6 +5933,34 @@ const SETTINGS_SCHEMA_1090 = [
         ],
     },
     {
+        cmd: 'WIFI_STA_NETWORK', label: 'More WiFi Networks', group: 'Network', disconnects: true,
+        help: 'Extra networks for WiFi Station. The ADSBee joins the strongest stored network in range.',
+        query: { expect: /^WIFI_STA_NETWORK=[23],/ },
+        fields: [2, 3].flatMap(n => [
+            { id: `ssid${n}`, label: `Network ${n} SSID`, type: 'string', maxLen: 31, note: 'Leave blank for none.' },
+            {
+                id: `pwd${n}`, label: `Network ${n} Password`, type: 'password', writeOnly: true, maxLen: 63,
+                placeholder: '(unchanged)',
+                validate: v => (v === '' || v.length >= 8 || v.length === 5 || v.length === 13
+                    ? '' : 'Use 8-63 characters, or a 5 or 13 character WEP key.'),
+            },
+        ]),
+        parse(lines) {
+            const values = {};
+            for (const l of lines) {
+                const m = l.match(/^WIFI_STA_NETWORK=([23]),([^,]*)/);
+                if (m) values[`ssid${m[1]}`] = m[2];
+            }
+            return values.ssid2 === undefined ? null : values;
+        },
+        build(v, dirty) {
+            return [2, 3].filter(n => dirty.has(`ssid${n}`) || dirty.has(`pwd${n}`)).map(n => {
+                if (v[`ssid${n}`] === '') return `AT+WIFI_STA_NETWORK=${n}`;
+                return `AT+WIFI_STA_NETWORK=${n},${v[`ssid${n}`]}${v[`pwd${n}`] ? ',' + v[`pwd${n}`] : ''}`;
+            });
+        },
+    },
+    {
         cmd: 'ETHERNET', label: 'Ethernet', group: 'Network', disconnects: true,
         fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
     },

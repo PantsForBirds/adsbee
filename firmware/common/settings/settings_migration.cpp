@@ -2,20 +2,24 @@
 
 #include <cstring>  // memcpy
 
-// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v15 and extend the chain
+// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v16 and extend the chain
 // (see settings_migration.hh).
-static_assert(kSettingsVersion == 15, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
+static_assert(kSettingsVersion == 16, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
 static_assert(sizeof(settings_v12::Settings) == 1088 && sizeof(settings_v13::Settings) == 1088 &&
-                  sizeof(settings_v14::Settings) == 1140,
+                  sizeof(settings_v14::Settings) == 1140 && sizeof(settings_v15::Settings) == 1144,
               "A frozen settings snapshot changed size. Frozen snapshots must never be edited.");
 
 // The frozen nested layouts must stay byte-identical to the live ones for the raw copies below to be valid. If a future
 // version changes CoreNetworkSettings or RxPosition, these fire and the migration steps must switch to field-by-field
 // copies for those members.
-static_assert(sizeof(settings_v14::CoreNetworkSettings) == sizeof(SettingsManager::Settings::CoreNetworkSettings),
-              "v14 CoreNetworkSettings layout diverged from live; migration copy is no longer valid.");
-static_assert(sizeof(settings_v14::RxPosition) == sizeof(SettingsManager::RxPosition),
-              "v14 RxPosition layout diverged from live; migration copy is no longer valid.");
+static_assert(sizeof(settings_v15::CoreNetworkSettings) == sizeof(SettingsManager::Settings::CoreNetworkSettings),
+              "v15 CoreNetworkSettings layout diverged from live; migration copy is no longer valid.");
+static_assert(sizeof(settings_v15::RxPosition) == sizeof(SettingsManager::RxPosition),
+              "v15 RxPosition layout diverged from live; migration copy is no longer valid.");
+static_assert(sizeof(settings_v14::CoreNetworkSettings) == sizeof(settings_v15::CoreNetworkSettings),
+              "v14 -> v15 CoreNetworkSettings layout changed; migration copy is no longer valid.");
+static_assert(sizeof(settings_v14::RxPosition) == sizeof(settings_v15::RxPosition),
+              "v14 -> v15 RxPosition layout changed; migration copy is no longer valid.");
 static_assert(sizeof(settings_v13::CoreNetworkSettings) == sizeof(settings_v14::CoreNetworkSettings),
               "v13 -> v14 CoreNetworkSettings layout changed; migration copy is no longer valid.");
 static_assert(sizeof(settings_v13::RxPosition) == sizeof(settings_v14::RxPosition),
@@ -115,9 +119,60 @@ void SettingsMigrator::MigrateV13ToV14(const settings_v13::Settings& in, setting
     memcpy(&out.rx_position, &in.rx_position, sizeof(in.rx_position));
 }
 
-void SettingsMigrator::MigrateV14ToV15(const settings_v14::Settings& in, SettingsManager::Settings& out) {
-    // Start from a fresh, fully-defaulted current struct so feeds_enabled (new in v15) takes its default (enabled, so
-    // active feeds keep running) and any RP2040 DeviceInfo-seeded defaults are applied.
+void SettingsMigrator::MigrateV14ToV15(const settings_v14::Settings& in, settings_v15::Settings& out) {
+    out = settings_v15::Settings{};
+    out.settings_version = 15;
+
+    memcpy(&out.core_network_settings, &in.core_network_settings, sizeof(in.core_network_settings));
+
+    out.r1090_rx_enabled = in.r1090_rx_enabled;
+    out.tl_offset_mv = in.tl_offset_mv;
+    out.r1090_bias_tee_enabled = in.r1090_bias_tee_enabled;
+    out.watchdog_timeout_sec = in.watchdog_timeout_sec;
+    out.led_enabled = in.led_enabled;
+    out.feeds_enabled = true;  // New in v15: keep active feeds running.
+    out.gnss_enabled = in.gnss_enabled;
+    out.gnss_receiver_type = in.gnss_receiver_type;
+    out.gnss_notify = in.gnss_notify;
+
+    out.log_level = in.log_level;
+    for (uint16_t i = 0; i < settings_v15::kNumSerialInterfaces; i++) {
+        out.reporting_protocols[i] = in.reporting_protocols[i];
+        out.baud_rates[i] = in.baud_rates[i];
+    }
+
+    out.subg_enabled = in.subg_enabled;
+    out.subg_rx_enabled = in.subg_rx_enabled;
+    out.subg_bias_tee_enabled = in.subg_bias_tee_enabled;
+    out.subg_mode = in.subg_mode;
+
+    out.remote_id_rx_enabled = in.remote_id_rx_enabled;
+    out.remote_id_transports = in.remote_id_transports;
+
+    out.remote_id_tx_enabled = in.remote_id_tx_enabled;
+    out.remote_id_tx_transports = in.remote_id_tx_transports;
+    out.remote_id_tx_uas_id_type = in.remote_id_tx_uas_id_type;
+    out.remote_id_tx_ua_type = in.remote_id_tx_ua_type;
+    memcpy(out.remote_id_tx_uas_id, in.remote_id_tx_uas_id, sizeof(in.remote_id_tx_uas_id));
+    memcpy(out.remote_id_tx_operator_id, in.remote_id_tx_operator_id, sizeof(in.remote_id_tx_operator_id));
+
+    memcpy(out.feed_uris, in.feed_uris, sizeof(in.feed_uris));
+    memcpy(out.feed_ports, in.feed_ports, sizeof(in.feed_ports));
+    memcpy(out.feed_is_active, in.feed_is_active, sizeof(in.feed_is_active));
+    for (uint16_t i = 0; i < settings_v15::kMaxNumFeeds; i++) {
+        out.feed_protocols[i] = in.feed_protocols[i];
+    }
+    memcpy(out.feed_receiver_ids, in.feed_receiver_ids, sizeof(in.feed_receiver_ids));
+
+    out.mavlink_system_id = in.mavlink_system_id;
+    out.mavlink_component_id = in.mavlink_component_id;
+
+    memcpy(&out.rx_position, &in.rx_position, sizeof(in.rx_position));
+}
+
+void SettingsMigrator::MigrateV15ToV16(const settings_v15::Settings& in, SettingsManager::Settings& out) {
+    // Start from a fresh, fully-defaulted current struct so the extra WiFi station networks (new in v16) start empty
+    // and any RP2040 DeviceInfo-seeded defaults are applied.
     out = SettingsManager::Settings();
 
     out.settings_version = kSettingsVersion;
@@ -129,6 +184,7 @@ void SettingsMigrator::MigrateV14ToV15(const settings_v14::Settings& in, Setting
     out.r1090_bias_tee_enabled = in.r1090_bias_tee_enabled;
     out.watchdog_timeout_sec = in.watchdog_timeout_sec;
     out.led_enabled = in.led_enabled;
+    out.feeds_enabled = in.feeds_enabled;
     out.gnss_enabled = in.gnss_enabled;
     out.gnss_receiver_type = static_cast<SettingsManager::GNSSReceiverType>(in.gnss_receiver_type);
     out.gnss_notify = in.gnss_notify;
@@ -174,6 +230,7 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
     // current version, so any stored version >= kOldestMigratableVersion lands on the live layout.
     settings_v13::Settings v13;
     settings_v14::Settings v14;
+    settings_v15::Settings v15;
 
     switch (from_version) {
         case 12: {
@@ -185,6 +242,7 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             memcpy(&v12, blob, sizeof(v12));
             MigrateV12ToV13(v12, v13);
             MigrateV13ToV14(v13, v14);
+            MigrateV14ToV15(v14, v15);
             break;
         }
         case 13: {
@@ -193,6 +251,7 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             }
             memcpy(&v13, blob, sizeof(v13));
             MigrateV13ToV14(v13, v14);
+            MigrateV14ToV15(v14, v15);
             break;
         }
         case 14: {
@@ -200,6 +259,14 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
                 return false;
             }
             memcpy(&v14, blob, sizeof(v14));
+            MigrateV14ToV15(v14, v15);
+            break;
+        }
+        case 15: {
+            if (blob_len < sizeof(settings_v15::Settings)) {
+                return false;
+            }
+            memcpy(&v15, blob, sizeof(v15));
             break;
         }
         default:
@@ -207,6 +274,6 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             return false;
     }
 
-    MigrateV14ToV15(v14, out);  // Final step: v14 is the newest frozen version, so this lands on the live struct.
+    MigrateV15ToV16(v15, out);  // Final step: v15 is the newest frozen version, so this lands on the live struct.
     return true;
 }

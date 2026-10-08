@@ -78,6 +78,11 @@ bool SettingsManager::Sanitize() {
         changed |= SanitizeBool(settings.feed_is_active[i], "feed_is_active", i);
         changed |= SanitizeString(settings.feed_uris[i], sizeof(settings.feed_uris[i]), "feed_uris", i);
     }
+    for (uint16_t i = 0; i < Settings::kWiFiSTANumExtraNetworks; i++) {
+        Settings::WiFiNetwork& net = settings.wifi_sta_extra_networks[i];
+        changed |= SanitizeString(net.ssid, sizeof(net.ssid), "wifi_sta_extra_networks.ssid", i);
+        changed |= SanitizeString(net.password, sizeof(net.password), "wifi_sta_extra_networks.password", i);
+    }
 
     // Baud rate 0 is invalid on hardware UARTs (but normal for the USB console).
     if (settings.baud_rates[SerialInterface::kCommsUART] == 0) {
@@ -258,6 +263,13 @@ void SettingsManager::Print() {
     }
     CONSOLE_PRINTF("%s", print_buf);
     print_buf_len = 0;
+    for (uint16_t i = 0; settings.core_network_settings.wifi_sta_enabled && i < Settings::kWiFiSTANumExtraNetworks; i++) {
+        const Settings::WiFiNetwork& net = settings.wifi_sta_extra_networks[i];
+        if (net.ssid[0] == '\0') continue;
+        char redacted[Settings::kWiFiPasswordMaxLen + 1];
+        RedactPassword(const_cast<char*>(net.password), redacted, Settings::kWiFiPasswordMaxLen);
+        CONSOLE_PRINTF("\t\tNetwork %d SSID: %s\r\n\t\tNetwork %d Password: %s\r\n", i + 2, net.ssid, i + 2, redacted);
+    }
 #endif
 
 #ifdef ON_PICO
@@ -349,4 +361,10 @@ void SettingsManager::PrintAT() {
     // AT+WIFI_STA
     CONSOLE_PRINTF("AT+WIFI_STA=%d,%s,%s\r\n", settings.core_network_settings.wifi_sta_enabled,
                    settings.core_network_settings.wifi_sta_ssid, settings.core_network_settings.wifi_sta_password);
+    for (uint16_t i = 0; i < Settings::kWiFiSTANumExtraNetworks; i++) {
+        const Settings::WiFiNetwork& net = settings.wifi_sta_extra_networks[i];
+        if (net.ssid[0] != '\0') {
+            CONSOLE_PRINTF("AT+WIFI_STA_NETWORK=%d,%s,%s\r\n", i + 2, net.ssid, net.password);
+        }
+    }
 }

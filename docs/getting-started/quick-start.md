@@ -162,6 +162,7 @@ Want to check the status of your feed? Use the links below to see your feed stat
 1. [Connect to the CLI](#connect-to-cli) via the method of you choosing.
 2. Run the command `AT+WIFI_STA?` to check your current WiFi station settings.
 3. Enter the network credentials for your WiFi network with `AT+WIFI_STA=<enabled>,<ssid>,<password>`. In this case, replace `<enabled>` with `1`, `<ssid>` with the SSID of your network, and `<password>` with your WPA passkey (8-63 characters). Note that values should be comma separated, with no spaces in between! No quotes are required around any values.
+   To store more networks, add them with `AT+WIFI_STA_NETWORK=<2 or 3>,<ssid>,<password>`. The ADSBee joins the strongest stored network in range.
 4. Save the settings with `AT+SETTINGS=SAVE`. If you’d like, you can verify that they were saved by calling `AT+SETTINGS?`.
 5. Apply the new WiFi settings by restarting the device with `AT+REBOOT`.
 

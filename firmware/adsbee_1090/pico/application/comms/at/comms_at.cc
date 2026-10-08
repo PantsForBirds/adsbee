@@ -1498,7 +1498,14 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"WATCHDOG\":[%lu],", (unsigned long)adsbee.GetWatchdogTimeoutSec());
     CPP_AT_PRINTF("\"WIFI_AP\":[%d,\"%s\",", cns.wifi_ap_enabled, JSONEscapeStr(cns.wifi_ap_ssid, esc, sizeof(esc)));
     CPP_AT_PRINTF("\"%s\",%d],", JSONEscapeStr(cns.wifi_ap_password, esc, sizeof(esc)), cns.wifi_ap_channel);
-    CPP_AT_PRINTF("\"WIFI_STA\":[%d,\"%s\"]", cns.wifi_sta_enabled, JSONEscapeStr(cns.wifi_sta_ssid, esc, sizeof(esc)));
+    CPP_AT_PRINTF("\"WIFI_STA\":[%d,\"%s\"],", cns.wifi_sta_enabled, JSONEscapeStr(cns.wifi_sta_ssid, esc, sizeof(esc)));
+    // Networks 2 and up; network 1 is in WIFI_STA.
+    CPP_AT_PRINTF("\"WIFI_STA_NETWORK\":[");
+    for (uint16_t i = 0; i < SettingsManager::Settings::kWiFiSTANumExtraNetworks; i++) {
+        CPP_AT_PRINTF("%s\"%s\"", i ? "," : "",
+                      JSONEscapeStr(settings_manager.settings.wifi_sta_extra_networks[i].ssid, esc, sizeof(esc)));
+    }
+    CPP_AT_PRINTF("]");
     CPP_AT_PRINTF("}\r\n");
 }
 
@@ -1789,6 +1796,67 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiSTACallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+// Stored WiFi station network `index` (1-based); network 1 lives in CoreNetworkSettings.
+static void WiFiSTANetwork(uint16_t index, char*& ssid, char*& password) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    if (index == 1) {
+        ssid = s.core_network_settings.wifi_sta_ssid;
+        password = s.core_network_settings.wifi_sta_password;
+    } else {
+        ssid = s.wifi_sta_extra_networks[index - 2].ssid;
+        password = s.wifi_sta_extra_networks[index - 2].password;
+    }
+}
+
+CPP_AT_CALLBACK(CommsManager::ATWiFiSTANetworkCallback) {
+    char *ssid, *password;
+    char redacted_password[SettingsManager::Settings::kWiFiPasswordMaxLen + 1];
+    switch (op) {
+        case '?': {
+            for (uint16_t i = 1; i <= SettingsManager::Settings::kWiFiSTAMaxNumNetworks; i++) {
+                WiFiSTANetwork(i, ssid, password);
+                SettingsManager::RedactPassword(password, redacted_password,
+                                                SettingsManager::Settings::kWiFiPasswordMaxLen);
+                CPP_AT_CMD_PRINTF("=%d,%s,%s\r\n", i, ssid, redacted_password);
+            }
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        }
+        case '=': {
+            uint16_t index;
+            CPP_AT_TRY_ARG2NUM(0, index);
+            if (index < 1 || index > SettingsManager::Settings::kWiFiSTAMaxNumNetworks) {
+                CPP_AT_ERROR("Network index must be 1-%d.", SettingsManager::Settings::kWiFiSTAMaxNumNetworks);
+            }
+            if (CPP_AT_HAS_ARG(2) && !WiFiSTAPasswordIsValid(args[2])) {
+                CPP_AT_ERROR("WiFi station password must be 8-63 characters (or a 5 or 13 character WEP key).");
+            }
+            WiFiSTANetwork(index, ssid, password);
+            if (!CPP_AT_HAS_ARG(1)) {
+                // Index alone clears the slot.
+                memset(ssid, '\0', SettingsManager::Settings::kWiFiSSIDMaxLen + 2);
+                memset(password, '\0', SettingsManager::Settings::kWiFiPasswordMaxLen + 2);
+                CPP_AT_CMD_PRINTF(": cleared network %d\r\n", index);
+                CPP_AT_SUCCESS();
+            }
+            strncpy(ssid, args[1].data(), SettingsManager::Settings::kWiFiSSIDMaxLen);
+            ssid[MIN(args[1].length(), SettingsManager::Settings::kWiFiSSIDMaxLen)] = '\0';
+            if (CPP_AT_HAS_ARG(2)) {
+                strncpy(password, args[2].data(), SettingsManager::Settings::kWiFiPasswordMaxLen);
+                password[MIN(args[2].length(), SettingsManager::Settings::kWiFiPasswordMaxLen)] = '\0';
+            }
+            SettingsManager::RedactPassword(password, redacted_password, SettingsManager::Settings::kWiFiPasswordMaxLen);
+            CPP_AT_CMD_PRINTF(": network %d: ssid=%s password=%s\r\n", index, ssid, redacted_password);
+            CPP_AT_SUCCESS();
+            break;
+        }
+        default: {
+            CPP_AT_ERROR("Operator %c not supported.", op);
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "BAUD_RATE",
      .min_args = 0,
@@ -2044,6 +2112,15 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "sta_pwd: 8-63 characters, or a 5 or 13 character WEP key.\r\n\t"
                     "Get WiFi station params.\r\n\tAT+WIFI_STA?\r\n\t+WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiSTACallback, comms_manager)},
+    {.command = "WIFI_STA_NETWORK",
+     .min_args = 0,
+     .max_args = 3,
+     .help_string = "Store WiFi station networks. The station joins the strongest one in range.\r\n\t"
+                    "AT+WIFI_STA_NETWORK=<index 1-3>,<ssid>,<pwd>\r\n\t"
+                    "Network 1 is the AT+WIFI_STA network. An omitted pwd keeps the stored one.\r\n\t"
+                    "Clear a network.\r\n\tAT+WIFI_STA_NETWORK=<index>\r\n\t"
+                    "List networks.\r\n\tAT+WIFI_STA_NETWORK?\r\n\t+WIFI_STA_NETWORK=<index>,<ssid>,<pwd>",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiSTANetworkCallback, comms_manager)},
 };
 const uint16_t at_command_list_num_commands = sizeof(at_command_list) / sizeof(at_command_list[0]);
 

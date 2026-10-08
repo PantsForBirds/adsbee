@@ -57,6 +57,11 @@ TEST(SettingsMigration, LayoutLockedSizes) {
     EXPECT_EQ(sizeof(settings_v14::CoreNetworkSettings),
               sizeof(SettingsManager::Settings::CoreNetworkSettings));
     EXPECT_EQ(sizeof(settings_v14::RxPosition), sizeof(SettingsManager::RxPosition));
+
+    EXPECT_EQ(sizeof(settings_v15::Settings), 1144u);
+    EXPECT_EQ(sizeof(settings_v15::CoreNetworkSettings),
+              sizeof(SettingsManager::Settings::CoreNetworkSettings));
+    EXPECT_EQ(sizeof(settings_v15::RxPosition), sizeof(SettingsManager::RxPosition));
 }
 
 // Fills a v13 settings struct with distinctive, non-default values across every field, and gives it a valid-CRC
@@ -326,6 +331,110 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
     EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
     EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+}
+
+// Fills a v15 settings struct with distinctive, non-default values across every field.
+static void PopulateV15(settings_v15::Settings& v15) {
+    v15 = settings_v15::Settings{};
+    v15.settings_version = 15;
+
+    SettingsManager::Settings::CoreNetworkSettings cns;  // Zero-fills strings in its constructor.
+    cns.esp32_enabled = true;
+    strncpy(cns.wifi_ap_ssid, "MigrateNet", sizeof(cns.wifi_ap_ssid));
+    strncpy(cns.wifi_ap_password, "supersecret", sizeof(cns.wifi_ap_password));
+    cns.wifi_ap_channel = 6;
+    cns.ethernet_enabled = true;
+    cns.UpdateCRC32();
+    ASSERT_EQ(sizeof(cns), sizeof(v15.core_network_settings));
+    memcpy(&v15.core_network_settings, &cns, sizeof(cns));
+
+    v15.r1090_rx_enabled = false;
+    v15.tl_offset_mv = 123;
+    v15.r1090_bias_tee_enabled = true;
+    v15.watchdog_timeout_sec = 42;
+    v15.led_enabled = false;
+    v15.feeds_enabled = false;
+    v15.gnss_enabled = true;
+    v15.gnss_receiver_type = SettingsManager::kGNSSReceiverUBXMIA;
+    v15.gnss_notify = true;
+    v15.log_level = SettingsManager::LogLevel::kInfo;
+    v15.reporting_protocols[0] = SettingsManager::ReportingProtocol::kCSBee;
+    v15.reporting_protocols[1] = SettingsManager::ReportingProtocol::kGDL90;
+    v15.reporting_protocols[2] = SettingsManager::ReportingProtocol::kAircraftJSON;
+    v15.baud_rates[0] = 1200;
+    v15.baud_rates[1] = 57600;
+    v15.baud_rates[2] = 4800;
+    v15.subg_enabled = SettingsManager::EnableState::kEnableStateDisabled;
+    v15.subg_rx_enabled = false;
+    v15.subg_bias_tee_enabled = true;
+    v15.subg_mode = SettingsManager::SubGHzRadioMode::kSubGHzRadioModeUATRx;
+    v15.remote_id_rx_enabled = true;
+    v15.remote_id_transports = SettingsManager::kRemoteIDTransportBLE5Long;
+    v15.remote_id_tx_enabled = true;
+    v15.remote_id_tx_transports = SettingsManager::kRemoteIDTransportWiFiBeacon;
+    v15.remote_id_tx_uas_id_type = 3;
+    v15.remote_id_tx_ua_type = 15;
+    strncpy(v15.remote_id_tx_uas_id, "TXID123", sizeof(v15.remote_id_tx_uas_id));
+    strncpy(v15.remote_id_tx_operator_id, "OP456", sizeof(v15.remote_id_tx_operator_id));
+
+    strncpy(v15.feed_uris[0], "myfeed.example.com", sizeof(v15.feed_uris[0]));
+    strncpy(v15.feed_uris[9], "feed.adsb.fi", sizeof(v15.feed_uris[9]));
+    v15.feed_ports[0] = 30005;
+    v15.feed_ports[9] = 30004;
+    v15.feed_is_active[0] = true;
+    v15.feed_is_active[9] = true;
+    v15.feed_protocols[0] = SettingsManager::ReportingProtocol::kBeast;
+    v15.feed_protocols[9] = SettingsManager::ReportingProtocol::kBeast;
+    v15.feed_receiver_ids[0][0] = 0xDE;
+    v15.feed_receiver_ids[0][7] = 0xAD;
+
+    v15.mavlink_system_id = 7;
+    v15.mavlink_component_id = 42;
+
+    v15.rx_position.source = 1;  // kPositionSourceFixed
+    v15.rx_position.latitude_deg = 37.5f;
+    v15.rx_position.longitude_deg = -122.3f;
+    v15.rx_position.gnss_altitude_ft = 111;
+    v15.rx_position.baro_altitude_ft = 222;
+    v15.rx_position.heading_deg = 90.0f;
+    v15.rx_position.speed_kts = 33;
+    v15.rx_position.icao_address = 0xABCDEF;
+}
+
+TEST(SettingsMigration, V15ToV16PreservesAllFieldsAndAddsEmptyWiFiNetworks) {
+    settings_v15::Settings v15;
+    PopulateV15(v15);
+
+    uint8_t blob[sizeof(settings_v15::Settings)];
+    memcpy(blob, &v15, sizeof(v15));
+
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 15, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(memcmp(&out.core_network_settings, &v15.core_network_settings, sizeof(v15.core_network_settings)), 0);
+
+    EXPECT_FALSE(out.r1090_rx_enabled);
+    EXPECT_EQ(out.tl_offset_mv, 123);
+    EXPECT_EQ(out.watchdog_timeout_sec, 42u);
+    EXPECT_FALSE(out.led_enabled);
+    EXPECT_FALSE(out.feeds_enabled);
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
+    EXPECT_EQ(out.log_level, SettingsManager::LogLevel::kInfo);
+    EXPECT_EQ(out.reporting_protocols[2], SettingsManager::ReportingProtocol::kAircraftJSON);
+    EXPECT_EQ(out.baud_rates[2], 4800u);
+    EXPECT_EQ(out.subg_enabled, SettingsManager::EnableState::kEnableStateDisabled);
+    EXPECT_EQ(out.remote_id_tx_ua_type, 15);
+    EXPECT_STREQ(out.remote_id_tx_operator_id, "OP456");
+    EXPECT_STREQ(out.feed_uris[0], "myfeed.example.com");
+    EXPECT_EQ(out.feed_protocols[9], SettingsManager::ReportingProtocol::kBeast);
+    EXPECT_EQ(out.feed_receiver_ids[0][7], 0xAD);
+    EXPECT_EQ(out.mavlink_component_id, 42);
+    EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+
+    for (uint16_t i = 0; i < SettingsManager::Settings::kWiFiSTANumExtraNetworks; i++) {
+        EXPECT_STREQ(out.wifi_sta_extra_networks[i].ssid, "");
+        EXPECT_STREQ(out.wifi_sta_extra_networks[i].password, "");
+    }
 }
 
 // Builds a v14 blob by raw byte offset using the layout shipped in adsbee_1090-0.9.1-rc2 (1140 B), with a distinct
@@ -689,8 +798,11 @@ TEST(SettingsManager, SanitizeTerminatesStrings) {
     memset(s.feed_uris[2], 'A', sizeof(s.feed_uris[2]));
     memset(s.remote_id_tx_uas_id, 'U', sizeof(s.remote_id_tx_uas_id));
     memset(s.remote_id_tx_operator_id, 'O', sizeof(s.remote_id_tx_operator_id));
+    memset(s.wifi_sta_extra_networks[1].password, 'W', sizeof(s.wifi_sta_extra_networks[1].password));
 
     EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_EQ(strnlen(s.wifi_sta_extra_networks[1].password, sizeof(s.wifi_sta_extra_networks[1].password)),
+              sizeof(s.wifi_sta_extra_networks[1].password) - 1);
 
     EXPECT_EQ(strnlen(s.core_network_settings.hostname, sizeof(s.core_network_settings.hostname)),
               sizeof(s.core_network_settings.hostname) - 1);
