@@ -10,11 +10,12 @@
 #include "stdio.h"
 #include "stdlib.h"  // for strtoull
 #include "string.h"  // for memset
+#include "strings.h"  // for strcasecmp
 #ifdef ON_PICO
 #include "pico/rand.h"
 #endif
 
-static constexpr uint32_t kSettingsVersion = 15;  // Change this when settings format changes!
+static constexpr uint32_t kSettingsVersion = 16;  // Change this when settings format changes!
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 class SettingsManager {
@@ -61,6 +62,15 @@ class SettingsManager {
         kGNSSReceiverGeneric,
         kGNSSReceiverUBXMIA,
     };
+
+    // IP versions used on the Ethernet and WiFi station interfaces. The WiFi access point is always IPv4.
+    enum IPMode : uint8_t {
+        kIPModeIPv4 = 0,  // IPv4 only (DHCP).
+        kIPModeDual,      // IPv4 (DHCP) and IPv6 (link-local + SLAAC).
+        kIPModeIPv6,      // IPv6 only (link-local + SLAAC), no DHCPv4 client.
+        kNumIPModes
+    };
+    static constexpr uint16_t kIPModeStrMaxLen = 4;  // Longest AT string ("IPV4", "DUAL", "IPV6").
 
     // Mode setting for the Sub-GHz radio.
     enum SubGHzRadioMode : uint8_t {
@@ -286,6 +296,9 @@ class SettingsManager {
 
         // Receiver position settings
         RxPosition rx_position;
+
+        // Network settings outside CoreNetworkSettings (which must keep its layout).
+        IPMode ip_mode = kIPModeDual;
 
         /**
          * Default constructor.
@@ -532,6 +545,35 @@ class SettingsManager {
     }
 
     /**
+     * Converts an IPMode to its AT command string. Returns "DUAL" for out-of-range values.
+     */
+    static inline const char* IPModeToStr(IPMode mode) {
+        switch (mode) {
+            case kIPModeIPv4:
+                return "IPV4";
+            case kIPModeIPv6:
+                return "IPV6";
+            case kIPModeDual:
+            default:
+                return "DUAL";
+        }
+    }
+
+    /**
+     * Parses an AT command IP mode string (IPV4, DUAL or IPV6, case-insensitive).
+     * @retval True if `str` named a mode and `mode` was written.
+     */
+    static inline bool IPModeFromStr(const char* str, IPMode& mode) {
+        for (uint8_t i = 0; i < kNumIPModes; i++) {
+            if (strcasecmp(str, IPModeToStr(static_cast<IPMode>(i))) == 0) {
+                mode = static_cast<IPMode>(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Helper function for converting a GNSSReceiverType to its AT command value string. Returns "NONE" for
      * out-of-range values (e.g. from a corrupted settings blob) so the AT dump stays replayable.
      * @param[in] type GNSSReceiverType to convert to a string.
@@ -650,7 +692,7 @@ extern SettingsManager settings_manager;
 //      settings_migration.cpp (see the recipe at the top of settings_versions.hh).
 //   3. Update the version and the numbers below to the new layout.
 // Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
-static_assert(kSettingsVersion == 15,
+static_assert(kSettingsVersion == 16,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
 static_assert(sizeof(SettingsManager::Settings) == 1144,
               "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");
@@ -671,5 +713,6 @@ static_assert(offsetof(SettingsManager::Settings, feed_protocols) == 1010, "Sett
 static_assert(offsetof(SettingsManager::Settings, feed_receiver_ids) == 1030, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, mavlink_system_id) == 1110, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, rx_position) == 1112, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, ip_mode) == 1141, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */

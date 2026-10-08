@@ -100,6 +100,7 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
                           wifi_sta_ssid, event->reason);
             wifi_sta_connected_ = false;
             wifi_sta_has_ip_ = false;
+            wifi_sta_has_ip6_ = false;
             if (wifi_sta_enabled) {
                 ScheduleDelayedFunctionCall(kWiFiSTAReconnectIntervalMs, &connect_to_wifi);
             }
@@ -207,8 +208,15 @@ bool CommsManager::WiFiInit() {
 
     esp_netif_t* wifi_ap_netif_ = esp_netif_create_default_wifi_ap();
     assert(wifi_ap_netif_);
-    esp_netif_t* wifi_sta_netif_ = esp_netif_create_default_wifi_sta();
+    // Same as esp_netif_create_default_wifi_sta(), with the IP mode applied.
+    esp_netif_inherent_config_t sta_base = ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
+    ApplyIPModeToNetifConfig(sta_base);
+    esp_netif_config_t sta_cfg = ESP_NETIF_DEFAULT_WIFI_STA();
+    sta_cfg.base = &sta_base;
+    wifi_sta_netif_ = esp_netif_new(&sta_cfg);
     assert(wifi_sta_netif_);
+    ESP_ERROR_CHECK(esp_netif_attach_wifi_station(wifi_sta_netif_));
+    ESP_ERROR_CHECK(esp_wifi_set_default_wifi_sta_handlers());
 
     ESP_ERROR_CHECK(esp_netif_set_hostname(wifi_sta_netif_, hostname));
 
@@ -218,6 +226,9 @@ bool CommsManager::WiFiInit() {
     HeapDiagnostics::Mark("wifi_init");
 
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    // After the default station handlers, so the netif is up when the link-local address is created.
+    ESP_ERROR_CHECK(
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &ip6_link_up_event_handler, NULL));
     if (!ip_event_handler_was_initialized_) {
         IPInit();
     }
