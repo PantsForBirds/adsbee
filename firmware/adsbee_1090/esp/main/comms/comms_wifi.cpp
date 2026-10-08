@@ -274,6 +274,7 @@ bool CommsManager::WiFiInit() {
     }
     HeapDiagnostics::Mark("wifi_start");
 
+    wifi_ap_running_ = ap_enabled;
     if (ap_enabled) {
         CONSOLE_INFO("CommsManager::WiFiInit", "WiFi AP started. SSID:%s", wifi_ap_ssid);
         // Lazily create the AP broadcast queue now that the AP is actually enabled (see the CommsManager constructor).
