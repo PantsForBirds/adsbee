@@ -2756,8 +2756,9 @@
 //   bitmask  checkbox group; options: [{bit, label}]; canonical number
 //   hex      text input for hex values (no 0x prefix); optional maxVal
 //   display  read-only informational value populated by parse(); never written
-// Fields may declare visibleIf(values) to show/hide based on sibling values, and
-// note: '...' for a hint line under the input.
+// Fields may declare visibleIf(values) to show/hide based on sibling values,
+// note: '...' for a hint line under the input, and validate(value) returning an error
+// message (or '') for checks beyond the type's own.
 //
 // To expose a new AT command in the GUI, add one entry to the product's schema array.
 
@@ -3171,6 +3172,7 @@ class SettingsEngine {
                 else if (field.maxLen && value.length > field.maxLen) msg = `Maximum ${field.maxLen} characters.`;
                 else if (field.type === 'hex' && value !== '' && !/^[0-9A-F]+$/.test(value)) msg = 'Enter a hex value.';
             }
+            if (!msg && field.validate) msg = field.validate(value) || '';
             if (msg) { errEl.textContent = msg; ok = false; }
         }
         return ok;

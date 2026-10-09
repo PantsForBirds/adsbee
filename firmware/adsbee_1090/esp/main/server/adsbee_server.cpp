@@ -354,7 +354,7 @@ void ADSBeeServer::SPIReceiveTask() {
 }
 
 bool ADSBeeServer::ReportGDL90() {
-    if (!settings_manager.settings.core_network_settings.wifi_ap_enabled) {
+    if (!comms_manager.WiFiAccessPointIsRunning()) {
         return true;  // Nothing to do.
     }
 
@@ -460,7 +460,7 @@ bool ADSBeeServer::ReportGDL90() {
 }
 
 bool ADSBeeServer::ReportGDL90UplinkDataMessage(const DecodedUATUplinkPacket& uplink_packet) {
-    if (!settings_manager.settings.core_network_settings.wifi_ap_enabled) {
+    if (!comms_manager.WiFiAccessPointIsRunning()) {
         return true;  // Nothing to do.
     }
 
@@ -627,11 +627,14 @@ static esp_err_t feed_api_get_handler(httpd_req_t* req) {
     }
     char escaped_uri[SettingsManager::Settings::kFeedURIMaxNumChars * 2 + 1];
     json_escape(escaped_uri, sizeof(escaped_uri), settings_manager.settings.feed_uris[index]);
+    char receiver_id[SettingsManager::Settings::kFeedReceiverIDNumBytes * 2 + 1];
+    SettingsManager::ReceiverIDToStr(settings_manager.settings.feed_receiver_ids[index], receiver_id);
     char json[512];
-    snprintf(json, sizeof(json), "{\"index\":%d,\"uri\":\"%s\",\"port\":%d,\"active\":%d,\"protocol\":\"%s\"}", index,
-             escaped_uri, settings_manager.settings.feed_ports[index],
+    snprintf(json, sizeof(json),
+             "{\"index\":%d,\"uri\":\"%s\",\"port\":%d,\"active\":%d,\"protocol\":\"%s\",\"receiver_id\":\"%s\"}",
+             index, escaped_uri, settings_manager.settings.feed_ports[index],
              (int)settings_manager.settings.feed_is_active[index],
-             SettingsManager::kReportingProtocolStrs[settings_manager.settings.feed_protocols[index]]);
+             SettingsManager::kReportingProtocolStrs[settings_manager.settings.feed_protocols[index]], receiver_id);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);

@@ -1372,6 +1372,15 @@ body {
     margin: 0;
 }
 
+.feed-map-row {
+    margin-bottom: 12px;
+    font-size: 0.9em;
+}
+
+.feed-map-row a {
+    color: #ffcb00;
+}
+
 .feed-modal-buttons {
     display: flex;
     gap: 12px;
@@ -2165,6 +2174,9 @@ body.dark-mode #map .leaflet-tile-pane {
                     <label>Protocol</label>
                     <select id="feed-protocol"></select>
                 </div>
+                <div id="feed-map-row" class="feed-map-row" style="display:none;">
+                    <a id="feed-map-link" target="_blank" rel="noopener">View this receiver on the whereplane.xyz map</a>
+                </div>
             </div>
             <div class="feed-modal-buttons">
                 <button class="tools-button" onclick="FeedEditor.save()">Save</button>
@@ -2746,8 +2758,9 @@ body.dark-mode #map .leaflet-tile-pane {
 //   bitmask  checkbox group; options: [{bit, label}]; canonical number
 //   hex      text input for hex values (no 0x prefix); optional maxVal
 //   display  read-only informational value populated by parse(); never written
-// Fields may declare visibleIf(values) to show/hide based on sibling values, and
-// note: '...' for a hint line under the input.
+// Fields may declare visibleIf(values) to show/hide based on sibling values,
+// note: '...' for a hint line under the input, and validate(value) returning an error
+// message (or '') for checks beyond the type's own.
 //
 // To expose a new AT command in the GUI, add one entry to the product's schema array.
 
@@ -3161,6 +3174,7 @@ class SettingsEngine {
                 else if (field.maxLen && value.length > field.maxLen) msg = `Maximum ${field.maxLen} characters.`;
                 else if (field.type === 'hex' && value !== '' && !/^[0-9A-F]+$/.test(value)) msg = 'Enter a hex value.';
             }
+            if (!msg && field.validate) msg = field.validate(value) || '';
             if (msg) { errEl.textContent = msg; ok = false; }
         }
         return ok;
@@ -4258,6 +4272,21 @@ class MetricsWebSocket {
     }
 }
 
+// whereplane.xyz shows one receiver's traffic at globe.whereplane.xyz/?feed=<uuid> (tar1090). The uuid is the one the
+// device sends when a Beast feed connects (BeastReporter::BuildFeedStartFrame): MMMMMMMM-MMMM-MMMM-NNNN-NNNNNNNNNNNN,
+// where M and N are both the 16 hex digit receiver ID.
+const WHEREPLANE_FEED_HOST = 'feed.whereplane.xyz';
+const BEAST_FEED_PROTOCOLS = new Set(['BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK']);
+
+/** Map URL for this receiver on whereplane.xyz, or null unless the feed is a Beast feed to feed.whereplane.xyz. */
+function whereplaneMapUrl(uri, protocol, receiverId) {
+    if (String(uri).trim().toLowerCase() !== WHEREPLANE_FEED_HOST || !BEAST_FEED_PROTOCOLS.has(protocol)) return null;
+    const id = String(receiverId).toLowerCase();
+    if (!/^[0-9a-f]{16}$/.test(id)) return null;
+    const uuid = `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(0, 4)}-${id.slice(4)}`;
+    return `https://globe.whereplane.xyz/?feed=${uuid}`;
+}
+
 class FeedEditor {
     static PROTOCOLS = ['NONE', 'RAW', 'BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK',
         'CSBEE', 'MAVLINK1', 'MAVLINK2', 'GDL90', 'AIRCRAFT_JSON'];
@@ -4286,6 +4315,7 @@ class FeedEditor {
                 port: parseInt(args[2], 10) || 0,
                 active: args[3] === '1',
                 protocol: args[4],
+                receiver_id: args[5] ?? '',
             };
         } catch (e) {
             statusEl.textContent = `Error: ${e.message}`;
@@ -4300,8 +4330,21 @@ class FeedEditor {
         sel.innerHTML = FeedEditor.PROTOCOLS
             .map(p => `<option value="${p}"${p === current.protocol ? ' selected' : ''}>${p}</option>`)
             .join('');
+        FeedEditor.receiverId = current.receiver_id;
+        document.getElementById('feed-uri').oninput = FeedEditor.updateMapLink;
+        sel.onchange = FeedEditor.updateMapLink;
+        FeedEditor.updateMapLink();
         statusEl.textContent = '';
         document.getElementById('feed-form').style.display = '';
+    }
+
+    // Shows the whereplane.xyz map link while the form describes a Beast feed to whereplane.
+    static updateMapLink() {
+        const url = whereplaneMapUrl(document.getElementById('feed-uri').value,
+            document.getElementById('feed-protocol').value, FeedEditor.receiverId);
+        const link = document.getElementById('feed-map-link');
+        if (url) link.href = url;
+        document.getElementById('feed-map-row').style.display = url ? '' : 'none';
     }
 
     static close() {
@@ -5925,7 +5968,10 @@ const SETTINGS_SCHEMA_1090 = [
         fields: [
             { id: 'en', label: 'Enabled', type: 'bool' },
             { id: 'ssid', label: 'SSID', type: 'string', maxLen: 31 },
-            { id: 'pwd', label: 'Password', type: 'password', maxLen: 63 },
+            {
+                id: 'pwd', label: 'Password', type: 'password', maxLen: 63, note: '8-63 characters.',
+                validate: v => (v.length >= 8 ? '' : 'Minimum 8 characters.'),
+            },
             { id: 'channel', label: 'Channel', type: 'int', min: 1, max: 11 },
         ],
     },
@@ -5938,12 +5984,19 @@ const SETTINGS_SCHEMA_1090 = [
             {
                 id: 'pwd', label: 'Password', type: 'password', writeOnly: true, maxLen: 63,
                 placeholder: '(unchanged)', note: 'Leave blank to keep the stored password.',
+                validate: v => (v === '' || v.length >= 8 || v.length === 5 || v.length === 13
+                    ? '' : 'Use 8-63 characters, or a 5 or 13 character WEP key.'),
             },
         ],
     },
     {
         cmd: 'ETHERNET', label: 'Ethernet', group: 'Network', disconnects: true,
         fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
+    },
+    {
+        cmd: 'IP_MODE', label: 'IP Mode', group: 'Network', disconnects: true,
+        help: 'IP versions on Ethernet and WiFi Station. DUAL adds IPv6 (link-local and SLAAC) to IPv4 DHCP; IPV6 turns off DHCP. The WiFi Access Point is always IPv4.',
+        fields: [{ id: 'mode', label: 'Mode', type: 'enum', options: ['IPV4', 'DUAL', 'IPV6'] }],
     },
     // ── Radio ──
     makeRxEnableEntry(),

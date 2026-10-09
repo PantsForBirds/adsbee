@@ -41,8 +41,9 @@
 //   bitmask  checkbox group; options: [{bit, label}]; canonical number
 //   hex      text input for hex values (no 0x prefix); optional maxVal
 //   display  read-only informational value populated by parse(); never written
-// Fields may declare visibleIf(values) to show/hide based on sibling values, and
-// note: '...' for a hint line under the input.
+// Fields may declare visibleIf(values) to show/hide based on sibling values,
+// note: '...' for a hint line under the input, and validate(value) returning an error
+// message (or '') for checks beyond the type's own.
 //
 // To expose a new AT command in the GUI, add one entry to the product's schema array.
 
@@ -456,6 +457,7 @@ class SettingsEngine {
                 else if (field.maxLen && value.length > field.maxLen) msg = `Maximum ${field.maxLen} characters.`;
                 else if (field.type === 'hex' && value !== '' && !/^[0-9A-F]+$/.test(value)) msg = 'Enter a hex value.';
             }
+            if (!msg && field.validate) msg = field.validate(value) || '';
             if (msg) { errEl.textContent = msg; ok = false; }
         }
         return ok;
@@ -803,7 +805,10 @@ const SETTINGS_SCHEMA_1090 = [
         fields: [
             { id: 'en', label: 'Enabled', type: 'bool' },
             { id: 'ssid', label: 'SSID', type: 'string', maxLen: 31 },
-            { id: 'pwd', label: 'Password', type: 'password', maxLen: 63 },
+            {
+                id: 'pwd', label: 'Password', type: 'password', maxLen: 63, note: '8-63 characters.',
+                validate: v => (v.length >= 8 ? '' : 'Minimum 8 characters.'),
+            },
             { id: 'channel', label: 'Channel', type: 'int', min: 1, max: 11 },
         ],
     },
@@ -816,12 +821,19 @@ const SETTINGS_SCHEMA_1090 = [
             {
                 id: 'pwd', label: 'Password', type: 'password', writeOnly: true, maxLen: 63,
                 placeholder: '(unchanged)', note: 'Leave blank to keep the stored password.',
+                validate: v => (v === '' || v.length >= 8 || v.length === 5 || v.length === 13
+                    ? '' : 'Use 8-63 characters, or a 5 or 13 character WEP key.'),
             },
         ],
     },
     {
         cmd: 'ETHERNET', label: 'Ethernet', group: 'Network', disconnects: true,
         fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
+    },
+    {
+        cmd: 'IP_MODE', label: 'IP Mode', group: 'Network', disconnects: true,
+        help: 'IP versions on Ethernet and WiFi Station. DUAL adds IPv6 (link-local and SLAAC) to IPv4 DHCP; IPV6 turns off DHCP. The WiFi Access Point is always IPv4.',
+        fields: [{ id: 'mode', label: 'Mode', type: 'enum', options: ['IPV4', 'DUAL', 'IPV6'] }],
     },
     // ── Radio ──
     makeRxEnableEntry(),

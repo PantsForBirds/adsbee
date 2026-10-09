@@ -17,7 +17,6 @@ source ../scripts/uf2_flash_lib.sh
 
 # Number of parallel build jobs.
 jobs=$(nproc 2>/dev/null || echo 4)
-required_esp_idf_version="v5.5.2"
 
 debug=false
 if [ "$1" = "-d" ]; then
@@ -41,34 +40,42 @@ check_version_sync() {
     fi
 }
 
+# The ESP-IDF build is pinned by the esp-idf image digest in compose.yml, and esp/dependencies.lock
+# records the IDF version it resolves against. Fails if the two disagree.
 check_esp_idf_version() {
-    echo "=== Checking ESP-IDF version (required: $required_esp_idf_version) ==="
-    local idf_version
+    local required_esp_idf_version idf_version
+    required_esp_idf_version="v$(sed -n '/^  idf:/,/^[^ ]/s/^    version: *//p' esp/dependencies.lock)"
+    echo "=== Checking ESP-IDF version (esp/dependencies.lock: $required_esp_idf_version) ==="
     idf_version=$(docker compose run --rm esp-idf bash -c "idf.py --version")
     echo "ESP-IDF reported by container: $idf_version"
     if [[ "$idf_version" != *"$required_esp_idf_version"* ]]; then
         echo "ERROR: ESP-IDF version mismatch. Expected $required_esp_idf_version."
-        echo "Update compose.yml to pin the esp-idf image tag to $required_esp_idf_version."
+        echo "The esp-idf image in compose.yml and esp/dependencies.lock must be updated together;"
+        echo "see \"ESP-IDF and component versions\" in firmware/README.md."
         exit 1
     fi
 }
 
 build_esp() {
     check_esp_idf_version
+    # The container mounts esp/ without .git, so ESP-IDF cannot run git describe for the app version
+    # (esp_app_desc_t::version). Use the same describe arguments ESP-IDF uses, from the host.
+    local project_ver
+    project_ver=$(git describe --always --tags --dirty 2>/dev/null || echo 1)
     if [ "$debug" = true ]; then
         echo "=== Building ESP32-S3 firmware (Debug) ==="
         # sdkconfig_debug is auto-generated on first run by layering sdkconfig.debug on top of sdkconfig.
         # Delete esp/sdkconfig_debug to force regeneration (e.g. after base sdkconfig changes).
         docker compose run --rm esp-idf bash -c "
             cd /firmware/adsbee_1090/esp &&
-            idf.py -B build/Debug -D CMAKE_BUILD_TYPE=Debug -D SDKCONFIG=\"\$(pwd)/sdkconfig_debug\" -D \"SDKCONFIG_DEFAULTS=\$(pwd)/sdkconfig;\$(pwd)/sdkconfig.debug\" build
+            idf.py -B build/Debug -D PROJECT_VER=\"$project_ver\" -D CMAKE_BUILD_TYPE=Debug -D SDKCONFIG=\"\$(pwd)/sdkconfig_debug\" -D \"SDKCONFIG_DEFAULTS=\$(pwd)/sdkconfig;\$(pwd)/sdkconfig.debug\" build
         "
         echo "=== ESP32-S3 build complete (Debug): esp/build/Debug/adsbee_esp.bin ==="
     else
         echo "=== Building ESP32-S3 firmware ==="
         docker compose run --rm esp-idf bash -c "
             cd /firmware/adsbee_1090/esp &&
-            idf.py -B build/Release build
+            idf.py -B build/Release -D PROJECT_VER=\"$project_ver\" build
         "
         echo "=== ESP32-S3 build complete: esp/build/Release/adsbee_esp.bin ==="
     fi

@@ -209,6 +209,8 @@ class ObjectDictionary {
         bool core_dump_to_flash_enabled;         // True if built with CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     };
 
+    static constexpr uint16_t kIP6AddrStrLen = 45;  // Longest IPv6 text form (does not include null terminator).
+
     /**
      * Struct used to retrieve network information from the ESP32.
      */
@@ -232,6 +234,12 @@ class ObjectDictionary {
                                [SettingsManager::Settings::kIPAddrStrLen + 1];
         char wifi_ap_client_macs[SettingsManager::Settings::kWiFiMaxNumClients]
                                 [SettingsManager::Settings::kMACAddrStrLen + 1];
+
+        // IPv6 addresses (empty if none): link-local, and the first global or unique local address.
+        char ethernet_ip6_link_local[kIP6AddrStrLen + 1] = {0};
+        char ethernet_ip6_global[kIP6AddrStrLen + 1] = {0};
+        char wifi_sta_ip6_link_local[kIP6AddrStrLen + 1] = {0};
+        char wifi_sta_ip6_global[kIP6AddrStrLen + 1] = {0};
 
         ESP32NetworkInfo() {
             for (uint16_t i = 0; i < SettingsManager::Settings::kWiFiMaxNumClients; i++) {

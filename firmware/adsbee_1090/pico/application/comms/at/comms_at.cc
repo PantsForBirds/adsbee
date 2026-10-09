@@ -897,6 +897,30 @@ CPP_AT_CALLBACK(CommsManager::ATHostnameCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+CPP_AT_CALLBACK(CommsManager::ATIPModeCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%s", SettingsManager::IPModeToStr(settings_manager.settings.ip_mode));
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=': {
+            char mode_str[SettingsManager::kIPModeStrMaxLen + 1] = {0};
+            if (!CPP_AT_HAS_ARG(0) || args[0].size() > SettingsManager::kIPModeStrMaxLen) {
+                CPP_AT_ERROR("Requires an argument. AT+IP_MODE=<IPV4|DUAL|IPV6>");
+            }
+            memcpy(mode_str, args[0].data(), args[0].size());
+            SettingsManager::IPMode mode;
+            if (!SettingsManager::IPModeFromStr(mode_str, mode)) {
+                CPP_AT_ERROR("Invalid IP mode '%s'. AT+IP_MODE=<IPV4|DUAL|IPV6>", mode_str);
+            }
+            settings_manager.settings.ip_mode = mode;
+            CPP_AT_SUCCESS();
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 CPP_AT_CALLBACK(CommsManager::ATOTACallback) {
     switch (op) {
         case '?':
@@ -1121,6 +1145,18 @@ CPP_AT_CALLBACK(CommsManager::ATMAVLINKIDCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+// Prints an interface's IPv6 addresses from ESP32NetworkInfo, if it has any.
+static void PrintIP6Addrs(char* link_local, char* global) {
+    link_local[ObjectDictionary::kIP6AddrStrLen] = '\0';
+    global[ObjectDictionary::kIP6AddrStrLen] = '\0';
+    if (link_local[0] != '\0') {
+        CPP_AT_PRINTF("\tIPv6 Link-Local Address: %s\r\n", link_local);
+    }
+    if (global[0] != '\0') {
+        CPP_AT_PRINTF("\tIPv6 Global Address: %s\r\n", global);
+    }
+}
+
 CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
     switch (op) {
         case '?':
@@ -1129,24 +1165,27 @@ CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
                 CPP_AT_ERROR("Error while reading network info from ESP32.");
             }
 
+            CPP_AT_PRINTF("IP Mode: %s\r\n", SettingsManager::IPModeToStr(settings_manager.settings.ip_mode));
             CPP_AT_PRINTF("Ethernet: %s\r\n", network_info.ethernet_enabled ? "ENABLED" : "DISABLED");
             if (!network_info.ethernet_has_ip) {
-                CPP_AT_PRINTF("\tNo IP address assigned.\r\n");
+                CPP_AT_PRINTF("\tNo IPv4 address assigned.\r\n");
             } else {
                 CPP_AT_PRINTF("\tIP Address: %s\r\n", network_info.ethernet_ip);
                 CPP_AT_PRINTF("\tSubnet Mask: %s\r\n", network_info.ethernet_netmask);
                 CPP_AT_PRINTF("\tGateway: %s\r\n", network_info.ethernet_gateway);
             }
+            PrintIP6Addrs(network_info.ethernet_ip6_link_local, network_info.ethernet_ip6_global);
 
             CPP_AT_PRINTF("WiFi Station: %s\r\n", network_info.wifi_sta_enabled ? "ENABLED" : "DISABLED");
             CPP_AT_PRINTF("\tSSID: %s\r\n", network_info.wifi_sta_ssid);
             if (!network_info.wifi_sta_has_ip) {
-                CPP_AT_PRINTF("\tNo IP address assigned.\r\n");
+                CPP_AT_PRINTF("\tNo IPv4 address assigned.\r\n");
             } else {
                 CPP_AT_PRINTF("\tIP Address: %s\r\n", network_info.wifi_sta_ip);
                 CPP_AT_PRINTF("\tSubnet Mask: %s\r\n", network_info.wifi_sta_netmask);
                 CPP_AT_PRINTF("\tGateway: %s\r\n", network_info.wifi_sta_gateway);
             }
+            PrintIP6Addrs(network_info.wifi_sta_ip6_link_local, network_info.wifi_sta_ip6_global);
 
             CPP_AT_PRINTF("WiFi Access Point: %s\r\n", network_info.wifi_ap_enabled ? "ENABLED" : "DISABLED");
             CPP_AT_PRINTF("\tNum Clients: %u\r\n", network_info.wifi_ap_num_clients);
@@ -1472,6 +1511,7 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"GNSS\":[%d,\"%s\",%d],", s.gnss_enabled,
                   GNSSModuleTypeToStr(SettingsToGNSSModuleType(s.gnss_receiver_type)), s.gnss_notify);
     CPP_AT_PRINTF("\"HOSTNAME\":[\"%s\"],", JSONEscapeStr(cns.hostname, esc, sizeof(esc)));
+    CPP_AT_PRINTF("\"IP_MODE\":[\"%s\"],", SettingsManager::IPModeToStr(s.ip_mode));
     CPP_AT_PRINTF("\"LED_ENABLE\":[%d],", s.led_enabled);
     CPP_AT_PRINTF("\"LOG_LEVEL\":[\"%s\"],", SettingsManager::kConsoleLogLevelStrs[s.log_level]);
     CPP_AT_PRINTF("\"MAVLINK_ID\":[%d,%d],", s.mavlink_system_id, s.mavlink_component_id);
@@ -1687,6 +1727,16 @@ CPP_AT_CALLBACK(CommsManager::ATWatchdogCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+// WPA2 needs 8-63 characters; an empty password means an open network.
+static bool WiFiAPPasswordIsValid(std::string_view password) {
+    return password.empty() || (password.length() >= 8 && password.length() <= 63);
+}
+
+// Stations also accept WEP keys (5 or 13 characters).
+static bool WiFiSTAPasswordIsValid(std::string_view password) {
+    return WiFiAPPasswordIsValid(password) || password.length() == 5 || password.length() == 13;
+}
+
 CPP_AT_CALLBACK(CommsManager::ATWiFiAPCallback) {
     SettingsManager::Settings::CoreNetworkSettings& cns = settings_manager.settings.core_network_settings;
     switch (op) {
@@ -1698,6 +1748,9 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiAPCallback) {
             break;
         }
         case '=': {
+            if (CPP_AT_HAS_ARG(2) && !WiFiAPPasswordIsValid(args[2])) {
+                CPP_AT_ERROR("WiFi AP password must be 8-63 characters.");
+            }
             if (CPP_AT_HAS_ARG(0)) {
                 CPP_AT_TRY_ARG2NUM(0, cns.wifi_ap_enabled);
                 CPP_AT_CMD_PRINTF(": wifi_ap_enabled=%d\r\n", cns.wifi_ap_enabled);
@@ -1744,6 +1797,9 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiSTACallback) {
             break;
         }
         case '=': {
+            if (CPP_AT_HAS_ARG(2) && !WiFiSTAPasswordIsValid(args[2])) {
+                CPP_AT_ERROR("WiFi station password must be 8-63 characters (or a 5 or 13 character WEP key).");
+            }
             if (CPP_AT_HAS_ARG(0)) {
                 CPP_AT_TRY_ARG2NUM(0, cns.wifi_sta_enabled);
                 CPP_AT_CMD_PRINTF(": wifi_sta_enabled=%d\r\n", cns.wifi_sta_enabled);
@@ -1866,6 +1922,14 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "interfaces.\r\n\tAT+HOSTNAME?\r\n\tQuery the "
                     "hostname used for all network interfaces.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATHostnameCallback, comms_manager)},
+    {.command = "IP_MODE",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+IP_MODE=<IPV4|DUAL|IPV6>\r\n\tSet the IP versions used on Ethernet and WiFi Station: IPV4 "
+                    "(DHCP), DUAL (DHCP plus IPv6 link-local and SLAAC, the default) or IPV6 (link-local and SLAAC, no "
+                    "DHCP). The WiFi Access Point is always IPv4. Applied with AT+SETTINGS=SAVE.\r\n\tAT+IP_MODE?\r\n\t"
+                    "Query the IP mode.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATIPModeCallback, comms_manager)},
     {.command = "LED_BLINK",
      .min_args = 2,
      .max_args = 4,
@@ -2018,12 +2082,14 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 4,
      .help_string =
          "Set WiFi access point params.\r\n\tAT+WIFI_AP=<enabled>,<ap_ssid>,<ap_pwd>,<ap_channel>\r\n\t"
+         "ap_pwd: 8-63 characters.\r\n\t"
          "Get WiFi access point params.\r\n\tAT+WIFI_AP?\r\n\t+WIFI_AP=<enabled>,<ap_ssid>,<ap_pwd>,<ap_channel>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiAPCallback, comms_manager)},
     {.command = "WIFI_STA",
      .min_args = 0,
      .max_args = 3,
      .help_string = "Set WiFi station params.\r\n\tAT+WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>\r\n\t"
+                    "sta_pwd: 8-63 characters, or a 5 or 13 character WEP key.\r\n\t"
                     "Get WiFi station params.\r\n\tAT+WIFI_STA?\r\n\t+WIFI_STA=<enabled>,<sta_ssid>,<sta_pwd>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiSTACallback, comms_manager)},
 };

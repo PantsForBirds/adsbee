@@ -40,6 +40,11 @@ ObjectDictionary::ESP32NetworkInfo CommsManager::GetNetworkInfo() {
     memcpy(network_info.wifi_sta_netmask, wifi_sta_netmask, SettingsManager::Settings::kIPAddrStrLen + 1);
     memcpy(network_info.wifi_sta_gateway, wifi_sta_gateway, SettingsManager::Settings::kIPAddrStrLen + 1);
 
+    GetIP6AddrStrs(ethernet_netif_, network_info.ethernet_ip6_link_local, network_info.ethernet_ip6_global,
+                   ObjectDictionary::kIP6AddrStrLen + 1);
+    GetIP6AddrStrs(wifi_sta_netif_, network_info.wifi_sta_ip6_link_local, network_info.wifi_sta_ip6_global,
+                   ObjectDictionary::kIP6AddrStrLen + 1);
+
     // WiFi access point network info.
     network_info.wifi_ap_enabled = wifi_ap_enabled;
     network_info.wifi_ap_num_clients = num_wifi_clients_;

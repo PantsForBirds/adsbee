@@ -44,7 +44,7 @@ const { SettingsEngine, SETTINGS_SCHEMA_1090 } = require('../settings.js');
 
 // The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc5.
 const DUMP = 'SETTINGS={"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHERNET":[1],"ESP32_ENABLE":[1],' +
-    '"FEED_ENABLE":[1],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
+    '"FEED_ENABLE":[1],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"IP_MODE":["DUAL"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
     '"MAVLINK_ID":[1,156],"PROTOCOL_OUT":["NONE","NONE"],"REMOTE_ID":[0,7,"0x00"],' +
     '"REMOTE_ID_TX":[0,7,"",1,2,"","0x0000"],"RX_ENABLE":[1,1],' +
     '"RX_POSITION":["LOWEST","OK",37.000000,-122.000000,-50,125,317.7,74,"000000"],"SUBG_ENABLE":["1"],' +
@@ -201,4 +201,26 @@ test('a save whose re-read fails still reports the save', async () => {
     input('WATCHDOG', 'timeout').value = '11';
     await engine.save();
     assert.match(engine.statusEl.textContent, /^Saved 1 setting\. Could not read settings: Timeout/);
+});
+
+test('WiFi passwords the device would reject are caught before anything is written', async () => {
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [DUMP];
+        if (cmd === 'AT+WIFI_STA=0,,12345' || cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    const err = (cmd) => document.getElementById(`settings-error-${cmd}-pwd`).textContent;
+    input('WIFI_AP', 'pwd').value = 'short';
+    input('WIFI_STA', 'pwd').value = 'sixsix';
+    await engine.save();
+    assert.deepStrictEqual(t.sent, ['AT+SETTINGS?JSON']);
+    assert.strictEqual(err('WIFI_AP'), 'Minimum 8 characters.');
+    assert.match(err('WIFI_STA'), /8-63 characters/);
+
+    input('WIFI_AP', 'pwd').value = 'yummyflowers';
+    input('WIFI_STA', 'pwd').value = '12345';  // 5 character WEP key
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+WIFI_STA=0,,12345', 'AT+SETTINGS=SAVE']);
 });

@@ -34,7 +34,7 @@ identically in both modes.
 | Console terminal (AT commands, history, ANSI colors) | ✔ | ✔ |
 | Map + aircraft table + detail sidebar | ✔ (`/aircraft` socket) | ✔ (`AT+PROTOCOL_OUT=CONSOLE,AIRCRAFT_JSON`, see below) |
 | Settings tab (schema-driven GUI, `AT+SETTINGS?JSON` bulk read) | ✔ | ✔ |
-| Feed editor (add/edit/remove feeds via `AT+FEED`) | ✔ | ✔ |
+| Feed editor (add/edit/remove feeds via `AT+FEED`, whereplane.xyz map link) | ✔ | ✔ |
 | Settings download / restore (`AT+SETTINGS?DUMP` replay) | ✔ | ✔ |
 | Firmware upload (`.ota` via `AT+OTA`) | ✔ | ✔ |
 | Receiver message-rate metrics (sparkline cards) | ✔ | ✘ — network-only, note shown |
