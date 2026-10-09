@@ -34,7 +34,7 @@ ObjectDictionary::ESP32NetworkInfo CommsManager::GetNetworkInfo() {
 
     // WiFi station network info.
     network_info.wifi_sta_enabled = wifi_sta_enabled;
-    memcpy(network_info.wifi_sta_ssid, wifi_sta_ssid, SettingsManager::Settings::kWiFiSSIDMaxLen + 1);
+    memcpy(network_info.wifi_sta_ssid, WiFiStationSSID(wifi_sta_network_index_), SettingsManager::Settings::kWiFiSSIDMaxLen + 1);
     network_info.wifi_sta_has_ip = wifi_sta_has_ip_;
     memcpy(network_info.wifi_sta_ip, wifi_sta_ip, SettingsManager::Settings::kIPAddrStrLen + 1);
     memcpy(network_info.wifi_sta_netmask, wifi_sta_netmask, SettingsManager::Settings::kIPAddrStrLen + 1);

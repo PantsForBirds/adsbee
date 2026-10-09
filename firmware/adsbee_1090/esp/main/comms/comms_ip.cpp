@@ -260,6 +260,7 @@ void CommsManager::IPEventHandler(void* arg, esp_event_base_t event_base, int32_
             const esp_netif_ip_info_t* ip_info = &event->ip_info;
 
             wifi_sta_has_ip_ = true;
+            wifi_sta_failed_mask_ = 0;  // Connected: earlier failed attempts no longer matter.
             snprintf(wifi_sta_ip, SettingsManager::Settings::kIPAddrStrLen, IPSTR, IP2STR(&ip_info->ip));
             wifi_sta_ip[SettingsManager::Settings::kIPAddrStrLen] = '\0';
             snprintf(wifi_sta_netmask, SettingsManager::Settings::kIPAddrStrLen, IPSTR, IP2STR(&ip_info->netmask));

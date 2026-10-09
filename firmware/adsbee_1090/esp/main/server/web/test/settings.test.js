@@ -48,7 +48,8 @@ const DUMP = 'SETTINGS={"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHER
     '"MAVLINK_ID":[1,156],"PROTOCOL_OUT":["NONE","NONE"],"REMOTE_ID":[0,7,"0x00"],' +
     '"REMOTE_ID_TX":[0,7,"",1,2,"","0x0000"],"RX_ENABLE":[1,1],' +
     '"RX_POSITION":["LOWEST","OK",37.000000,-122.000000,-50,125,317.7,74,"000000"],"SUBG_ENABLE":["1"],' +
-    '"TL_OFFSET":[600,"-104 dBm"],"WATCHDOG":[10],"WIFI_AP":[0,"test-bee","yummyflowers",1],"WIFI_STA":[0,""]}';
+    '"TL_OFFSET":[600,"-104 dBm"],"WATCHDOG":[10],"WIFI_AP":[0,"test-bee","yummyflowers",1],"WIFI_STA":[0,""],' +
+    '"WIFI_STA_NETWORK":["office",""]}';
 
 // Scripted transport: handler(cmd, opts, n) returns body lines or throws; records every command.
 function makeTransport(handler) {
@@ -96,6 +97,8 @@ test('every GUI setting is in the dump and loads from one command', async () => 
     assert.strictEqual(input('WIFI_AP', 'pwd').value, 'yummyflowers');
     assert.strictEqual(input('WIFI_AP', 'channel').value, '1');
     assert.strictEqual(input('WIFI_STA', 'pwd').value, '');  // write-only, never shown
+    assert.strictEqual(input('WIFI_STA_NETWORK', 'ssid2').value, 'office');
+    assert.strictEqual(input('WIFI_STA_NETWORK', 'ssid3').value, '');
     assert.strictEqual(input('SUBG_ENABLE', 'state').value, '1');
     assert.strictEqual(input('LOG_LEVEL', 'level').value, 'WARNINGS');
     assert.strictEqual(input('RX_POSITION', 'source').value, 'LOWEST');
@@ -223,4 +226,39 @@ test('WiFi passwords the device would reject are caught before anything is writt
     input('WIFI_STA', 'pwd').value = '12345';  // 5 character WEP key
     await engine.save();
     assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+WIFI_STA=0,,12345', 'AT+SETTINGS=SAVE']);
+});
+
+test('extra WiFi networks are set, cleared and validated per slot', async () => {
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [DUMP];
+        if (cmd.startsWith('AT+WIFI_STA_NETWORK=') || cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    input('WIFI_STA_NETWORK', 'ssid3').value = 'van-hotspot';
+    input('WIFI_STA_NETWORK', 'pwd3').value = 'sixsix';
+    await engine.save();
+    assert.deepStrictEqual(t.sent, ['AT+SETTINGS?JSON']);
+
+    input('WIFI_STA_NETWORK', 'pwd3').value = 'hotspotpass';
+    input('WIFI_STA_NETWORK', 'ssid2').value = '';
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 4),
+        ['AT+WIFI_STA_NETWORK=2', 'AT+WIFI_STA_NETWORK=3,van-hotspot,hotspotpass', 'AT+SETTINGS=SAVE']);
+});
+
+test('extra WiFi networks read from AT+WIFI_STA_NETWORK? when the dump lacks them', async () => {
+    const json = JSON.parse(DUMP.slice('SETTINGS='.length));
+    delete json.WIFI_STA_NETWORK;
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return ['SETTINGS=' + JSON.stringify(json)];
+        if (cmd === 'AT+WIFI_STA_NETWORK?') return ['WIFI_STA_NETWORK=2,office,********', 'WIFI_STA_NETWORK=3,lab,'];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.strictEqual(input('WIFI_STA_NETWORK', 'ssid2').value, 'office');
+    assert.strictEqual(input('WIFI_STA_NETWORK', 'ssid3').value, 'lab');
+    assert.strictEqual(input('WIFI_STA_NETWORK', 'pwd2').value, '');
 });

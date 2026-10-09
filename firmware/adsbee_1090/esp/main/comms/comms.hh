@@ -210,6 +210,11 @@ class CommsManager {
      */
     inline bool WiFiStationHasIP() { return wifi_sta_has_ip_; }
 
+    /**
+     * Joins a stored WiFi network: the strongest one a scan finds when several are stored. Public for timer callbacks.
+     */
+    void WiFiStationJoin();
+
     // Public so that pass-through functions can access it.
     void WiFiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 
@@ -252,6 +257,9 @@ class CommsManager {
     bool wifi_sta_enabled = false;
     char wifi_sta_ssid[SettingsManager::Settings::kWiFiSSIDMaxLen + 1];          // Add space for null terminator.
     char wifi_sta_password[SettingsManager::Settings::kWiFiPasswordMaxLen + 1];  // Add space for null terminator.
+    // Stored networks 2 and up; wifi_sta_ssid/wifi_sta_password is network 1.
+    SettingsManager::Settings::WiFiNetwork wifi_sta_extra_networks[SettingsManager::Settings::kWiFiSTANumExtraNetworks] =
+        {};
     char wifi_sta_ip[SettingsManager::Settings::kIPAddrStrLen + 1] = {0};       // IP address of the ESP32 WiFi station.
     char wifi_sta_netmask[SettingsManager::Settings::kIPAddrStrLen + 1] = {0};  // Netmask of the ESP32 WiFi station.
     char wifi_sta_gateway[SettingsManager::Settings::kIPAddrStrLen + 1] = {0};  // Gateway of the ESP32 WiFi station.
@@ -287,6 +295,15 @@ class CommsManager {
     bool PollFeedSocketConnect(uint16_t feed_index);
     bool FinishFeedSocketConnect(uint16_t feed_index);
     void CloseFeedSocket(uint16_t feed_index);
+
+    // Stored WiFi station network `index` (0-based); "" for unused slots.
+    const char* WiFiStationSSID(int index);
+    const char* WiFiStationPassword(int index);
+    // Fills ssids[kWiFiSTAMaxNumNetworks] with the joinable networks' SSIDs ("" if unused or bad password).
+    uint16_t WiFiStationUsableSSIDs(const char* ssids[]);
+    // Picks a network from the finished scan; WiFiNetworkSelector::kNone if none are stored.
+    int WiFiStationPickNetwork();
+    void WiFiStationConnect(int index);
 
     /**
      * Initializes the IP event handler that is common to both Ethernet and WiFi events. Automatically called by
@@ -356,6 +373,9 @@ class CommsManager {
     TaskHandle_t wifi_ap_task_handle = nullptr;
     TaskHandle_t ip_wan_task_handle = nullptr;
     bool wifi_sta_connected_ = false;
+    int wifi_sta_network_index_ = 0;  // Stored network the station is joining or joined, 0-based.
+    bool wifi_sta_scan_in_progress_ = false;
+    uint32_t wifi_sta_failed_mask_ = 0;  // Bit i: the last attempt on stored network i failed.
     bool wifi_sta_has_ip_ = false;
     bool wifi_sta_has_ip6_ = false;  // Global or unique local IPv6 address assigned.
     uint32_t wifi_sta_connected_timestamp_ms_ = 0;  // This will loop every 49.7 days or so.

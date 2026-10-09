@@ -120,6 +120,7 @@ class CommsManager {
     CPP_AT_CALLBACK(ATWatchdogCallback);
     CPP_AT_CALLBACK(ATWiFiAPCallback);
     CPP_AT_CALLBACK(ATWiFiSTACallback);
+    CPP_AT_CALLBACK(ATWiFiSTANetworkCallback);
     CPP_AT_CALLBACK(ATBootloader);
 
     /**

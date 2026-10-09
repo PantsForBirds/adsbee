@@ -15,7 +15,7 @@
 #include "pico/rand.h"
 #endif
 
-static constexpr uint32_t kSettingsVersion = 16;  // Change this when settings format changes!
+static constexpr uint32_t kSettingsVersion = 17;  // Change this when settings format changes!
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 class SettingsManager {
@@ -145,6 +145,9 @@ class SettingsManager {
         static constexpr uint16_t kWiFiSSIDMaxLen = 31;
         static constexpr uint16_t kWiFiPasswordMaxLen = 63;
         static constexpr uint16_t kWiFiMaxNumClients = 6;
+        // Stored WiFi station networks: core_network_settings holds the first, wifi_sta_extra_networks the rest.
+        static constexpr uint16_t kWiFiSTAMaxNumNetworks = 3;
+        static constexpr uint16_t kWiFiSTANumExtraNetworks = kWiFiSTAMaxNumNetworks - 1;
         static constexpr uint32_t kDefaultCommsUARTBaudrate = 115200;
         static constexpr uint32_t kDefaultGNSSUARTBaudrate = 9600;
         // Open Drone ID UAS ID / Operator ID string length (ODID_ID_SIZE in opendroneid.h).
@@ -212,6 +215,11 @@ class SettingsManager {
                 uint32_t calculated_crc32 = CalculateCRC32();
                 return calculated_crc32 == crc32;
             }
+        };
+
+        struct WiFiNetwork {
+            char ssid[kWiFiSSIDMaxLen + 2];  // Empty means the slot is unused.
+            char password[kWiFiPasswordMaxLen + 2];
         };
 
         uint32_t settings_version = kSettingsVersion;
@@ -300,6 +308,9 @@ class SettingsManager {
         // Network settings outside CoreNetworkSettings (which must keep its layout).
         IPMode ip_mode = kIPModeDual;
 
+        // WiFi station networks 2 and up. The station joins the strongest stored network in range.
+        WiFiNetwork wifi_sta_extra_networks[kWiFiSTANumExtraNetworks];
+
         /**
          * Default constructor.
          */
@@ -309,6 +320,7 @@ class SettingsManager {
             // Operator ID message.
             memset(remote_id_tx_uas_id, '\0', sizeof(remote_id_tx_uas_id));
             memset(remote_id_tx_operator_id, '\0', sizeof(remote_id_tx_operator_id));
+            memset(wifi_sta_extra_networks, '\0', sizeof(wifi_sta_extra_networks));
 
 #ifdef ON_PICO
             DeviceInfo device_info;
@@ -692,9 +704,9 @@ extern SettingsManager settings_manager;
 //      settings_migration.cpp (see the recipe at the top of settings_versions.hh).
 //   3. Update the version and the numbers below to the new layout.
 // Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
-static_assert(kSettingsVersion == 16,
+static_assert(kSettingsVersion == 17,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
-static_assert(sizeof(SettingsManager::Settings) == 1144,
+static_assert(sizeof(SettingsManager::Settings) == 1340,
               "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");
 static_assert(alignof(SettingsManager::Settings) == 4, "Settings alignment changed. See the comment above.");
 static_assert(sizeof(SettingsManager::Settings::CoreNetworkSettings) == 240,
@@ -714,5 +726,6 @@ static_assert(offsetof(SettingsManager::Settings, feed_receiver_ids) == 1030, "S
 static_assert(offsetof(SettingsManager::Settings, mavlink_system_id) == 1110, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, rx_position) == 1112, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, ip_mode) == 1141, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, wifi_sta_extra_networks) == 1142, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */
