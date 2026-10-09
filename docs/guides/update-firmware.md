@@ -24,6 +24,16 @@ These steps update the firmware on an ADSBee 1090. Firmware images are published
 4. Wait for the device to erase its inactive firmware page and flash the contents of the .ota file. In rare occasions, the update may fail (network issues, etc). The device will not be “bricked”, simply refresh the page and try uploading again.
 5. If settings have been wiped (e.g. a major settings version update has occurred), click the “Upload Settings” button to restore your settings using the .settings file you downloaded earlier.
 
+## Check for updates
+
+Firmware with the **↻ Updates** button (below Upload Firmware on the device's webpage and in the web consoles) can find and install a release by itself. It needs internet access in the browser.
+
+1. Click **↻ Updates**. The page identifies the ADSBee to the adsbee.aero firmware service with its unique ID, part code and OTA keys, then shows `✓ <version>` when it is up to date or `<running> → <new>` when a release is available.
+2. Tick **RC** to include release candidates. Release candidates have no guarantee of stability or of a clean migration to or from other firmware versions.
+3. Click **⇣ Update**. The page downloads the file, checks its SHA-256 and runs the same update as Upload Firmware. Download your settings first, as above.
+
+An ADSBee without valid OTA keys (for example a self-built one) shows `⚠ no keys` and a link to the releases page; download the .ota file there and use Upload Firmware.
+
 ## Building firmware from source
 
 To build the firmware yourself, see the [firmware README](https://github.com/PantsForBirds/adsbee/blob/main/firmware/README.md) on GitHub. ADSBee 1421 firmware updates are covered on the [ADSBee m1421 page](../adsbee-1421/m1421.md#firmware-updates-from-your-host).
