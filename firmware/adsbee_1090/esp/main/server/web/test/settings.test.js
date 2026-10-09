@@ -44,7 +44,7 @@ const { SettingsEngine, SETTINGS_SCHEMA_1090 } = require('../settings.js');
 
 // The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc5.
 const DUMP = 'SETTINGS={"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHERNET":[1],"ESP32_ENABLE":[1],' +
-    '"FEED_ENABLE":[1],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
+    '"FEED_ENABLE":[1],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"IP_MODE":["DUAL"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
     '"MAVLINK_ID":[1,156],"PROTOCOL_OUT":["NONE","NONE"],"REMOTE_ID":[0,7,"0x00"],' +
     '"REMOTE_ID_TX":[0,7,"",1,2,"","0x0000"],"RX_ENABLE":[1,1],' +
     '"RX_POSITION":["LOWEST","OK",37.000000,-122.000000,-50,125,317.7,74,"000000"],"SUBG_ENABLE":["1"],' +

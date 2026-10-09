@@ -5977,6 +5977,11 @@ const SETTINGS_SCHEMA_1090 = [
         cmd: 'ETHERNET', label: 'Ethernet', group: 'Network', disconnects: true,
         fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
     },
+    {
+        cmd: 'IP_MODE', label: 'IP Mode', group: 'Network', disconnects: true,
+        help: 'IP versions on Ethernet and WiFi Station. DUAL adds IPv6 (link-local and SLAAC) to IPv4 DHCP; IPV6 turns off DHCP. The WiFi Access Point is always IPv4.',
+        fields: [{ id: 'mode', label: 'Mode', type: 'enum', options: ['IPV4', 'DUAL', 'IPV6'] }],
+    },
     // ── Radio ──
     makeRxEnableEntry(),
     {

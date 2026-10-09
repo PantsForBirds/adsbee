@@ -54,6 +54,7 @@ void CommsManager::EthernetEventHandler(void* arg, esp_event_base_t event_base, 
             CONSOLE_INFO("CommsManager::EthernetEventHandler", "Ethernet Link Down");
             ethernet_connected_ = false;
             ethernet_has_ip_ = false;
+            ethernet_has_ip6_ = false;
             // ESP_ERROR_CHECK(esp_netif_dhcpc_stop(ethernet_netif_));
             esp_err_t stop_err = esp_eth_stop(eth_handle);
             if (stop_err != ESP_OK) {
@@ -81,7 +82,10 @@ void CommsManager::EthernetEventHandler(void* arg, esp_event_base_t event_base, 
 
 bool CommsManager::EthernetInit() {
     //  Create instance(s) of esp-netif for SPI Ethernet(s)
+    esp_netif_inherent_config_t base = ESP_NETIF_INHERENT_DEFAULT_ETH();
+    ApplyIPModeToNetifConfig(base);
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
+    cfg.base = &base;
     ethernet_netif_ = esp_netif_new(&cfg);
 
     ESP_ERROR_CHECK(esp_netif_set_hostname(ethernet_netif_, hostname));
@@ -141,6 +145,10 @@ bool CommsManager::EthernetInit() {
 
     // Attach Ethernet driver to TCP/IP stack
     ESP_ERROR_CHECK(esp_netif_attach(ethernet_netif_, esp_eth_new_netif_glue(ethernet_handle_)));
+
+    // After the netif glue's handlers, so the netif is up when the link-local address is created.
+    ESP_ERROR_CHECK(
+        esp_event_handler_register(ETH_EVENT, ETHERNET_EVENT_CONNECTED, &ip6_link_up_event_handler, NULL));
 
     // Start Ethernet driver
     ESP_ERROR_CHECK(esp_eth_start(ethernet_handle_));

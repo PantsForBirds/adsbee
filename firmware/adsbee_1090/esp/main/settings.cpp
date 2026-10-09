@@ -29,6 +29,13 @@ bool SettingsManager::Apply() {
     // Apply the Ethernet settings.
     comms_manager.ethernet_enabled = settings.core_network_settings.ethernet_enabled;
 
+    // The IP mode is set when the Ethernet and WiFi station netifs are created.
+    if (comms_manager.ip_mode != settings.ip_mode) {
+        ethernet_restart_required |= settings.core_network_settings.ethernet_enabled;
+        wifi_sta_restart_required |= settings.core_network_settings.wifi_sta_enabled;
+    }
+    comms_manager.ip_mode = settings.ip_mode;
+
     // Check if the AP settings have changed.
     if (comms_manager.wifi_ap_enabled != settings.core_network_settings.wifi_ap_enabled ||
         (comms_manager.wifi_ap_enabled &&
