@@ -140,7 +140,7 @@ Here are a few apps that can be used with ADSBee 1090. If you have one that you 
 3. Check the current feed settings with `AT+FEED?`
 4. Enter the details for your new feed with `AT+FEED=<feed_index>,<feed_uri>,<feed_port>,<feed_active>,<protocol>`.
    - `<feed_index>`: ADSBee can support up to 6 feeds simultaneously. This parameter is replaced with a digit from 0-5 in order to indicate which feed is being altered.
-   - `<feed_uri>`: This parameter is replaced with the IP address of the feed endpoint.
+   - `<feed_uri>`: This parameter is replaced with the hostname, IPv4 address or IPv6 address (e.g. `2001:db8::5`) of the feed endpoint.
    - `<feed_port>`: This parameter indicates which port on the endpoint will be used for the feed. The most common value is 30004, the typical port for Mode-S Beast data over TCP.
    - `<active>`: Enable / disable the feed. Set this to 1 to activate the feed.
    - `<protocol>`: What protocol to use when feeding. Currently, only `BEAST` and `BEAST_RAW` are supported.
@@ -156,6 +156,8 @@ Want to check the status of your feed? Use the links below to see your feed stat
   - Click the status icon in the bottom left of the homepage: <https://adsb.fi/>
 - ADSB.lol
   - <https://api.adsb.lol/0/me>
+- whereplane.xyz
+  - In the web interface, click the `feed.whereplane.xyz` feed card and use the map link in the feed editor. It opens `https://globe.whereplane.xyz/?feed=<receiver uuid>`, which shows only the aircraft your ADSBee feeds.
 
 ## 🛜 Join an External WiFi Network { #join-external-wifi }
 
@@ -165,6 +167,14 @@ Want to check the status of your feed? Use the links below to see your feed stat
    To store more networks, add them with `AT+WIFI_STA_NETWORK=<2 or 3>,<ssid>,<password>`. The ADSBee joins the strongest stored network in range.
 4. Save the settings with `AT+SETTINGS=SAVE`. If you’d like, you can verify that they were saved by calling `AT+SETTINGS?`.
 5. Apply the new WiFi settings by restarting the device with `AT+REBOOT`.
+
+## 🌍 Use IPv6 { #ipv6 }
+
+Ethernet and the WiFi station use IPv4 and IPv6 at the same time by default. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router; DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 and static addresses aren't supported.
+
+1. Check the addresses with `AT+NETWORK_INFO?`. The web interface is reachable at `http://[<IPv6 address>]/`, and as `<hostname>.local` over mDNS.
+2. Select the IP versions with `AT+IP_MODE=<mode>`: `DUAL` (default), `IPV4` (IPv4 only) or `IPV6` (IPv6 only, DHCP off). The WiFi access point is always IPv4.
+3. Apply with `AT+SETTINGS=SAVE`; the network interfaces restart.
 
 ## 💡 Integrate the ADSBee with an Embedded Project { #embedded-project }
 

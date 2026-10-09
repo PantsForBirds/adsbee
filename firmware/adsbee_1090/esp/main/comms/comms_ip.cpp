@@ -51,41 +51,32 @@ static const uint32_t kTCPReuseAddrEnable =
 void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     comms_manager.IPEventHandler(arg, event_base, event_id, event_data);
 }
+void ip6_link_up_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    comms_manager.IP6LinkUpEventHandler(arg, event_base, event_id, event_data);
+}
 void ip_wan_task(void* pvParameters) { comms_manager.IPWANTask(pvParameters); }
 /** End "Pass-Through" functions. **/
 
-bool IsNotIPAddress(const char* uri) {
-    // Check if the URI contains any letters
-    for (const char* p = uri; *p != '\0'; p++) {
-        if (isalpha(*p)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool ResolveURIToIP(const char* url, char* ip) {
-    struct addrinfo hints;
-    struct addrinfo* res;
-    struct in_addr addr;
-    int err;
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
+// Resolves a feed URI (hostname, IPv4 or IPv6 literal) to a TCP address of the given family (AF_INET, AF_INET6 or
+// AF_UNSPEC). The caller frees *res with freeaddrinfo().
+static bool ResolveFeedURI(const char* uri, uint16_t port, int family, struct addrinfo** res) {
+    struct addrinfo hints = {};
+    hints.ai_family = family;
     hints.ai_socktype = SOCK_STREAM;
+    char port_str[6];
+    snprintf(port_str, sizeof(port_str), "%u", port);
 
-    err = getaddrinfo(url, NULL, &hints, &res);
-    if (err != 0 || res == NULL) {
-        CONSOLE_ERROR("ResolveURLToIP", "DNS lookup failed for %s: %d", url, err);
-        freeaddrinfo(res);
+    *res = nullptr;
+    int err = getaddrinfo(uri, port_str, &hints, res);
+    if (err != 0 || *res == nullptr) {
+        CONSOLE_ERROR("ResolveFeedURI", "Lookup of %s (%s) failed: %d", uri,
+                      family == AF_INET ? "IPv4" : (family == AF_INET6 ? "IPv6" : "IPv4/IPv6"), err);
+        if (*res != nullptr) {
+            freeaddrinfo(*res);
+            *res = nullptr;
+        }
         return false;
     }
-
-    addr.s_addr = ((struct sockaddr_in*)res->ai_addr)->sin_addr.s_addr;
-    inet_ntop(AF_INET, &addr, ip, 16);
-    CONSOLE_INFO("ResolveURLToIP", "DNS lookup succeeded. IP=%s", ip);
-
-    freeaddrinfo(res);
     return true;
 }
 
@@ -184,6 +175,65 @@ bool CommsManager::IPInit() {
     return true;
 }
 
+void CommsManager::ApplyIPModeToNetifConfig(esp_netif_inherent_config_t& base) {
+    uint32_t flags = base.flags;
+    if (ip_mode == SettingsManager::kIPModeIPv6) {
+        flags &= ~ESP_NETIF_DHCP_CLIENT;
+    } else {
+        flags |= ESP_NETIF_DHCP_CLIENT;
+    }
+    if (ip_mode == SettingsManager::kIPModeIPv4) {
+        flags &= ~ESP_NETIF_FLAG_IPV6_AUTOCONFIG_ENABLED;
+    } else {
+        flags |= ESP_NETIF_FLAG_IPV6_AUTOCONFIG_ENABLED;
+    }
+    base.flags = static_cast<esp_netif_flags_t>(flags);
+}
+
+void CommsManager::IP6LinkUpEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
+                                         void* event_data) {
+    if (ip_mode == SettingsManager::kIPModeIPv4) {
+        return;
+    }
+    // Registered after the default handlers, which bring the netif up on these events.
+    esp_netif_t* netif = nullptr;
+    if (event_base == ETH_EVENT && event_id == ETHERNET_EVENT_CONNECTED) {
+        netif = ethernet_netif_;
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
+        netif = wifi_sta_netif_;
+    }
+    if (netif == nullptr) {
+        return;
+    }
+    esp_err_t err = esp_netif_create_ip6_linklocal(netif);
+    if (err != ESP_OK) {
+        CONSOLE_ERROR("CommsManager::IP6LinkUpEventHandler", "Failed to create IPv6 link-local address on %s: %s",
+                      esp_netif_get_desc(netif), esp_err_to_name(err));
+    }
+}
+
+void CommsManager::GetIP6AddrStrs(esp_netif_t* netif, char* link_local, char* global, size_t len) {
+    link_local[0] = '\0';
+    global[0] = '\0';
+    if (netif == nullptr) {
+        return;
+    }
+    esp_ip6_addr_t addrs[LWIP_IPV6_NUM_ADDRESSES];
+    int num_addrs = esp_netif_get_all_ip6(netif, addrs);  // Preferred (usable) addresses only.
+    for (int i = 0; i < num_addrs; i++) {
+        esp_ip6_addr_type_t type = esp_netif_ip6_get_addr_type(&addrs[i]);
+        char* dest = nullptr;
+        if (type == ESP_IP6_ADDR_IS_LINK_LOCAL && link_local[0] == '\0') {
+            dest = link_local;
+        } else if ((type == ESP_IP6_ADDR_IS_GLOBAL || type == ESP_IP6_ADDR_IS_UNIQUE_LOCAL) && global[0] == '\0') {
+            dest = global;
+        }
+        if (dest != nullptr) {
+            inet_ntop(AF_INET6, addrs[i].addr, dest, len);
+        }
+    }
+}
+
 void CommsManager::IPEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     switch (event_id) {
         case IP_EVENT_AP_STAIPASSIGNED: {
@@ -238,6 +288,22 @@ void CommsManager::IPEventHandler(void* arg, esp_event_base_t event_base, int32_
 
             CONSOLE_INFO("CommsManager::IPEventHandler", "Ethernet got IP address. IP: %s, Netmask: %s, Gateway: %s",
                          ethernet_ip, ethernet_netmask, ethernet_gateway);
+            break;
+        }
+        case IP_EVENT_GOT_IP6: {
+            // An IPv6 address finished duplicate address detection (link-local, or SLAAC from a router advertisement).
+            ip_event_got_ip6_t* event = (ip_event_got_ip6_t*)event_data;
+            esp_ip6_addr_type_t type = esp_netif_ip6_get_addr_type(&event->ip6_info.ip);
+            bool routable = type == ESP_IP6_ADDR_IS_GLOBAL || type == ESP_IP6_ADDR_IS_UNIQUE_LOCAL;
+            if (routable && event->esp_netif == ethernet_netif_) {
+                ethernet_has_ip6_ = true;
+            } else if (routable && event->esp_netif == wifi_sta_netif_) {
+                wifi_sta_has_ip6_ = true;
+            }
+            char addr_str[ObjectDictionary::kIP6AddrStrLen + 1];
+            inet_ntop(AF_INET6, event->ip6_info.ip.addr, addr_str, sizeof(addr_str));
+            CONSOLE_INFO("CommsManager::IPEventHandler", "%s got IPv6 address %s (%s).",
+                         esp_netif_get_desc(event->esp_netif), addr_str, routable ? "global" : "link-local");
             break;
         }
         case IP_EVENT_ETH_LOST_IP: {
@@ -352,17 +418,37 @@ bool CommsManager::ConnectFeedSocket(uint16_t feed_index) {
     }
     feed_sock_last_connect_timestamp_ms_[feed_index] = timestamp_ms;
 
+    // Resolve the destination for the address families this device can reach. A hostname with both A and AAAA records
+    // resolves to IPv4 when IPv4 is up (lwIP returns a single address).
+    int family = AF_UNSPEC;
+    if (!HasIPv4()) {
+        family = AF_INET6;
+    } else if (!HasIPv6()) {
+        family = AF_INET;
+    }
+    struct addrinfo* dest = nullptr;
+    if (!ResolveFeedURI(settings_manager.settings.feed_uris[feed_index], settings_manager.settings.feed_ports[feed_index],
+                        family, &dest)) {
+        CONSOLE_ERROR("CommsManager::IPWANTask", "Failed to resolve URI %s for feed %d",
+                      settings_manager.settings.feed_uris[feed_index], feed_index);
+        return false;
+    }
+    struct sockaddr_storage dest_addr = {};
+    socklen_t dest_addr_len = MIN(dest->ai_addrlen, sizeof(dest_addr));
+    memcpy(&dest_addr, dest->ai_addr, dest_addr_len);
+    freeaddrinfo(dest);
+
     // Create socket.
-    // IPv4, TCP
-    feed_sock_[feed_index] = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    feed_sock_[feed_index] = socket(dest_addr.ss_family, SOCK_STREAM, IPPROTO_TCP);
     if (feed_sock_[feed_index] <= 0) {
         CONSOLE_ERROR("CommsManager::IPWANTask", "Unable to create socket for feed %d: errno %d (%s)", feed_index,
                       errno, strerror(errno));
         CloseFeedSocket(feed_index);
         return false;
     }
-    CONSOLE_INFO("CommsManager::IPWANTask", "Socket for feed %d created, connecting to %s:%d", feed_index,
-                 settings_manager.settings.feed_uris[feed_index], settings_manager.settings.feed_ports[feed_index]);
+    CONSOLE_INFO("CommsManager::IPWANTask", "Socket for feed %d created, connecting to %s:%d over %s", feed_index,
+                 settings_manager.settings.feed_uris[feed_index], settings_manager.settings.feed_ports[feed_index],
+                 dest_addr.ss_family == AF_INET6 ? "IPv6" : "IPv4");
 
     // Enable TCP keepalive
     setsockopt(feed_sock_[feed_index], SOL_SOCKET, SO_KEEPALIVE, &kTCPKeepAliveEnable, sizeof(kTCPKeepAliveEnable));
@@ -375,32 +461,12 @@ bool CommsManager::ConnectFeedSocket(uint16_t feed_index) {
     // Allow reuse of local addresses.
     setsockopt(feed_sock_[feed_index], SOL_SOCKET, SO_REUSEADDR, &kTCPReuseAddrEnable, sizeof(kTCPReuseAddrEnable));
 
-    struct sockaddr_in dest_addr;
-    // If the URI contains letters, resolve it to an IP address
-    if (IsNotIPAddress(settings_manager.settings.feed_uris[feed_index])) {
-        // Is not an IP address, try DNS resolution.
-        char resolved_ip[16];
-        if (!ResolveURIToIP(settings_manager.settings.feed_uris[feed_index], resolved_ip)) {
-            CONSOLE_ERROR("CommsManager::IPWANTask", "Failed to resolve URL %s for feed %d",
-                          settings_manager.settings.feed_uris[feed_index], feed_index);
-            CloseFeedSocket(feed_index);
-            return false;
-        }
-        inet_pton(AF_INET, resolved_ip, &dest_addr.sin_addr);
-    } else {
-        // Is an IP address, use it directly.
-        inet_pton(AF_INET, settings_manager.settings.feed_uris[feed_index], &dest_addr.sin_addr);
-    }
-
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(settings_manager.settings.feed_ports[feed_index]);
-
     // Connect without blocking. This task serves every feed, and a blocking connect() to an unreachable host held it
     // for the whole TCP connect timeout (~18 s per attempt) while the WAN queue overflowed and all feeds lost frames.
     // The connect finishes in PollFeedSocketConnect() on later passes of IPWANTask.
     int flags = fcntl(feed_sock_[feed_index], F_GETFL, 0);
     fcntl(feed_sock_[feed_index], F_SETFL, flags | O_NONBLOCK);
-    int err = connect(feed_sock_[feed_index], (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+    int err = connect(feed_sock_[feed_index], (struct sockaddr*)&dest_addr, dest_addr_len);
     if (err != 0 && errno == EINPROGRESS) {
         feed_sock_is_connecting_[feed_index] = true;
         return PollFeedSocketConnect(feed_index);

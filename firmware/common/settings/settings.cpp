@@ -151,6 +151,13 @@ bool SettingsManager::Sanitize() {
         changed = true;
     }
 
+    if (settings.ip_mode >= kNumIPModes) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "ip_mode %u out of range, resetting to kIPModeDual.",
+                      settings.ip_mode);
+        settings.ip_mode = kIPModeDual;
+        changed = true;
+    }
+
     if (settings.rx_position.source >= RxPosition::kNumPositionSources) {
         CONSOLE_ERROR("SettingsManager::Sanitize", "rx_position.source %u out of range, resetting to kPositionSourceLowestAircraft.",
                       settings.rx_position.source);
@@ -277,6 +284,8 @@ void SettingsManager::Print() {
     // Print Ethernet settings.
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len, "\tEthernet: %s\r\n",
                               settings.core_network_settings.ethernet_enabled ? "ENABLED" : "DISABLED");
+    print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
+                              "\tIP Mode (Ethernet, WiFi Station): %s\r\n", IPModeToStr(settings.ip_mode));
 
     // Print feed settings.
     CONSOLE_PRINTF("\tFeed URIs:\r\n");
@@ -321,6 +330,9 @@ void SettingsManager::PrintAT() {
         CONSOLE_PRINTF("AT+FEED=%d,%s,%u,%d,%s\r\n", i, settings.feed_uris[i], settings.feed_ports[i],
                        settings.feed_is_active[i], kReportingProtocolStrs[settings.feed_protocols[i]]);
     }
+
+    // AT+IP_MODE
+    CONSOLE_PRINTF("AT+IP_MODE=%s\r\n", IPModeToStr(settings.ip_mode));
 
     // AT+LED_ENABLE
     CONSOLE_PRINTF("AT+LED_ENABLE=%d\r\n", settings.led_enabled);

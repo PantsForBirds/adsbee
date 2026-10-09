@@ -286,7 +286,8 @@ static_assert(offsetof(Settings, rx_position) == 1108, "v14 rx_position offset d
 }  // namespace settings_v14
 
 /**
- * v15 layout: v14 plus `feeds_enabled` after `led_enabled` (adsbee_1090 0.9.1-rc3 to rc6).
+ * v15 layout: v14 plus `feeds_enabled` after `led_enabled` (shifting gnss_* and everything after them by one byte).
+ * Shipped in adsbee_1090 0.9.1-rc3 through 0.9.1-rc6.
  */
 namespace settings_v15 {
 
@@ -324,8 +325,7 @@ struct __attribute__((packed)) RxPosition {
     uint32_t icao_address;
 };
 
-// Enum members as their v15 underlying types: LogLevel/ReportingProtocol : uint16_t, EnableState : int8_t,
-// SubGHzRadioMode/GNSSReceiverType : uint8_t.
+// Byte-identical copy of the shipped v15 Settings layout. Enum members are stored as their underlying integer types.
 struct alignas(4) Settings {
     uint32_t settings_version;
     CoreNetworkSettings core_network_settings;
@@ -382,3 +382,102 @@ static_assert(offsetof(Settings, mavlink_system_id) == 1110, "v15 mavlink_system
 static_assert(offsetof(Settings, rx_position) == 1112, "v15 rx_position offset drift.");
 
 }  // namespace settings_v15
+
+/**
+ * v16 layout: v15 plus `ip_mode` in the tail padding after rx_position (adsbee_1090 #281).
+ */
+namespace settings_v16 {
+
+static constexpr uint16_t kHostnameMaxLen = 32;
+static constexpr uint16_t kWiFiSSIDMaxLen = 31;
+static constexpr uint16_t kWiFiPasswordMaxLen = 63;
+static constexpr uint16_t kNumSerialInterfaces = 3;
+static constexpr uint16_t kMaxNumFeeds = 10;
+static constexpr uint16_t kFeedURIMaxNumChars = 63;
+static constexpr uint16_t kFeedReceiverIDNumBytes = 8;
+static constexpr uint16_t kRemoteIDIDMaxLen = 20;
+
+struct CoreNetworkSettings {
+    bool esp32_enabled;
+    char hostname[kHostnameMaxLen + 1];
+    bool wifi_ap_enabled;
+    uint8_t wifi_ap_channel;
+    char wifi_ap_ssid[kWiFiSSIDMaxLen + 2];
+    char wifi_ap_password[kWiFiPasswordMaxLen + 2];
+    bool wifi_sta_enabled;
+    char wifi_sta_ssid[kWiFiSSIDMaxLen + 2];
+    char wifi_sta_password[kWiFiPasswordMaxLen + 2];
+    bool ethernet_enabled;
+    uint32_t crc32;
+};
+
+struct __attribute__((packed)) RxPosition {
+    uint8_t source;
+    float latitude_deg;
+    float longitude_deg;
+    int32_t gnss_altitude_ft;
+    int32_t baro_altitude_ft;
+    float heading_deg;
+    int32_t speed_kts;
+    uint32_t icao_address;
+};
+
+// Byte-identical copy of the shipped v15 Settings layout. Enum members are stored as their underlying integer types.
+struct alignas(4) Settings {
+    uint32_t settings_version;
+    CoreNetworkSettings core_network_settings;
+    bool r1090_rx_enabled;
+    int32_t tl_offset_mv;
+    bool r1090_bias_tee_enabled;
+    uint32_t watchdog_timeout_sec;
+    bool led_enabled;
+    bool feeds_enabled;  // Added in v15.
+    bool gnss_enabled;
+    uint8_t gnss_receiver_type;
+    bool gnss_notify;
+    uint16_t log_level;
+    uint16_t reporting_protocols[kNumSerialInterfaces];
+    uint32_t baud_rates[kNumSerialInterfaces];
+    int8_t subg_enabled;
+    bool subg_rx_enabled;
+    bool subg_bias_tee_enabled;
+    uint8_t subg_mode;
+    bool remote_id_rx_enabled;
+    uint8_t remote_id_transports;
+    bool remote_id_tx_enabled;
+    uint8_t remote_id_tx_transports;
+    uint8_t remote_id_tx_uas_id_type;
+    uint8_t remote_id_tx_ua_type;
+    char remote_id_tx_uas_id[kRemoteIDIDMaxLen + 1];
+    char remote_id_tx_operator_id[kRemoteIDIDMaxLen + 1];
+    char feed_uris[kMaxNumFeeds][kFeedURIMaxNumChars + 1];
+    uint16_t feed_ports[kMaxNumFeeds];
+    bool feed_is_active[kMaxNumFeeds];
+    uint16_t feed_protocols[kMaxNumFeeds];
+    uint8_t feed_receiver_ids[kMaxNumFeeds][kFeedReceiverIDNumBytes];
+    uint8_t mavlink_system_id;
+    uint8_t mavlink_component_id;
+    RxPosition rx_position;
+    uint8_t ip_mode;  // Added in v16 (IPMode: 0 = IPv4, 1 = dual, 2 = IPv6).
+};
+
+// Lock the v16 byte layout (the live layout lock in settings.hh at kSettingsVersion == 16).
+static_assert(sizeof(CoreNetworkSettings) == 240, "v16 CoreNetworkSettings must be 240 bytes.");
+static_assert(sizeof(RxPosition) == 29, "v16 RxPosition must be 29 bytes.");
+static_assert(sizeof(Settings) == 1144, "v16 Settings must be 1144 bytes.");
+static_assert(offsetof(Settings, core_network_settings) == 4, "v16 CoreNetworkSettings offset drift.");
+static_assert(offsetof(Settings, led_enabled) == 260, "v16 led_enabled offset drift.");
+static_assert(offsetof(Settings, feeds_enabled) == 261, "v16 feeds_enabled offset drift.");
+static_assert(offsetof(Settings, gnss_notify) == 264, "v16 gnss_notify offset drift.");
+static_assert(offsetof(Settings, log_level) == 266, "v16 log_level offset drift.");
+static_assert(offsetof(Settings, baud_rates) == 276, "v16 baud_rates offset drift.");
+static_assert(offsetof(Settings, subg_mode) == 291, "v16 subg_mode offset drift.");
+static_assert(offsetof(Settings, remote_id_tx_enabled) == 294, "v16 remote_id_tx_enabled offset drift.");
+static_assert(offsetof(Settings, feed_uris) == 340, "v16 feed_uris offset drift.");
+static_assert(offsetof(Settings, feed_protocols) == 1010, "v16 feed_protocols offset drift.");
+static_assert(offsetof(Settings, feed_receiver_ids) == 1030, "v16 feed_receiver_ids offset drift.");
+static_assert(offsetof(Settings, mavlink_system_id) == 1110, "v16 mavlink_system_id offset drift.");
+static_assert(offsetof(Settings, rx_position) == 1112, "v16 rx_position offset drift.");
+static_assert(offsetof(Settings, ip_mode) == 1141, "v16 ip_mode offset drift.");
+
+}  // namespace settings_v16

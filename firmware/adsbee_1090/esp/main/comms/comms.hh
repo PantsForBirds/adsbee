@@ -4,6 +4,7 @@
 #include "driver/gpio.h"
 #include "esp_eth.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -151,9 +152,18 @@ class CommsManager {
     inline uint16_t GetNumWiFiClients() { return num_wifi_clients_; }
 
     /**
-     * Returns whether the ESP32 is connected to an external network via either Ethernet or WiFi.
+     * Returns whether the ESP32 is connected to an external network via either Ethernet or WiFi, with an IPv4 address
+     * or a global (or unique local) IPv6 address.
      */
-    inline bool HasIP() { return wifi_sta_has_ip_ || ethernet_has_ip_; }
+    inline bool HasIP() { return HasIPv4() || HasIPv6(); }
+    inline bool HasIPv4() { return wifi_sta_has_ip_ || ethernet_has_ip_; }
+    inline bool HasIPv6() { return wifi_sta_has_ip6_ || ethernet_has_ip6_; }
+
+    /**
+     * Creates the IPv6 link-local address on an interface once its link is up. Does nothing in IPv4-only mode. Public
+     * so that pass through functions can access it.
+     */
+    void IP6LinkUpEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 
     /**
      * Handler for IP events associated with ethernet and WiFi. Public so that pass through functions can access it.
@@ -224,6 +234,9 @@ class CommsManager {
 
     // Network hostname.
     char hostname[SettingsManager::Settings::kHostnameMaxLen + 1] = {0};
+
+    // IP versions used on Ethernet and the WiFi station. Takes effect when those interfaces are initialized.
+    SettingsManager::IPMode ip_mode = SettingsManager::kIPModeIPv4;
 
     // Ethernet public variables.
     bool ethernet_enabled = false;
@@ -300,6 +313,17 @@ class CommsManager {
     bool IPInit();
 
     /**
+     * Sets the DHCP client and SLAAC flags of an Ethernet or WiFi station netif config for ip_mode.
+     */
+    void ApplyIPModeToNetifConfig(esp_netif_inherent_config_t& base);
+
+    /**
+     * Writes an interface's IPv6 link-local address and its first global or unique local address as strings (empty if
+     * none).
+     */
+    static void GetIP6AddrStrs(esp_netif_t* netif, char* link_local, char* global, size_t len);
+
+    /**
      * Updates the feed metrics values and prints a cute lil message.
      */
     void UpdateFeedMetrics();
@@ -330,6 +354,7 @@ class CommsManager {
     esp_netif_t* ethernet_netif_ = nullptr;
     bool ethernet_connected_ = false;
     bool ethernet_has_ip_ = false;
+    bool ethernet_has_ip6_ = false;  // Global or unique local IPv6 address assigned.
     uint32_t ethernet_link_up_timestamp_ms_ = 0;  // This will loop every 49.7 days or so.
 
     // WiFi AP private variables.
@@ -352,6 +377,7 @@ class CommsManager {
     bool wifi_sta_scan_in_progress_ = false;
     uint32_t wifi_sta_failed_mask_ = 0;  // Bit i: the last attempt on stored network i failed.
     bool wifi_sta_has_ip_ = false;
+    bool wifi_sta_has_ip6_ = false;  // Global or unique local IPv6 address assigned.
     uint32_t wifi_sta_connected_timestamp_ms_ = 0;  // This will loop every 49.7 days or so.
 
     uint16_t feed_mps_counter_[SettingsManager::Settings::kMaxNumFeeds] = {0};
@@ -404,6 +430,8 @@ class CommsManager {
 };
 
 extern CommsManager comms_manager;
+
+void ip6_link_up_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 
 #define CONSOLE_ERROR(tag, ...) \
     ESP_LOGE(tag, __VA_ARGS__); \

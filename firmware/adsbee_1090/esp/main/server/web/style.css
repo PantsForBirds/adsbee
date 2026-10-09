@@ -568,6 +568,15 @@ body {
     margin: 0;
 }
 
+.feed-map-row {
+    margin-bottom: 12px;
+    font-size: 0.9em;
+}
+
+.feed-map-row a {
+    color: #ffcb00;
+}
+
 .feed-modal-buttons {
     display: flex;
     gap: 12px;

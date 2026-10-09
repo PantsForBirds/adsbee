@@ -62,6 +62,9 @@ TEST(SettingsMigration, LayoutLockedSizes) {
     EXPECT_EQ(sizeof(settings_v15::CoreNetworkSettings),
               sizeof(SettingsManager::Settings::CoreNetworkSettings));
     EXPECT_EQ(sizeof(settings_v15::RxPosition), sizeof(SettingsManager::RxPosition));
+
+    EXPECT_EQ(sizeof(settings_v16::Settings), 1144u);
+    EXPECT_EQ(offsetof(settings_v16::Settings, ip_mode), offsetof(SettingsManager::Settings, ip_mode));
 }
 
 // Fills a v13 settings struct with distinctive, non-default values across every field, and gives it a valid-CRC
@@ -298,6 +301,7 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
     EXPECT_FALSE(out.led_enabled);
 
     EXPECT_TRUE(out.feeds_enabled);  // New in v15.
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);  // New in v16.
     EXPECT_TRUE(out.gnss_enabled);
     EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
     EXPECT_TRUE(out.gnss_notify);
@@ -401,7 +405,7 @@ static void PopulateV15(settings_v15::Settings& v15) {
     v15.rx_position.icao_address = 0xABCDEF;
 }
 
-TEST(SettingsMigration, V15ToV16PreservesAllFieldsAndAddsEmptyWiFiNetworks) {
+TEST(SettingsMigration, V15ToCurrentPreservesAllFieldsAndAddsEmptyWiFiNetworks) {
     settings_v15::Settings v15;
     PopulateV15(v15);
 
@@ -435,6 +439,125 @@ TEST(SettingsMigration, V15ToV16PreservesAllFieldsAndAddsEmptyWiFiNetworks) {
         EXPECT_STREQ(out.wifi_sta_extra_networks[i].ssid, "");
         EXPECT_STREQ(out.wifi_sta_extra_networks[i].password, "");
     }
+}
+
+TEST(SettingsMigration, V16ToV17PreservesIPModeAndAddsEmptyWiFiNetworks) {
+    // v16 is v15 plus ip_mode in what was tail padding: same size, same leading bytes.
+    settings_v15::Settings v15;
+    PopulateV15(v15);
+    settings_v16::Settings v16;
+    static_assert(sizeof(v15) == sizeof(v16));
+    memcpy(&v16, &v15, sizeof(v16));
+    v16.settings_version = 16;
+    v16.ip_mode = SettingsManager::kIPModeIPv6;
+
+    uint8_t blob[sizeof(settings_v16::Settings)];
+    memcpy(blob, &v16, sizeof(v16));
+
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 16, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(memcmp(&out.core_network_settings, &v16.core_network_settings, sizeof(v16.core_network_settings)), 0);
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv6);
+    EXPECT_FALSE(out.feeds_enabled);
+    EXPECT_EQ(out.baud_rates[2], 4800u);
+    EXPECT_STREQ(out.feed_uris[0], "myfeed.example.com");
+    EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+    for (uint16_t i = 0; i < SettingsManager::Settings::kWiFiSTANumExtraNetworks; i++) {
+        EXPECT_STREQ(out.wifi_sta_extra_networks[i].ssid, "");
+        EXPECT_STREQ(out.wifi_sta_extra_networks[i].password, "");
+    }
+}
+
+TEST(SettingsMigration, V15ToV16PreservesAllFieldsAndDefaultsIPMode) {
+    settings_v15::Settings v15 = settings_v15::Settings{};
+    v15.settings_version = 15;
+
+    SettingsManager::Settings::CoreNetworkSettings cns;
+    strncpy(cns.hostname, "v15-host", sizeof(cns.hostname));
+    strncpy(cns.wifi_sta_ssid, "v15-sta", sizeof(cns.wifi_sta_ssid));
+    cns.wifi_sta_enabled = true;
+    cns.ethernet_enabled = true;
+    cns.UpdateCRC32();
+    memcpy(&v15.core_network_settings, &cns, sizeof(cns));
+
+    v15.r1090_rx_enabled = false;
+    v15.tl_offset_mv = 321;
+    v15.watchdog_timeout_sec = 17;
+    v15.led_enabled = false;
+    v15.feeds_enabled = false;
+    v15.gnss_enabled = true;
+    v15.gnss_receiver_type = SettingsManager::kGNSSReceiverGeneric;
+    v15.gnss_notify = true;
+    v15.log_level = SettingsManager::LogLevel::kErrors;
+    v15.reporting_protocols[1] = SettingsManager::ReportingProtocol::kMAVLINK2;
+    v15.baud_rates[1] = 230400;
+    v15.subg_enabled = SettingsManager::EnableState::kEnableStateExternal;
+    v15.remote_id_tx_enabled = true;
+    strncpy(v15.remote_id_tx_operator_id, "OP15", sizeof(v15.remote_id_tx_operator_id));
+    strncpy(v15.feed_uris[2], "2001:db8::5", sizeof(v15.feed_uris[2]));
+    v15.feed_ports[2] = 30005;
+    v15.feed_is_active[2] = true;
+    v15.feed_protocols[2] = SettingsManager::ReportingProtocol::kBeastNoUAT;
+    v15.feed_receiver_ids[2][3] = 0x5A;
+    v15.mavlink_system_id = 9;
+    v15.rx_position.source = 2;  // kPositionSourceGNSS
+    v15.rx_position.icao_address = 0x123456;
+
+    uint8_t blob[sizeof(settings_v15::Settings)];
+    memcpy(blob, &v15, sizeof(v15));
+    blob[1141] = 0xEE;  // v15 tail padding, now ip_mode: must not leak into the migrated value.
+
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 15, out));
+
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);
+
+    SettingsManager::Settings::CoreNetworkSettings cns_out = out.core_network_settings;
+    EXPECT_TRUE(cns_out.IsValid());
+    EXPECT_STREQ(out.core_network_settings.hostname, "v15-host");
+    EXPECT_STREQ(out.core_network_settings.wifi_sta_ssid, "v15-sta");
+    EXPECT_TRUE(out.core_network_settings.wifi_sta_enabled);
+    EXPECT_TRUE(out.core_network_settings.ethernet_enabled);
+
+    EXPECT_FALSE(out.r1090_rx_enabled);
+    EXPECT_EQ(out.tl_offset_mv, 321);
+    EXPECT_EQ(out.watchdog_timeout_sec, 17u);
+    EXPECT_FALSE(out.led_enabled);
+    EXPECT_FALSE(out.feeds_enabled);
+    EXPECT_TRUE(out.gnss_enabled);
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverGeneric);
+    EXPECT_TRUE(out.gnss_notify);
+    EXPECT_EQ(out.log_level, SettingsManager::LogLevel::kErrors);
+    EXPECT_EQ(out.reporting_protocols[1], SettingsManager::ReportingProtocol::kMAVLINK2);
+    EXPECT_EQ(out.baud_rates[1], 230400u);
+    EXPECT_EQ(out.subg_enabled, SettingsManager::EnableState::kEnableStateExternal);
+    EXPECT_TRUE(out.remote_id_tx_enabled);
+    EXPECT_STREQ(out.remote_id_tx_operator_id, "OP15");
+    EXPECT_STREQ(out.feed_uris[2], "2001:db8::5");
+    EXPECT_EQ(out.feed_ports[2], 30005);
+    EXPECT_TRUE(out.feed_is_active[2]);
+    EXPECT_EQ(out.feed_protocols[2], SettingsManager::ReportingProtocol::kBeastNoUAT);
+    EXPECT_EQ(out.feed_receiver_ids[2][3], 0x5A);
+    EXPECT_EQ(out.mavlink_system_id, 9);
+    EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceGNSS);
+    EXPECT_EQ(out.rx_position.icao_address, 0x123456u);
+}
+
+TEST(Settings, IPModeStrings) {
+    SettingsManager::IPMode mode = SettingsManager::kIPModeDual;
+    for (uint8_t i = 0; i < SettingsManager::kNumIPModes; i++) {
+        const SettingsManager::IPMode m = static_cast<SettingsManager::IPMode>(i);
+        ASSERT_TRUE(SettingsManager::IPModeFromStr(SettingsManager::IPModeToStr(m), mode));
+        EXPECT_EQ(mode, m);
+    }
+    EXPECT_TRUE(SettingsManager::IPModeFromStr("ipv6", mode));
+    EXPECT_EQ(mode, SettingsManager::kIPModeIPv6);
+    EXPECT_FALSE(SettingsManager::IPModeFromStr("IPV5", mode));
+    EXPECT_FALSE(SettingsManager::IPModeFromStr("", mode));
+    EXPECT_EQ(mode, SettingsManager::kIPModeIPv6);  // Unchanged on failure.
+    EXPECT_STREQ(SettingsManager::IPModeToStr(static_cast<SettingsManager::IPMode>(200)), "DUAL");
 }
 
 // Builds a v14 blob by raw byte offset using the layout shipped in adsbee_1090-0.9.1-rc2 (1140 B), with a distinct
@@ -742,8 +865,10 @@ TEST(SettingsManager, SanitizeClampsOutOfRangeEnumFields) {
     s.subg_enabled = static_cast<SettingsManager::EnableState>(42);
     s.gnss_receiver_type = static_cast<SettingsManager::GNSSReceiverType>(200);
     s.rx_position.source = static_cast<SettingsManager::RxPosition::PositionSource>(200);
+    s.ip_mode = static_cast<SettingsManager::IPMode>(200);
 
     EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_EQ(s.ip_mode, SettingsManager::kIPModeDual);
 
     EXPECT_LT(s.log_level, SettingsManager::LogLevel::kNumLogLevels);
     EXPECT_LT(s.reporting_protocols[0], SettingsManager::ReportingProtocol::kNumProtocols);
