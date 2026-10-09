@@ -7195,11 +7195,6 @@ class Settings1090Transport {
                 },
                 install: (bytes, name) => uploader.uploadFirmware(new File([bytes], name)),
             });
-                    const m = lines.length ? lines[0].match(/:\s*(\S+)/) : null;
-                    return m ? m[1] : null;
-                },
-                install: (bytes, name) => uploader.uploadFirmware(new File([bytes], name)),
-            });
             document.getElementById('sidebar-close').addEventListener('click', () => {
                 if (liveMap) liveMap.deselect();
             });
