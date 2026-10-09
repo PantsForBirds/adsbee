@@ -583,6 +583,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🌍 Use IPv6
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#embedded-project" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1241,6 +1252,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#ipv6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🌍 Use IPv6
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#embedded-project" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1456,7 +1478,7 @@
 <li>Check the current feed settings with <code>AT+FEED?</code></li>
 <li>Enter the details for your new feed with <code>AT+FEED=&lt;feed_index&gt;,&lt;feed_uri&gt;,&lt;feed_port&gt;,&lt;feed_active&gt;,&lt;protocol&gt;</code>.</li>
 <li><code>&lt;feed_index&gt;</code>: ADSBee can support up to 6 feeds simultaneously. This parameter is replaced with a digit from 0-5 in order to indicate which feed is being altered.</li>
-<li><code>&lt;feed_uri&gt;</code>: This parameter is replaced with the IP address of the feed endpoint.</li>
+<li><code>&lt;feed_uri&gt;</code>: This parameter is replaced with the hostname, IPv4 address or IPv6 address (e.g. <code>2001:db8::5</code>) of the feed endpoint.</li>
 <li><code>&lt;feed_port&gt;</code>: This parameter indicates which port on the endpoint will be used for the feed. The most common value is 30004, the typical port for Mode-S Beast data over TCP.</li>
 <li><code>&lt;active&gt;</code>: Enable / disable the feed. Set this to 1 to activate the feed.</li>
 <li><code>&lt;protocol&gt;</code>: What protocol to use when feeding. Currently, only <code>BEAST</code> and <code>BEAST_RAW</code> are supported.<ul>
@@ -1484,6 +1506,13 @@
 <li>Enter the network credentials for your WiFi network with <code>AT+WIFI_STA=&lt;enabled&gt;,&lt;ssid&gt;,&lt;password&gt;</code>. In this case, replace <code>&lt;enabled&gt;</code> with <code>1</code>, <code>&lt;ssid&gt;</code> with the SSID of your network, and <code>&lt;password&gt;</code> with your WPA passkey (8-63 characters). Note that values should be comma separated, with no spaces in between! No quotes are required around any values.</li>
 <li>Save the settings with <code>AT+SETTINGS=SAVE</code>. If you’d like, you can verify that they were saved by calling <code>AT+SETTINGS?</code>.</li>
 <li>Apply the new WiFi settings by restarting the device with <code>AT+REBOOT</code>.</li>
+</ol>
+<h2 id="ipv6">🌍 Use IPv6<a class="headerlink" href="#ipv6" title="Permanent link">&para;</a></h2>
+<p>Ethernet and the WiFi station use IPv4 and IPv6 at the same time by default. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router; DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 and static addresses aren't supported.</p>
+<ol>
+<li>Check the addresses with <code>AT+NETWORK_INFO?</code>. The web interface is reachable at <code>http://[&lt;IPv6 address&gt;]/</code>, and as <code>&lt;hostname&gt;.local</code> over mDNS.</li>
+<li>Select the IP versions with <code>AT+IP_MODE=&lt;mode&gt;</code>: <code>DUAL</code> (default), <code>IPV4</code> (IPv4 only) or <code>IPV6</code> (IPv6 only, DHCP off). The WiFi access point is always IPv4.</li>
+<li>Apply with <code>AT+SETTINGS=SAVE</code>; the network interfaces restart.</li>
 </ol>
 <h2 id="embedded-project">💡 Integrate the ADSBee with an Embedded Project<a class="headerlink" href="#embedded-project" title="Permanent link">&para;</a></h2>
 <p>The ADSBee 1090 is intended to interface easily with external modules via UART! Both the USB connector (CONSOLE) and UART output can be used to report received aircraft data in a variety of formats, including MAVLINK1, MAVLINK2, GDL90, Mode S Beast, and CSBEE. Of these protocols, CSBEE is the easiest to decode from scratch, and is also the most information rich.</p>
