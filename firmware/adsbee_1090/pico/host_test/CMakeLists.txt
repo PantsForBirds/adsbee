@@ -19,6 +19,8 @@ set_target_properties(libgtest PROPERTIES IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/
 target_link_libraries(host_test PRIVATE libgtest Threads::Threads)
 target_link_libraries(host_test_fpu PRIVATE libgtest Threads::Threads)
 target_compile_definitions(host_test_fpu PRIVATE HAS_FPU)
+target_compile_definitions(host_test PRIVATE SETTINGS_BLOBS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/settings_blobs")
+target_compile_definitions(host_test_fpu PRIVATE SETTINGS_BLOBS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/settings_blobs")
 # MAVLink send helpers need the firmware's comms_manager; tests only exercise message packing.
 target_compile_definitions(host_test PRIVATE MAVLINK_NO_CONVENIENCE_FUNCTIONS)
 target_compile_definitions(host_test_fpu PRIVATE MAVLINK_NO_CONVENIENCE_FUNCTIONS)
@@ -60,6 +62,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_reporting_mavlink.cc
         test_reporting_raw.cc
         test_settings.cc
+        test_settings_release_blobs.cc
         test_spi_coprocessor.cc
         test_spi_link_gate.cc
         test_at_console_guard.cc
