@@ -92,6 +92,10 @@ re-copy the marked block:
 - **UI/network classes**: `adsbee.js` is embedded near-verbatim with a short
   list of deltas documented at the top of the block (AT-based FeedEditor,
   channel-based ADSBeeAT, mode-aware uploader/settings-manager).
+- **Terminal paste guard**: `isOtherTextEntry` (in `adsbee.js`) is also copied into
+  `software/adsbee_1421_console/adsbee_1421_console.html`;
+  `firmware/adsbee_1090/esp/main/server/web/test/terminal_paste.test.js` checks both copies
+  and that the terminal's paste handler leaves other text boxes alone.
 - **Serial transport**: `SerialManager`, `LineSink`, `AtQueue`, and the line
   router are ported from `software/adsbee_1421_console/adsbee_1421_console.html`
   (minus its baud sweep, which USB CDC makes unnecessary).

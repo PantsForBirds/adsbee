@@ -424,8 +424,9 @@
             }
         });
 
-        // Handle copy/paste
+        // Copy/paste for the terminal; other text boxes keep the browser's own handling.
         document.addEventListener('copy', (e) => {
+            if (isOtherTextEntry(e.target, hiddenInput)) return;
             const selection = window.getSelection();
             if (selection.toString().length > 0) {
                 e.clipboardData.setData('text/plain', selection.toString());
@@ -434,6 +435,7 @@
         });
 
         document.addEventListener('paste', (e) => {
+            if (isOtherTextEntry(e.target, hiddenInput)) return;
             e.preventDefault();
             const paste = e.clipboardData.getData('text');
             currentCommand = currentCommand.substring(0, cursorPosition) + paste + currentCommand.substring(cursorPosition);

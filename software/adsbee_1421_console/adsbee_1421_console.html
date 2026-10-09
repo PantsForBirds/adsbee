@@ -2434,8 +2434,23 @@
             }
         });
 
-        // Handle copy/paste
+        // Input types that take no typed or pasted text.
+        const NON_TEXT_INPUT_TYPES = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+
+        /**
+         * True when target is a text box other than the console terminal's hidden input. The terminal's document-wide
+         * copy/paste handlers leave these alone so pasting into settings and feed fields works.
+         */
+        function isOtherTextEntry(target, terminalInput) {
+            if (!target || target === terminalInput) return false;
+            if (target.isContentEditable) return true;
+            if (target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return true;
+            return target.tagName === 'INPUT' && !NON_TEXT_INPUT_TYPES.has((target.type || 'text').toLowerCase());
+        }
+
+        // Copy/paste for the terminal; other text boxes keep the browser's own handling.
         document.addEventListener('copy', (e) => {
+            if (isOtherTextEntry(e.target, hiddenInput)) return;
             const selection = window.getSelection();
             if (selection.toString().length > 0) {
                 e.clipboardData.setData('text/plain', selection.toString());
@@ -2444,6 +2459,7 @@
         });
 
         document.addEventListener('paste', (e) => {
+            if (isOtherTextEntry(e.target, hiddenInput)) return;
             e.preventDefault();
             const paste = e.clipboardData.getData('text');
             currentCommand = currentCommand.substring(0, cursorPosition) + paste + currentCommand.substring(cursorPosition);
