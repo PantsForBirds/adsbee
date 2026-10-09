@@ -350,6 +350,7 @@ class CommsManager {
     bool wifi_sta_connected_ = false;
     int wifi_sta_network_index_ = 0;  // Stored network the station is joining or joined, 0-based.
     bool wifi_sta_scan_in_progress_ = false;
+    uint32_t wifi_sta_failed_mask_ = 0;  // Bit i: the last attempt on stored network i failed.
     bool wifi_sta_has_ip_ = false;
     uint32_t wifi_sta_connected_timestamp_ms_ = 0;  // This will loop every 49.7 days or so.
 

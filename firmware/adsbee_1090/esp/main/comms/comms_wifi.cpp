@@ -79,10 +79,23 @@ void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id
 }
 
 void wifi_access_point_task(void* pvParameters) { comms_manager.WiFiAccessPointTask(pvParameters); }
-inline void join_wifi(void* arg = nullptr) { comms_manager.WiFiStationJoin(); }
+
+// Station state is only touched on the default event loop task, so timer callbacks post an event instead of calling
+// WiFiStationJoin() from the esp_timer task.
+ESP_EVENT_DEFINE_BASE(ADSBEE_WIFI_EVENT);
+enum ADSBeeWiFiEvent : int32_t { kADSBeeWiFiEventJoin = 0 };
+inline void join_wifi(void* arg = nullptr) {
+    if (esp_event_post(ADSBEE_WIFI_EVENT, kADSBeeWiFiEventJoin, nullptr, 0, 0) != ESP_OK) {
+        CONSOLE_ERROR("join_wifi", "Failed to post a WiFi join event.");
+    }
+}
 /** End "Pass-Through" functions. **/
 
 void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    if (event_base == ADSBEE_WIFI_EVENT) {
+        if (event_id == kADSBeeWiFiEventJoin) WiFiStationJoin();
+        return;
+    }
     switch (event_id) {
         case WIFI_EVENT_AP_STACONNECTED: {
             // A new station has connected to the ADSBee's softAP network.
@@ -111,6 +124,8 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
             CONSOLE_ERROR("CommsManager::WiFiEventHandler",
                           "Disconnected from (or failed to connect to) ap SSID:%s - Disconnect reason : %d",
                           WiFiStationSSID(wifi_sta_network_index_), event->reason);
+            // Without an IP the attempt failed (e.g. wrong password): try other stored networks first next time.
+            if (!wifi_sta_has_ip_) wifi_sta_failed_mask_ |= 1u << wifi_sta_network_index_;
             wifi_sta_connected_ = false;
             wifi_sta_has_ip_ = false;
             if (wifi_sta_enabled) {
@@ -124,6 +139,7 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
             wifi_sta_connected_timestamp_ms_ = get_time_since_boot_ms();
             break;
         case WIFI_EVENT_SCAN_DONE:
+            // Second half of WiFiStationJoin(): the scan it started has finished.
             if (wifi_sta_scan_in_progress_) {
                 wifi_sta_scan_in_progress_ = false;
                 WiFiStationConnect(WiFiStationPickNetwork());
@@ -163,18 +179,13 @@ int CommsManager::WiFiStationPickNetwork() {
     static WiFiNetworkSelector::ScanResult results[kWiFiScanDefaultListSize];
     uint16_t num_records = kWiFiScanDefaultListSize;
     if (esp_wifi_scan_get_ap_records(&num_records, records) != ESP_OK) num_records = 0;
+    CONSOLE_INFO("CommsManager::WiFiStationPickNetwork", "WiFi scan done, %u access points seen.", num_records);
     for (uint16_t i = 0; i < num_records; i++) {
         results[i] = {.ssid = (const char*)records[i].ssid, .rssi_dbm = records[i].rssi};
     }
 
-    int index = WiFiNetworkSelector::Strongest(ssids, SettingsManager::Settings::kWiFiSTAMaxNumNetworks, results,
-                                               num_records);
-    if (index == WiFiNetworkSelector::kNone) {
-        // None seen (e.g. hidden SSIDs): try the stored networks in turn.
-        index = WiFiNetworkSelector::Next(ssids, SettingsManager::Settings::kWiFiSTAMaxNumNetworks,
-                                          wifi_sta_network_index_);
-    }
-    return index;
+    return WiFiNetworkSelector::Pick(ssids, SettingsManager::Settings::kWiFiSTAMaxNumNetworks, results, num_records,
+                                     wifi_sta_failed_mask_, wifi_sta_network_index_);
 }
 
 void CommsManager::WiFiStationConnect(int index) {
@@ -191,20 +202,26 @@ void CommsManager::WiFiStationConnect(int index) {
     }
 }
 
+// Runs on the event loop task (STA_START, or a delayed join_wifi() after a disconnect). With several stored networks
+// it only starts a non-blocking scan; WIFI_EVENT_SCAN_DONE then picks a network and connects.
 void CommsManager::WiFiStationJoin() {
+    if (wifi_sta_scan_in_progress_ || wifi_sta_connected_) return;  // A scan is pending, or a stale delayed join.
     const char* ssids[SettingsManager::Settings::kWiFiSTAMaxNumNetworks];
     if (WiFiStationUsableSSIDs(ssids) <= 1) {
         // One stored network: join it directly, which also finds hidden SSIDs.
         WiFiStationConnect(WiFiNetworkSelector::Next(ssids, SettingsManager::Settings::kWiFiSTAMaxNumNetworks, -1));
         return;
     }
-    wifi_sta_scan_in_progress_ = true;
-    if (esp_wifi_scan_start(nullptr, false) != ESP_OK) {
-        wifi_sta_scan_in_progress_ = false;
-        CONSOLE_WARNING("CommsManager::WiFiStationJoin", "WiFi scan failed, trying the next stored network.");
-        WiFiStationConnect(
-            WiFiNetworkSelector::Next(ssids, SettingsManager::Settings::kWiFiSTAMaxNumNetworks, wifi_sta_network_index_));
+    esp_err_t err = esp_wifi_scan_start(nullptr, false);
+    if (err == ESP_OK) {
+        wifi_sta_scan_in_progress_ = true;
+        return;
     }
+    // E.g. the Remote ID sniffer holds the radio: skip the scan and try the stored networks in turn.
+    CONSOLE_WARNING("CommsManager::WiFiStationJoin", "WiFi scan failed (%s), trying the next stored network.",
+                    esp_err_to_name(err));
+    WiFiStationConnect(WiFiNetworkSelector::Next(ssids, SettingsManager::Settings::kWiFiSTAMaxNumNetworks,
+                                                 wifi_sta_network_index_, wifi_sta_failed_mask_));
 }
 
 void CommsManager::WiFiAccessPointTask(void* pvParameters) {
@@ -306,6 +323,7 @@ bool CommsManager::WiFiInit() {
     HeapDiagnostics::Mark("wifi_init");
 
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(ADSBEE_WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     if (!ip_event_handler_was_initialized_) {
         IPInit();
     }
