@@ -2263,8 +2263,8 @@ body.dark-mode #map .leaflet-tile-pane {
 //
 // The page reads AT+DEVICE_INFO? from the receiver and trades its unique ID and OTA keys for a short-lived token
 // (POST auth). With that token it lists releases (GET releases?channel=stable|rc) and downloads one file
-// (GET files/<tag>/<name>), which the page's own uploader then flashes. The OTA keys are sent only to the service and
-// never shown or logged. A receiver without valid keys (DIY builds) gets a link to the GitHub releases page instead.
+// (GET files/<tag>/<name>), which the page's own uploader then flashes. A receiver without valid keys (DIY builds) gets
+// a link to the GitHub releases page instead.
 //
 // The logic has no DOM access and is tested in node (test/firmware_release.test.js); mount() is the UI. The 1090 and
 // 1421 consoles carry verbatim copies (test/firmware_release_drift.test.js).
@@ -2471,11 +2471,11 @@ body.dark-mode #map .leaflet-tile-pane {
     }
 
     /**
-     * Picks what to offer from a releases listing. channel 'stable' offers the rollout's recommended version, also when
-     * it is older than the running one (an admin rollback); 'rc' offers the newest release listed and never a
-     * downgrade. Returns {state, release, version, asset, current}, state one of:
-     *   update (newer than running), rollback (recommended is older), current (same), ahead (running is newer than
-     *   the RC offer), unknown (running version unreadable), none (nothing to offer).
+     * Picks what to offer from a releases listing. channel 'stable' offers the rollout's recommended version; 'rc'
+     * offers the newest release listed. An older version is offered only when the service flags an admin rollback
+     * (listing.rollback), on either channel. Returns {state, release, version, asset, current}, state one of:
+     *   update (newer than running), rollback, current (same), ahead (running is newer than the offer),
+     *   unknown (running version unreadable), none (nothing to offer).
      */
     function selectUpdate(listing, { product, current, channel }) {
         const p = PRODUCTS[product];
@@ -2488,18 +2488,15 @@ body.dark-mode #map .leaflet-tile-pane {
             if (v && asset && asset.url) cands.push({ release: r, version: v, asset });
         }
         cands.sort((a, b) => compareVersions(b.version, a.version));
-        let best;
-        if (channel === 'rc') {
-            best = cands[0];
-        } else {
-            const rec = parseVersion(listing.recommended);
-            best = rec && cands.find((c) => compareVersions(c.version, rec) === 0);
-        }
+        const rec = parseVersion(listing.recommended);
+        const recommended = rec && cands.find((c) => compareVersions(c.version, rec) === 0);
+        const rollback = listing.rollback === true && recommended && cur && compareVersions(rec, cur) < 0;
+        const best = rollback ? recommended : channel === 'rc' ? cands[0] : recommended;
         if (!best) return { state: 'none', current: cur };
         let state = 'unknown';
         if (cur) {
             const c = compareVersions(best.version, cur);
-            state = c > 0 ? 'update' : c === 0 ? 'current' : channel === 'rc' ? 'ahead' : 'rollback';
+            state = c > 0 ? 'update' : c === 0 ? 'current' : rollback ? 'rollback' : 'ahead';
         }
         return { state, release: best.release, version: best.version, asset: best.asset, current: cur };
     }
@@ -2552,11 +2549,6 @@ body.dark-mode #map .leaflet-tile-pane {
         if (!subtle) return sha256Js(bytes);
         const d = new Uint8Array(await subtle.digest('SHA-256', bytes));
         return Array.from(d, (x) => x.toString(16).padStart(2, '0')).join('');
-    }
-
-    /** Hides OTA key values in console text shown to the user. */
-    function redactKeys(text) {
-        return text.replace(/(OTA Key \d+:\s*)\S+/g, '$1••••');
     }
 
     /**
@@ -2706,7 +2698,7 @@ body.dark-mode #map .leaflet-tile-pane {
 
     const api = { DEFAULT_API_BASE, API_BASE_KEY, GITHUB_RELEASES_URL, RC_WARNING, DEVICE_INFO_LINE, ReleaseError,
                   FirmwareApi, parseVersion, formatVersion, compareVersions, parseDeviceInfo, runningVersion,
-                  selectUpdate, sha256Js, sha256Hex, redactKeys, mount };
+                  selectUpdate, sha256Js, sha256Hex, mount };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else root.AdsbeeFirmwareRelease = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -2844,7 +2836,6 @@ body.dark-mode #map .leaflet-tile-pane {
         }
 
         function appendToTerminal(text) {
-            text = text.replace(/(OTA Key \d+:\s*)\S+/g, '$1••••');  // Never show the OTA keys.
             // Process ANSI escape sequences for colors. Text between sequences is written as
             // DOM text nodes, which escape HTML entities by construction.
             const ansiRegex = /\x1b\[([0-9;]*)m/g;
@@ -4330,7 +4321,7 @@ class ConsoleWebSocket {
         this.paused = false;
         this.captureCallback = null;
         this._reconnectTimer = null;
-        this.muteUntil = 0;  // The firmware update check hides the terminal while it reads the OTA keys.
+        this.muteUntil = 0;  // The firmware update check keeps its AT+DEVICE_INFO? out of the terminal.
         this.init();
     }
 
@@ -7188,7 +7179,7 @@ class Settings1090Transport {
                 product: '1090',
                 client: 'console',
                 // Over the serial AT queue (hidden from the terminal) or the network settings socket. The ESP32 sends
-                // console output to every socket, so the network terminal is muted while the OTA keys go by.
+                // console output to every socket, so the network terminal is muted meanwhile.
                 readDeviceInfo: async () => {
                     if (connectionManager.state !== 'connected') throw new Error('Not connected.');
                     const mute = (ms) => { if (connectionManager.mode === 'network' && consoleWebSocket) consoleWebSocket.muteUntil = Date.now() + ms; };

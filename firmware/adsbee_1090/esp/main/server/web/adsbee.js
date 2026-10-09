@@ -24,7 +24,7 @@ class ConsoleWebSocket {
         this.paused = false;
         this.captureCallback = null;
         this._reconnectTimer = null;
-        this.muteUntil = 0;  // The firmware update check hides the terminal while it reads the OTA keys.
+        this.muteUntil = 0;  // The firmware update check keeps its AT+DEVICE_INFO? out of the terminal.
         this.init();
     }
 

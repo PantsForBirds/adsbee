@@ -288,7 +288,6 @@
         }
 
         function appendToTerminal(text) {
-            text = text.replace(/(OTA Key \d+:\s*)\S+/g, '$1••••');  // Never show the OTA keys.
             // Process ANSI escape sequences for colors. Text between sequences is written as
             // DOM text nodes, which escape HTML entities by construction.
             const ansiRegex = /\x1b\[([0-9;]*)m/g;
@@ -632,7 +631,7 @@
 
         // Initialize the uploader when the page loads
         // AT+DEVICE_INFO? for the firmware update check, over a separate /console socket like the Settings tab's. The
-        // ESP32 sends console output to every socket, so the terminal is muted while the OTA keys go by.
+        // ESP32 sends console output to every socket, so the terminal is muted meanwhile.
         async function readDeviceInfo() {
             const transport = new Settings1090Transport(WS_CONFIG.console_ws_url);
             if (consoleWebSocket) consoleWebSocket.muteUntil = Date.now() + 10000;

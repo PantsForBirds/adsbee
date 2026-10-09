@@ -72,12 +72,6 @@ test('parseDeviceInfo builds the auth body for each product', () => {
     assert.doesNotMatch('ESP32 WiFi AP MAC Address: 00:11:22:33:44:55', fr.DEVICE_INFO_LINE);
 });
 
-test('redactKeys hides OTA key values', () => {
-    const out = fr.redactKeys('Part Code: x\r\nOTA Key 0: 3045abc\r\nOTA Key 1: def\r\n');
-    assert.ok(!out.includes('3045abc') && !out.includes('def'));
-    assert.match(out, /OTA Key 0: ••••/);
-});
-
 const listing = (recommended, releases) => ({ recommended, releases: releases.map((r) => ({
     version: r.version, tag: r.tag, prerelease: /-rc/.test(r.version),
     assets: r.assets.map((a) => Object.assign({ url: `files/${r.tag}/${a.name}`, size: 1, sha256: 'a'.repeat(64) }, a)),
@@ -104,12 +98,17 @@ test('RC channel offers the newest listed release (rc10 > rc6)', () => {
     assert.strictEqual(s.release.version, '0.9.1-rc10');
 });
 
-test('stable offers a lower recommendation as a rollback; RC never downgrades; equal is "current"', () => {
+test('downgrades only on an admin rollback, on either channel; equal is "current"', () => {
     const l = listing('0.9.0', [REL('0.9.0', OTA), REL('0.9.1-rc6', OTA)]);
-    const back = fr.selectUpdate(l, { product: 1090, current: '0.9.1-rc6', channel: 'stable' });
-    assert.strictEqual(back.state, 'rollback');
-    assert.strictEqual(back.release.version, '0.9.0');
+    // An RC tester ahead of stable is not offered 0.9.0.
+    assert.strictEqual(fr.selectUpdate(l, { product: 1090, current: '0.9.1-rc6', channel: 'stable' }).state, 'ahead');
     assert.strictEqual(fr.selectUpdate(l, { product: 1090, current: '0.9.1-rc7', channel: 'rc' }).state, 'ahead');
+    const rolled = Object.assign({}, l, { rollback: true });
+    for (const channel of ['stable', 'rc']) {
+        const s = fr.selectUpdate(rolled, { product: 1090, current: '0.9.1-rc6', channel });
+        assert.strictEqual(s.state, 'rollback', channel);
+        assert.strictEqual(s.release.version, '0.9.0');
+    }
     assert.strictEqual(fr.selectUpdate(l, { product: 1090, current: '0.9.1-rc6', channel: 'rc' }).state, 'current');
     assert.strictEqual(fr.selectUpdate(l, { product: 1090, current: 'garbage', channel: 'rc' }).state, 'unknown');
 });

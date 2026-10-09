@@ -55,7 +55,7 @@ function startMock({ releases = [], recommended = null, files = {}, port = 0, to
         state.requests.push(`${req.method} ${url.pathname}${url.search}`);
         log(`${req.method} ${url.pathname}${url.search}`);
         if (req.method === 'OPTIONS') return send(204, undefined);
-        // Test control: /__set?recommended=<version|null>&rate_limited=0|1
+        // Test control: /__set?[product=adsbee_1090&]recommended=<version|null>&rollback=0|1&rate_limited=0|1
         if (url.pathname === '/__set') {
             if (url.searchParams.has('recommended')) {
                 const r = url.searchParams.get('recommended');
@@ -64,6 +64,7 @@ function startMock({ releases = [], recommended = null, files = {}, port = 0, to
                 if (product) state.recommended = Object.assign(typeof state.recommended === 'object' && state.recommended ? state.recommended : {}, { [product]: v });
                 else state.recommended = v;
             }
+            if (url.searchParams.has('rollback')) state.rollback = url.searchParams.get('rollback') === '1';
             if (url.searchParams.has('rate_limited')) state.rateLimited = url.searchParams.get('rate_limited') === '1';
             return send(200, { recommended: state.recommended, rate_limited: state.rateLimited });
         }
@@ -105,6 +106,7 @@ function startMock({ releases = [], recommended = null, files = {}, port = 0, to
 
         if (route === 'releases' && req.method === 'GET') {
             return send(200, { product: tok.product, current: null, recommended: recommendedFor(tok.product),
+                               rollback: state.rollback === true,
                                releases: listing(url.searchParams.get('channel'), tok.product) });
         }
         const f = /^files\/([^/]+)\/([^/]+)$/.exec(route);
