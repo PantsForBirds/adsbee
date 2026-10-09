@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/png" href="favicon.png">
     <script src="ota_updater.js"></script>
+    <script src="firmware_release.js"></script>
     <script src="adsbee.js"></script>
     <script src="settings.js"></script>
 </head>
@@ -78,6 +79,7 @@
                 </div>
 
                 <input type="file" id="settingsFile" accept=".settings" style="display: none;">
+                <div id="fw-check"></div>
 
 
             </div>
@@ -286,6 +288,7 @@
         }
 
         function appendToTerminal(text) {
+            text = text.replace(/(OTA Key \d+:\s*)\S+/g, '$1••••');  // Never show the OTA keys.
             // Process ANSI escape sequences for colors. Text between sequences is written as
             // DOM text nodes, which escape HTML entities by construction.
             const ansiRegex = /\x1b\[([0-9;]*)m/g;
@@ -628,8 +631,29 @@
         }
 
         // Initialize the uploader when the page loads
+        // AT+DEVICE_INFO? for the firmware update check, over a separate /console socket like the Settings tab's. The
+        // ESP32 sends console output to every socket, so the terminal is muted while the OTA keys go by.
+        async function readDeviceInfo() {
+            const transport = new Settings1090Transport(WS_CONFIG.console_ws_url);
+            if (consoleWebSocket) consoleWebSocket.muteUntil = Date.now() + 10000;
+            try {
+                return await transport.sendCommand('AT+DEVICE_INFO?', {
+                    expect: AdsbeeFirmwareRelease.DEVICE_INFO_LINE, terminator: 'quiet', quietMs: 1500, timeoutMs: 6000,
+                });
+            } finally {
+                transport.disconnect();
+                if (consoleWebSocket) consoleWebSocket.muteUntil = Date.now() + 1000;
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
-            new FirmwareUploader(HOST_URI);
+            const uploader = new FirmwareUploader(HOST_URI);
+            const firmwareCheck = AdsbeeFirmwareRelease.mount(document.getElementById('fw-check'), {
+                product: '1090',
+                readDeviceInfo,
+                install: (bytes, name) => uploader.uploadFirmware(new File([bytes], name)),
+            });
+            if (metricsWebSocket) metricsWebSocket.onAutoUpdate = firmwareCheck.setAutoUpdate;
             new SettingsManager(HOST_URI);
             document.getElementById('sidebar-close').addEventListener('click', () => {
                 if (liveMap) liveMap.deselect();

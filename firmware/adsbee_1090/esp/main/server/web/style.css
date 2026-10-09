@@ -359,6 +359,61 @@ body {
     cursor: not-allowed;
 }
 
+/* Firmware update check (firmware_release.js) */
+.fw-check {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.fw-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.fw-row .tools-button {
+    width: auto;
+    margin: 0;
+    padding: 8px 14px;
+}
+
+.fw-rc,
+.fw-muted {
+    color: var(--text-secondary);
+}
+
+.fw-rc {
+    cursor: pointer;
+    user-select: none;
+}
+
+.fw-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.fw-status a {
+    color: inherit;
+}
+
+.fw-ok {
+    color: #16a34a;
+}
+
+.fw-bad {
+    color: #dc2626;
+}
+
+.fw-rc-warning {
+    color: #d97706;
+    font-size: 0.85em;
+}
+
 .progress-container {
     margin-top: 16px;
     display: none;

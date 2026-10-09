@@ -24,6 +24,7 @@ class ConsoleWebSocket {
         this.paused = false;
         this.captureCallback = null;
         this._reconnectTimer = null;
+        this.muteUntil = 0;  // The firmware update check hides the terminal while it reads the OTA keys.
         this.init();
     }
 
@@ -41,7 +42,7 @@ class ConsoleWebSocket {
         // Listen for messages
         this.ws.addEventListener('message', (event) => {
             const dispatch = (text) => {
-                appendToTerminal(text);
+                if (Date.now() >= this.muteUntil) appendToTerminal(text);
                 if (this.captureCallback) this.captureCallback(text);
             };
             if (typeof event.data === 'string') {
@@ -290,6 +291,7 @@ class MetricsWebSocket {
         this.noiseFloorCard = null;
         this.feedSlotMap = {};
         this.onGNSSStatus = null;
+        this.onAutoUpdate = null;
         this.connect();
         this.feedsCountEl = document.getElementById('feed-count');
         this.container = document.getElementById('metrics-container');
@@ -465,6 +467,8 @@ class MetricsWebSocket {
                     if (deviceStatus.gnss && this.onGNSSStatus) {
                         this.onGNSSStatus(deviceStatus.gnss);
                     }
+                    // ESP32 automatic updates, {enabled, state, version}, from firmware that reports it.
+                    if (this.onAutoUpdate) this.onAutoUpdate(deviceStatus.auto_update || null);
                 }
             } catch (error) {
                 console.error('Error parsing WebSocket message:', error);
