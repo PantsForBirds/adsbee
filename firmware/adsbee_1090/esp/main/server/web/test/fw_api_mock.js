@@ -1,10 +1,12 @@
 // Mock of the adsbee.aero firmware service (API v1, adsbee-aero docs/firmware_api.md) for the web UI tests and bench
-// runs. In-memory; accepts a device when ota_keys[0] === `valid-<unique_id>`.
+// runs. In-memory; accepts a device when ota_keys[0] === `valid-<unique_id>`, or any non-empty keys with acceptAnyKey
+// (bench runs with real receivers; MOCK_ACCEPT_ANY_KEY=1 on the command line).
 //
 //   const mock = await startMock({ releases, recommended, files });   // mock.base = 'http://127.0.0.1:<port>/api/fw/v1/'
 //   node test/fw_api_mock.js <port> <release dir> [recommended]       // serves <dir>/<tag>/<file>; logs requests
 //
 // releases: [{tag, version, prerelease, notes_url, assets: [{name, kind}]}]; sizes and SHA-256 come from files.
+// recommended: a version, or {adsbee_1090: version, adsbee_1421: version}.
 'use strict';
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -20,15 +22,18 @@ const CORS = {
 };
 
 function startMock({ releases = [], recommended = null, files = {}, port = 0, tokenTtlMs = 3600000,
-                     log = () => {} } = {}) {
+                     acceptAnyKey = false, log = () => {} } = {}) {
     const state = { releases, recommended, files, tokens: new Map(), requests: [], authBodies: [],
                     rateLimited: false };
     const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
     const isPre = (r) => /-(rc|alpha|beta)\d*$/.test(r.version);
-    const listing = (channel) => {
-        const sorted = [...state.releases].sort((a, b) => cmp(b.version, a.version));
+    const recommendedFor = (product) => (state.recommended && typeof state.recommended === 'object'
+        ? state.recommended[product] || null : state.recommended);
+    const listing = (channel, product) => {
+        const sorted = state.releases.filter((r) => r.tag.startsWith(`${product}-`))
+            .sort((a, b) => cmp(b.version, a.version));
         const list = channel === 'rc' ? sorted
-            : sorted.filter((r) => !isPre(r) || r.version === state.recommended);
+            : sorted.filter((r) => !isPre(r) || r.version === recommendedFor(product));
         return list.map((r) => ({
             version: r.version, tag: r.tag, prerelease: isPre(r), published_at: r.published_at || null,
             notes_url: r.notes_url || null,
@@ -54,7 +59,10 @@ function startMock({ releases = [], recommended = null, files = {}, port = 0, to
         if (url.pathname === '/__set') {
             if (url.searchParams.has('recommended')) {
                 const r = url.searchParams.get('recommended');
-                state.recommended = r === 'null' ? null : r;
+                const product = url.searchParams.get('product');
+                const v = r === 'null' ? null : r;
+                if (product) state.recommended = Object.assign(typeof state.recommended === 'object' && state.recommended ? state.recommended : {}, { [product]: v });
+                else state.recommended = v;
             }
             if (url.searchParams.has('rate_limited')) state.rateLimited = url.searchParams.get('rate_limited') === '1';
             return send(200, { recommended: state.recommended, rate_limited: state.rateLimited });
@@ -76,23 +84,28 @@ function startMock({ releases = [], recommended = null, files = {}, port = 0, to
             if (!body.unique_id || !Array.isArray(body.ota_keys) || !/^adsbee_(1090|1421)$/.test(body.product)) {
                 return send(400, { error: 'bad_request', detail: 'missing fields' });
             }
-            if (body.ota_keys[0] !== `valid-${body.unique_id}`) return send(401, { error: 'bad_key' });
+            if (/^WRONG/.test(body.part_code)) {  // Test stand-in for a part code of the other product.
+                return send(403, { error: 'wrong_product' });
+            }
+            const ok = acceptAnyKey ? body.ota_keys.length === 2 && body.ota_keys.every((k) => /^[0-9a-fA-F]{64,}$/.test(k))
+                : body.ota_keys[0] === `valid-${body.unique_id}`;
+            if (!ok) return send(401, { error: 'bad_key' });
             const token = crypto.randomBytes(16).toString('hex');
-            state.tokens.set(token, Date.now() + tokenTtlMs);
+            state.tokens.set(token, { exp: Date.now() + tokenTtlMs, product: body.product });
             return send(200, { token, expires_in: Math.round(tokenTtlMs / 1000) });
         }
 
         const m = /^Bearer (\w+)$/.exec(req.headers.authorization || '');
-        const exp = m && state.tokens.get(m[1]);
-        if (!exp) return send(401, { error: 'bad_token' });
-        if (exp < Date.now()) {
+        const tok = m && state.tokens.get(m[1]);
+        if (!tok) return send(401, { error: 'bad_token' });
+        if (tok.exp < Date.now()) {
             state.tokens.delete(m[1]);
             return send(401, { error: 'token_expired' });
         }
 
         if (route === 'releases' && req.method === 'GET') {
-            return send(200, { product: 'adsbee_1090', current: null, recommended: state.recommended,
-                               releases: listing(url.searchParams.get('channel')) });
+            return send(200, { product: tok.product, current: null, recommended: recommendedFor(tok.product),
+                               releases: listing(url.searchParams.get('channel'), tok.product) });
         }
         const f = /^files\/([^/]+)\/([^/]+)$/.exec(route);
         if (f && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -143,6 +156,7 @@ if (require.main === module) {
     const [port, dir, recommended] = process.argv.slice(2);
     const { releases, files } = loadDir(dir);
     startMock({ releases, files, recommended: recommended || null, port: +port,
+                acceptAnyKey: process.env.MOCK_ACCEPT_ANY_KEY === '1',
                 log: (l) => console.log(new Date().toISOString(), l) })
         .then((m) => console.log(`mock firmware service at ${m.base}: ${releases.map((r) => r.tag).join(' ')}`));
 }

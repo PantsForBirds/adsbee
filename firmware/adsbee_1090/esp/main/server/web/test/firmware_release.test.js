@@ -18,6 +18,7 @@ const INFO_1090 = [
     'OTA Key 0: valid-E46478B14B4C1F23',
     'OTA Key 1: 3045022100abcdef',
     'ESP32 Firmware Version: 0.9.1-rc5',
+    'ESP32 Base MAC Address: DC:54:75:D2:6C:24',
 ];
 const INFO_1421 = [
     'Part Code: 0020-0001-1421',
@@ -58,8 +59,9 @@ test('parseDeviceInfo builds the auth body for each product', () => {
     assert.deepStrictEqual(fr.parseDeviceInfo(INFO_1090, '1090'), {
         product: 'adsbee_1090', unique_id: 'E46478B14B4C1F23', part_code: '0010-0021-1090U',
         ota_keys: ['valid-E46478B14B4C1F23', '3045022100abcdef'],
-        versions: { rp2040: '0.9.1-rc5', esp32: '0.9.1-rc5' },
+        versions: { rp2040: '0.9.1-rc5', esp32: '0.9.1-rc5' }, mac_address: 'DC:54:75:D2:6C:24',
     });
+    assert.ok(!('mac_address' in fr.parseDeviceInfo(INFO_1090.slice(0, -1), '1090')), 'MAC only when printed');
     const i1421 = fr.parseDeviceInfo(INFO_1421, '1421');
     assert.strictEqual(i1421.product, 'adsbee_1421');
     assert.strictEqual(i1421.unique_id, '00124B0029A1B2C3');
@@ -67,7 +69,7 @@ test('parseDeviceInfo builds the auth body for each product', () => {
     assert.strictEqual(fr.runningVersion(i1421), '0.3.10');
     assert.throws(() => fr.parseDeviceInfo(['Part Code: x'], '1090'), (e) => e.code === 'device');
     for (const l of INFO_1090) assert.match(l, fr.DEVICE_INFO_LINE);
-    assert.doesNotMatch('ESP32 Base MAC Address: 00:11:22:33:44:55', fr.DEVICE_INFO_LINE);
+    assert.doesNotMatch('ESP32 WiFi AP MAC Address: 00:11:22:33:44:55', fr.DEVICE_INFO_LINE);
 });
 
 test('redactKeys hides OTA key values', () => {
@@ -102,9 +104,11 @@ test('RC channel offers the newest listed release (rc10 > rc6)', () => {
     assert.strictEqual(s.release.version, '0.9.1-rc10');
 });
 
-test('running newer than the offer is "ahead" (no downgrade); equal is "current"', () => {
+test('stable offers a lower recommendation as a rollback; RC never downgrades; equal is "current"', () => {
     const l = listing('0.9.0', [REL('0.9.0', OTA), REL('0.9.1-rc6', OTA)]);
-    assert.strictEqual(fr.selectUpdate(l, { product: 1090, current: '0.9.1-rc6', channel: 'stable' }).state, 'ahead');
+    const back = fr.selectUpdate(l, { product: 1090, current: '0.9.1-rc6', channel: 'stable' });
+    assert.strictEqual(back.state, 'rollback');
+    assert.strictEqual(back.release.version, '0.9.0');
     assert.strictEqual(fr.selectUpdate(l, { product: 1090, current: '0.9.1-rc7', channel: 'rc' }).state, 'ahead');
     assert.strictEqual(fr.selectUpdate(l, { product: 1090, current: '0.9.1-rc6', channel: 'rc' }).state, 'current');
     assert.strictEqual(fr.selectUpdate(l, { product: 1090, current: 'garbage', channel: 'rc' }).state, 'unknown');
@@ -153,6 +157,8 @@ test('a device without valid keys gets no-keys', async () => {
         const api = new fr.FirmwareApi({ base: mock.base });
         const info = fr.parseDeviceInfo(INFO_1090.map((l) => l.replace(/^OTA Key 0: .*/, 'OTA Key 0: bogus')), '1090');
         await assert.rejects(api.auth(info), (e) => e.code === 'no-keys');
+        await assert.rejects(api.auth(Object.assign({}, fr.parseDeviceInfo(INFO_1090, '1090'), { part_code: 'WRONG-1421' })),
+                             (e) => e.code === 'wrong-product');
     } finally {
         await mock.close();
     }

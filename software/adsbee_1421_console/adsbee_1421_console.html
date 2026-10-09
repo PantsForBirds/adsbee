@@ -2151,18 +2151,19 @@
                        'firmware versions.';
     // Per product: the file the page's uploader takes, and the AT+DEVICE_INFO? lines that identify the device.
     const PRODUCTS = {
-        1090: { kind: 'ota', asset: /\.ota$/, idLine: 'RP2040 Flash Unique ID',
+        // Units provisioned before 2026 have keys that sign the ESP32 base MAC; the service tries both.
+        1090: { kind: 'ota', asset: /\.ota$/, idLine: 'RP2040 Flash Unique ID', macLine: 'ESP32 Base MAC Address',
                 versions: { rp2040: 'RP2040 Firmware Version', esp32: 'ESP32 Firmware Version' } },
         1421: { kind: 'hex', asset: /\.hex$/, idLine: 'CC1314R10 Unique ID',
                 versions: { cc1314: 'CC1314R10 Firmware Version' } },
     };
     // AT+DEVICE_INFO? lines the pages capture. Anything else (MAC addresses etc.) is left out.
-    const DEVICE_INFO_LINE = /^(Part Code|RP2040 Flash Unique ID|CC1314R10 Unique ID|OTA Key \d+|RP2040 Firmware Version|ESP32 Firmware Version|CC1314R10 Firmware Version):/;
+    const DEVICE_INFO_LINE = /^(Part Code|RP2040 Flash Unique ID|CC1314R10 Unique ID|OTA Key \d+|RP2040 Firmware Version|ESP32 Firmware Version|ESP32 Base MAC Address|CC1314R10 Firmware Version):/;
 
     class ReleaseError extends Error {
         constructor(code, message, retryAt) {
             super(message);
-            // offline | no-keys | rate-limit | bad-response | download | checksum | device
+            // offline | no-keys | wrong-product | rate-limit | bad-response | download | checksum | device
             this.code = code;
             this.retryAt = retryAt || null;
         }
@@ -2203,8 +2204,10 @@
             const v = get(line);
             if (v) versions[k] = v;
         }
-        return { product: `adsbee_${product}`, unique_id: uniqueId, part_code: get('Part Code') || '',
-                 ota_keys: otaKeys, versions };
+        const body = { product: `adsbee_${product}`, unique_id: uniqueId, part_code: get('Part Code') || '',
+                       ota_keys: otaKeys, versions };
+        if (p.macLine && get(p.macLine)) body.mac_address = get(p.macLine);
+        return body;
     }
 
     /** Running firmware version from the parsed device info: the RP2040 on the 1090, the CC1314 on the 1421. */
@@ -2262,6 +2265,13 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(Object.assign({}, info, { client: this.client })),
             });
+            if (resp.status === 403) {
+                const json = await resp.json().catch(() => null);
+                if (json && json.error === 'wrong_product') {
+                    throw new ReleaseError('wrong-product', `This receiver's part code doesn't belong to an ADSBee ` +
+                        `${info.product.slice(7)}.`);
+                }
+            }
             if (resp.status === 401 || resp.status === 403) {
                 throw new ReleaseError('no-keys', 'This receiver has no valid OTA keys, so the firmware service ' +
                     'can\'t offer updates. Download the firmware from GitHub and use Upload Firmware.');
@@ -2332,10 +2342,11 @@
     }
 
     /**
-     * Picks what to offer from a releases listing. channel 'stable' offers only the rollout's recommended version;
-     * 'rc' offers the newest release listed. Returns {state, release, asset, current}, state one of:
-     *   update (newer than running), current (same), ahead (running is newer; never offered as a downgrade),
-     *   unknown (running version unreadable), none (nothing to offer).
+     * Picks what to offer from a releases listing. channel 'stable' offers the rollout's recommended version, also when
+     * it is older than the running one (an admin rollback); 'rc' offers the newest release listed and never a
+     * downgrade. Returns {state, release, version, asset, current}, state one of:
+     *   update (newer than running), rollback (recommended is older), current (same), ahead (running is newer than
+     *   the RC offer), unknown (running version unreadable), none (nothing to offer).
      */
     function selectUpdate(listing, { product, current, channel }) {
         const p = PRODUCTS[product];
@@ -2359,7 +2370,7 @@
         let state = 'unknown';
         if (cur) {
             const c = compareVersions(best.version, cur);
-            state = c > 0 ? 'update' : c === 0 ? 'current' : 'ahead';
+            state = c > 0 ? 'update' : c === 0 ? 'current' : channel === 'rc' ? 'ahead' : 'rollback';
         }
         return { state, release: best.release, version: best.version, asset: best.asset, current: cur };
     }
@@ -2455,7 +2466,8 @@
         const github = (title) => h('a', { href: GITHUB_RELEASES_URL, target: '_blank', rel: 'noopener',
                                            textContent: 'GitHub ↗', title });
         const fail = (e) => {
-            const short = { offline: 'offline', 'no-keys': 'no keys', 'rate-limit': 'busy', checksum: 'checksum',
+            const short = { offline: 'offline', 'no-keys': 'no keys', 'wrong-product': 'wrong product',
+                            'rate-limit': 'busy', checksum: 'checksum',
                             download: 'download failed', device: 'no device' }[e.code] || 'error';
             show(h('span', { className: 'fw-bad', textContent: `⚠ ${short}`, title: e.message || String(e) }),
                  (e.code === 'offline' || e.code === 'no-keys') &&
@@ -2480,9 +2492,11 @@
                      notes(sel.release));
                 return;
             }
+            const back = sel.state === 'rollback';
             show(h('span', { textContent: `${cur} → ${latest}`,
-                             title: sel.state === 'unknown' ? 'Running version unknown.' : 'Update available.' }),
-                 h('button', { className: 'tools-button fw-update-btn', textContent: '⇣ Update',
+                             title: back ? `The rollout moved this receiver back to ${latest}.`
+                                 : sel.state === 'unknown' ? 'Running version unknown.' : 'Update available.' }),
+                 h('button', { className: 'tools-button fw-update-btn', textContent: back ? '↓ Roll back' : '⇣ Update',
                                title: `Download ${sel.asset.name} and install it`, onclick: () => update(sel) }),
                  notes(sel.release));
         }
@@ -2521,7 +2535,8 @@
             const to = formatVersion(sel.version);
             const from = sel.current ? formatVersion(sel.current) : 'unknown';
             const isRc = sel.release.prerelease || sel.version.rc > 0;
-            if (!confirm(`Update ADSBee ${opts.product} firmware ${from} → ${to}?` + (isRc ? `\n\n${RC_WARNING}` : ''))) {
+            const verb = sel.state === 'rollback' ? 'Roll back' : 'Update';
+            if (!confirm(`${verb} ADSBee ${opts.product} firmware ${from} → ${to}?` + (isRc ? `\n\n${RC_WARNING}` : ''))) {
                 return;
             }
             busy = true;
