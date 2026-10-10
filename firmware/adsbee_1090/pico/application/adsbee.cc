@@ -309,7 +309,7 @@ uint16_t __time_critical_func(ADSBee::GetMLATJitterPWMSliceCounts)() {
     return pwm_hw->slice[mlat_jitter_pwm_slice_].ctr;
 }
 
-int __time_critical_func(ADSBee::GetNoiseFloordBm)() { return AD8313MilliVoltsTodBm(noise_floor_mv_); }
+int __time_critical_func(ADSBee::GetNoiseFloordBm)() { return DetectorMilliVoltsTodBm(noise_floor_mv_); }
 
 int ADSBee::GetNoiseFloorMilliVolts() { return noise_floor_mv_; }
 
@@ -435,14 +435,21 @@ void __time_critical_func(ADSBee::OnDemodBegin)(uint gpio) {
     rx_packet_[sm_index].mlat_48mhz_64bit_counts = mlat_48mhz_64bit_counts;  // Save this to modify later.
     last_demod_begin_timestamp_us_ = time_us_32();  // Lets the noise floor sampler avoid this packet.
 
-    ReadSignalStrengthMilliVoltsNonBlockingBegin();  // Kick off ADC read.
+    if (!r1090_rssi::PacketSampleAtEnd(bsp.r1090_rf_frontend_version)) {
+        ReadSignalStrengthMilliVoltsNonBlockingBegin();  // Kick off ADC read.
+    }
 }
 
 void __time_critical_func(ADSBee::OnDemodComplete)() {
 #ifdef DEBUG_ISR_TIMING
     uint16_t isr_start_counts = GetMLATJitterPWMSliceCounts();
 #endif
-    int signal_strength_dbm = AD8313MilliVoltsTodBm(ReadSignalStrengthMilliVoltsNonBlockingComplete());
+    if (r1090_rssi::PacketSampleAtEnd(bsp.r1090_rf_frontend_version)) {
+        // Sample now, while the low pass on the RSSI line still holds the packet's settled level (~2us conversion).
+        ReadSignalStrengthMilliVoltsNonBlockingBegin();
+    }
+    int signal_strength_dbm = r1090_rssi::PacketMilliVoltsTodBm(ReadSignalStrengthMilliVoltsNonBlockingComplete(),
+                                                                noise_floor_mv_, bsp.r1090_rf_frontend_version);
 
     // Figure out which state machines were triggered and get things set up to read packets from them. Don't stop
     // them, let them finish chewing since they run at a lower clock rate.
@@ -660,7 +667,9 @@ int __time_critical_func(ADSBee::ReadSignalStrengthMilliVoltsNonBlockingComplete
     return ADC_COUNTS_TO_MV(rssi_adc_counts);
 }
 
-int ADSBee::ReadSignalStrengthdBmBlocking() { return AD8313MilliVoltsTodBm(ReadSignalStrengthMilliVoltsBlocking()); }
+int ADSBee::ReadSignalStrengthdBmBlocking() {
+    return DetectorMilliVoltsTodBm(ReadSignalStrengthMilliVoltsBlocking());
+}
 
 int ADSBee::ReadTLMilliVolts() {
     // Read back the low level TL bias output voltage.
