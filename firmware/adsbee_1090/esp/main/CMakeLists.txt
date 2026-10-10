@@ -62,6 +62,7 @@ idf_component_register(
         "server/web/adsbee.js"
         "server/web/settings.js"
         "server/web/ota_updater.js"
+        "server/web/firmware_release.js"
         "server/web/favicon.png"
 )
 

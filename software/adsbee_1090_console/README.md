@@ -74,6 +74,23 @@ serial stream is diverted to the updater (status pollers pause). `AT+OTA=BOOT`
 reboots the RP2040 and re-enumerates the USB port; the page reconnects
 automatically when it reappears.
 
+## Firmware update check
+
+The nav bar shows the installed firmware version with a status dot (gray: not checked, offline
+or no keys; spinner: checking or installing; green: up to date; amber: update available; red:
+failed). On connect the page reads `AT+DEVICE_INFO?` (unique ID, part code, OTA keys), trades it
+with the adsbee.aero firmware service (API v1) for a short-lived token and lists releases; the
+listing is cached for 6 h and refreshed at that interval. Clicking the version opens a dropdown:
+the stable release the service's rollout assigns to this receiver with **⇣ Update** (or
+`✓ up to date`), **RC** for release candidates (with a warning), release notes, and **↻** to
+check now. Update downloads the `.ota`, checks its size and SHA-256 and installs it with the same
+upload path as Upload Firmware, then checks again when the receiver is back. Receivers without
+valid OTA keys get a link to the GitHub releases for a manual upload. In network mode the
+terminal is muted while the page reads `AT+DEVICE_INFO?`.
+`localStorage['adsbee-fw-api']` overrides the service URL for testing. The code is
+`firmware_release.js` from the device web UI, vendored verbatim
+(`test/firmware_release_drift.test.js`).
+
 ## Vendoring conventions
 
 This page is assembled by hand from the sources it mirrors — edit there, then
@@ -99,6 +116,9 @@ re-copy the marked block:
 - **Serial transport**: `SerialManager`, `LineSink`, `AtQueue`, and the line
   router are ported from `software/adsbee_1421_console/adsbee_1421_console.html`
   (minus its baud sweep, which USB CDC makes unnecessary).
+- **Firmware update check**: `firmware/adsbee_1090/esp/main/server/web/firmware_release.js` is copied
+  verbatim between the `BEGIN/END VENDORED firmware_release.js` markers (here and in the 1421
+  console); `test/firmware_release_drift.test.js` fails when a copy differs.
 - **Leaflet 1.9.4** is vendored inline (BSD-2-Clause, license header kept)
   between `BEGIN/END VENDORED` markers, copied from the 1421 console.
 

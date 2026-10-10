@@ -24,6 +24,26 @@ These steps update the firmware on an ADSBee 1090. Firmware images are published
 4. Wait for the device to erase its inactive firmware page and flash the contents of the .ota file. In rare occasions, the update may fail (network issues, etc). The device will not be “bricked”, simply refresh the page and try uploading again.
 5. If settings have been wiped (e.g. a major settings version update has occurred), click the “Upload Settings” button to restore your settings using the .settings file you downloaded earlier.
 
+## Check for updates
+
+Newer firmware shows the installed version at the top right of the device's webpage and of the web consoles, with a dot that tells whether an update is waiting. The page checks by itself when it loads (the consoles: when they connect) and a few times a day after that. It needs internet access in the browser.
+
+| Dot | Meaning |
+|---|---|
+| gray | not checked, offline, or no valid OTA keys |
+| spinning | checking or installing |
+| green | up to date |
+| amber, pulsing | update available |
+| red | the check or the install failed |
+
+1. Click the version. The dropdown shows the installed version and the newest stable release for this ADSBee: `✓ up to date`, or the new version with **⇣ Update**. **↻** checks again now.
+2. Tick **RC** to see release candidates too. Release candidates have no guarantee of stability or of a clean migration to or from other firmware versions.
+3. Click **⇣ Update**. The page downloads the file, checks its SHA-256 and runs the same update as Upload Firmware. Download your settings first, as above. When the ADSBee is back the page checks again.
+
+The page identifies the ADSBee to the adsbee.aero firmware service with its unique ID, part code and OTA keys.
+
+An ADSBee without valid OTA keys (for example a self-built one) shows `⚠ no keys` and a link to the releases page; download the .ota file there and use Upload Firmware.
+
 ## Building firmware from source
 
 To build the firmware yourself, see the [firmware README](https://github.com/PantsForBirds/adsbee/blob/main/firmware/README.md) on GitHub. ADSBee 1421 firmware updates are covered on the [ADSBee m1421 page](../adsbee-1421/m1421.md#firmware-updates-from-your-host).

@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/png" href="favicon.png">
     <script src="ota_updater.js"></script>
+    <script src="firmware_release.js"></script>
     <script src="adsbee.js"></script>
     <script src="settings.js"></script>
 </head>
@@ -21,6 +22,7 @@
             <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
         <div class="tab-bar-controls">
+            <span id="fw-check"></span>
             <span class="theme-toggle-label">&#9788;</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="darkModeToggle">
@@ -628,8 +630,31 @@
         }
 
         // Initialize the uploader when the page loads
+        // AT+DEVICE_INFO? for the firmware update check, over a separate /console socket like the Settings tab's. The
+        // ESP32 sends console output to every socket, so the terminal is muted meanwhile.
+        async function readDeviceInfo() {
+            const transport = new Settings1090Transport(WS_CONFIG.console_ws_url);
+            if (consoleWebSocket) consoleWebSocket.muteUntil = Date.now() + 10000;
+            try {
+                return await transport.sendCommand('AT+DEVICE_INFO?', {
+                    expect: AdsbeeFirmwareRelease.DEVICE_INFO_LINE, terminator: 'quiet', quietMs: 1500, timeoutMs: 6000,
+                });
+            } finally {
+                transport.disconnect();
+                if (consoleWebSocket) consoleWebSocket.muteUntil = Date.now() + 1000;
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
-            new FirmwareUploader(HOST_URI);
+            const uploader = new FirmwareUploader(HOST_URI);
+            const firmwareCheck = AdsbeeFirmwareRelease.mount(document.getElementById('fw-check'), {
+                product: '1090',
+                readDeviceInfo,
+                install: (bytes, name) => uploader.uploadFirmware(new File([bytes], name)),
+            });
+            if (metricsWebSocket) metricsWebSocket.onAutoUpdate = firmwareCheck.setAutoUpdate;
+            // Once more if the console socket wasn't up yet.
+            firmwareCheck.check().then((ok) => { if (!ok) setTimeout(firmwareCheck.check, 5000); });
             new SettingsManager(HOST_URI);
             document.getElementById('sidebar-close').addEventListener('click', () => {
                 if (liveMap) liveMap.deselect();
