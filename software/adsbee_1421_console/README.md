@@ -71,12 +71,15 @@ Programmer (`firmware/adsbee_1421/programmer/`) and click **Connect**.
   or ~2 min at 115200. After the post-flash reboot the page re-detects
   the link automatically.
 
-- **↻ Updates** — asks the adsbee.aero firmware service for a newer release (stable, or with
-  **RC** release candidates too, with a warning) and flashes its `.hex` the same way as Upload
-  Firmware: Enter bootloader, then flash, in one click. It identifies the module with
-  `AT+DEVICE_INFO?` (unique ID, part code, OTA keys) and checks the
-  download's SHA-256. Modules without valid OTA keys get a link to the GitHub releases. The code is
-  `firmware/adsbee_1090/esp/main/server/web/firmware_release.js`, vendored verbatim.
+- **Version chip** (nav bar) — the installed firmware version with a status dot (gray: not
+  checked, offline or no keys; spinner: checking or installing; green: up to date; amber: update
+  available; red: failed). On connect the page asks the adsbee.aero firmware service for a newer
+  release (cached for 6 h); clicking the version opens a dropdown with the stable offer and
+  **⇣ Update**, **RC** for release candidates (with a warning), release notes and **↻**. Update
+  flashes the `.hex` the same way as Upload Firmware: Enter bootloader, then flash, in one click.
+  It identifies the module with `AT+DEVICE_INFO?` (unique ID, part code, OTA keys) and checks the
+  download's SHA-256. Modules without valid OTA keys get a link to the GitHub releases. The code
+  is `firmware/adsbee_1090/esp/main/server/web/firmware_release.js`, vendored verbatim.
 
 ## Firmware upload wiring
 
