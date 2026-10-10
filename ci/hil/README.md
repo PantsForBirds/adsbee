@@ -200,6 +200,16 @@ With explicit messages only exact matches count, so nearby aircraft can't pass a
 instrument's built-in table every frame on the band counts, so use a cabled or shielded setup. With
 no transmitter the result is `SKIP` (exit 0, or 1 with `--fail-on-skip`).
 
+**Before transmitting into an ADSBee:**
+
+- Turn its feeds off so synthetic aircraft never reach an aggregator: `AT+FEED_ENABLE=0` then
+  `AT+SETTINGS=SAVE` (older firmware: `AT+FEED=<index>,,,0` for every slot). Check with
+  `AT+FEED_ENABLE?` (`=0`) and `AT+FEED?` before the first transmission and after every flash or
+  settings reset. For an m1421, stop the host process that forwards its output.
+- Restore the recorded `AT+FEED_ENABLE` and `AT+FEED` values (and save) when the test is over.
+- Use only the reserved synthetic ICAO range `0xADF000`-`0xADF0FF`.
+- Never exceed 0 dBm into a receiver input.
+
 **Keep receivers on attenuated coax or behind attenuators.** Full transmitter output can damage a
 receiver's front end, and radiating on 1090 or 978 MHz outside a shielded setup is illegal in most
 places.
