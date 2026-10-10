@@ -22,6 +22,7 @@
             <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
         <div class="tab-bar-controls">
+            <span id="fw-check"></span>
             <span class="theme-toggle-label">&#9788;</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="darkModeToggle">
@@ -79,7 +80,6 @@
                 </div>
 
                 <input type="file" id="settingsFile" accept=".settings" style="display: none;">
-                <div id="fw-check"></div>
 
 
             </div>
@@ -653,6 +653,8 @@
                 install: (bytes, name) => uploader.uploadFirmware(new File([bytes], name)),
             });
             if (metricsWebSocket) metricsWebSocket.onAutoUpdate = firmwareCheck.setAutoUpdate;
+            // Once more if the console socket wasn't up yet.
+            firmwareCheck.check().then((ok) => { if (!ok) setTimeout(firmwareCheck.check, 5000); });
             new SettingsManager(HOST_URI);
             document.getElementById('sidebar-close').addEventListener('click', () => {
                 if (liveMap) liveMap.deselect();

@@ -221,3 +221,53 @@ test('SHA-256 in JS matches node crypto, including padding edge lengths', () => 
     assert.strictEqual(fr.sha256Js(new TextEncoder().encode('abc')),
                        'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 });
+
+// ── Nav bar chip ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+test('chipState: dot color per state', () => {
+    const { chipState, ReleaseError, parseVersion } = fr;
+    const sel = (state, v = '0.9.1') => ({ state, version: parseVersion(v) });
+    assert.strictEqual(chipState({ phase: '', err: null, stable: null, rc: null }).dot, 'off');
+    assert.strictEqual(chipState({ phase: 'check', err: null, stable: sel('update'), rc: null }).dot, 'busy');
+    assert.match(chipState({ phase: 'install', err: null, stable: null, rc: null }).tip, /Installing/);
+    for (const s of ['current', 'ahead', 'none']) {
+        assert.strictEqual(chipState({ phase: '', err: null, stable: sel(s), rc: null }).dot, 'ok', s);
+    }
+    for (const s of ['update', 'rollback', 'unknown']) {
+        assert.strictEqual(chipState({ phase: '', err: null, stable: sel(s), rc: null }).dot, 'new', s);
+    }
+    assert.match(chipState({ phase: '', err: null, stable: sel('update'), rc: null }).tip, /0\.9\.1/);
+    assert.match(chipState({ phase: '', err: null, stable: sel('rollback', '0.9.0'), rc: null }).tip, /Rollback to 0\.9\.0/);
+    // An RC offer counts only when the page passes it (RC box ticked).
+    const rc = chipState({ phase: '', err: null, stable: sel('current'), rc: sel('update', '0.9.2-rc1') });
+    assert.deepStrictEqual([rc.dot, /0\.9\.2-rc1/.test(rc.tip)], ['new', true]);
+    // Gray when the service can't be asked; red when a check or an install went wrong.
+    for (const code of ['offline', 'no-keys', 'rate-limit', 'device']) {
+        assert.strictEqual(chipState({ phase: '', err: new ReleaseError(code, 'm'), stable: sel('update'), rc: null }).dot, 'off', code);
+    }
+    for (const code of ['checksum', 'download', 'bad-response', 'wrong-product', 'install']) {
+        const s = chipState({ phase: '', err: new ReleaseError(code, 'why'), stable: sel('current'), rc: null });
+        assert.deepStrictEqual([s.dot, s.tip], ['bad', 'why'], code);
+    }
+});
+
+test('listing cache: per service, receiver and running version; expires', () => {
+    const { cacheKey, readCache, CACHE_KEY, CHECK_INTERVAL_MS } = fr;
+    const info = { product: 'adsbee_1090', unique_id: 'E46478B14B4C1F23', versions: { rp2040: '0.9.1-rc5' } };
+    const key = cacheKey('https://adsbee.aero/api/fw/v1/', info);
+    const data = {};
+    const store = { getItem: (k) => (k in data ? data[k] : null) };
+    assert.strictEqual(readCache(store, key, 1000), null);
+    data[CACHE_KEY] = JSON.stringify({ key, at: 1000, stable: { releases: [] }, rc: null });
+    assert.strictEqual(readCache(store, key, 1000 + CHECK_INTERVAL_MS - 1).at, 1000);
+    assert.strictEqual(readCache(store, key, 1000 + CHECK_INTERVAL_MS), null, 'expired');
+    assert.strictEqual(readCache(store, key, 500), null, 'clock went back');
+    // Another firmware version, receiver or service: not this cache.
+    assert.notStrictEqual(cacheKey('https://adsbee.aero/api/fw/v1/', { ...info, versions: { rp2040: '0.9.1-rc6' } }), key);
+    assert.notStrictEqual(cacheKey('https://adsbee.aero/api/fw/v1/', { ...info, unique_id: 'X' }), key);
+    assert.notStrictEqual(cacheKey('http://localhost:8093/', info), key);
+    assert.strictEqual(readCache(store, key + 'x', 1001), null);
+    data[CACHE_KEY] = '{not json';
+    assert.strictEqual(readCache(store, key, 1001), null);
+    assert.strictEqual(readCache({ getItem: () => { throw new Error('blocked'); } }, key, 1001), null);
+});

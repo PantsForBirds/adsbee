@@ -1157,61 +1157,6 @@
             cursor: not-allowed;
         }
 
-        /* Firmware update check (firmware_release.js) */
-        .fw-check {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 4px;
-        }
-
-        .fw-row {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-        }
-
-        .fw-row .tools-button {
-            width: auto;
-            margin: 0;
-            padding: 8px 14px;
-        }
-
-        .fw-rc,
-        .fw-muted {
-            color: var(--text-secondary);
-        }
-
-        .fw-rc {
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .fw-status {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .fw-status a {
-            color: inherit;
-        }
-
-        .fw-ok {
-            color: #16a34a;
-        }
-
-        .fw-bad {
-            color: #dc2626;
-        }
-
-        .fw-rc-warning {
-            color: #d97706;
-            font-size: 0.85em;
-        }
-
         .progress-container {
             margin-top: 16px;
             display: none;
@@ -1971,6 +1916,7 @@
         <div class="tab-bar-controls">
             <span id="status-dot" class="status-dot" title="Disconnected"></span>
             <button id="connect-btn" class="connect-btn">Connect</button>
+            <span id="fw-check"></span>
             <span class="theme-toggle-label">&#9788;</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="darkModeToggle">
@@ -2019,7 +1965,6 @@
                     </button>
                     <input type="file" id="fileInput" accept=".hex" style="display: none;">
                 </div>
-                <div id="fw-check"></div>
             </div>
         </div>
     </div>
@@ -2163,7 +2108,7 @@
     class ReleaseError extends Error {
         constructor(code, message, retryAt) {
             super(message);
-            // offline | no-keys | wrong-product | rate-limit | bad-response | download | checksum | device
+            // offline | no-keys | wrong-product | rate-limit | bad-response | download | checksum | device | install
             this.code = code;
             this.retryAt = retryAt || null;
         }
@@ -2422,14 +2367,79 @@
         return Array.from(d, (x) => x.toString(16).padStart(2, '0')).join('');
     }
 
+    // How long a release listing is reused before the page asks the service again.
+    const CHECK_INTERVAL_MS = 6 * 3600 * 1000;
+    const CACHE_KEY = 'adsbee-fw-cache';
+    const FAILED = ['checksum', 'download', 'bad-response', 'wrong-product', 'install'];
+
+    /** Identifies what a cached listing belongs to: service, receiver and the firmware it runs. */
+    function cacheKey(base, info) {
+        return [base, info.product, info.unique_id, runningVersion(info) || '?'].join('|');
+    }
+
+    /** The cached {key, at, stable, rc} if it is for key and younger than CHECK_INTERVAL_MS, else null. */
+    function readCache(store, key, now) {
+        try {
+            const c = JSON.parse(store.getItem(CACHE_KEY));
+            return c && c.key === key && c.stable && now - c.at >= 0 && now - c.at < CHECK_INTERVAL_MS ? c : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
     /**
-     * The update check UI, rendered into el. opts:
+     * The nav bar dot. s = {phase: '' | 'check' | 'install', err, stable, rc}; stable and rc are selectUpdate()
+     * results or null (rc only when the RC box is ticked). Returns {dot, tip}, dot one of:
+     *   off (gray: not checked, offline, no keys), busy (spinner), ok (green), new (amber), bad (red).
+     */
+    function chipState(s) {
+        if (s.phase) return { dot: 'busy', tip: s.phase === 'install' ? 'Installing…' : 'Checking for updates…' };
+        if (s.err) return { dot: FAILED.includes(s.err.code) ? 'bad' : 'off', tip: s.err.message || String(s.err) };
+        if (!s.stable) return { dot: 'off', tip: 'Firmware updates: not checked.' };
+        const offer = [s.stable, s.rc].find((x) => x && ['update', 'rollback', 'unknown'].includes(x.state));
+        if (!offer) return { dot: 'ok', tip: 'Firmware is up to date.' };
+        const v = formatVersion(offer.version);
+        return { dot: 'new', tip: offer.state === 'rollback' ? `Rollback to ${v} requested.` : `Update available: ${v}.` };
+    }
+
+    const CSS = `
+.fw-chip{display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--border-subtle);border-radius:999px;padding:4px 10px;font:12px ui-monospace,Menlo,Consolas,monospace;color:var(--text-secondary);cursor:pointer;white-space:nowrap}
+.fw-chip:hover{color:var(--text-primary)}
+.fw-dot{width:9px;height:9px;border-radius:50%;background:#9ca3af;flex:none;box-sizing:border-box}
+.fw-dot.ok{background:#16a34a}
+.fw-dot.bad{background:#dc2626}
+.fw-dot.new{background:#f59e0b;animation:fw-pulse 1.4s ease-in-out infinite}
+.fw-dot.busy{background:none;border:2px solid #9ca3af;border-top-color:transparent;animation:fw-spin .8s linear infinite}
+@keyframes fw-pulse{50%{box-shadow:0 0 0 4px rgba(245,158,11,.3)}}
+@keyframes fw-spin{to{transform:rotate(360deg)}}
+.fw-menu{position:fixed;top:52px;right:8px;z-index:900;box-sizing:border-box;min-width:250px;max-width:calc(100vw - 16px);padding:10px 12px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.25);font:13px Arial,sans-serif;line-height:1.3;user-select:none}
+.fw-menu[hidden]{display:none}
+.fw-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-height:28px}
+.fw-line>:first-child{min-width:52px;color:var(--text-secondary)}
+.fw-line label{cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.fw-line input{margin:0}
+.fw-grow{flex:1}
+.fw-menu a{color:inherit}
+.fw-menu button{font:inherit;border:0;border-radius:5px;padding:4px 9px;cursor:pointer;background:#ffcb00;color:#18181b}
+.fw-menu button.fw-plain{background:none;color:var(--text-secondary);padding:2px 4px;font-size:15px}
+.fw-menu button:disabled{opacity:.5;cursor:default}
+.fw-ok{color:#16a34a}
+.fw-bad{color:#dc2626}
+.fw-warn{color:#d97706;font-size:12px}
+.fw-muted{color:var(--text-secondary)}
+@media(max-width:520px){.fw-chip{padding:6px}.fw-chip span+span,.theme-toggle-label{display:none}.tab-btn,.tab-logo{padding:0 6px}}
+`;
+
+    /**
+     * The update UI: a version chip with a status dot, rendered into el (in the nav bar), and its dropdown. opts:
      *   product        '1090' | '1421'
      *   readDeviceInfo async () => AT+DEVICE_INFO? lines (DEVICE_INFO_LINE matches); throws if not connected
      *   install        async (Uint8Array, fileName) => runs the page's firmware upload with that file
      *   client         'web_ui' | 'console'
      *   apiBase        optional API base URL
-     * Returns {check(), setAutoUpdate({enabled, state, version} | null)}.
+     * The page calls check() when the receiver connects; listings are cached for CHECK_INTERVAL_MS and refreshed
+     * at that interval while the page stays open.
+     * Returns {check(force), reset(), setAutoUpdate({enabled, state, version} | null)}.
      */
     function mount(el, opts) {
         const RC_KEY = 'adsbee-fw-include-rc';
@@ -2438,92 +2448,140 @@
             e.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
             return e;
         };
-        const check = h('button', { className: 'tools-button fw-check-btn', textContent: '↻ Updates',
-                                    title: 'Check for new firmware' });
-        const rc = h('input', { type: 'checkbox' });
-        try { rc.checked = localStorage.getItem(RC_KEY) === '1'; } catch (e) { /* storage blocked */ }
-        const status = h('span', { className: 'fw-status' });
-        const auto = h('span', { className: 'fw-auto fw-muted' });
-        const warn = h('div', { className: 'fw-rc-warning', textContent: '⚠ RC: no stability or migration guarantee',
-                                title: RC_WARNING });
-        el.classList.add('fw-check');
-        el.replaceChildren(h('div', { className: 'fw-row' }, check,
-                             h('label', { className: 'fw-rc', title: `Include release candidates. ${RC_WARNING}` },
-                               rc, ' RC'), status, auto), warn);
+        const store = { getItem: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+                        setItem: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } } };
+        if (!document.getElementById('fw-css')) document.head.append(h('style', { id: 'fw-css', textContent: CSS }));
 
         const api = new FirmwareApi({ base: opts.apiBase, client: opts.client || 'web_ui' });
-        let busy = false;
-        let current = null;
-        const show = (...kids) => status.replaceChildren(...kids.filter(Boolean));
-        const github = (title) => h('a', { href: GITHUB_RELEASES_URL, target: '_blank', rel: 'noopener',
-                                           textContent: 'GitHub ↗', title });
-        const fail = (e) => {
-            const short = { offline: 'offline', 'no-keys': 'no keys', 'wrong-product': 'wrong product',
-                            'rate-limit': 'busy', checksum: 'checksum',
-                            download: 'download failed', device: 'no device' }[e.code] || 'error';
-            show(h('span', { className: 'fw-bad', textContent: `⚠ ${short}`, title: e.message || String(e) }),
-                 (e.code === 'offline' || e.code === 'no-keys') &&
-                     github('Download the firmware from GitHub, then use Upload Firmware.'));
-        };
-        const notes = (r) => r.notes_url && h('a', { href: r.notes_url, target: '_blank', rel: 'noopener',
-                                                     textContent: 'notes ↗', title: `${r.tag || r.version} release notes` });
+        const dot = h('span', { className: 'fw-dot' });
+        const ver = h('span', { textContent: '—' });
+        const chip = h('button', { className: 'fw-chip' }, dot, ver);
+        const menu = h('div', { className: 'fw-menu', hidden: true });
+        const rc = h('input', { type: 'checkbox', checked: store.getItem(RC_KEY) === '1' });
+        el.replaceChildren(chip, menu);
 
-        function render(sel) {
-            const channel = rc.checked ? 'RC' : 'stable';
-            const cur = sel.current ? formatVersion(sel.current) : '?';
-            if (sel.state === 'none') {
-                show(h('span', { className: 'fw-ok', textContent: `✓ ${cur}`,
-                                 title: rc.checked ? 'No release found.' : 'No update assigned to this receiver.' }));
-                return;
+        let phase = '';         // '' | 'check' | 'install'
+        let progress = '';
+        let err = null;
+        let info = null;
+        let lists = null;       // {key, at, stable, rc}
+        let retryAt = 0;        // The service's Retry-After.
+        let auto = null;
+
+        const pick = (channel) => (lists && lists[channel] && info
+            ? selectUpdate(lists[channel], { product: opts.product, current: runningVersion(info), channel }) : null);
+        const link = (href, text, title) => h('a', { href, target: '_blank', rel: 'noopener', textContent: text, title });
+
+        // One dropdown line for a channel: the offer with its button, or "✓ up to date".
+        function offer(label, sel, channel) {
+            const kids = [label];
+            if (sel && !sel.state) {
+                kids.push(h('span', { className: 'fw-grow' }));
+            } else if (!sel) {
+                kids.push(h('span', { className: 'fw-muted fw-grow', textContent: '—', title: 'Not checked.' }));
+            } else if (['update', 'rollback', 'unknown'].includes(sel.state)) {
+                const back = sel.state === 'rollback';
+                kids.push(h('span', { className: 'fw-grow', textContent: formatVersion(sel.version),
+                                      title: back ? 'The rollout moved this receiver back to this version.'
+                                          : sel.state === 'unknown' ? 'Running version unknown.' : 'Update available.' }),
+                          h('button', { textContent: back ? '↓ Roll back' : '⇣ Update', disabled: !!phase,
+                                        title: `Download ${sel.asset.name} and install it`, onclick: () => update(sel) }));
+            } else {
+                kids.push(h('span', { className: 'fw-ok fw-grow', textContent: '✓ up to date',
+                                      title: sel.state === 'none' ? (channel === 'rc' ? 'No release found.'
+                                                                     : 'No update assigned to this receiver.')
+                                          : sel.state === 'ahead' ? `Running firmware is newer than the ${channel} offer ` +
+                                                                    `(${formatVersion(sel.version)}).`
+                                          : `Running the newest ${channel} release.` }));
             }
-            const latest = formatVersion(sel.version);
-            if (sel.state === 'current' || sel.state === 'ahead') {
-                show(h('span', { className: 'fw-ok', textContent: `✓ ${cur}`,
-                                 title: sel.state === 'current' ? `Up to date (${channel}).`
-                                     : `Running firmware is newer than the ${channel} offer (${latest}).` }),
-                     notes(sel.release));
-                return;
-            }
-            const back = sel.state === 'rollback';
-            show(h('span', { textContent: `${cur} → ${latest}`,
-                             title: back ? `The rollout moved this receiver back to ${latest}.`
-                                 : sel.state === 'unknown' ? 'Running version unknown.' : 'Update available.' }),
-                 h('button', { className: 'tools-button fw-update-btn', textContent: back ? '↓ Roll back' : '⇣ Update',
-                               title: `Download ${sel.asset.name} and install it`, onclick: () => update(sel) }),
-                 notes(sel.release));
+            const r = sel && sel.release;
+            if (r && r.notes_url) kids.push(link(r.notes_url, 'notes ↗', `${r.tag || r.version} release notes`));
+            return h('div', { className: 'fw-line' }, ...kids);
         }
 
-        async function run() {
-            if (busy) return;
-            busy = true;
-            check.disabled = true;
-            show(h('span', { className: 'fw-muted', textContent: '…' }));
+        function render() {
+            const s = chipState({ phase, err, stable: pick('stable'), rc: rc.checked ? pick('rc') : null });
+            const cur = info && runningVersion(info);
+            dot.className = `fw-dot ${s.dot}`;
+            ver.textContent = cur || '—';
+            chip.title = s.tip;
+            const short = err && ({ offline: 'offline', 'no-keys': 'no keys', 'wrong-product': 'wrong product',
+                                    'rate-limit': 'busy', checksum: 'checksum', download: 'download failed',
+                                    device: 'no device' }[err.code] || 'error');
+            menu.replaceChildren(...[
+                h('div', { className: 'fw-line' },
+                  h('span', { textContent: 'installed' }), h('span', { className: 'fw-grow', textContent: cur || '—' }),
+                  phase && h('span', { className: 'fw-muted', textContent: progress || '…' }),
+                  h('button', { className: 'fw-plain', textContent: '↻', disabled: !!phase, onclick: () => check(true),
+                                title: 'Check now' + (lists ? ` (last: ${new Date(lists.at).toLocaleString()})` : '') })),
+                offer(h('span', { textContent: 'stable', title: 'The release recommended for this receiver.' }),
+                      pick('stable'), 'stable'),
+                offer(h('label', { title: `Show release candidates. ${RC_WARNING}` }, rc, ' RC'),
+                      rc.checked ? pick('rc') : { state: '' }, 'rc'),
+                rc.checked && h('div', { className: 'fw-warn', textContent: '⚠ no stability or migration guarantee',
+                                         title: RC_WARNING }),
+                auto && h('div', { className: 'fw-line fw-muted', title: `Automatic updates ${auto.enabled ? 'on' : 'off'}` +
+                                   (auto.state ? `; ${auto.state}` : '') + (auto.version ? ` (${auto.version})` : '') + '.',
+                                   textContent: `⟳ ${auto.enabled ? 'auto' : 'manual'}` +
+                                                (auto.state && auto.state !== 'idle' ? ` · ${auto.state}` : '') }),
+                err && h('div', { className: 'fw-line' },
+                         h('span', { className: s.dot === 'bad' ? 'fw-bad' : 'fw-warn', textContent: `⚠ ${short}`,
+                                     title: err.message || String(err) }),
+                         ['offline', 'no-keys', 'rate-limit'].includes(err.code) &&
+                             link(GITHUB_RELEASES_URL, 'GitHub ↗',
+                                  'Download the firmware from GitHub, then use Upload Firmware.')),
+            ].filter(Boolean));
+        }
+
+        // Listings from the cache, or from the service when forced, stale or missing.
+        async function load(force) {
+            const key = cacheKey(api.base, info);
+            const now = Date.now();
+            const cached = !force && readCache(store, key, now);
+            if (cached && (cached.rc || !rc.checked)) { lists = cached; return; }
+            if (now < retryAt) {
+                throw new ReleaseError('rate-limit', 'Too many requests to the firmware service; try again after ' +
+                                       `${new Date(retryAt).toLocaleTimeString()}.`, retryAt);
+            }
             try {
-                let info;
+                if (api.info !== info) await api.auth(info);
+                const stable = cached ? cached.stable : await api.releases('stable');
+                lists = { key, at: cached ? cached.at : now, stable, rc: rc.checked ? await api.releases('rc') : null };
+                store.setItem(CACHE_KEY, JSON.stringify(lists));
+            } catch (e) {
+                if (e.retryAt) retryAt = e.retryAt;
+                throw e;
+            }
+        }
+
+        /** Reads the receiver and updates the dot. force skips the cache. Resolves to true if the receiver answered. */
+        async function check(force) {
+            if (phase) return false;
+            phase = 'check';
+            err = null;
+            render();
+            let answered = false;
+            try {
+                let next;
                 try {
-                    info = parseDeviceInfo(await opts.readDeviceInfo(), opts.product);
+                    next = parseDeviceInfo(await opts.readDeviceInfo(), opts.product);
                 } catch (e) {
+                    info = lists = null;
                     throw e instanceof ReleaseError ? e : new ReleaseError('device', e.message || 'Not connected.');
                 }
-                current = runningVersion(info);
-                await api.auth(info);
-                await refresh();
+                answered = true;
+                if (!info || cacheKey(api.base, info) !== cacheKey(api.base, next)) { info = next; lists = null; }
+                await load(force);
             } catch (e) {
-                fail(e);
-            } finally {
-                busy = false;
-                check.disabled = false;
+                err = e;
             }
-        }
-
-        async function refresh() {
-            const channel = rc.checked ? 'rc' : 'stable';
-            const listing = await api.releases(channel);
-            render(selectUpdate(listing, { product: opts.product, current, channel }));
+            phase = '';
+            render();
+            return answered;
         }
 
         async function update(sel) {
-            if (busy) return;
+            if (phase) return;
             const to = formatVersion(sel.version);
             const from = sel.current ? formatVersion(sel.current) : 'unknown';
             const isRc = sel.release.prerelease || sel.version.rc > 0;
@@ -2531,45 +2589,68 @@
             if (!confirm(`${verb} ADSBee ${opts.product} firmware ${from} → ${to}?` + (isRc ? `\n\n${RC_WARNING}` : ''))) {
                 return;
             }
-            busy = true;
-            check.disabled = true;
+            phase = 'install';
+            err = null;
+            menu.hidden = true;
+            const say = (text) => { progress = text; render(); };
             try {
-                const bytes = await api.download(sel.asset, (p) => show(h('span', { className: 'fw-muted',
-                                                                                     textContent: `⇣ ${p}%` })));
-                show(h('span', { className: 'fw-muted', textContent: `↻ ${to}` }));
-                await opts.install(bytes, sel.asset.name);
-                show();
+                say('⇣ 0%');
+                if (api.info !== info) await api.auth(info);
+                const bytes = await api.download(sel.asset, (p) => say(`⇣ ${p}%`));
+                say(`↻ ${to}`);
+                try {
+                    await opts.install(bytes, sel.asset.name);
+                } catch (e) {
+                    throw e instanceof ReleaseError ? e : new ReleaseError('install', e.message || 'Install failed.');
+                }
+                // The receiver reboots: ask until it answers again, then check from the service.
+                for (let i = 0; i < 40; i++) {
+                    await new Promise((r) => setTimeout(r, 6000));
+                    phase = '';
+                    if (await check(true)) break;
+                    phase = 'install';
+                    render();
+                }
             } catch (e) {
-                fail(e);
-            } finally {
-                busy = false;
-                check.disabled = false;
+                err = e;
             }
+            phase = progress = '';
+            render();
         }
 
-        function setAutoUpdate(a) {
-            if (!a) { auto.replaceChildren(); return; }
-            auto.textContent = `⟳ ${a.enabled ? 'auto' : 'manual'}${a.state && a.state !== 'idle' ? ` · ${a.state}` : ''}`;
-            auto.title = `Automatic updates ${a.enabled ? 'on' : 'off'}` + (a.state ? `; ${a.state}` : '') +
-                         (a.version ? ` (${a.version})` : '') + '.';
-        }
-
-        check.addEventListener('click', run);
-        rc.addEventListener('change', () => {
-            try { localStorage.setItem(RC_KEY, rc.checked ? '1' : '0'); } catch (e) { /* storage blocked */ }
-            warn.style.display = rc.checked ? '' : 'none';
-            if (api.token && !busy) {
-                busy = true;
-                refresh().catch(fail).finally(() => { busy = false; });
+        chip.addEventListener('click', () => { menu.hidden = !menu.hidden; });
+        document.addEventListener('click', (e) => { if (!el.contains(e.target)) menu.hidden = true; });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') menu.hidden = true; });
+        rc.addEventListener('change', async () => {
+            store.setItem(RC_KEY, rc.checked ? '1' : '0');
+            if (rc.checked && info && !phase) {
+                phase = 'check';
+                render();
+                await load(false).then(() => { err = null; }, (e) => { err = e; });
+                phase = '';
             }
+            render();
         });
-        warn.style.display = rc.checked ? '' : 'none';
-        return { check: run, setAutoUpdate };
+        // Refresh the listing when it has aged out; the receiver isn't asked again.
+        setInterval(async () => {
+            if (!info || phase || document.hidden || (lists && Date.now() - lists.at < CHECK_INTERVAL_MS)) return;
+            phase = 'check';
+            render();
+            await load(false).then(() => { err = null; }, (e) => { err = e; });
+            phase = '';
+            render();
+        }, 10 * 60 * 1000);
+        render();
+        return {
+            check,
+            reset() { info = lists = err = null; render(); },
+            setAutoUpdate(a) { auto = a || null; render(); },
+        };
     }
 
-    const api = { DEFAULT_API_BASE, API_BASE_KEY, GITHUB_RELEASES_URL, RC_WARNING, DEVICE_INFO_LINE, ReleaseError,
-                  FirmwareApi, parseVersion, formatVersion, compareVersions, parseDeviceInfo, runningVersion,
-                  selectUpdate, sha256Js, sha256Hex, mount };
+    const api = { DEFAULT_API_BASE, API_BASE_KEY, GITHUB_RELEASES_URL, RC_WARNING, DEVICE_INFO_LINE, CHECK_INTERVAL_MS,
+                  CACHE_KEY, ReleaseError, FirmwareApi, parseVersion, formatVersion, compareVersions, parseDeviceInfo,
+                  runningVersion, selectUpdate, cacheKey, readCache, chipState, sha256Js, sha256Hex, mount };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else root.AdsbeeFirmwareRelease = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -4853,6 +4934,7 @@ function makeRxEnableEntry() {
                 const gen = ++this.gen;
                 deviceInfoCard.query();
                 statsPanel.queryUptime();
+                if (firmwareCheck) firmwareCheck.check();
                 if (this.active === 'map') {
                     initMapTab();
                     await this.enterMapMode(gen);
@@ -6077,6 +6159,7 @@ function makeRxEnableEntry() {
                     this._setConnectedIndicators();
                     // The device just rebooted, so the uptime card is stale by definition.
                     statsPanel.queryUptime();
+                    if (firmwareCheck) firmwareCheck.check();
                 } catch (_) { }
             },
 
@@ -6096,6 +6179,7 @@ function makeRxEnableEntry() {
                 this.btn.textContent = 'Connect';
                 this.dot.className = 'status-dot';
                 this.dot.title = 'Disconnected';
+                if (firmwareCheck) firmwareCheck.reset();
                 appendToTerminal('Serial port disconnected.\n');
             },
 
@@ -6105,6 +6189,7 @@ function makeRxEnableEntry() {
                 tabController.mapStreamEngaged = false;
                 this.btn.textContent = 'Connect';
                 this.dot.className = 'status-dot' + (this._wantReconnect ? ' reconnecting' : '');
+                if (firmwareCheck) firmwareCheck.reset();
                 this.dot.title = this._wantReconnect
                     ? 'Port lost — will reconnect when it reappears' : 'Disconnected';
                 appendToTerminal('\x1b[31mSerial port lost.\x1b[0m\n');
@@ -6140,11 +6225,12 @@ function makeRxEnableEntry() {
             localStorage.setItem('darkMode', darkModeToggle.checked ? 'true' : 'false');
         });
 
+        let firmwareCheck = null;
         document.addEventListener('DOMContentLoaded', () => {
             statsPanel.init();
             connectionUI.init();
             flashController.init();
-            AdsbeeFirmwareRelease.mount(document.getElementById('fw-check'), {
+            firmwareCheck = AdsbeeFirmwareRelease.mount(document.getElementById('fw-check'), {
                 product: '1421',
                 client: 'console',
                 readDeviceInfo: () => {
