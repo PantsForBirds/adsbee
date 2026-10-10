@@ -35,8 +35,11 @@ def df17_identification(icao: int, callsign: str, category: int = 0, ca: int = 5
     return (head + mode_s_crc(head).to_bytes(3, "big")).hex().upper()
 
 
-def unique_df17_set(count: int, base_icao: int = 0xADB000, prefix: str = "HIL") -> List[str]:
-    """``count`` distinct DF17 messages with consecutive ICAO addresses from base_icao."""
+def unique_df17_set(count: int, base_icao: int = 0xADF000, prefix: str = "HIL") -> List[str]:
+    """``count`` distinct DF17 messages with consecutive ICAO addresses from base_icao.
+
+    The default base is the reserved synthetic range 0xADF000-0xADF0FF (256 addresses).
+    """
     return [df17_identification(base_icao + i, f"{prefix}{i:0{8 - len(prefix)}d}"[:8]) for i in range(count)]
 
 

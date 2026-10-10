@@ -200,6 +200,22 @@ The optional second argument is a regex passed to `ctest -R`. Test names follow 
 - **Hardware integration tests**: `esp/main/target_test/` and `pico/application/target_test/` — must run on device
 - CI builds the firmware artifact; on-device testing is manual
 
+### HIL testing with a signal source
+
+Before driving an ADSBee from a Bee Wiggler, Pluto wiggler or any other SDR:
+
+1. **Turn its feeds off first**, so synthetic aircraft never reach an aggregator.
+   - Check: `AT+FEED_ENABLE?` must print `=0` (and `AT+FEED?` shows each slot).
+   - Turn off: `AT+FEED_ENABLE=0` then `AT+SETTINGS=SAVE`, so a reboot or watchdog reset keeps them
+     off. Firmware older than settings v15 has no master switch: set every slot inactive with
+     `AT+FEED=<index>,,,0`.
+   - Check again after every flash or settings reset; the defaults turn feeds back on.
+   - An m1421 has no network of its own: stop whatever host process forwards its output.
+   - Restore: record `AT+FEED_ENABLE?` and `AT+FEED?` before the test, put them back (plus
+     `AT+SETTINGS=SAVE`) once the transmitter is off, and say so in your report.
+2. **Use the reserved synthetic ICAO range `0xADF000`-`0xADF0FF`** for every frame you transmit.
+3. **Never exceed 0 dBm into a receiver input.**
+
 ---
 
 ## Flashing
