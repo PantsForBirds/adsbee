@@ -1994,6 +1994,17 @@ body.dark-mode #map .leaflet-tile-pane {
     width: 180px;
 }
 
+/* Room for the firmware chip on narrow windows. */
+@media (max-width: 760px) {
+    .host-input {
+        width: 140px;
+    }
+
+    .tab-btn {
+        padding: 0 9px;
+    }
+}
+
 /* ─── Serial-mode metric notes ───────────────────────── */
 /* Stand-ins for the metric sections that only exist on the /metrics
    WebSocket and have no AT-command equivalent over a serial connection. */
@@ -2552,11 +2563,13 @@ body.dark-mode #map .leaflet-tile-pane {
 .fw-menu button{font:inherit;border:0;border-radius:5px;padding:4px 9px;cursor:pointer;background:#ffcb00;color:#18181b}
 .fw-menu button.fw-plain{background:none;color:var(--text-secondary);padding:2px 4px;font-size:15px}
 .fw-menu button:disabled{opacity:.5;cursor:default}
-.fw-ok{color:#16a34a}
-.fw-bad{color:#dc2626}
-.fw-warn{color:#d97706;font-size:12px}
+.fw-menu .fw-ok{color:#16a34a}
+.fw-menu .fw-bad{color:#dc2626}
+.fw-menu .fw-warn{color:#d97706}
+.fw-menu div.fw-warn{font-size:12px}
 .fw-muted{color:var(--text-secondary)}
-@media(max-width:520px){.fw-chip{padding:6px}.fw-chip span+span,.theme-toggle-label{display:none}.tab-btn,.tab-logo{padding:0 6px}}
+@media(max-width:760px){.fw-chip{padding:6px}.fw-chip span+span{display:none}}
+@media(max-width:520px){.theme-toggle-label{display:none}.tab-btn,.tab-logo{padding:0 6px}}
 `;
 
     /**
@@ -2566,8 +2579,8 @@ body.dark-mode #map .leaflet-tile-pane {
      *   install        async (Uint8Array, fileName) => runs the page's firmware upload with that file
      *   client         'web_ui' | 'console'
      *   apiBase        optional API base URL
-     * The page calls check() when the receiver connects; listings are cached for CHECK_INTERVAL_MS and refreshed
-     * at that interval while the page stays open.
+     * The page calls check() when the receiver connects, and again when it is back after an update; listings are
+     * cached for CHECK_INTERVAL_MS and refreshed at that interval while the page stays open.
      * Returns {check(force), reset(), setAutoUpdate({enabled, state, version} | null)}.
      */
     function mount(el, opts) {
@@ -2596,6 +2609,7 @@ body.dark-mode #map .leaflet-tile-pane {
         let lists = null;       // {key, at, stable, rc}
         let retryAt = 0;        // The service's Retry-After.
         let auto = null;
+        let again = false;
 
         const pick = (channel) => (lists && lists[channel] && info
             ? selectUpdate(lists[channel], { product: opts.product, current: runningVersion(info), channel }) : null);
@@ -2685,6 +2699,7 @@ body.dark-mode #map .leaflet-tile-pane {
 
         /** Reads the receiver and updates the dot. force skips the cache. Resolves to true if the receiver answered. */
         async function check(force) {
+            again = phase === 'install';    // Asked while installing: check when that is done.
             if (phase) return false;
             phase = 'check';
             err = null;
@@ -2732,19 +2747,14 @@ body.dark-mode #map .leaflet-tile-pane {
                 } catch (e) {
                     throw e instanceof ReleaseError ? e : new ReleaseError('install', e.message || 'Install failed.');
                 }
-                // The receiver reboots: ask until it answers again, then check from the service.
-                for (let i = 0; i < 40; i++) {
-                    await new Promise((r) => setTimeout(r, 6000));
-                    phase = '';
-                    if (await check(true)) break;
-                    phase = 'install';
-                    render();
-                }
+                // The receiver reboots; the page calls check() when it answers again.
+                info = lists = null;
             } catch (e) {
                 err = e;
             }
             phase = progress = '';
             render();
+            if (again) check();
         }
 
         chip.addEventListener('click', () => { menu.hidden = !menu.hidden; });
