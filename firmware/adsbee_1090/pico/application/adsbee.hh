@@ -13,6 +13,7 @@
 #include "macros.hh"  // For MAX / MIN.
 #include "main.hh"    // For ISR core assignment.
 #include "mode_s_packet.hh"
+#include "r1090_rssi.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
 #include "stdint.h"
@@ -136,15 +137,20 @@ class ADSBee {
     bool Update();
 
     /**
-     * Inlne helper function that converts milliVolts at the AD8313 input to a corresponding value in dBm, using values
-     * from the AD8313 datasheet.
+     * Converts a static voltage from the RF power detector (noise floor, trigger level) to dBm, using the calibration
+     * of this board's RF front end.
      * @param[in] mv Voltage level, in milliVolts.
      * @retval Corresponding power level, in dBm.
      */
-    static inline int AD8313MilliVoltsTodBm(int mv) {
-        static constexpr uint16_t kLNAGaindB = 44;    // Gain of 2x LNAs in front of the AD8313, from bench testing.
-        return 60 * (mv - 1600) / 1000 - kLNAGaindB;  // AD8313 0dBm intercept at 1.6V, slope is 60dBm/V.
+    static inline int DetectorMilliVoltsTodBm(int mv) {
+        return r1090_rssi::DetectorMilliVoltsTodBm(mv, bsp.r1090_rf_frontend_version);
     }
+
+    /**
+     * Original detector conversion. AT+TL_OFFSET still prints the offset through it for the settings UI, although an
+     * offset in mV is not a power level.
+     */
+    static inline int AD8313MilliVoltsTodBm(int mv) { return r1090_rssi::LegacyMilliVoltsTodBm(mv); }
 
     /**
      * Inline helper function that converts ADC counts on theRP2040 to milliVolts.
