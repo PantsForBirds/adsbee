@@ -214,7 +214,8 @@
      * offers the newest release listed. An older version is offered only when the service flags an admin rollback
      * (listing.rollback), on either channel. Returns {state, release, version, asset, current}, state one of:
      *   update (newer than running), rollback, current (same), ahead (running is newer than the offer),
-     *   unknown (running version unreadable), none (nothing to offer).
+     *   unknown (running version unreadable), none (nothing to offer; hold: true when the service paused updates
+     *   for this receiver).
      */
     function selectUpdate(listing, { product, current, channel }) {
         const p = PRODUCTS[product];
@@ -231,7 +232,7 @@
         const recommended = rec && cands.find((c) => compareVersions(c.version, rec) === 0);
         const rollback = listing.rollback === true && recommended && cur && compareVersions(rec, cur) < 0;
         const best = rollback ? recommended : channel === 'rc' ? cands[0] : recommended;
-        if (!best) return { state: 'none', current: cur };
+        if (!best) return { state: 'none', current: cur, hold: listing.hold === true };
         let state = 'unknown';
         if (cur) {
             const c = compareVersions(best.version, cur);
@@ -412,6 +413,9 @@
                                           : sel.state === 'unknown' ? 'Running version unknown.' : 'Update available.' }),
                           h('button', { textContent: back ? '↓ Roll back' : '⇣ Update', disabled: !!phase,
                                         title: `Download ${sel.asset.name} and install it`, onclick: () => update(sel) }));
+            } else if (sel.hold) {
+                kids.push(h('span', { className: 'fw-muted fw-grow', textContent: '⏸ paused',
+                                      title: 'Updates are paused for this receiver.' }));
             } else {
                 kids.push(h('span', { className: 'fw-ok fw-grow', textContent: '✓ up to date',
                                       title: sel.state === 'none' ? (channel === 'rc' ? 'No release found.'

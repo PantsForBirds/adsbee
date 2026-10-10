@@ -271,3 +271,19 @@ test('listing cache: per service, receiver and running version; expires', () => 
     assert.strictEqual(readCache(store, key, 1001), null);
     assert.strictEqual(readCache({ getItem: () => { throw new Error('blocked'); } }, key, 1001), null);
 });
+
+test('a held receiver is offered nothing, and says so', () => {
+    const listing = { recommended: null, hold: true, reason: 'hold', releases: [
+        { version: '0.9.1', assets: [{ kind: 'ota', name: 'adsbee_1090.ota', url: 'files/v0.9.1/adsbee_1090.ota' }] }] };
+    const sel = fr.selectUpdate(listing, { product: '1090', current: '0.9.0', channel: 'stable' });
+    assert.deepStrictEqual([sel.state, sel.hold], ['none', true]);
+    assert.strictEqual(fr.chipState({ phase: '', err: null, stable: sel, rc: null }).dot, 'ok');
+    assert.strictEqual(fr.selectUpdate({ recommended: null, releases: [] }, { product: '1090', current: '0.9.0', channel: 'stable' }).hold, false);
+});
+
+test('a pinned RC is offered on the stable channel', () => {
+    const listing = { recommended: '0.9.2-rc1', pinned: true, reason: 'pin', releases: [
+        { version: '0.9.2-rc1', prerelease: true, assets: [{ kind: 'ota', name: 'adsbee_1090.ota', url: 'files/v0.9.2-rc1/adsbee_1090.ota' }] }] };
+    const sel = fr.selectUpdate(listing, { product: '1090', current: '0.9.1', channel: 'stable' });
+    assert.deepStrictEqual([sel.state, fr.formatVersion(sel.version)], ['update', '0.9.2-rc1']);
+});
