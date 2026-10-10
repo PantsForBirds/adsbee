@@ -63,7 +63,10 @@ public follow_irq:
     wait 0 gpio, pulses_gpio
 idle_found:
     wait 1 gpio, pulses_gpio ; 0
-    irq set 5 rel [0] side 1  ; 1 | set IRQ 5+SM to indicate to the other preamble detector that it can start looking now and delay to middle of bit to start filtering.
+    ; Set IRQ 5+SM so the next preamble detector can start looking. The 3 cycle delay moves the HI and LO checks
+    ; 3 cycles later relative to this edge: the first pulse crosses the trigger level earlier than the following
+    ; ones (LEVEL charges up during the preamble), so their HI checks used to start before the pulse rose.
+    irq set 5 rel [3] side 1  ; 1:4
     jmp correlate_10 ; short circuit jump to correlate_10 since we are already into the first pulse
 
 check_next_bit:
@@ -104,10 +107,10 @@ c10_pin_is_hi:
     jmp x-- c10_wrap side 0; 2+2n
 c10_wrap_done:
     ; Finished correlating the high, check for clock stretch and wait for the rest of the bit time.
-    set x 4 [4] ; wait is 3*(x+1) cycles
+    set x 4 [1] ; wait is 3*(x+1) cycles (3 cycles shorter: keeps the stretch sample where it was in the pulse)
 c10_wait_before_stretch_check:
     jmp x-- c10_wait_before_stretch_check [2]
-    jmp pin c10_clock_stretch [4] side 1 ; clock stretch sample
+    jmp pin c10_clock_stretch [7] side 1 ; clock stretch sample
 c10_success:
     jmp check_next_bit [5] side 0  ; cycle idle at end
 
@@ -311,7 +314,7 @@ public initial_entry:
 initial_entry_delay_wrap:
     jmp x-- initial_entry_delay_wrap [2]
     ; Preamble ends LO, so imitate the end of a 1 with its HI->LO transition.
-    jmp initial_entry_cut_in [6]  ;wait adjusted here
+    jmp initial_entry_cut_in [3]  ; 3 cycles shorter: the preamble detector raises the demod pin 3 cycles later.
 
 start_of_1:
 ; FALLING EDGE WAIT
@@ -477,7 +480,7 @@ public initial_entry:
 initial_entry_delay_wrap:
     jmp x-- initial_entry_delay_wrap [2]
     ; Preamble ends LO, so imitate the end of a 1 with its HI->LO transition.
-    jmp initial_entry_cut_in [6]
+    jmp initial_entry_cut_in [3]  ; Same 3 cycle compensation as message_demodulator.
 
 % c-sdk {
 static inline void message_demodulator_self_parking_program_init(
