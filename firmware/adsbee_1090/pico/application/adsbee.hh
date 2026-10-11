@@ -13,6 +13,8 @@
 #include "macros.hh"  // For MAX / MIN.
 #include "main.hh"    // For ISR core assignment.
 #include "mode_s_packet.hh"
+#include "mode_s_soft_demod.hh"
+#include "r1090_rssi.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
 #include "stdint.h"
@@ -84,23 +86,21 @@ class ADSBee {
     static constexpr uint8_t kNoDemodStateMachine = 0xFF;  // demod_pin_to_sm_index_ value for non-demod GPIOs.
 
     static constexpr uint kMLATCounterWrapInterruptPriority = 0;
-    static constexpr uint kGPIOInterruptPriority = 1;
-    static constexpr uint kDemodCompleteInterruptPriority = 2;
+    // The RP2040 only implements the top 2 bits of an interrupt priority. The message begin and mid-message
+    // interrupts must preempt the demodulation of an earlier capture.
+    static constexpr uint kCaptureEventInterruptPriority = 0x40;
+    static constexpr uint kCaptureDemodInterruptPriority = 0x80;
 
     struct ADSBeeConfig {
-        PIO preamble_detector_pio = pio0;
-        uint preamble_detector_demod_pin_irq = IO_IRQ_BANK0;
-        PIO message_demodulator_pio = pio1;
-        uint preamble_detector_demod_complete_irq = PIO0_IRQ_0;
+        PIO preamble_matcher_pio = pio0;
+        uint demod_pin_irq = IO_IRQ_BANK0;
+        PIO pulse_sampler_pio = pio1;
+        uint preamble_matcher_irq = PIO0_IRQ_0;
 
         uint16_t r1090_led_pin = 15;
         // Reading ADS-B on GPIO19. Will look for DEMOD signal on GPIO20.
         uint16_t pulses_pin = bsp.r1090_pulses_pin;
         uint16_t* demod_pins = bsp.r1090_demod_pins;
-        // Use GPIO22 for the decode PIO program to output its recovered clock (for debugging only).
-        uint16_t* recovered_clk_pins =
-            bsp.r1090_recovered_clk_pins;  // Set RECOVERED_CLK to fake pin for high power preamble detector. Will be
-                                           // overridden by higher priority (lower index) SM.
         // GPIO 24-25 used as PWM outputs for setting analog comparator threshold voltages.
         uint16_t tl_pwm_pin = bsp.r1090_tl_pwm_pin;
         // GPIO 26-27 used as ADC inputs for reading analog comparator threshold voltages after RF filer.
@@ -136,15 +136,20 @@ class ADSBee {
     bool Update();
 
     /**
-     * Inlne helper function that converts milliVolts at the AD8313 input to a corresponding value in dBm, using values
-     * from the AD8313 datasheet.
+     * Converts a static voltage from the RF power detector (noise floor, trigger level) to dBm, using the calibration
+     * of this board's RF front end.
      * @param[in] mv Voltage level, in milliVolts.
      * @retval Corresponding power level, in dBm.
      */
-    static inline int AD8313MilliVoltsTodBm(int mv) {
-        static constexpr uint16_t kLNAGaindB = 44;    // Gain of 2x LNAs in front of the AD8313, from bench testing.
-        return 60 * (mv - 1600) / 1000 - kLNAGaindB;  // AD8313 0dBm intercept at 1.6V, slope is 60dBm/V.
+    static inline int DetectorMilliVoltsTodBm(int mv) {
+        return r1090_rssi::DetectorMilliVoltsTodBm(mv, bsp.r1090_rf_frontend_version);
     }
+
+    /**
+     * Original detector conversion. AT+TL_OFFSET still prints the offset through it for the settings UI, although an
+     * offset in mV is not a power level.
+     */
+    static inline int AD8313MilliVoltsTodBm(int mv) { return r1090_rssi::LegacyMilliVoltsTodBm(mv); }
 
     /**
      * Inline helper function that converts ADC counts on theRP2040 to milliVolts.
@@ -185,8 +190,8 @@ class ADSBee {
 
     /**
      * Creates a composite timestamp using the current value of the SysTick timer (running at 125MHz) and the SysTick
-     * wrap counter to simulate a timer running at 48MHz (which matches the frequency of the preamble detector PIO).
-     * SysTick is per core: call only on the core that ran MLATCounterInit() (the demodulator ISR core). Elsewhere it
+     * wrap counter to simulate a timer running at 48MHz (which matches the frequency of the preamble matcher PIO).
+     * SysTick is per core: call only on the core that ran MLATCounterInit() (the receiver ISR core). Elsewhere it
      * returns only the wrap count.
      * @param[in] num_bits Number of bits to mask the counter value to. Defaults to full resolution.
      * @retval 48MHz counter value.
@@ -246,14 +251,26 @@ class ADSBee {
     inline uint32_t GetWatchdogTimeoutSec() { return watchdog_timeout_sec_; }
 
     /**
-     * ISR for GPIO interrupts.
+     * ISR for the rising edge of a demod pin: a preamble matcher found a preamble and its sampler started.
      */
     void OnDemodBegin(uint gpio);
 
     /**
-     * ISR triggered by DECODE completing, via PIO0 IRQ0.
+     * ISR for PIO0 IRQ0: a preamble matcher is about 43us into a message. Samples RSSI, drops captures of noise and
+     * schedules the early end of 56 bit captures.
      */
-    void OnDemodComplete();
+    void OnDemodMid();
+
+    /**
+     * ISR for the sample DMA channels: a capture is complete.
+     */
+    void OnCaptureComplete();
+
+    /**
+     * ISR for the timer alarm that ends the capture of a 56 bit message early, so its preamble matcher and sampler
+     * are free again without waiting out the rest of a 112 bit capture.
+     */
+    void OnShortCaptureAlarm();
 
     /**
      * ISR triggered by SysTick interrupt. Used to wrap the MLAT counter.
@@ -336,7 +353,7 @@ class ADSBee {
 #ifndef ISRS_ON_CORE1
         // Only enable / disable the IRQ from here if we are running the ISRs on core 0. Otherwise this will enable
         // interrupts on the current core, in addition to the core that's actually supposed to be running them.
-        // Simultaneous dual-core ISRs for OnDemodComplete will corrupt all the packets.
+        // Simultaneous dual-core ISRs for the receiver will corrupt all the packets.
         SyncReceiver1090IRQEnable();
 #else
         // Core 1 update loop will check adsbee.Receiver1090IsEnabled() to see if IRQ should be enabled.
@@ -349,16 +366,14 @@ class ADSBee {
      * SetReceiver1090Enable(). Note that this function will synchronize the IRQ enable state to match the
      * r1090_enabled_ member variable.
      */
-    inline void SyncReceiver1090IRQEnable() {
-        irq_set_enabled(config_.preamble_detector_demod_complete_irq, r1090_enabled_);
-    }
+    inline void SyncReceiver1090IRQEnable() { irq_set_enabled(config_.preamble_matcher_irq, r1090_enabled_); }
 
     /**
      * Checks whether the 1090 receiver IRQ is currently enabled. Can only be called from the same core that runs the
      * IRQs.
      * @retval True if enabled, false otherwise.
      */
-    inline bool Receiver1090IRQIsEnabled() { return irq_is_enabled(config_.preamble_detector_demod_complete_irq); }
+    inline bool Receiver1090IRQIsEnabled() { return irq_is_enabled(config_.preamble_matcher_irq); }
 
     /**
      * Enables or disables the sub-GHz radio by powering the receiver chip on or off. Re-initializes the receiver chip
@@ -467,14 +482,45 @@ class ADSBee {
     ADSBeeConfig config_;
 
     uint32_t irq_wrapper_sm_ = 0;
-    uint32_t preamble_detector_sm_[BSP::kMaxNumDemodStateMachines];
-    uint32_t preamble_detector_offset_ = 0;
+    uint32_t preamble_matcher_sm_[BSP::kMaxNumDemodStateMachines];
+    uint32_t preamble_matcher_offset_ = 0;
     uint32_t irq_wrapper_offset_ = 0;
 
-    uint32_t message_demodulator_sm_[BSP::kMaxNumDemodStateMachines];
-    uint32_t message_demodulator_offset_ = 0;
+    uint32_t pulse_sampler_sm_[BSP::kMaxNumDemodStateMachines];
+    uint32_t pulse_sampler_offset_ = 0;
 
     uint32_t mlat_jitter_dma_channel_[BSP::kMaxNumDemodStateMachines];
+
+    // One DMA channel and capture buffer per pulse sampler (one spare word for bit windows that end in the last one).
+    int sample_dma_channel_[BSP::kMaxNumDemodStateMachines] = {-1, -1, -1, -1};
+    uint32_t sample_buf_[BSP::kMaxNumDemodStateMachines][mode_s_soft_demod::kCaptureWords + 1] = {};
+    uint32_t demod_samples_[mode_s_soft_demod::kCaptureWords + 1] = {};  // Capture being demodulated.
+    int sample_rssi_mv_[BSP::kMaxNumDemodStateMachines] = {0};
+    // Capture bookkeeping for telling a second matcher firing on the data pulses of a message apart from a new
+    // message. Written and read in ISRs on the receiver core only.
+    volatile bool capture_active_[BSP::kMaxNumDemodStateMachines] = {false};
+    volatile bool capture_is_short_[BSP::kMaxNumDemodStateMachines] = {false};
+    uint32_t capture_begin_us_[BSP::kMaxNumDemodStateMachines] = {0};
+    int short_capture_alarm_num_ = -1;
+    volatile int8_t short_capture_sm_index_ = -1;  // State machine the short capture alarm is armed for, or -1.
+
+    /**
+     * Parks a sampler at idle with empty FIFOs and re-arms its DMA channels for the next capture.
+     */
+    void RearmSampler(uint16_t sm_index);
+
+    /**
+     * Drops the capture a preamble matcher just started: sends the matcher back to hunting and re-arms its sampler.
+     * Only call while the matcher is past its match (demod pin high).
+     */
+    void AbortCapture(uint16_t sm_index);
+
+    /**
+     * Demodulates the capture of one sampler, queues the message and re-arms the sampler and its preamble matcher.
+     * @param[in] sm_index State machine index.
+     * @param[in] num_words Number of sample words captured.
+     */
+    void FinishCapture(uint16_t sm_index, uint16_t num_words);
     uint32_t mlat_jitter_pwm_slice_ = 0;
     uint16_t mlat_jitter_counts_on_demod_begin_[BSP::kMaxNumDemodStateMachines] = {0};
     uint16_t mlat_jitter_counts_on_fifo_pull_[BSP::kMaxNumDemodStateMachines] = {0};
@@ -482,7 +528,7 @@ class ADSBee {
     // Maps a demod GPIO number to its state machine index (kNoDemodStateMachine for other GPIOs). Built in PIOInit().
     uint8_t demod_pin_to_sm_index_[NUM_BANK0_GPIOS];
 
-    // OnDemodComplete() duration statistics, only maintained when DEBUG_ISR_TIMING is defined.
+    // Demodulation time statistics, only maintained when DEBUG_ISR_TIMING is defined.
     uint32_t isr_count_ = 0;
     uint32_t isr_duration_sum_counts_ = 0;
     uint16_t isr_duration_max_counts_ = 0;

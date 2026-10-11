@@ -110,6 +110,7 @@ if (ON_EMBEDDED_DEVICE)
         ${ADSBEE_MODULES_DIR}/cppAT/src/cpp_at.cc
         main.cc # Don't include main for testing.
         adsbee.cc
+        mode_s_soft_demod.cc
         settings.cc
     )
 

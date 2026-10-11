@@ -3,53 +3,32 @@
 #include <hardware/structs/scb.h>
 #include <hardware/structs/systick.h>
 
+#include "capture.pio.h"
+#include "hal.hh"
 #include "hardware/adc.h"
 #include "hardware/clocks.h"
+#include "hardware/dma.h"
 #include "hardware/exception.h"
 #include "hardware/gpio.h"
+#include "hardware/irq.h"
 #include "hardware/pio.h"
 #include "hardware/pwm.h"
+#include "mode_s_packet_decoder.hh"
+#include "pico/binary_info.h"
 #include "pico/rand.h"
 #include "pico/stdlib.h"
 #include "pico/time.h"
-#include "stdio.h"  // for printing
-// #include "hardware/dma.h"
-#include "capture.pio.h"
-#include "hal.hh"
-#include "hardware/irq.h"
-#include "mode_s_packet_decoder.hh"
-#include "pico/binary_info.h"
 #include "spi_coprocessor.hh"
+#include "stdio.h"  // for printing
 
 // #include <charconv>
 #include <string.h>  // for strcat
 
-#include "comms.hh"          // For debug prints.
+#include "comms.hh"           // For debug prints.
 #include "gnss_interface.hh"  // For the gnss receiver instance.
 
-// Uncomment the line below to enable preamble detector debugging on recovered_clk.
-#define DEBUG_PREAMBLE_DETECTOR
-// Uncomment the line below to enable demodulator debugging on recovered_clk.
-// #define DEBUG_DEMODULATOR
-// Uncomment to measure OnDemodComplete() ISR duration and print avg/max once per second (default log level).
+// Uncomment to measure the capture demodulation time in FinishCapture() and print avg/max once per second.
 // #define DEBUG_ISR_TIMING
-// Uncomment to use the self-parking message demodulator PIO program (see capture.pio). The demodulator pads and parks
-// itself at the end of each message, so OnDemodComplete() only drains the FIFO instead of padding bit-by-bit and
-// restarting the state machine. Requires on-target validation before being made the default.
-// #define DEMODULATOR_SELF_PARKING
-
-#ifdef DEMODULATOR_SELF_PARKING
-#define MESSAGE_DEMODULATOR_PROGRAM              message_demodulator_self_parking_program
-#define MESSAGE_DEMODULATOR_PROGRAM_INIT         message_demodulator_self_parking_program_init
-#define MESSAGE_DEMODULATOR_OFFSET_INITIAL_ENTRY message_demodulator_self_parking_offset_initial_entry
-// Maximum number of PC polls to wait for the demodulator to finish padding and park after the demod pin drops
-// (padding takes ~1.4us after the pin drops; each poll is a handful of system clock cycles).
-static constexpr uint16_t kDemodulatorParkSpinLimit = 256;
-#else
-#define MESSAGE_DEMODULATOR_PROGRAM              message_demodulator_program
-#define MESSAGE_DEMODULATOR_PROGRAM_INIT         message_demodulator_program_init
-#define MESSAGE_DEMODULATOR_OFFSET_INITIAL_ENTRY message_demodulator_offset_initial_entry
-#endif  // DEMODULATOR_SELF_PARKING
 
 // Uncomment this to hold the status LED on for 5 seconds if the watchdog commanded a reboot.
 // #define WATCHDOG_REBOOT_WARNING
@@ -59,10 +38,22 @@ static constexpr uint16_t kDemodulatorParkSpinLimit = 256;
 // Scales 125MHz system clock into a 48MHz counter.
 static const uint32_t kMLATWrapCounterIncrement = (1 << 24) * MLAT_SYSTEM_CLOCK_RATIO;
 
-constexpr float kPreambleDetectorFreqHz = 48e6;    // Running at 48MHz (24 clock cycles per half bit).
-constexpr float kMessageDemodulatorFreqHz = 48e6;  // Run at 48 MHz to demodulate bits at 1Mbps.
-
-static const uint16_t kPreambleDetectorFIFODepthWords = 4;
+constexpr float kPreambleMatcherFreqHz = 48e6;  // Running at 48MHz (24 clock cycles per half bit).
+constexpr float kPulseSamplerFreqHz = 48e6;     // Pulse sampler PIO clock: one comparator sample every 4 cycles.
+// A matcher that fires this soon after another capture began is looking at that message's data pulses, not at a new
+// preamble.
+constexpr uint32_t kCaptureGuardLongUs = 118;   // 112 data bits after the preamble match, plus margin.
+constexpr uint32_t kCaptureGuardShortUs = 60;   // 56 data bits, plus margin.
+constexpr uint16_t kMidCheckWords = 6;          // Sample words looked at mid-message to drop captures of noise.
+constexpr uint16_t kMidCheckMinHiSamples = 40;  // Of 192: a message has about 96, comparator noise a handful.
+// Ending the capture of 56 bit messages early.
+constexpr uint32_t kMidCheckFirstSample =
+    mode_s_soft_demod::kNominalStartOffsetSamples - 1;  // First sample of the first data bit, leaning early.
+constexpr int kShortCaptureMinConfidence = 3;           // HI sample margin (of 6) for calling the first bit a 0.
+constexpr uint32_t kShortCaptureAlarmDelayUs = 17;  // From the mid-message interrupt (~43us) to past 56 bits (59us).
+// The sampler starts about half a microsecond before the data block. Timestamps keep referring to the start of the
+// data block, as with the earlier demodulator.
+constexpr uint32_t kSamplerLead48MHzCounts = (mode_s_soft_demod::kNominalStartOffsetSamples + 1) * 4;
 
 constexpr float kInt16MaxRecip = 1.0f / INT16_MAX;
 
@@ -84,7 +75,11 @@ void __time_critical_func(on_demod_pin_change)(uint gpio, uint32_t event_mask) {
     gpio_acknowledge_irq(gpio, event_mask);
 }
 
-void __time_critical_func(on_demod_complete)() { isr_access->OnDemodComplete(); }
+void __time_critical_func(on_demod_mid)() { isr_access->OnDemodMid(); }
+
+void __time_critical_func(on_capture_complete)() { isr_access->OnCaptureComplete(); }
+
+void __time_critical_func(on_short_capture_alarm)(uint alarm_num) { isr_access->OnShortCaptureAlarm(); }
 
 /** End pass-through functions for public access **/
 
@@ -92,14 +87,14 @@ ADSBee::ADSBee(ADSBeeConfig config_in) {
     config_ = config_in;
 
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        preamble_detector_sm_[sm_index] = pio_claim_unused_sm(config_.preamble_detector_pio, true);
-        message_demodulator_sm_[sm_index] = pio_claim_unused_sm(config_.message_demodulator_pio, true);
+        preamble_matcher_sm_[sm_index] = pio_claim_unused_sm(config_.preamble_matcher_pio, true);
+        pulse_sampler_sm_[sm_index] = pio_claim_unused_sm(config_.pulse_sampler_pio, true);
     }
 
-    preamble_detector_offset_ = pio_add_program(config_.preamble_detector_pio, &preamble_detector_program);
-    message_demodulator_offset_ = pio_add_program(config_.message_demodulator_pio, &MESSAGE_DEMODULATOR_PROGRAM);
+    preamble_matcher_offset_ = pio_add_program(config_.preamble_matcher_pio, &preamble_matcher_program);
+    pulse_sampler_offset_ = pio_add_program(config_.pulse_sampler_pio, &pulse_sampler_program);
 
-    // Put IRQ parameters into the global scope for the on_demod_complete ISR.
+    // Put IRQ parameters into the global scope for the ISRs.
     isr_access = this;
 
     // Figure out slice and channel values that will be used for setting PWM duty cycle.
@@ -189,8 +184,8 @@ bool ADSBee::InitISRs() {
 bool ADSBee::DeInitISRs() {
     // Disable PIO state machines before cleaning up
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        pio_sm_set_enabled(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], false);
-        pio_sm_set_enabled(config_.message_demodulator_pio, message_demodulator_sm_[sm_index], false);
+        pio_sm_set_enabled(config_.preamble_matcher_pio, preamble_matcher_sm_[sm_index], false);
+        pio_sm_set_enabled(config_.pulse_sampler_pio, pulse_sampler_sm_[sm_index], false);
     }
 
     // Stop and unclaim DMA channels used for MLAT jitter counters
@@ -202,7 +197,17 @@ bool ADSBee::DeInitISRs() {
     }
 
     // Disable interrupts
-    irq_set_enabled(config_.preamble_detector_demod_complete_irq, false);
+    irq_set_enabled(config_.preamble_matcher_irq, false);
+    irq_set_enabled(DMA_IRQ_1, false);
+    for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
+        if (sample_dma_channel_[sm_index] >= 0) {
+            dma_channel_set_irq1_enabled(sample_dma_channel_[sm_index], false);
+            dma_channel_abort(sample_dma_channel_[sm_index]);
+        }
+    }
+    if (short_capture_alarm_num_ >= 0) {
+        hardware_alarm_cancel(short_capture_alarm_num_);
+    }
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
         gpio_set_irq_enabled(config_.demod_pins[sm_index], GPIO_IRQ_EDGE_RISE, false);
     }
@@ -309,7 +314,7 @@ uint16_t __time_critical_func(ADSBee::GetMLATJitterPWMSliceCounts)() {
     return pwm_hw->slice[mlat_jitter_pwm_slice_].ctr;
 }
 
-int __time_critical_func(ADSBee::GetNoiseFloordBm)() { return AD8313MilliVoltsTodBm(noise_floor_mv_); }
+int __time_critical_func(ADSBee::GetNoiseFloordBm)() { return DetectorMilliVoltsTodBm(noise_floor_mv_); }
 
 int ADSBee::GetNoiseFloorMilliVolts() { return noise_floor_mv_; }
 
@@ -435,201 +440,209 @@ void __time_critical_func(ADSBee::OnDemodBegin)(uint gpio) {
     rx_packet_[sm_index].mlat_48mhz_64bit_counts = mlat_48mhz_64bit_counts;  // Save this to modify later.
     last_demod_begin_timestamp_us_ = time_us_32();  // Lets the noise floor sampler avoid this packet.
 
-    ReadSignalStrengthMilliVoltsNonBlockingBegin();  // Kick off ADC read.
+    if (!gpio_get(gpio)) {
+        // Stale edge: this capture was already dropped or finished (interrupts were held off for a while). The
+        // matcher is hunting again and must not be touched.
+        return;
+    }
+    if (!r1090_enabled_) {
+        AbortCapture(sm_index);  // Receiver is off: keep the matchers idle-cycling, demodulate nothing.
+        return;
+    }
+    uint32_t now_us = last_demod_begin_timestamp_us_;
+    for (uint16_t other = 0; other < bsp.r1090_num_demod_state_machines; other++) {
+        if (other == sm_index || !capture_active_[other]) {
+            continue;
+        }
+        uint32_t guard_us = capture_is_short_[other] ? kCaptureGuardShortUs : kCaptureGuardLongUs;
+        if (now_us - capture_begin_us_[other] < guard_us) {
+            // Matched on the data pulses of the message that capture is taking: drop it, keep the matcher hunting.
+            AbortCapture(sm_index);
+            return;
+        }
+    }
+    capture_begin_us_[sm_index] = now_us;
+    capture_is_short_[sm_index] = false;
+    capture_active_[sm_index] = true;
 }
 
-void __time_critical_func(ADSBee::OnDemodComplete)() {
-#ifdef DEBUG_ISR_TIMING
-    uint16_t isr_start_counts = GetMLATJitterPWMSliceCounts();
-#endif
-    int signal_strength_dbm = AD8313MilliVoltsTodBm(ReadSignalStrengthMilliVoltsNonBlockingComplete());
-
-    // Figure out which state machines were triggered and get things set up to read packets from them. Don't stop
-    // them, let them finish chewing since they run at a lower clock rate.
-    bool sm_triggered[bsp.r1090_num_demod_state_machines] = {false};
+void __time_critical_func(ADSBee::OnDemodMid)() {
+    PIO pio = config_.preamble_matcher_pio;
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        if (!pio_interrupt_get(config_.preamble_detector_pio, sm_index)) {
-            // Skip state machines that didn't finish demodulating.
+        uint32_t source_mask = 1u << (PIO_INTR_SM0_LSB + sm_index);
+        if (!(pio->inte0 & source_mask) || !pio_interrupt_get(pio, sm_index)) {
             continue;
         }
-        sm_triggered[sm_index] = true;
-#ifndef DEMODULATOR_SELF_PARKING
-        pio_sm_set_enabled(config_.message_demodulator_pio, message_demodulator_sm_[sm_index], false);
-#endif
-    }
-
-    // Empty the triggered state machines' RX FIFOs one by one and create RawModeSPacket objects from them.
-    for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        if (!sm_triggered[sm_index]) {
+        if (!capture_active_[sm_index]) {
+            // The begin interrupt for this capture was never handled: no timestamp. Drop it (the matcher is stalled
+            // on its interrupt flag, so it is safe to send it back to hunting).
+            AbortCapture(sm_index);
             continue;
         }
+        // The RSSI low pass has settled on the message: sample it (~2us).
+        ReadSignalStrengthMilliVoltsNonBlockingBegin();
+        sample_rssi_mv_[sm_index] = ReadSignalStrengthMilliVoltsNonBlockingComplete();
+        // The flag stays set (it holds the matcher) until the capture is in: mask it so this ISR doesn't refire.
+        hw_clear_bits(&pio->inte0, source_mask);
 
-        // Read the RSSI level of the current packet.
-        rx_packet_[sm_index].sigs_dbm = signal_strength_dbm;
-        rx_packet_[sm_index].sigq_db = rx_packet_[sm_index].sigs_dbm - GetNoiseFloordBm();
-        rx_packet_[sm_index].source = sm_index;  // Record this state machine as the source of the packet.
-        // Get the difference between the beginning of the demodulation period and the first FIFO push. The FIFO
-        // push does not have jitter relative to the preamble but needs to be anchored to a full 24-bit timer value,
-        // since it's from a 16-bit PWM peripheral.
-        uint16_t& a = mlat_jitter_counts_on_fifo_pull_[sm_index];
-        uint16_t& b = mlat_jitter_counts_on_demod_begin_[sm_index];
-        // The jitter counter counts the system clock: convert to 48MHz MLAT counts. Unsigned 16-bit subtraction
-        // handles a wrap of the counter between the two captures.
-        uint16_t mlat_jitter_correction_sys_clk_counts = b - a;
-        rx_packet_[sm_index].mlat_48mhz_64bit_counts -=
-            MLATJitterCountsTo48MHzCounts(mlat_jitter_correction_sys_clk_counts);
-
-        // Clear the transponder packet buffer.
-        memset((void*)rx_packet_[sm_index].buffer, 0xFF, RawModeSPacket::kMaxPacketLenWords32 * sizeof(uint32_t));
-
-        bool demodulator_parked = false;
-#ifdef DEMODULATOR_SELF_PARKING
-        // The demodulator pads its own partial word and parks at initial_entry once the demod pin drops. Wait
-        // (briefly) for it to get there. If it doesn't (e.g. the RX FIFO filled up with noise before the pin dropped
-        // and the SM is stalled on a push), fall back to the manual pad / restart path below.
-        uint parked_pc = message_demodulator_offset_ + MESSAGE_DEMODULATOR_OFFSET_INITIAL_ENTRY;
-        for (uint16_t spin = 0; spin < kDemodulatorParkSpinLimit; spin++) {
-            if (pio_sm_get_pc(config_.message_demodulator_pio, message_demodulator_sm_[sm_index]) == parked_pc) {
-                demodulator_parked = true;
-                break;
+        // About 500 samples are in. A message keeps the comparator HI half of the time; a capture with few HI
+        // samples means the matcher fired on noise: drop it now instead of holding the matcher and sampler for the
+        // full length.
+        uint16_t hi_samples = 0;
+        for (uint16_t i = 0; i < kMidCheckWords; i++) {
+            uint32_t word = sample_buf_[sm_index][i];
+            for (uint16_t shift = 0; shift < 32; shift += 6) {
+                hi_samples += mode_s_soft_demod::kPopCount6[(word >> shift) & 0x3F];
             }
         }
-        if (!demodulator_parked) {
-            pio_sm_set_enabled(config_.message_demodulator_pio, message_demodulator_sm_[sm_index], false);
+        if (hi_samples < kMidCheckMinHiSamples) {
+            hw_set_bits(&pio->inte0, source_mask);
+            AbortCapture(sm_index);
+            continue;
         }
-#endif  // DEMODULATOR_SELF_PARKING
-
-        // If the FIFO is full, we got a bunch of garbage bits after ending the demodulation, but that's OK, we can
-        // chop off the rest of them and see if we got a valid message. If it's not full, we need to carefully feed
-        // in 0 bits until we join the last partial word of the message together with the rest of it.
-        if (!demodulator_parked &&
-            !pio_sm_is_rx_fifo_full(config_.message_demodulator_pio, message_demodulator_sm_[sm_index])) {
-            // Shift 0 bits into the input shift register until it pushes into the RX FIFO.
-            uint16_t rx_fifo_level =
-                pio_sm_get_rx_fifo_level(config_.message_demodulator_pio, message_demodulator_sm_[sm_index]);
-            while (pio_sm_get_rx_fifo_level(config_.message_demodulator_pio, message_demodulator_sm_[sm_index]) ==
-                   rx_fifo_level) {
-                // NOTE: Shift in bits one by one since for some reason the autopush doesn't work if we shift in a
-                // bunch of bits at the same time.
-                pio_sm_exec_wait_blocking(config_.message_demodulator_pio, message_demodulator_sm_[sm_index],
-                                          pio_encode_in(pio_null, 1));
-            }
-
-            // // Enqueue any partially complete 32-bit word onto the RX FIFO.
-            // pio_sm_exec_wait_blocking(config_.message_demodulator_pio, message_demodulator_sm_[sm_index],
-            //                           pio_encode_push(false, true));
-        }
-
-        // Pull all words out of the RX FIFO.
-        volatile uint16_t packet_num_words =
-            pio_sm_get_rx_fifo_level(config_.message_demodulator_pio, message_demodulator_sm_[sm_index]);
-        if (packet_num_words > RawModeSPacket::kMaxPacketLenWords32) {
-            // Packet length is invalid; dump everything and try again next time.
-            // Only enable this print for debugging! Printing from the interrupt causes the USB library to crash.
-            // CONSOLE_WARNING("ADSBee::OnDemodComplete", "Received a packet with %d 32-bit words, expected maximum
-            // of %d.",
-            //                 packet_num_words, RawModeSPacket::kExtendedSquitterPacketNumWords32);
-            // pio_sm_clear_fifos(config_.message_demodulator_pio, message_demodulator_sm_);
-            packet_num_words = RawModeSPacket::kMaxPacketLenWords32;
-        }
-        // Track that we attempted to demodulate something.
-        aircraft_dictionary.Record1090Demod(sm_index);
-        // Create a RawModeSPacket and push it onto the queue.
-        for (uint16_t i = 0; i < packet_num_words; i++) {
-            rx_packet_[sm_index].buffer[i] =
-                pio_sm_get(config_.message_demodulator_pio, message_demodulator_sm_[sm_index]);
-            if (packet_num_words > RawModeSPacket::kSquitterPacketNumWords32 - 1 && i == packet_num_words - 1) {
-                // Packet has enough bits to be plausibly interesting, and we're about to read the last word.
-                // Trim off extra ingested bit from last word in the packet.
-                // FIXME: Extra bit is ingested non-deterministically, depending on whether there was a HI bit right
-                // after the demod interval went LO. This happens because the demodulator state machine ends up in a
-                // state where it's waiting for an edge regardless of whether the demod interval is active. Our
-                // interrupts are too slow (1-3us) to get to the PIO state machine in time to stop it from doing
-                // this. rx_packet_[sm_index].buffer[i] >>= 1; Mask and left align final word based on bit length.
-                switch (packet_num_words) {
-                    case RawModeSPacket::kSquitterPacketNumWords32:
-                    case RawModeSPacket::kSquitterPacketNumWords32 + 1:
-                        aircraft_dictionary.Record1090RawSquitterFrame(sm_index);
-                        rx_packet_[sm_index].buffer[i] = rx_packet_[sm_index].buffer[i] & 0xFFFFFF00;
-                        rx_packet_[sm_index].buffer_len_bytes = RawModeSPacket::kSquitterPacketLenBytes;
-                        if (!decoder.raw_mode_s_packet_in_queue.Enqueue(rx_packet_[sm_index])) {
-                            r1090_packet_queue_overflowed_ = true;
-                        }
-                        break;
-                    case RawModeSPacket::kExtendedSquitterPacketNumWords32:
-                    case RawModeSPacket::kExtendedSquitterPacketNumWords32 + 1:
-                        aircraft_dictionary.Record1090RawExtendedSquitterFrame(sm_index);
-                        rx_packet_[sm_index].buffer[i] = rx_packet_[sm_index].buffer[i] & 0xFFFF0000;
-                        rx_packet_[sm_index].buffer_len_bytes = RawModeSPacket::kExtendedSquitterPacketLenBytes;
-                        if (!decoder.raw_mode_s_packet_in_queue.Enqueue(rx_packet_[sm_index])) {
-                            r1090_packet_queue_overflowed_ = true;
-                        }
-                        break;
-                    default:
-                        // Don't push partial packets.
-                        // Printing to tinyUSB from within an interrupt causes crashes! Don't do it.
-                        // CONSOLE_WARNING(
-                        //     "ADSBee::OnDemodComplete",
-                        //     "Unhandled case while creating RawModeSPacket, received packet with %d 32-bit
-                        //     words.", packet_num_words);
-                        break;
+        uint32_t first_bit = mode_s_soft_demod::BitSamples(sample_buf_[sm_index], kMidCheckFirstSample);
+        int first_bit_margin = mode_s_soft_demod::kPopCount6[first_bit & 0x3F] -
+                               mode_s_soft_demod::kPopCount6[first_bit >> mode_s_soft_demod::kSamplesPerChip];
+        // A confident 0 in the first bit of the downlink format is a 56 bit message: end its capture as soon as its
+        // samples are in (one alarm: if it is taken, this capture just runs its full length).
+        if (first_bit_margin >= kShortCaptureMinConfidence) {
+            capture_is_short_[sm_index] = true;
+            if (short_capture_sm_index_ < 0) {
+                short_capture_sm_index_ = sm_index;
+                if (hardware_alarm_set_target(short_capture_alarm_num_,
+                                              make_timeout_time_us(kShortCaptureAlarmDelayUs))) {
+                    short_capture_sm_index_ = -1;  // Target already passed: no callback will come.
                 }
             }
         }
-
-        if (!demodulator_parked) {
-            // Flush any remaining words in the RX FIFO. Any partial word left in the ISR is discarded by the restart
-            // below.
-            while (!pio_sm_is_rx_fifo_empty(config_.message_demodulator_pio, message_demodulator_sm_[sm_index])) {
-                pio_sm_get(config_.message_demodulator_pio, message_demodulator_sm_[sm_index]);
-            }
-
-            // Reset the demodulator state machine to wait for the next decode interval, then enable it.
-            pio_sm_restart(config_.message_demodulator_pio,
-                           message_demodulator_sm_[sm_index]);  // Reset shift counters etc.
-            uint demodulator_program_start = message_demodulator_offset_ + MESSAGE_DEMODULATOR_OFFSET_INITIAL_ENTRY;
-            pio_sm_exec_wait_blocking(config_.message_demodulator_pio, message_demodulator_sm_[sm_index],
-                                      pio_encode_jmp(demodulator_program_start));  // Jump to beginning of program.
-            pio_sm_set_enabled(config_.message_demodulator_pio, message_demodulator_sm_[sm_index], true);
-        }
-
-        // Stuff the preamble detector TX FIFO full of garbage so that the preamble detector can use a pull to
-        // signal the demod interval beginning.
-        while (!pio_sm_is_tx_fifo_full(config_.message_demodulator_pio, message_demodulator_sm_[sm_index])) {
-            pio_sm_put(config_.message_demodulator_pio, message_demodulator_sm_[sm_index],
-                       0xFFFFFFFF);  // Non-blocking put.
-        }
-
-        // Re-enable the MLAT jitter counter for this state machine.
-        // Reset the write address but don't start the DMA channel yet.
-        dma_channel_set_write_addr(mlat_jitter_dma_channel_[sm_index], &mlat_jitter_counts_on_fifo_pull_[sm_index],
-                                   false);
-        dma_channel_start(mlat_jitter_dma_channel_[sm_index]);
-
-        // // Release the preamble detector from its wait state.
-        // if (sm_index == bsp.r1090_high_power_demod_state_machine_index) {
-        //     // High power state machine operates alone and doesn't need to wait for any other SM to complete. It
-        //     // would normally be enabled by one of the interleaved well formed preamble detector state machines
-        //     // refreshing, but doing it here brings it up a little quicker and allows it to catch a subsequent
-        //     high
-        //     // power packet if it comes in quickly.
-        //     pio_sm_exec_wait_blocking(
-        //         config_.preamble_detector_pio, preamble_detector_sm_[sm_index],
-        //         pio_encode_jmp(preamble_detector_offset_ + preamble_detector_offset_waiting_for_first_edge));
-        // }
-
-        pio_interrupt_clear(config_.preamble_detector_pio, sm_index);
     }
+}
 
+void __time_critical_func(ADSBee::OnCaptureComplete)() {
+    uint32_t pending = dma_hw->ints1;
+    for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
+        uint32_t channel_mask = 1u << sample_dma_channel_[sm_index];
+        if (!(pending & channel_mask)) {
+            continue;
+        }
+        dma_hw->ints1 = channel_mask;
+        FinishCapture(sm_index, mode_s_soft_demod::kCaptureWords);
+    }
+}
+
+void __time_critical_func(ADSBee::OnShortCaptureAlarm)() {
+    int8_t sm_index = short_capture_sm_index_;
+    short_capture_sm_index_ = -1;
+    if (sm_index < 0) {
+        return;
+    }
+    uint channel = sample_dma_channel_[sm_index];
+    uint32_t words_done = mode_s_soft_demod::kCaptureWords - dma_channel_hw_addr(channel)->transfer_count;
+    if (!dma_channel_is_busy(channel) || words_done < mode_s_soft_demod::kShortCaptureWords) {
+        return;  // Already finished by the DMA interrupt, or late samples: let the capture run out.
+    }
+    // Stop the DMA channel. Its interrupt is masked around the abort (an abort can raise it) and cleared after.
+    dma_channel_set_irq1_enabled(channel, false);
+    dma_channel_abort(channel);
+    dma_hw->ints1 = 1u << channel;
+    dma_channel_set_irq1_enabled(channel, true);
+    FinishCapture(sm_index, mode_s_soft_demod::kShortCaptureWords);
+}
+
+void __time_critical_func(ADSBee::RearmSampler)(uint16_t sm_index) {
+    PIO sampler_pio = config_.pulse_sampler_pio;
+    uint sampler_sm = pulse_sampler_sm_[sm_index];
+    pio_sm_set_enabled(sampler_pio, sampler_sm, false);
+    dma_channel_abort(sample_dma_channel_[sm_index]);
+    dma_hw->ints1 = 1u << sample_dma_channel_[sm_index];
+    pio_sm_clear_fifos(sampler_pio, sampler_sm);
+    pio_sm_restart(sampler_pio, sampler_sm);
+    pio_sm_exec(sampler_pio, sampler_sm, pio_encode_jmp(pulse_sampler_offset_ + pulse_sampler_offset_idle));
+    // Refill the TX FIFO: the sampler's pull is the trigger for the timestamp DMA.
+    while (!pio_sm_is_tx_fifo_full(sampler_pio, sampler_sm)) {
+        pio_sm_put(sampler_pio, sampler_sm, 0xFFFFFFFF);
+    }
+    dma_channel_abort(mlat_jitter_dma_channel_[sm_index]);
+    dma_channel_set_write_addr(mlat_jitter_dma_channel_[sm_index], &mlat_jitter_counts_on_fifo_pull_[sm_index], false);
+    dma_channel_start(mlat_jitter_dma_channel_[sm_index]);
+    dma_channel_set_write_addr(sample_dma_channel_[sm_index], sample_buf_[sm_index], false);
+    dma_channel_set_trans_count(sample_dma_channel_[sm_index], mode_s_soft_demod::kCaptureWords, true);
+    pio_sm_set_enabled(sampler_pio, sampler_sm, true);
+}
+
+void __time_critical_func(ADSBee::AbortCapture)(uint16_t sm_index) {
+    // The matcher is in its wait after the match (or stalled on its interrupt flag): send it back to hunting. It
+    // already passed the round robin token on at its edge, so the ring is unaffected.
+    PIO pio = config_.preamble_matcher_pio;
+    pio_sm_exec(pio, preamble_matcher_sm_[sm_index],
+                pio_encode_jmp(preamble_matcher_offset_ + preamble_matcher_offset_follow_irq));
+    pio_interrupt_clear(pio, sm_index);
+    if (short_capture_sm_index_ == static_cast<int8_t>(sm_index)) {
+        short_capture_sm_index_ = -1;
+    }
+    RearmSampler(sm_index);
+    capture_active_[sm_index] = false;
+}
+
+void __time_critical_func(ADSBee::FinishCapture)(uint16_t sm_index, uint16_t num_words) {
+    {
+        if (short_capture_sm_index_ == static_cast<int8_t>(sm_index)) {
+            short_capture_sm_index_ = -1;  // Full capture finished first: the alarm has nothing left to do.
+        }
+        // Take the samples and the timestamp jitter count, then free the sampler and its matcher before the (slower)
+        // demodulation so they can take the next message.
+        for (uint16_t i = 0; i <= mode_s_soft_demod::kCaptureWords; i++) {
+            demod_samples_[i] = i < num_words ? sample_buf_[sm_index][i] : 0;
+        }
+        uint16_t jitter_sys_clk_counts =
+            mlat_jitter_counts_on_demod_begin_[sm_index] - mlat_jitter_counts_on_fifo_pull_[sm_index];
+        uint64_t mlat_48mhz_64bit_counts = rx_packet_[sm_index].mlat_48mhz_64bit_counts -
+                                           MLATJitterCountsTo48MHzCounts(jitter_sys_clk_counts) +
+                                           kSamplerLead48MHzCounts;
+        int rssi_mv = sample_rssi_mv_[sm_index];
+
+        // Release the preamble matcher (it drops the demod pin), then park the sampler for the next message.
+        pio_interrupt_clear(config_.preamble_matcher_pio, sm_index);
+        hw_set_bits(&config_.preamble_matcher_pio->inte0, 1u << (PIO_INTR_SM0_LSB + sm_index));
+        RearmSampler(sm_index);
+        capture_active_[sm_index] = false;
+
+        aircraft_dictionary.Record1090Demod(sm_index);
 #ifdef DEBUG_ISR_TIMING
-    // 16-bit counter at 125MHz wraps every ~524us, far longer than any ISR execution.
-    uint16_t isr_duration_counts = GetMLATJitterPWMSliceCounts() - isr_start_counts;
-    if (isr_duration_counts > isr_duration_max_counts_) {
-        isr_duration_max_counts_ = isr_duration_counts;
-    }
-    isr_duration_sum_counts_ += isr_duration_counts;
-    isr_count_++;
+        uint16_t demod_start_counts = GetMLATJitterPWMSliceCounts();
 #endif
+        mode_s_soft_demod::Result result;
+        bool found = mode_s_soft_demod::Demodulate(demod_samples_, num_words, result);
+#ifdef DEBUG_ISR_TIMING
+        // 16-bit counter at 125MHz wraps every ~524us, longer than a demodulation.
+        uint16_t demod_duration_counts = GetMLATJitterPWMSliceCounts() - demod_start_counts;
+        if (demod_duration_counts > isr_duration_max_counts_) {
+            isr_duration_max_counts_ = demod_duration_counts;
+        }
+        isr_duration_sum_counts_ += demod_duration_counts;
+        isr_count_++;
+#endif
+        if (found) {
+            RawModeSPacket packet;
+            for (uint16_t i = 0; i < RawModeSPacket::kMaxPacketLenWords32; i++) {
+                packet.buffer[i] = result.buffer[i];
+            }
+            packet.buffer_len_bytes = result.len_bits / kBitsPerByte;
+            packet.sigs_dbm =
+                r1090_rssi::PacketMilliVoltsTodBm(rssi_mv, noise_floor_mv_, bsp.r1090_rf_frontend_version);
+            packet.sigq_db = packet.sigs_dbm - GetNoiseFloordBm();
+            packet.source = sm_index;
+            packet.mlat_48mhz_64bit_counts = mlat_48mhz_64bit_counts;
+            if (result.len_bits == RawModeSPacket::kSquitterPacketLenBits) {
+                aircraft_dictionary.Record1090RawSquitterFrame(sm_index);
+            } else {
+                aircraft_dictionary.Record1090RawExtendedSquitterFrame(sm_index);
+            }
+            if (!decoder.raw_mode_s_packet_in_queue.Enqueue(packet)) {
+                r1090_packet_queue_overflowed_ = true;
+            }
+        }
+    }
 }
 
 void __time_critical_func(ADSBee::OnSysTickWrap)() { mlat_counter_wraps_ += kMLATWrapCounterIncrement; }
@@ -660,7 +673,7 @@ int __time_critical_func(ADSBee::ReadSignalStrengthMilliVoltsNonBlockingComplete
     return ADC_COUNTS_TO_MV(rssi_adc_counts);
 }
 
-int ADSBee::ReadSignalStrengthdBmBlocking() { return AD8313MilliVoltsTodBm(ReadSignalStrengthMilliVoltsBlocking()); }
+int ADSBee::ReadSignalStrengthdBmBlocking() { return DetectorMilliVoltsTodBm(ReadSignalStrengthMilliVoltsBlocking()); }
 
 int ADSBee::ReadTLMilliVolts() {
     // Read back the low level TL bias output voltage.
@@ -763,7 +776,8 @@ void ADSBee::IngestAndForwardPackets() {
 
     // Ingest Broadcast Remote ID (drone) packets pulled from the ESP32 into the aircraft dictionary. The ESP32 already
     // ingested these into its own dictionary for network output; here they populate the RP2040 dictionary so drones
-    // appear in the serial reporting outputs (CSBee / GDL90 / MAVLINK / Aircraft JSON) alongside Mode S and UAT traffic.
+    // appear in the serial reporting outputs (CSBee / GDL90 / MAVLINK / Aircraft JSON) alongside Mode S and UAT
+    // traffic.
     RawRemoteIDPacket remote_id_packet;
     while (raw_remote_id_packet_queue.Dequeue(remote_id_packet)) {
         aircraft_dictionary.IngestRawRemoteIDPacket(remote_id_packet);
@@ -805,7 +819,7 @@ void ADSBee::MLATCounterInit() {
     pwm_config_set_wrap(&config, 0xFFFF);             // Use the full 16-bit span.
     pwm_init(mlat_jitter_pwm_slice_, &config, true);  // Start immediately.
 
-    // Enable a DMA DREQ for each demodulator PIO TX FIFO. This is used to capture the IRQ jitter offset counter
+    // Enable a DMA DREQ for each pulse sampler PIO TX FIFO. This is used to capture the IRQ jitter offset counter
     // when a decode interval begins (32 bits into a message).
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
         mlat_jitter_dma_channel_[sm_index] =
@@ -822,9 +836,9 @@ void ADSBee::MLATCounterInit() {
 }
 
 void ADSBee::PIOInit() {
-    /** PREAMBLE DETECTOR PIO **/
+    /** PREAMBLE MATCHER PIO **/
     // Calculate the PIO clock divider.
-    float preamble_detector_div = (float)clock_get_hz(clk_sys) / kPreambleDetectorFreqHz;
+    float preamble_matcher_div = (float)clock_get_hz(clk_sys) / kPreambleMatcherFreqHz;
     // Build the demod pin -> state machine lookup table used by OnDemodBegin().
     for (uint16_t gpio = 0; gpio < NUM_BANK0_GPIOS; gpio++) {
         demod_pin_to_sm_index_[gpio] = kNoDemodStateMachine;
@@ -835,97 +849,67 @@ void ADSBee::PIOInit() {
         }
     }
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        // Only make the state machine wait to start if it's part of the round-robin group of well formed preamble
-        // detectors.
-        bool make_sm_wait = sm_index > 0;  // State machines 1, 2, 3 follow state machine 0 in round robin.
-        // Initialize the program using the .pio file helper function
-        preamble_detector_program_init(
-            config_.preamble_detector_pio,                     // Use PIO block 0.
-            preamble_detector_sm_[sm_index],                   // State machines 0-2
-            preamble_detector_offset_ /* + starting_offset*/,  // Program startin offset.
-            config_.pulses_pin,                                // Pulses pin (input).
-            config_.demod_pins[sm_index],                      // Demod pin (output).
-#ifdef DEBUG_PREAMBLE_DETECTOR
-            config_.recovered_clk_pins[sm_index],  // Use the recovered clk pin for preamble detector debugging.
-#else
-            UINT16_MAX,  // Don't use the recovered clk pin for side set.
-#endif                              // DEBUG_PREAMBLE_DETECTOR
-            preamble_detector_div,  // Clock divisor (for 48MHz).
-            make_sm_wait            // Whether state machine should wait for an IRQ to begin.
-        );
+        // The matchers take candidate preamble edges in turn: the first one starts, the others wait for theirs.
+        bool make_sm_wait = sm_index > 0;
+        preamble_matcher_program_init(config_.preamble_matcher_pio, preamble_matcher_sm_[sm_index],
+                                      preamble_matcher_offset_, config_.pulses_pin, config_.demod_pins[sm_index],
+                                      preamble_matcher_div, make_sm_wait);
 
         // Handle GPIO interrupts (for marking beginning of demod interval).
         gpio_set_irq_enabled_with_callback(config_.demod_pins[sm_index], GPIO_IRQ_EDGE_RISE, true, on_demod_pin_change);
 
-        /** Set the second chip of the preamble sequence into the ISR: 10100000.
-         * Each "10" is represented by a 1 (since we don't actually care too muh about the trailing 0). A "10" half
-         * nibble is 1us. Each "00" is represented by two 0 bits, since each 0 bit is 500ns of 0's.
-         * from preamble sequence to allow the demodulator more time to start up.
-         *
-         * We actually ignore the last 500ns of 0's and do a dumb delay, since this part tends to get "dirty" due to
-         * the LEVEL filter drifting downwards during the long LO. Taking into account the initial idle filter, we
-         * are matching on a pattern that looks something like: 0b001X1X000X, where X indicates 500ns of ignored
-         * bits.
-         */
-
-        // mov isr null ; Clear ISR.
-        pio_sm_exec(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], pio_encode_mov(pio_isr, pio_null));
-        // set x 0b11       ; ISR = 0b00000000000000000000000000000000
-        pio_sm_exec(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], pio_encode_set(pio_x, 0b11));
-        // in x 2           ; ISR = 0b00000000000000000000000000000011
-        pio_sm_exec(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], pio_encode_in(pio_x, 2));
-        // in null 3        ; ISR = 0b00000000000000000000000000011000
-        pio_sm_exec(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], pio_encode_in(pio_null, 3));
-        // in x 2           ; ISR = 0b00000000000000000000000001100011
-        pio_sm_exec(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], pio_encode_in(pio_x, 2));
-        // in null 3        ; ISR = 0b00000000000000000000001100011000
-        pio_sm_exec(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], pio_encode_in(pio_null, 3));
-        // mov x null   ; Clear scratch x.
-        pio_sm_exec(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], pio_encode_mov(pio_x, pio_null));
-
-        // Use this instruction to verify preamble was formed correctly (pushes ISR to RX FIFO).
-        // pio_sm_exec(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], pio_encode_push(false,
-        // true)); while (true) {
-        //     // Stall core 1 so we can peek at the RX FIFO registers.
-        // }
-
-        // Stuff the demodulator TX FIFO full of garbage so that the demodulator can use a pull to signal
-        // the demod interval beginning.
-        while (!pio_sm_is_tx_fifo_full(config_.message_demodulator_pio, message_demodulator_sm_[sm_index])) {
-            pio_sm_put(config_.message_demodulator_pio, message_demodulator_sm_[sm_index],
+        // Fill the sampler's TX FIFO: its pull at the start of a capture triggers the timestamp DMA.
+        while (!pio_sm_is_tx_fifo_full(config_.pulse_sampler_pio, pulse_sampler_sm_[sm_index])) {
+            pio_sm_put(config_.pulse_sampler_pio, pulse_sampler_sm_[sm_index],
                        0xFFFFFFFF);  // Non-blocking put.
         }
     }
 
-    // Enable the DEMOD interrupt on PIO0_IRQ_0 - PIO0_IRQ_n, where n is the number of preamble detector state
-    // machines.
+    // PIO0 IRQ0: a preamble matcher is about 43us into a message (RSSI sample, noise and length checks). The flag
+    // also holds the matcher until its capture is finished.
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        pio_set_irq0_source_enabled(config_.preamble_detector_pio,
-                                    static_cast<pio_interrupt_source>(pis_interrupt0 + sm_index),
-                                    true);  // PIO0 state machine 0+i
+        pio_set_irq0_source_enabled(config_.preamble_matcher_pio,
+                                    static_cast<pio_interrupt_source>(pis_interrupt0 + sm_index), true);
     }
+    irq_set_exclusive_handler(config_.preamble_matcher_irq, on_demod_mid);
+    irq_set_priority(config_.preamble_matcher_irq, kCaptureEventInterruptPriority);
+    irq_set_enabled(config_.preamble_matcher_irq, true);
 
-    // Handle PIO0 IRQ0.
-    irq_set_exclusive_handler(config_.preamble_detector_demod_complete_irq, on_demod_complete);
-    irq_set_enabled(config_.preamble_detector_demod_complete_irq, true);
-    irq_set_priority(config_.preamble_detector_demod_complete_irq, kDemodCompleteInterruptPriority);
-
-    /** MESSAGE DEMODULATOR PIO **/
-    float message_demodulator_div = (float)clock_get_hz(clk_sys) / kMessageDemodulatorFreqHz;
+    /** PULSE SAMPLER PIO **/
+    float pulse_sampler_div = (float)clock_get_hz(clk_sys) / kPulseSamplerFreqHz;
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        MESSAGE_DEMODULATOR_PROGRAM_INIT(
-            config_.message_demodulator_pio, message_demodulator_sm_[sm_index], message_demodulator_offset_,
-            config_.pulses_pin, config_.demod_pins[sm_index],
-#ifdef DEBUG_DEMODULATOR
-            config_.recovered_clk_pins[sm_index],  // Side set on recovered clk pin on the designated state machine.
-#else
-            UINT16_MAX,  // Don't side set on recovered clk pin.
-#endif  // DEBUG_DEMODULATOR
-            message_demodulator_div);
+        PIO pio = config_.pulse_sampler_pio;
+        uint sm = pulse_sampler_sm_[sm_index];
+        pulse_sampler_program_init(pio, sm, pulse_sampler_offset_, config_.pulses_pin, config_.demod_pins[sm_index],
+                                   pulse_sampler_div);
+        // DMA: sampler RX FIFO -> capture buffer, one interrupt per complete capture.
+        if (sample_dma_channel_[sm_index] < 0) {
+            sample_dma_channel_[sm_index] = dma_claim_unused_channel(true);
+        }
+        dma_channel_config dma_config = dma_channel_get_default_config(sample_dma_channel_[sm_index]);
+        channel_config_set_read_increment(&dma_config, false);
+        channel_config_set_write_increment(&dma_config, true);
+        channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_32);
+        channel_config_set_dreq(&dma_config, pio_get_dreq(pio, sm, false));
+        dma_channel_configure(sample_dma_channel_[sm_index], &dma_config, sample_buf_[sm_index], &pio->rxf[sm],
+                              mode_s_soft_demod::kCaptureWords, true);
+        dma_channel_set_irq1_enabled(sample_dma_channel_[sm_index], true);
+        capture_active_[sm_index] = false;
     }
+    // Timer alarm that ends the capture of a 56 bit message early.
+    if (short_capture_alarm_num_ < 0) {
+        short_capture_alarm_num_ = hardware_alarm_claim_unused(true);
+    }
+    short_capture_sm_index_ = -1;
+    hardware_alarm_set_callback(short_capture_alarm_num_, on_short_capture_alarm);
+    irq_set_priority(TIMER_IRQ_0 + short_capture_alarm_num_, kCaptureDemodInterruptPriority);
+    irq_set_exclusive_handler(DMA_IRQ_1, on_capture_complete);
+    irq_set_priority(DMA_IRQ_1, kCaptureDemodInterruptPriority);
+    irq_set_enabled(DMA_IRQ_1, true);
 
-    // Set GPIO interrupts to be higher priority than the DEMOD complete interrupt to allow RSSI measurement.
-    irq_set_priority(config_.preamble_detector_demod_pin_irq, kGPIOInterruptPriority);
+    // The message begin interrupt (demod pin rising edge) shares the priority of the mid-message interrupt: both
+    // must preempt the demodulation of an earlier capture.
+    irq_set_priority(config_.demod_pin_irq, kCaptureEventInterruptPriority);
 }
 
 void ADSBee::PIOEnable() {
@@ -933,20 +917,12 @@ void ADSBee::PIOEnable() {
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
         dma_channel_start(mlat_jitter_dma_channel_[sm_index]);
     }
-
-    // Enable the state machines.
-    // Need to enable the demodulator SMs first, since if the preamble detector trips the IRQ but the demodulator
-    // isn't enabled, we end up in a deadlock (I think, this maybe should be verified again).
+    // Samplers first, so each one is parked at idle before its preamble matcher can raise the demod pin.
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        // pio_sm_set_enabled(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], true);
-        pio_sm_set_enabled(config_.message_demodulator_pio, message_demodulator_sm_[sm_index], true);
+        pio_sm_set_enabled(config_.pulse_sampler_pio, pulse_sampler_sm_[sm_index], true);
     }
-    // Enable round robin well formed preamble detectors.
-    // NOTE: These need to be enable to allow the high power preamble detector to run, since they reset the IRQ that
-    // the high power preamble detector relies on. This is a vestige of the fact that the high power preamble
-    // detector uses the same PIO code that does round-robin for the well formed preamble detectors.
     for (uint16_t sm_index = 0; sm_index < bsp.r1090_num_demod_state_machines; sm_index++) {
-        pio_sm_set_enabled(config_.preamble_detector_pio, preamble_detector_sm_[sm_index], true);
+        pio_sm_set_enabled(config_.preamble_matcher_pio, preamble_matcher_sm_[sm_index], true);
     }
 }
 
@@ -977,8 +953,8 @@ void ADSBee::PruneAircraftDictionary() {
         isr_count_ = 0;
         isr_duration_sum_counts_ = 0;
         isr_duration_max_counts_ = 0;
-        CONSOLE_WARNING("ADSBee::PruneAircraftDictionary", "OnDemodComplete: %lu calls, avg %lu us, max %u us.",
-                        isr_count, isr_count > 0 ? isr_sum_counts / isr_count / 125 : 0, isr_max_counts / 125);
+        CONSOLE_WARNING("ADSBee::PruneAircraftDictionary", "Demodulate: %lu calls, avg %lu us, max %u us.", isr_count,
+                        isr_count > 0 ? isr_sum_counts / isr_count / 125 : 0, isr_max_counts / 125);
 #endif
     }
 }
@@ -1011,7 +987,7 @@ void ADSBee::UpdateNoiseFloor() {
     uint32_t demod_begin_us = last_demod_begin_timestamp_us_;
 
     // Never sample while a demodulation is in progress: the RSSI line is sitting at the packet's power level, and the
-    // ISR owns the ADC (OnDemodBegin() kicked off a conversion that OnDemodComplete() reads back).
+    // ISR owns the ADC (OnDemodMid() samples the packet's RSSI).
     if (gpio_get_all() & demod_pins_mask_) {
         return;
     }
