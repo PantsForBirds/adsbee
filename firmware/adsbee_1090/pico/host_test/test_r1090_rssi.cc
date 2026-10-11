@@ -7,15 +7,16 @@ static constexpr uint8_t kV1 = 1;
 static constexpr uint8_t kV2 = 2;
 static constexpr uint8_t kV3 = 3;
 
-TEST(R1090RSSI, LegacyConversionUnchangedOnV1AndV2) {
-    // 60 dB/V around 1600 mV, minus 44 dB of LNA gain, on the raw sample.
+TEST(R1090RSSI, LegacyConversionOnV1AndV2) {
+    // 60 dB/V around 1600 mV, minus 44 dB of LNA gain.
     for (uint8_t version : {kV1, kV2}) {
         EXPECT_EQ(DetectorMilliVoltsTodBm(1600, version), -44);
         EXPECT_EQ(DetectorMilliVoltsTodBm(728, version), -96);
         EXPECT_EQ(DetectorMilliVoltsTodBm(1000, version), -80);
-        EXPECT_EQ(PacketMilliVoltsTodBm(1000, 728, version), -80);
-        EXPECT_EQ(PacketMilliVoltsTodBm(1000, 990, version), -80);  // The noise floor is not used.
-        EXPECT_FALSE(PacketSampleAtEnd(version));
+        // Packets: the settled sample is scaled back to the height the original early sample had (58 %).
+        EXPECT_EQ(PacketMilliVoltsTodBm(1228, 728, version), LegacyMilliVoltsTodBm(728 + 290));
+        EXPECT_EQ(PacketMilliVoltsTodBm(728, 728, version), -96);
+        EXPECT_EQ(PacketMilliVoltsTodBm(700, 728, version), -96);
     }
 }
 
@@ -33,7 +34,7 @@ TEST(R1090RSSI, V3SaturatesAtDetectorFullScale) {
     EXPECT_EQ(DetectorMilliVoltsTodBm(1770, kV3), kV3MaxdBm);
     EXPECT_EQ(DetectorMilliVoltsTodBm(1897, kV3), kV3MaxdBm);
     EXPECT_EQ(DetectorMilliVoltsTodBm(3300, kV3), kV3MaxdBm);
-    EXPECT_EQ(PacketMilliVoltsTodBm(1500, 948, kV3), kV3MaxdBm);
+    EXPECT_EQ(PacketMilliVoltsTodBm(1600, 948, kV3), kV3MaxdBm);
 }
 
 TEST(R1090RSSI, V3IsMonotonic) {
@@ -47,15 +48,13 @@ TEST(R1090RSSI, V3IsMonotonic) {
 }
 
 TEST(R1090RSSI, V3PacketsFollowTheBenchCalibration) {
-    // End-of-packet samples from the bench: {sample mV, noise floor mV, dBm commanded}. The floor above 948 mV is
-    // the signal generator's carrier leak at the higher levels.
-    const int packets[][3] = {{1001, 948, -82},  {1028, 948, -78}, {1054, 948, -74}, {1082, 948, -70},
-                              {1111, 948, -66},  {1143, 949, -62}, {1176, 951, -58}, {1208, 951, -54},
-                              {1272, 1016, -50}, {1328, 1068, -46}};
+    // Mid-message samples from the bench: {sample mV, noise floor mV, dBm commanded}. The floor above 948 mV is the
+    // signal generator's carrier leak at the higher levels.
+    const int packets[][3] = {{1043, 948, -80}, {1079, 948, -76}, {1118, 948, -72}, {1160, 947, -68},
+                              {1199, 948, -64}, {1240, 949, -60}, {1285, 951, -56}, {1362, 1016, -52}};
     for (const auto& packet : packets) {
         EXPECT_NEAR(PacketMilliVoltsTodBm(packet[0], packet[1], kV3), packet[2], 2) << packet[2] << " dBm";
     }
-    EXPECT_TRUE(PacketSampleAtEnd(kV3));
 }
 
 TEST(R1090RSSI, V3PacketAtOrBelowTheFloorReadsTheFloor) {

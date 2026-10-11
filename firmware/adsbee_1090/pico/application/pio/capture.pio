@@ -1,513 +1,124 @@
-; PIO0
-; SM0: Well Formed Preamble Detector #1
-; SM1: High Power Preamble Detector #1
-; SM2: Well Formed Preamble Detector #2
-; SM3: High Power Preamble Detector #2
+; 1090MHz Mode S receive path with software bit decisions.
+; PIO0: 4x preamble_matcher (round robin). PIO1: 4x pulse_sampler, one per preamble matcher.
+; Both run at 48MHz: 24 cycles per 0.5us chip.
 
-; PIO1
-; SM0: Demodulator for Well Formed Preamble Detector #1
-; SM1: Demodulator for High Power Preamble Detector #1
-; SM2: Demodulator for Well Formed Preamble Detector #2
-; SM3: Demodulator for High Power Preamble Detector #2
-
-.program preamble_detector
-
-; This program runs at 48MHz. Each clock cycle is 1/48us.
-
-.define pulses_gpio 19
-.define pulses_pin_index 0
-.define demod_pin_index 1
-
-; 1/24us per tick (2x 48MHz instructions per tick)
-.define end_of_message_idle_ticks 25
-.define beginning_of_message_idle_ticks 31
-
-; 1/48us per tick
-.define fpl_clock_stretch_ticks 3
-
-; These values are n-1, where n is number of samples.
-; .define correlate_00_n_samples 8
-; .define correlate_10_n_samples 4
-.define correlate_n_samples 4
-
-; Allow side-setting the out_pin for debugging. 1x output pin can be optionally side-set.
-.side_set 1 opt
-
-; c00_failed:
-;     jmp !y follow_irq ; if we got sent here with y=1, we are in initial idle correlation mode and should fast reset
-; waiting_for_idle: ; Wait for idle period between first and second preamble chip to start pattern matching.
-;     set x, beginning_of_message_idle_ticks side 0
-; CORRELATE 00 | 44 cycles
-; Correlate for a "00" pattern, represented in the preamble pattern by a 0 bit. We want to make sure we don't have more than 1 high sample in this 0 period.
-; If y is 1, it enforces continuous retry correlation with beginning_of_message_idle_ticks (we are looking for the first idle).
-correlate_00:
-c00_wrap:
-    ; Standard correlate_00 uses the x value set by the pattern parser.
-    ; jmp pin c00_failed side 1
-    jmp pin follow_irq side 1
-    jmp x-- c00_wrap side 0
-c00_success:
-    jmp !y check_next_bit [6] ;side 1 ; If y=0, we were in initial idle correlation mode and can start looking for the preamble. If y=1, we just found the idle before the second preamble chip, so start looking for the next bit.
-    jmp idle_found
-
-    ; else fall through to follow_irq (we failed a 00 correlation later in the preamble)
-.wrap_target
-; This is where we go to start looking for a new preamble, or after a preamble match fails.
-public follow_irq:
-    mov osr isr side 0               ; OSR = 0b0000000000000000001100011000
-    out null 23                     ; OSR = 0b100011000 Throw away the first bit since we short circuit it.
-    set x correlate_n_samples
-    wait 1 irq 4 rel ; Wait for IRQ 4+SM, then clear it.
-    ; set y 1 ; Set y = 1 and jump to the waiting_for_idle function, which reuses correlate_00 in a special mode where it continuously searches for an idle period and self resets in case of failure.
-    ; jmp waiting_for_idle
-    wait 0 gpio, pulses_gpio
-idle_found:
-    wait 1 gpio, pulses_gpio ; 0
-    irq set 5 rel [0] side 1  ; 1 | set IRQ 5+SM to indicate to the other preamble detector that it can start looking now and delay to middle of bit to start filtering.
-    jmp correlate_10 ; short circuit jump to correlate_10 since we are already into the first pulse
-
-check_next_bit:
-    jmp !osre preamble_not_done_yet side 0 ; 2 
-preamble_matched:
-    set pins 1 [2] ; 19:22 | set demod pin to indicate message body beginning
-    wait 1 gpio, pulses_gpio [7] ; 23:30 | wait till middle of message eye to look for end
-    
-waiting_for_end_of_message:
-    set x, end_of_message_idle_ticks ; 30:32 | [2.0us] number of sequential idle samples required to mark end of packet
-idle_countdown:
-    jmp pin waiting_for_end_of_message ; 33+2n:35+2n | start over the idle countdown if received a non idle bit
-    jmp x-- idle_countdown [2] ; 36+2n:38+2n | still idle, keep counting down if the timer isn't up
-message_finished:
-    set pins, 0 ; 39+2n | set demod pin to 0 to indicate message is finished
-    irq wait 0 rel ; 40+2n | Set IRQ 0+SM, and wait for it to clear (don't look for new messages until the current one has been processed).
-; x == 0 here (idle_countdown loop terminated). When reached from message_finished, falls through and wraps to follow_irq.
-; filter_pin_lo_stretch:
-;     jmp x-- filter_pin_lo side 0 [fpl_stretch_extra_ticks_per_loop] ; Stretch loops remaining: loop to filter_pin_lo. x=0: fall through and wrap to follow_irq.
-.wrap
-
-preamble_not_done_yet:
-    ; set x 3                         ; 3: (filter_num_samples-1) Assert HI for 12 cycles ((x+1) * (3 cycles per wrap))
-    out y, 1                        ; 1: Find next bit polarity from OSR.
-    set x correlate_n_samples [3]
-    jmp !y correlate_00   [0]         ; 2:
-; CORRELATE 10 | 44 cycles
-; Correlate for a "10" pattern, represented in the preamble pattern by a 1 bit. We want to assert high samples for the 0.5us 1,
-; and don't care about the contents of the 0.5us 0 but do want to sample it once in case we need to clock stretch.
-correlate_10:
-    ; set x correlate_10_n_samples ; 1
-c10_wrap:
-; Basically put assert_pin_hi here followed by a clock stretch check then a delay.
-    jmp pin c10_pin_is_hi side 1 ; 1+2n
-; c10 failed
-    jmp follow_irq ; 2+2n | Pin is LO, assert failed.
-c10_pin_is_hi:
-    jmp x-- c10_wrap side 0; 2+2n
-c10_wrap_done:
-    ; Finished correlating the high, check for clock stretch and wait for the rest of the bit time.
-    set x 4 [4] ; wait is 3*(x+1) cycles
-c10_wait_before_stretch_check:
-    jmp x-- c10_wait_before_stretch_check [2]
-    jmp pin c10_clock_stretch [4] side 1 ; clock stretch sample
-c10_success:
-    jmp check_next_bit [5] side 0  ; cycle idle at end
-
-c10_clock_stretch:
-    jmp c10_success [fpl_clock_stretch_ticks] side 0 ; 36:36+stretch
-
-
-; assert_pin_hi:
-;     ; set x 4 [0] ; 5-6 | Assert HI for 10 cycles ((x+1) * (2 cycles per wrap))
-; aph_wrap:
-;     jmp pin aph_pin_is_hi side 1 ; 7+2n
-;     jmp follow_irq ; 8+2n | Pin is LO, assert failed.
-; aph_pin_is_hi:
-;     jmp x-- aph_wrap side 0; 8+2n
-; aph_success:
-;     nop [1]
-;     jmp check_next_bit [7]   ; 20-25 | cycle idle at end
-
-; filter_pin_hi:
-;     set y 3  ; 6: (filter_correct_samples-1) Minimum number of correct samples needed to keep looking.
-; fph_wrap_target:
-;     jmp pin fph_pin_hi  ; 7+3n
-; fph_pin_lo:
-;     jmp fph_wrap    ; 8+3n
-; fph_pin_hi:
-;     jmp y-- fph_wrap    ; 8+3n
-; fph_exit_success:
-;     jmp x-- fph_exit_success [2] ; Complete remaining loops.
-;     jmp check_next_bit [3] ; 22-25
-; fph_wrap:
-;     jmp x-- fph_wrap_target ; 9+3n
-;     jmp waiting_for_first_edge  ; Correlation failed.
-
-; fpl_lo_clock_stretch:
-;     jmp fpl_pin_hi [fpl_clock_stretch_ticks] side 0
-
-
-; NOTE: The fall time of the AD8313 is asymmetric, with a longer fall than rise time. This measn that on high power messages, we want to sample later in the
-; bit period to increase the chance that we capture a LO sample. This sample routine provides clock stretching in the preamble on high power messages in order
-; to shift the sampling window of the demodulator later in each bit time, in order to improve demodulation rate at high powers.
-; Each LO sample in the preamble can stretch the clock by up to fpl_clock_stretch_ticks cycles if their first sample is HI. This allows up to 2 * fpl_clock_stretch_ticks
-; cycles of stretching in the ideal case where clock stretching only occurs on the trailing edge of HI bits in the preamble.
-; Known issue: We ran out of instructions to disable clock stretching on consecutive LO bits, so we could accidentally stretch the clock if we receive noise
-; at just the wrong time in the preamble tail.
-; filter_pin_lo:
-;     ; Generous implementation that accepts a single LO sample anywhere in the sampling window as a success.
-;     ; This accounts for the asymmetric nature of the data slicer circuit as it is charging up during the preamble; it
-;     ; is a lot harder to get a LO sample than a HI sample from an incoming message.
-
-;     ; Number of samples = x+1.
-;     jmp pin fpl_lo_clock_stretch [3] ; 5
-; fpl_wrap_target:
-;     jmp pin fpl_pin_hi side 0 ; 6+2n
-; fpl_pin_lo:
-;     jmp x-- fpl_pin_lo [1] side 1; 7+2n,8+2n | Complete remaining loops
-;     jmp check_next_bit [4] side 0; 9+2n:13+2n | Adjust post-filter delay here.
-; fpl_pin_hi:
-;     jmp x-- fpl_wrap_target side 1; 7+2n
-;     jmp follow_irq side 0; Never found a LO sample, correlation failed.
-
-    ; Single sample implementaiton that samples once in the middle of the interval.
-;     nop [6] ; 6-12
-;     jmp pin fpl_fail ; 13
-; fpl_success:
-;     jmp check_next_bit [11] ; 14-25
-; fpl_fail:
-;     jmp check_next_bit [11] ; 14-25
-
-    ; Correlation implementation that enforces no more than y+1 samples must be incorrect (HI).
-;     set y 1  ; 6: (filter_num_samples - filter_correct_samples - 1) Minimum number of INCORRECT samples needed to abort.
-; fpl_wrap_target:
-;     jmp pin fpl_pin_hi ; 7+3n
-; fpl_pin_lo:
-;     jmp fpl_wrap ; 8+3n
-; fpl_pin_hi:
-;     jmp y-- fpl_wrap ; 8+3n
-;     jmp waiting_for_first_edge
-; fpl_wrap:
-;     jmp x-- fpl_wrap_target ; 9+3n
-;     ; jmp !y waiting_for_first_edge ; 22: Reset if correlation failed.
-;     jmp check_next_bit [3] ; 22-25
-
-
-
-% c-sdk {
-
-// Helper function (for use in C program) to initialize this PIO program
-void preamble_detector_program_init(
-    PIO pio, 
-    uint sm, 
-    uint offset, 
-    uint pulses_pin, 
-    uint demod_pin, 
-    uint recovered_clk_pin,
-    float div, 
-    bool waiting
-) {
-
-    // Sets up state machine and wrap target. This function is automatically
-    // generated in preamble_detector.pio.h.
-    pio_sm_config c = preamble_detector_program_get_default_config(offset);
-
-    // Allow PIO to read GPIO pulses_pin (as input)
-    pio_sm_set_consecutive_pindirs(pio, sm, pulses_pin, 1, false); // set one pin starting at pulses_pin to IN
-
-    // Allow PIO to control GPIO demod_pin (as output for debugging)
-    pio_gpio_init(pio, demod_pin);
-    pio_sm_set_consecutive_pindirs(pio, sm, demod_pin, 1, true); // set one pin starting at demod_pin to OUT
-
-    // Connect pulses_pin to IN pin (control with 'in' instruction)
-    sm_config_set_in_pins(&c, pulses_pin); // for WAIT
-    sm_config_set_jmp_pin(&c, pulses_pin); // for JMP
-
-    // Connect demod_pin to SET
-    sm_config_set_set_pins(&c, demod_pin, 1); // set one pin as SET output
-
-    sm_config_set_out_shift(&c, false, false, 32); // OSR shifts left, autopull threshold set to 32 (used for OSRE compare)
-    sm_config_set_in_shift(&c, false, false, 32); // ISR shifts left, autopush turned off
-    
-    // Set the clock divider for the state machine
-    sm_config_set_clkdiv(&c, div);
-
-    if (recovered_clk_pin != UINT16_MAX) {
-        // This is the chosen state machine to have a recovered_clk output!
-
-        // Allow PIO to control recovered_clk_pin (as output for debugging).
-        pio_gpio_init(pio, recovered_clk_pin);
-        pio_sm_set_consecutive_pindirs(pio, sm, recovered_clk_pin, 1, true); // set one pin starting at out_pin to OUT
-
-        // Connect out_pin to SET and SIDESET
-        sm_config_set_sideset_pins(&c, recovered_clk_pin); 
-    }
-
-    // Load configuration and jump to start of the program
-    if (!waiting) {
-        pio_sm_exec(pio, sm, pio_encode_irq_set(true, 4)); // Set IRQ 4 + SM to avoid waiting on complementary state machine on startup.
-    }
-    pio_sm_init(pio, sm, offset + preamble_detector_offset_follow_irq, &c);
-}
-
-%}
-
-.program message_demodulator
-; Demod pin for knowing when a valid message demod interval has begun.
-.define demod_in_pin_index 0
-; Pulses input pin for reading current power level.
-.define pulses_gpio 19
-; Each delay count is 4 cycles
-.define initial_entry_delay 8
-
-; Allow side-setting the out_pin for debugging. 1x output pin can be optionally side-set.
-.side_set 1 opt
-; Assumes line is idle low, first bit is 0
-; One bit is 48 cycles
-; a '0' is encoded as 01
-; a '1' is encoded as 10
+.program preamble_matcher
+; Matches the comparator output against the 8us preamble, chip by chip, and tolerates a number of wrong samples.
 ;
-; Both the IN base and the JMP pin mapping must be pointed at the GPIO used for RX.
-; Autopush must be enabled.
-; Before enabling the SM, it should be placed in a 'wait 1, pin` state, so that
-; it will not start sampling until the initial line idle state ends.
+; ISR holds the chip pattern (loaded by the CPU): 2 unused bits, then 2 bits per chip for 15 chips, first chip first:
+;   0b11 = expect HI, 0b10 = expect LO, 0b0x = don't check.
+; A checked chip is sampled 4 times, at cycles 5, 9, 13 and 17 of the chip (9 to 21 cycles after its nominal start). Every sample that differs from the
+; expectation takes one count out of y (the mismatch budget) and delays the rest of the pattern by one cycle. The
+; candidate is dropped when the budget is used up.
 
+.define pulses_gpio 19
+.define public mismatch_budget 4
+.define samples_per_chip 4
 
-; SAMPLE SUBROUTINE
-; Samples 5x and uses a biased majority vote to determine whether it's HI or LO.
-; @param[in] y Goes back to end_of_0 if y = 0, goes back to end_of_1 otherwise.
-; @retval x x=1 if >=2/3 samples were LO, x=0 otherwise.
-sample:
-    set x 2 [7]         ; 5:13 | (x+1) = number of samples to take (added delay 7)
-    mov osr !null [7]   ; 14:22 | OSR = 0b1111111111111111111111 (added delay 7)
-public sample_set_vote_threshold:
-    ;out null 27 [2]         ; 23:25 | OSR = 0b11111 (5/5 bits required to classify sampling period as HI, it's hard to get LO samples so we fudge it)
-    ; out null 28 [2]         ; 23:25 | OSR = 0b1111 (4/5 bits required to classify sampling period as HI)
-    out null 29 [2]         ; 23:25 | OSR = 0b111 (3/3 bits required to classify sampling period as HI)
-    ; out null 30 [2]         ; 23:25 | OSR = 0b11 (2/3 bits required to classify sampling period as HI)
-; One sample takes 3 cycles.
-sample_wrap_target:
-    jmp pin sample_hi side 1 ; 8+3n
-sample_lo:
-    jmp sample_wrap side 0 ; 9+3n
-sample_hi:
-    out null 1 side 0 ; 9+3n
-sample_wrap:
-    jmp x-- sample_wrap_target ; 10+3n
-    jmp !osre sample_net_lo [1] ; 17:19 | if OSR not empty → net LO (dead mov x,pins removed, 2 cycles redistributed)
-
-sample_net_hi:
-    set x 0 [1]                 ; 20-21
-    jmp sample_return           ; 22
-sample_net_lo:
-    set x 1 [2]                 ; 20-22
-    
-sample_return:
-    jmp !y end_of_0             ; 22 | End of 0
-    jmp end_of_1                ; 23 | End of 1
-
-public initial_entry:
-    wait 1 pin demod_in_pin_index [3]  ; Wait to enter DEMOD interval.
-    pull noblock [0]        ; Pull from TX FIFO to OSR in order to signal DMA to capture timestamp.
-    set x initial_entry_delay side 0
-initial_entry_delay_wrap:
-    jmp x-- initial_entry_delay_wrap [2]
-    ; Preamble ends LO, so imitate the end of a 1 with its HI->LO transition.
-    jmp initial_entry_cut_in [6]  ;wait adjusted here
-
-start_of_1:
-; FALLING EDGE WAIT
-    ; wait 0 gpio pulses_gpio ; 0 | Wait for the 1->0 transition - at this point we are 0.5 into the bit.
-
-; FALLING EDGE CLOCK RECOVERY
-;     set x max_clock_skew_cycles side 1
-; start_of_1_wait_loop:
-;     jmp pin start_of_1_still_hi    ; Pin HI → go check timeout counter
-;     jmp falling_edge_1             ; 0 | Pin LO → found the falling edge
-; start_of_1_still_hi:
-;     jmp x-- start_of_1_wait_loop   ; 0 | Decrement, loop back, or fall through on x=0
-
-; DUMB WAIT
-    nop [7] ;side 1
-
-falling_edge_1:
-    mov x !null side 0          ; 1
-    in x, 1                     ; 2 | Emit a 1.
-initial_entry_cut_in:
-    set y 1                     ; 3
-    jmp sample                  ; 4
-end_of_1:
-    jmp !x start_of_1           ; 24 | If signal is 1 again, it's another 1 bit, otherwise it's a 0.
-
+fail_lo:
+    jmp y-- lo_next                 ; Wrong sample in a LO chip: spend budget, or fall through and start over.
 .wrap_target
-start_of_0:                     ; We are 0.25 bits into a 0 - signal is LO
-; RISING EDGE WAIT
-    ; wait 1 gpio pulses_gpio ; 0 | Wait for the 0->1 transition - at this point we are 0.5 into the bit.
-
-; RISING EDGE CLOCK RECOVERY
-;     set x max_clock_skew_cycles side 1
-; start_of_0_wait_loop:
-;     jmp pin rising_edge_0 [1]       ; 0
-;     jmp x-- start_of_0_wait_loop
-
-; DUMB WAIT
-    nop [7] ;side 1
-
-rising_edge_0:
-    in null, 1 [1] side 0       ; 1:2 | Emit a 0, sleep 3/4 of a bit
-
-    set y 0 ;side 0              ; 3
-    jmp sample                  ; 4
-end_of_0:
-    jmp !x start_of_1 [1]       ; 23:24 | If signal is 0 again, it's another 0 bit otherwise it's a 1
+public follow_irq:
+    set pins, 0                     ; Demod pin low: not receiving.
+    mov osr, isr                    ; Reload the chip pattern...
+    out null, 2                     ; ...which has 15 chips: the sampler starts half a microsecond before the data.
+    wait 1 irq 4 rel                ; Round robin: wait for the previous matcher to take a candidate.
+    wait 0 gpio pulses_gpio
+    wait 1 gpio pulses_gpio         ; Rising edge: candidate first preamble pulse. Chip 0 starts here.
+    irq set 5 rel                   ; Let the next matcher look for the next edge.
+public set_budget:
+    set y, mismatch_budget
+chip:                               ; Cycle 0 of the chip (4 cycles after the edge for chip 0).
+    out x, 1                        ; 0 | Check this chip?
+    jmp !x skip_chip                ; 1
+    out x, 1                        ; 2 | Expected level.
+    jmp !x expect_lo                ; 3
+expect_hi:
+    set x, (samples_per_chip - 1)    ; 4
+hi_sample:
+    jmp pin hi_next                 ; 5 + 4n
+    jmp y-- hi_next                 ; Wrong sample: spend budget...
+    jmp follow_irq                  ; ...or start over.
+hi_next:
+    jmp x-- hi_sample [2]           ; 6:8 + 4n
+    jmp chip_end [1]                ; 21:22
+expect_lo:
+    set x, (samples_per_chip - 1)    ; 4
+lo_sample:
+    jmp pin fail_lo                 ; 5 + 4n
+lo_next:
+    jmp x-- lo_sample [2]           ; 6:8 + 4n
+    jmp chip_end [1]                ; 21:22
+skip_chip:
+    out x, 1 [20]                   ; 2:22 | Discard the expected level.
+chip_end:
+    jmp !osre chip                  ; 23
+matched:
+    set pins, 1                     ; Preamble matched: the sampler starts and the CPU timestamps the rising edge.
+    ; Wait about 43us, until the RSSI low pass has settled and before a 56 bit message ends.
+    set y, 1
+rssi_wait_outer:
+    set x, 31
+rssi_wait_inner:
+    jmp x-- rssi_wait_inner [31]
+    jmp y-- rssi_wait_outer
+    irq wait 0 rel                  ; IRQ 0+SM: the CPU samples RSSI, and clears the flag once the samples are in.
 .wrap
 
 % c-sdk {
-#include "bsp.hh"
+// Chip pattern for preamble chips 0 to 14: pulses in chips 0, 2, 7 and 9; quiet chips 4, 5 and 11 to 14 checked.
+// The chips next to a pulse are skipped (pulse tails, comparator level recovery). Chip 15 is left to the sampler.
+static const uint32_t kPreambleMatcherChipPattern = 0b00110011001010001100110010101010;
 
-static inline void message_demodulator_program_init(
-    PIO pio, 
-    uint sm, 
-    uint offset, 
-    uint pulses_pin, 
-    uint demod_pin,
-    uint recovered_clk_pin, 
-    float div
-) {
-    pio_sm_set_consecutive_pindirs(pio, sm, demod_pin, 1, false);
+static inline void preamble_matcher_program_init(PIO pio, uint sm, uint offset, uint pulses_pin, uint demod_pin,
+                                                 float div, bool waiting) {
+    pio_sm_config c = preamble_matcher_program_get_default_config(offset);
     pio_sm_set_consecutive_pindirs(pio, sm, pulses_pin, 1, false);
-
-    pio_sm_config c = message_demodulator_program_get_default_config(offset);
-    sm_config_set_in_pins(&c, demod_pin); // WAIT pins: Utilize demod_pin as GPIO base.
-    sm_config_set_jmp_pin(&c, pulses_pin); // JMP based on the comparator output
-    sm_config_set_out_shift(&c, false, false, 32); // OSR shifts left, autopull turned off, autopull threshold 32 bits
-    sm_config_set_in_shift(&c, false, true, 32); // ISR shifts left, autopush turned on, autopush threshold 32 bits
-    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_NONE); // We expect max 112 bits, so 4 Byte RX FIFO is fine. We use the TX FIFO for DMA signaling.
+    pio_gpio_init(pio, demod_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, demod_pin, 1, true);
+    sm_config_set_in_pins(&c, pulses_pin);
+    sm_config_set_jmp_pin(&c, pulses_pin);
+    sm_config_set_set_pins(&c, demod_pin, 1);
+    sm_config_set_out_shift(&c, false, false, 32);  // OSR shifts left: first chip in the MSBs.
+    sm_config_set_in_shift(&c, false, false, 32);
     sm_config_set_clkdiv(&c, div);
-
-    if (recovered_clk_pin != UINT16_MAX) {
-        // This is the chosen state machine to have a recovered_clk output!
-
-        // Allow PIO to control recovered_clk_pin (as output for debugging).
-        pio_gpio_init(pio, recovered_clk_pin);
-        pio_sm_set_consecutive_pindirs(pio, sm, recovered_clk_pin, 1, true); // set one pin starting at out_pin to OUT
-
-        // Connect recovered_clk_pin to SIDESET
-        sm_config_set_sideset_pins(&c, recovered_clk_pin); 
+    if (!waiting) {
+        pio_sm_exec(pio, sm, pio_encode_irq_set(true, 4));  // The first matcher of the ring starts right away.
     }
-
-    // Alter the sample vote threshold based on RF frontend version.
-    // Default is out null 28 [2] (4/5 HI samples required). For V3+ use out null 29 [2] (3/5 HI samples required).
-    //if (bsp.r1090_rf_frontend_version >= SettingsManager::DeviceInfo::kADSBee1090RFFrontendV3) {
-    //    pio->instr_mem[offset + message_demodulator_offset_sample_set_vote_threshold] =
-    //    pio_encode_out(pio_null, 29) | pio_encode_delay(2);
-    //}
-
-    // Park at initial_entry so the SM waits for the demod pin instead of free-running from the top of the program.
-    pio_sm_init(pio, sm, offset + message_demodulator_offset_initial_entry, &c);
+    pio_sm_init(pio, sm, offset + preamble_matcher_offset_follow_irq, &c);
+    // Load the chip pattern into the ISR through the (otherwise unused) TX FIFO.
+    pio_sm_put(pio, sm, kPreambleMatcherChipPattern);
+    pio_sm_exec(pio, sm, pio_encode_pull(false, true));
+    pio_sm_exec(pio, sm, pio_encode_mov(pio_isr, pio_osr));
 }
 %}
-; SELF-PARKING MESSAGE DEMODULATOR (opt-in via DEMODULATOR_SELF_PARKING in adsbee.cc).
-; Identical bit timing and sampling phase to message_demodulator (48 cycles per bit, same sample window), but checks the
-; demod pin after every bit. When the preamble detector drops the demod pin at the end of a message, the SM pads the
-; partial ISR word with zeros until it autopushes (left aligned, exactly one push), clears the ISR shift counter, and parks
-; at initial_entry waiting for the next demod interval. This removes the CPU-side bit-at-a-time padding and the full
-; state machine restart from the OnDemodComplete ISR, and makes the received word count deterministic (2 or 4 words).
-; 31 instructions.
-.program message_demodulator_self_parking
-; Demod pin for knowing when a valid message demod interval has begun. Must be the IN pin base.
-.define demod_in_pin_index 0
-; Each delay count is 4 cycles
-.define initial_entry_delay 8
 
-; Allow side-setting the out_pin for debugging. 1x output pin can be optionally side-set.
-.side_set 1 opt
+.program pulse_sampler
+; Samples the comparator output at 12MHz (12 samples per bit) while its preamble matcher holds the demod pin high.
+; Autopush hands 32 samples at a time to a DMA channel. The CPU parks the state machine at idle again when the
+; capture is complete.
 
-; SAMPLE SUBROUTINE (unchanged from message_demodulator, 33 cycles)
-; Samples 3x and uses a biased majority vote to determine whether it's HI or LO.
-; @retval x x=1 if the sampling period was LO, x=0 if it was HI.
-sample:
-    set x 2 [7]         ; 5:13 | (x+1) = number of samples to take
-    mov osr !null [7]   ; 14:22 | OSR = all ones
-public sample_set_vote_threshold:
-    out null 29 [2]     ; 23:25 | OSR = 0b111 (3/3 bits required to classify sampling period as HI)
-sample_wrap_target:
-    jmp pin sample_hi side 1 ; 8+3n
-sample_lo:
-    jmp sample_wrap side 0 ; 9+3n
-sample_hi:
-    out null 1 side 0 ; 9+3n
-sample_wrap:
-    jmp x-- sample_wrap_target ; 10+3n
-    jmp !osre sample_net_lo [1] ; 17:19 | if OSR not empty -> net LO
-sample_net_hi:
-    set x 0 [1]                 ; 20-21
-    jmp sample_return           ; 22
-sample_net_lo:
-    set x 1 [2]                 ; 20-22
-sample_return:                  ; 4 cycles (message_demodulator uses 3 here, compensated by the shorter nop below)
-    mov osr, ::pins             ; 23 | Bit-reversed IN pins: OSR bit 31 = demod pin (IN pin 0).
-    out y, 1                    ; 24 | y = demod pin (OSR shifts left, so out yields bit 31).
-    jmp !y message_done         ; 25 | Demod interval ended: flush the partial word and park.
-    jmp !x start_of_1           ; 26 | HI sample -> next bit is a 1, otherwise fall through to a 0.
-
-start_of_0:                     ; We are ~0.25 bits into a 0 - signal is LO
-    nop [6]                     ; 7 cycles (message_demodulator: 8) | DUMB WAIT
-rising_edge_0:
-    in null, 1 [1] side 0       ; 1:2 | Emit a 0.
-    jmp sample [1]              ; 3:4
-
-start_of_1:
-    nop [6]                     ; 7 cycles (message_demodulator: 8) | DUMB WAIT
-falling_edge_1:
-    mov x !null side 0          ; 1
-    in x, 1                     ; 2 | Emit a 1.
-initial_entry_cut_in:
-    jmp sample [1]              ; 3:4
-
-message_done:
-    set x, 31
-pad_loop:
-    in null, 1                  ; 32 single-bit shifts: exactly one autopush of the left-aligned partial word.
-    jmp x-- pad_loop
-    mov isr, null               ; Clear the ISR shift counter so the next message autopushes at 32 bits.
-; Fall through and park.
-public initial_entry:
-    wait 1 pin demod_in_pin_index [3]  ; Wait to enter DEMOD interval.
-    pull noblock [0]        ; Pull from TX FIFO to OSR in order to signal DMA to capture timestamp.
-    set x initial_entry_delay side 0
-initial_entry_delay_wrap:
-    jmp x-- initial_entry_delay_wrap [2]
-    ; Preamble ends LO, so imitate the end of a 1 with its HI->LO transition.
-    jmp initial_entry_cut_in [6]
+public idle:
+    jmp pin start                   ; Demod pin (JMP pin) high?
+    jmp idle
+start:
+    pull noblock                    ; TX FIFO pull: triggers the DMA transfer that timestamps the message.
+.wrap_target
+    in pins, 1 [3]                  ; One comparator sample every 4 cycles.
+.wrap
 
 % c-sdk {
-static inline void message_demodulator_self_parking_program_init(
-    PIO pio,
-    uint sm,
-    uint offset,
-    uint pulses_pin,
-    uint demod_pin,
-    uint recovered_clk_pin,
-    float div
-) {
+static inline void pulse_sampler_program_init(PIO pio, uint sm, uint offset, uint pulses_pin, uint demod_pin,
+                                              float div) {
+    pio_sm_config c = pulse_sampler_program_get_default_config(offset);
     pio_sm_set_consecutive_pindirs(pio, sm, demod_pin, 1, false);
     pio_sm_set_consecutive_pindirs(pio, sm, pulses_pin, 1, false);
-
-    pio_sm_config c = message_demodulator_self_parking_program_get_default_config(offset);
-    sm_config_set_in_pins(&c, demod_pin); // WAIT / mov pins: demod_pin is IN pin 0.
-    sm_config_set_jmp_pin(&c, pulses_pin); // JMP based on the comparator output
-    sm_config_set_out_shift(&c, false, false, 32); // OSR shifts left, autopull turned off, autopull threshold 32 bits
-    sm_config_set_in_shift(&c, false, true, 32); // ISR shifts left, autopush turned on, autopush threshold 32 bits
-    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_NONE); // We expect max 112 bits, so 4 word RX FIFO is fine. We use the TX FIFO for DMA signaling.
+    sm_config_set_in_pins(&c, pulses_pin);
+    sm_config_set_jmp_pin(&c, demod_pin);
+    sm_config_set_in_shift(&c, false, true, 32);  // ISR shifts left (first sample in the MSB), autopush at 32.
+    sm_config_set_out_shift(&c, false, false, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_NONE);  // The TX FIFO is used for the timestamp trigger.
     sm_config_set_clkdiv(&c, div);
-
-    if (recovered_clk_pin != UINT16_MAX) {
-        // Allow PIO to control recovered_clk_pin (as output for debugging).
-        pio_gpio_init(pio, recovered_clk_pin);
-        pio_sm_set_consecutive_pindirs(pio, sm, recovered_clk_pin, 1, true);
-        sm_config_set_sideset_pins(&c, recovered_clk_pin);
-    }
-
-    // Park at initial_entry waiting for the demod pin.
-    pio_sm_init(pio, sm, offset + message_demodulator_self_parking_offset_initial_entry, &c);
+    pio_sm_init(pio, sm, offset + pulse_sampler_offset_idle, &c);
 }
 %}
