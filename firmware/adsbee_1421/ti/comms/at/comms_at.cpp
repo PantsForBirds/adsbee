@@ -942,7 +942,7 @@ CPP_AT_CALLBACK(CommsManager::ATSubGRxModeCallback) {
 //   AT+MLAT=CAP,<ms>,<flags>,<mask>   capture loop. flags: 1 ClearIrq(mask) per rising edge, 2 read + print the
 //                                     RX FIFO per rising edge, 4 GetTimestampValue x3 per rising edge, 8 SetRx per
 //                                     falling edge, 16 drain the FIFO in the background, 32 wait 250 us before
-//                                     the FIFO read
+//                                     the FIFO read, 64 re-arm a one-shot capture every 1 ms
 static int MlatHexToBytes(std::string_view hex, uint8_t* out, size_t max_len) {
     if (hex.size() % 2 != 0 || hex.size() / 2 > max_len) {
         return -1;
@@ -1102,6 +1102,13 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
                     lr.ProbeRaw(cmd, 5, rx1, rsp, 0, &nss);
                     CPP_AT_PRINTF("#R %06lx\r\n", (unsigned long)nss);
                 }
+            }
+            if (flags & 64) {
+                // One-shot sampling of a fast clock: take one edge, pause about 1 ms, take the next.
+                uint64_t pause_start_us = get_time_since_boot_us();
+                while (get_time_since_boot_us() - pause_start_us < 1000) {
+                }
+                mlat_probe::Arm();
             }
             if ((flags & 16) && !had_edge && get_time_since_boot_ms() - last_drain_ms >= 5) {
                 last_drain_ms = get_time_since_boot_ms();

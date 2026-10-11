@@ -18,8 +18,10 @@ bool IsInited();
 // Current timer value (same counter the captures use).
 uint32_t Now();
 uint8_t PinLevel();
-// Capture edge selection: 0 = rising, 1 = falling, 2 = both.
+// Capture edge selection: 0 = rising, 1 = falling, 2 = both; +4 = one-shot (each capture needs Arm()).
 void SetEdges(uint8_t mode);
+// Clears a pending capture and enables the capture interrupt.
+void Arm();
 // Pops one captured edge. Returns false if none is pending.
 bool PopEdge(Edge& edge);
 uint32_t DroppedEdges();

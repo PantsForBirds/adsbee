@@ -26,6 +26,7 @@ static volatile uint16_t head = 0;  // ISR writes.
 static volatile uint16_t tail = 0;  // Thread reads.
 static volatile uint32_t dropped = 0;
 static volatile uint32_t total = 0;
+static volatile bool one_shot = false;
 
 static void CaptureIsr(uintptr_t /*arg*/) {
     TimerIntClear(GPT0_BASE, TIMER_CAPA_EVENT);
@@ -35,11 +36,17 @@ static void CaptureIsr(uintptr_t /*arg*/) {
     total = total + 1;
     uint16_t next = static_cast<uint16_t>((head + 1) & (kRingLen - 1));
     if (next == tail) {
+        // Ring full: a fast signal on the pin. Stop capturing until the next Flush() so the ISR can't starve the
+        // main loop.
         dropped = dropped + 1;
+        TimerIntDisable(GPT0_BASE, TIMER_CAPA_EVENT);
         return;
     }
     ring[head] = {ticks, level};
     head = next;
+    if (one_shot) {
+        TimerIntDisable(GPT0_BASE, TIMER_CAPA_EVENT);  // Re-armed by Arm().
+    }
 }
 
 void Init() {
@@ -79,8 +86,15 @@ uint32_t Now() { return HWREG(GPT0_BASE + GPT_O_TAV) & 0x00FFFFFF; }
 uint8_t PinLevel() { return static_cast<uint8_t>(GPIO_readDio(kProbeIoid)); }
 
 void SetEdges(uint8_t mode) {
+    uint8_t edges = mode & 3;
+    one_shot = (mode & 4) != 0;
     TimerEventControl(GPT0_BASE, TIMER_A,
-                      mode == 0 ? TIMER_EVENT_POS_EDGE : mode == 1 ? TIMER_EVENT_NEG_EDGE : TIMER_EVENT_BOTH_EDGES);
+                      edges == 0 ? TIMER_EVENT_POS_EDGE : edges == 1 ? TIMER_EVENT_NEG_EDGE : TIMER_EVENT_BOTH_EDGES);
+}
+
+void Arm() {
+    TimerIntClear(GPT0_BASE, TIMER_CAPA_EVENT);
+    TimerIntEnable(GPT0_BASE, TIMER_CAPA_EVENT);
 }
 
 bool PopEdge(Edge& edge) {
@@ -96,9 +110,11 @@ uint32_t DroppedEdges() { return dropped; }
 uint32_t TotalEdges() { return total; }
 
 void Flush() {
+    TimerIntDisable(GPT0_BASE, TIMER_CAPA_EVENT);
     tail = head;
     dropped = 0;
     total = 0;
+    Arm();
 }
 
 }  // namespace mlat_probe
