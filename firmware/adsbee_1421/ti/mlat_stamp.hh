@@ -19,6 +19,7 @@ struct Counters {
     volatile uint32_t clears_posted = 0;   // Mode 1: ClearIrq frames posted from the capture interrupt.
     volatile uint32_t clears_deferred = 0; // Mode 1: bus was busy at the edge; cleared later.
     volatile uint32_t clears_thread = 0;   // Mode 1: deferred clears posted from the main loop.
+    volatile uint32_t clears_stolen = 0;   // Mode 1: clears that interrupted a parked loop drain.
     volatile uint32_t isr_cycles = 0;      // CPU cycles spent in the capture interrupt.
     volatile uint32_t isr_max_cycles = 0;
     uint32_t stamped = 0;                  // Packets given a timestamp.

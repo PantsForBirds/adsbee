@@ -367,11 +367,12 @@ CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
         CPP_AT_SUCCESS();
     }
     const mlat_stamp::Counters& m = mlat_stamp::c;
-    CPP_AT_CMD_PRINTF("=mode=%u,edges=%lu,ring_dropped=%lu,clears_posted=%lu,clears_deferred=%lu,clears_thread=%lu,"
+    CPP_AT_CMD_PRINTF("=mode=%u,edges=%lu,ring_dropped=%lu,clears_posted=%lu,clears_deferred=%lu,clears_thread=%lu,clears_stolen=%lu,"
                       "isr_cycles=%lu,isr_max_cycles=%lu,stamped=%lu,unstamped=%lu,batches_ok=%lu,batches_mismatch=%lu,"
                       "orphans=%lu,doubles=%lu,rx_packets=%lu,valid=%lu,valid_stamped=%lu,log=%u\r\n",
                       mlat_stamp::Mode(), (unsigned long)m.edges, (unsigned long)m.ring_dropped,
                       (unsigned long)m.clears_posted, (unsigned long)m.clears_deferred, (unsigned long)m.clears_thread,
+                      (unsigned long)m.clears_stolen,
                       (unsigned long)m.isr_cycles, (unsigned long)m.isr_max_cycles, (unsigned long)m.stamped,
                       (unsigned long)m.unstamped, (unsigned long)m.batches_ok, (unsigned long)m.batches_mismatch,
                       (unsigned long)m.orphans, (unsigned long)m.doubles, (unsigned long)m.rx_packets,
