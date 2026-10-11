@@ -147,6 +147,7 @@ class CommsManager {
     CPP_AT_CALLBACK(ATSettingsCallback);
     CPP_AT_CALLBACK(ATSubGRxModeCallback);
     CPP_AT_CALLBACK(ATUptimeCallback);
+    CPP_AT_CALLBACK(ATMlatCallback);  // MLAT bench probe (t-0354).
     CPP_AT_CALLBACK(ATWatchdogCallback);
 #ifdef HARDWARE_UNIT_TESTS
 #ifdef ADSBEE_DEBUG_BUILD

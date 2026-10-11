@@ -1168,3 +1168,36 @@ bool LR2021::GetCcaResult(CcaResultRsp* rsp_out) {
 
     return true;
 }
+
+// MLAT bench probe (t-0354), experiment only.
+#include <ti/drivers/dpl/HwiP.h>
+
+#include "mlat_probe.hh"
+
+bool LR2021::ProbeRaw(const uint8_t* tx, size_t tx_len, uint8_t* rx1, uint8_t* rsp, size_t rsp_len,
+                      uint32_t* nss_ticks) {
+    if (!WaitUntilReady()) {
+        return false;
+    }
+    // Timer read and NSS fall back to back with interrupts off: a fixed few cycles apart.
+    uintptr_t key = HwiP_disable();
+    uint32_t ticks = mlat_probe::Now();
+    SetNSS(false);
+    HwiP_restore(key);
+    if (nss_ticks != nullptr) {
+        *nss_ticks = ticks;
+    }
+    bool ok = SPITransfer(tx, rx1, tx_len);
+    EndTransaction();
+    if (!ok) {
+        return false;
+    }
+    if (rsp_len > 0) {
+        if (!BeginTransaction()) {
+            return false;
+        }
+        ok = SPITransfer(nullptr, rsp, rsp_len);
+        EndTransaction();
+    }
+    return ok;
+}

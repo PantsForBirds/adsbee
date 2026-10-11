@@ -1131,6 +1131,14 @@ class LR2021 {
      */
     bool GetTimestampValue(TimestampIndex timestamp_index, TimestampValueRsp* rsp_out);
 
+    /**
+     * MLAT bench probe (t-0354): sends tx (opcode + parameters) as one frame and, if rsp_len > 0, reads a
+     * response frame of rsp_len bytes (Stat word first). rx1 receives the bytes clocked out during the command
+     * frame (Stat + IrqStatus). nss_ticks, if not null, gets the probe timer value read just before NSS fell on
+     * the command frame.
+     */
+    bool ProbeRaw(const uint8_t* tx, size_t tx_len, uint8_t* rx1, uint8_t* rsp, size_t rsp_len, uint32_t* nss_ticks);
+
     /** Sets the device into CCA (Clear Channel Assessment) mode for the given duration. */
     bool SetCca(uint32_t duration);
 

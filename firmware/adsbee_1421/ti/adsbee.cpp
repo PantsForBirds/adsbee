@@ -1,5 +1,7 @@
 #include "adsbee.hh"
 
+#include "mlat_probe.hh"
+
 #include <ti/devices/cc13x4_cc26x4/driverlib/ccfgread.h>
 #include <ti/devices/cc13x4_cc26x4/driverlib/osc.h>
 #include <ti/devices/cc13x4_cc26x4/driverlib/sys_ctrl.h>
@@ -648,6 +650,9 @@ bool ADSBee::UpdateLR2021() {
     }
     if (!lr2021_enabled_) {
         return true;  // Bus released to an external host (AT+LR_ENABLE=0): issue no transactions.
+    }
+    if (mlat_probe::hold) {
+        return true;  // MLAT bench probe owns the LR2021.
     }
     if (!rx_1090_enabled_) {
         return true;  // 1090 RX user-disabled: the LR2021 is held in reset; nothing to drain.

@@ -4,6 +4,7 @@
 #include <cstring>   // for strcat
 #include <iostream>  // for AT command ingestion
 
+#include "mlat_probe.hh"
 #include "adsbee.hh"
 #include "ccfg_bootloader_flash.hh"
 #include "comms.hh"
@@ -932,6 +933,196 @@ CPP_AT_CALLBACK(CommsManager::ATSubGRxModeCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+// MLAT bench probe (t-0354), experiment only.
+//   AT+MLAT=INIT                      start the DIO_13 edge capture timer
+//   AT+MLAT=HOLD,<0|1>                freeze / resume the normal LR2021 servicing (resume re-inits the chip)
+//   AT+MLAT=PIN                       DIO_13 level, timer value, edge counters
+//   AT+MLAT=EDGES,<0|1|2>             capture rising / falling / both edges
+//   AT+MLAT=RAW,<hex>,<rsp_len>       raw LR2021 command frame, optional response frame
+//   AT+MLAT=CAP,<ms>,<flags>,<mask>   capture loop. flags: 1 ClearIrq(mask) per rising edge, 2 read + print the
+//                                     RX FIFO per rising edge, 4 GetTimestampValue x3 per rising edge, 8 SetRx per
+//                                     falling edge, 16 drain the FIFO in the background, 32 wait 250 us before
+//                                     the FIFO read
+static int MlatHexToBytes(std::string_view hex, uint8_t* out, size_t max_len) {
+    if (hex.size() % 2 != 0 || hex.size() / 2 > max_len) {
+        return -1;
+    }
+    auto nibble = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < hex.size() / 2; i++) {
+        int hi = nibble(hex[2 * i]), lo = nibble(hex[2 * i + 1]);
+        if (hi < 0 || lo < 0) {
+            return -1;
+        }
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return static_cast<int>(hex.size() / 2);
+}
+
+static void MlatPrintHex(const uint8_t* buf, size_t len) {
+    static const char kDigits[] = "0123456789ABCDEF";
+    char line[2 * 64 + 1];
+    size_t n = len > 64 ? 64 : len;
+    for (size_t i = 0; i < n; i++) {
+        line[2 * i] = kDigits[buf[i] >> 4];
+        line[2 * i + 1] = kDigits[buf[i] & 0xF];
+    }
+    line[2 * n] = '\0';
+    CPP_AT_PRINTF("%s", line);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
+    if (op != '=' || !CPP_AT_HAS_ARG(0)) {
+        CPP_AT_ERROR("AT+MLAT=<INIT|HOLD|PIN|EDGES|RAW|CAP>,...");
+    }
+    LR2021& lr = adsbee.lr2021;
+    if (args[0].compare("INIT") == 0) {
+        mlat_probe::Init();
+        CPP_AT_PRINTF("MLAT timer=%06lx pin=%u\r\n", (unsigned long)mlat_probe::Now(), mlat_probe::PinLevel());
+        CPP_AT_SUCCESS();
+    }
+    if (!mlat_probe::IsInited()) {
+        CPP_AT_ERROR("Run AT+MLAT=INIT first.");
+    }
+    if (args[0].compare("HOLD") == 0 && CPP_AT_HAS_ARG(1)) {
+        uint8_t on = 0;
+        CPP_AT_TRY_ARG2NUM(1, on);
+        if (on) {
+            adsbee.BeginDirectLR2021Access();
+            mlat_probe::hold = true;
+        } else {
+            mlat_probe::hold = false;
+            if (!adsbee.EndDirectLR2021Access()) {
+                CPP_AT_ERROR("Receiver re-init failed.");
+            }
+        }
+        CPP_AT_SUCCESS();
+    }
+    if (args[0].compare("PIN") == 0) {
+        CPP_AT_PRINTF("MLAT pin=%u timer=%06lx edges=%lu dropped=%lu hold=%u\r\n", mlat_probe::PinLevel(),
+                      (unsigned long)mlat_probe::Now(), (unsigned long)mlat_probe::TotalEdges(),
+                      (unsigned long)mlat_probe::DroppedEdges(), mlat_probe::hold ? 1 : 0);
+        CPP_AT_SUCCESS();
+    }
+    if (args[0].compare("EDGES") == 0 && CPP_AT_HAS_ARG(1)) {
+        uint8_t mode = 0;
+        CPP_AT_TRY_ARG2NUM(1, mode);
+        mlat_probe::SetEdges(mode);
+        mlat_probe::Flush();
+        CPP_AT_SUCCESS();
+    }
+    if (!mlat_probe::hold) {
+        CPP_AT_ERROR("Run AT+MLAT=HOLD,1 first.");
+    }
+    if (args[0].compare("RAW") == 0 && CPP_AT_HAS_ARG(1)) {
+        uint8_t tx[40], rx1[40], rsp[64];
+        int tx_len = MlatHexToBytes(args[1], tx, sizeof(tx));
+        uint16_t rsp_len = 0;
+        if (CPP_AT_HAS_ARG(2)) {
+            CPP_AT_TRY_ARG2NUM(2, rsp_len);
+        }
+        if (tx_len < 2 || rsp_len > sizeof(rsp)) {
+            CPP_AT_ERROR("Bad hex or response length.");
+        }
+        uint32_t nss = 0;
+        bool ok = lr.ProbeRaw(tx, tx_len, rx1, rsp, rsp_len, &nss);
+        CPP_AT_PRINTF("MLAT RAW ok=%u nss=%06lx pin=%u rx1=", ok, (unsigned long)nss, mlat_probe::PinLevel());
+        MlatPrintHex(rx1, tx_len);
+        CPP_AT_PRINTF(" rsp=");
+        MlatPrintHex(rsp, rsp_len);
+        CPP_AT_PRINTF("\r\n");
+        CPP_AT_SUCCESS();
+    }
+    if (args[0].compare("CAP") == 0 && CPP_AT_HAS_ARG(1) && CPP_AT_HAS_ARG(2) && CPP_AT_HAS_ARG(3)) {
+        uint32_t duration_ms = 0, flags = 0;
+        CPP_AT_TRY_ARG2NUM(1, duration_ms);
+        CPP_AT_TRY_ARG2NUM(2, flags);
+        uint8_t mask_bytes[4];
+        if (MlatHexToBytes(args[3], mask_bytes, 4) != 4) {
+            CPP_AT_ERROR("Mask must be 8 hex digits.");
+        }
+        uint8_t rx1[8], rsp[8], fifo[64];
+        auto fifo_level = [&]() -> uint16_t {
+            const uint8_t cmd[2] = {0x01, 0x1C};
+            return lr.ProbeRaw(cmd, 2, rx1, rsp, 4, nullptr) ? static_cast<uint16_t>((rsp[2] << 8) | rsp[3]) : 0;
+        };
+        mlat_probe::Flush();
+        uint32_t start_ms = get_time_since_boot_ms();
+        uint32_t last_drain_ms = start_ms;
+        uint32_t drained_bytes = 0;
+        char c;
+        while (get_time_since_boot_ms() - start_ms < duration_ms &&
+               !iface_getc(SettingsManager::SerialInterface::kConsole, c)) {
+            adsbee.FeedWatchdog();
+            mlat_probe::Edge edge;
+            bool had_edge = false;
+            while (mlat_probe::PopEdge(edge)) {
+                had_edge = true;
+                CPP_AT_PRINTF("#E %06lx %u\r\n", (unsigned long)edge.ticks, edge.level);
+                if (edge.level) {
+                    if (flags & 4) {
+                        for (uint8_t index = 0; index < 3; index++) {
+                            const uint8_t cmd[3] = {0x02, 0x17, index};
+                            uint32_t nss = 0;
+                            uint8_t ts[6] = {0};
+                            lr.ProbeRaw(cmd, 3, rx1, ts, 6, &nss);
+                            CPP_AT_PRINTF("#T %u %02x%02x%02x%02x %06lx\r\n", index, ts[2], ts[3], ts[4], ts[5],
+                                          (unsigned long)nss);
+                        }
+                    }
+                    if (flags & 2) {
+                        if (flags & 32) {
+                            uint64_t wait_start_us = get_time_since_boot_us();
+                            while (get_time_since_boot_us() - wait_start_us < 250) {
+                            }
+                        }
+                        uint16_t level = fifo_level();
+                        if (level > sizeof(fifo)) {
+                            level = sizeof(fifo);
+                        }
+                        if (level > 0 && lr.ReadRxFifo(fifo, level)) {
+                            CPP_AT_PRINTF("#F ");
+                            MlatPrintHex(fifo, level);
+                            CPP_AT_PRINTF("\r\n");
+                        } else {
+                            CPP_AT_PRINTF("#F -\r\n");
+                        }
+                    }
+                    if (flags & 1) {
+                        const uint8_t cmd[6] = {0x01, 0x16, mask_bytes[0], mask_bytes[1], mask_bytes[2], mask_bytes[3]};
+                        lr.ProbeRaw(cmd, 6, rx1, rsp, 0, nullptr);
+                    }
+                } else if (flags & 8) {
+                    const uint8_t cmd[5] = {0x02, 0x0C, 0x00, 0x00, 0x00};
+                    uint32_t nss = 0;
+                    lr.ProbeRaw(cmd, 5, rx1, rsp, 0, &nss);
+                    CPP_AT_PRINTF("#R %06lx\r\n", (unsigned long)nss);
+                }
+            }
+            if ((flags & 16) && !had_edge && get_time_since_boot_ms() - last_drain_ms >= 5) {
+                last_drain_ms = get_time_since_boot_ms();
+                uint16_t level = fifo_level();
+                while (level > 0) {
+                    uint16_t chunk = level > sizeof(fifo) ? sizeof(fifo) : level;
+                    if (!lr.ReadRxFifo(fifo, chunk)) {
+                        break;
+                    }
+                    drained_bytes += chunk;
+                    level -= chunk;
+                }
+            }
+        }
+        CPP_AT_PRINTF("#D edges=%lu dropped=%lu drained=%lu pin=%u\r\n", (unsigned long)mlat_probe::TotalEdges(),
+                      (unsigned long)mlat_probe::DroppedEdges(), (unsigned long)drained_bytes, mlat_probe::PinLevel());
+        CPP_AT_SUCCESS();
+    }
+    CPP_AT_ERROR("Unknown MLAT sub-command or missing arguments.");
+}
+
 CPP_AT_CALLBACK(CommsManager::ATUptimeCallback) {
     switch (op) {
         case '?':
@@ -1424,6 +1615,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "LRLF/LRHF=LR2021 low/high band (150-1100 / 1900-2700 MHz).",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxCWCallback, comms_manager)},
 #endif
+    {.command = "MLAT",
+     .min_args = 1,
+     .max_args = 4,
+     .help_string = "MLAT bench probe (t-0354). AT+MLAT=<INIT|HOLD|PIN|EDGES|RAW|CAP>,...",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATMlatCallback, comms_manager)},
     {.command = "UPTIME",
      .min_args = 0,
      .max_args = 0,

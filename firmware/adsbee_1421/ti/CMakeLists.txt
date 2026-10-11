@@ -121,6 +121,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     # ${CMAKE_CURRENT_SOURCE_DIR}/smartrf/smartrf_settings.c
 
     adsbee.cpp
+    mlat_probe.cpp
     packet_decoder.cpp
     # settings.cpp
 )
