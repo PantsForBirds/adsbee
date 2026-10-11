@@ -1054,6 +1054,7 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
         uint32_t start_ms = get_time_since_boot_ms();
         uint32_t last_drain_ms = start_ms;
         uint32_t drained_bytes = 0;
+        uint32_t edges_seen = 0, unstuck = 0, stuck_passes = 0;
         char c;
         while (get_time_since_boot_ms() - start_ms < duration_ms &&
                !iface_getc(SettingsManager::SerialInterface::kConsole, c)) {
@@ -1062,6 +1063,7 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
             bool had_edge = false;
             while (mlat_probe::PopEdge(edge)) {
                 had_edge = true;
+                edges_seen++;
                 CPP_AT_PRINTF("#E %06lx %u\r\n", (unsigned long)edge.ticks, edge.level);
                 if (edge.level) {
                     if (flags & 4) {
@@ -1103,6 +1105,18 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
                     CPP_AT_PRINTF("#R %06lx\r\n", (unsigned long)nss);
                 }
             }
+            if ((flags & 1) && !had_edge && mlat_probe::PinLevel() && mlat_probe::TotalEdges() == edges_seen) {
+                // The pin is high with no captured edge left to handle: the event fired before the capture was armed
+                // (or while its predecessor was being cleared). Clear it so the next packet makes an edge again.
+                if (++stuck_passes >= 3) {
+                    const uint8_t cmd[6] = {0x01, 0x16, mask_bytes[0], mask_bytes[1], mask_bytes[2], mask_bytes[3]};
+                    lr.ProbeRaw(cmd, 6, rx1, rsp, 0, nullptr);
+                    unstuck++;
+                    stuck_passes = 0;
+                }
+            } else {
+                stuck_passes = 0;
+            }
             if (flags & 64) {
                 // One-shot sampling of a fast clock: take one edge, pause about 1 ms, take the next.
                 uint64_t pause_start_us = get_time_since_boot_us();
@@ -1123,8 +1137,9 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
                 }
             }
         }
-        CPP_AT_PRINTF("#D edges=%lu dropped=%lu drained=%lu pin=%u\r\n", (unsigned long)mlat_probe::TotalEdges(),
-                      (unsigned long)mlat_probe::DroppedEdges(), (unsigned long)drained_bytes, mlat_probe::PinLevel());
+        CPP_AT_PRINTF("#D edges=%lu dropped=%lu drained=%lu pin=%u unstuck=%lu\r\n",
+                      (unsigned long)mlat_probe::TotalEdges(), (unsigned long)mlat_probe::DroppedEdges(),
+                      (unsigned long)drained_bytes, mlat_probe::PinLevel(), (unsigned long)unstuck);
         CPP_AT_SUCCESS();
     }
     CPP_AT_ERROR("Unknown MLAT sub-command or missing arguments.");
