@@ -596,6 +596,8 @@ void ADSBee::IngestAndForwardPackets() {
         // Check for any new valid packets and push all decoded packets to the reporting queue, even if the aircraft
         // dictionary didn't know what to do with them.
         if (decoded_packet.is_valid) {
+            mlat_stamp::LogValid(decoded_packet.icao_address, decoded_packet.downlink_format,
+                                 decoded_packet.raw.mlat_48mhz_64bit_counts);
             lr2021_frames_since_valid_ = 0;  // Healthy stream: reset the validity watchdog.
             // Counted, not logged: at high packet rates a per-packet CONSOLE_ERROR here floods the UART
             // TX ring and stalls the main loop -- the very thing that makes the queue overflow.
@@ -820,6 +822,7 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
     static constexpr uint16_t kMaxBatchPackets = 20;  // 256-byte FIFO / 14-byte packets = 18.
     uint64_t mlat_stamps[kMaxBatchPackets];
     const bool mlat_on = mlat_stamp::Mode() != 0 && num_packets <= kMaxBatchPackets;
+    mlat_stamp::c.rx_packets += num_packets;
     if (mlat_on) {
         mlat_stamp::PairBatch(mlat_boundary_ticks, mlat_exact_boundary, num_packets, mlat_stamps);
     }

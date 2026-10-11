@@ -27,6 +27,9 @@ struct Counters {
     uint32_t batches_mismatch = 0;         // Edge count did not fit the packet count: whole batch unstamped.
     uint32_t orphans = 0;                  // Edges dropped without a packet.
     uint32_t doubles = 0;                  // Two edges closer than a packet length (merged, packet unstamped).
+    uint32_t rx_packets = 0;               // FIFO packets parsed.
+    uint32_t valid = 0;                    // Valid decoded frames.
+    uint32_t valid_stamped = 0;            // Valid decoded frames with a timestamp.
 };
 extern Counters c;
 
@@ -40,6 +43,17 @@ void ResetCounters();
 // Pairs the next num_packets FIFO packets (oldest first) with captured edges. boundary_ticks: counter value when
 // the batch was complete in the FIFO. exact_boundary: every packet complete by then is in the batch (loop drain
 // level read); false for the 9-packet chain read. Writes one 64-bit 48 MHz timestamp per packet, 0 = unstamped.
+// Log of the last valid frames for the bench (ICAO, downlink format, timestamp with bit 63 = unstamped).
+struct LogEntry {
+    uint32_t icao_df;  // ICAO in [23:0], downlink format in [31:24].
+    uint64_t stamp;
+};
+static constexpr uint16_t kLogLen = 512;
+void LogValid(uint32_t icao, uint16_t df, uint64_t stamp);
+uint16_t LogCount();
+const LogEntry& LogAt(uint16_t i);
+void LogClear();
+
 void PairBatch(uint32_t boundary_ticks, bool exact_boundary, uint16_t num_packets, uint64_t* stamps);
 
 }  // namespace mlat_stamp

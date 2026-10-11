@@ -344,6 +344,21 @@ CPP_AT_CALLBACK(CommsManager::ATR1090RxBoostCallback) {
 CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
     // MLAT prototype (t-0364): AT+MLAT=<0|1|2> sets the mode and zeroes the counters, AT+MLAT? prints them.
     if (op == '=') {
+        if (args[0].compare("DUMP") == 0) {
+            // One line per logged valid frame: ICAO, downlink format, timestamp (bit 63 set = unstamped).
+            for (uint16_t i = 0; i < mlat_stamp::LogCount(); i++) {
+                const mlat_stamp::LogEntry& e = mlat_stamp::LogAt(i);
+                CPP_AT_PRINTF("#ML %06lX %u %08lX%08lX\r\n", (unsigned long)(e.icao_df & 0xFFFFFF), (unsigned)(e.icao_df >> 24),
+                              (unsigned long)(e.stamp >> 32), (unsigned long)(e.stamp & 0xFFFFFFFF));
+            }
+            mlat_stamp::LogClear();
+            CPP_AT_SUCCESS();
+        }
+        if (args[0].compare("CLEAR") == 0) {
+            mlat_stamp::LogClear();
+            mlat_stamp::ResetCounters();
+            CPP_AT_SUCCESS();
+        }
         uint16_t mode = 0;
         CPP_AT_TRY_ARG2NUM(0, mode);
         if (mode > 2 || !adsbee.SetMLATMode(static_cast<uint8_t>(mode))) {
@@ -354,12 +369,13 @@ CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
     const mlat_stamp::Counters& m = mlat_stamp::c;
     CPP_AT_CMD_PRINTF("=mode=%u,edges=%lu,ring_dropped=%lu,clears_posted=%lu,clears_deferred=%lu,clears_thread=%lu,"
                       "isr_cycles=%lu,isr_max_cycles=%lu,stamped=%lu,unstamped=%lu,batches_ok=%lu,batches_mismatch=%lu,"
-                      "orphans=%lu,doubles=%lu\r\n",
+                      "orphans=%lu,doubles=%lu,rx_packets=%lu,valid=%lu,valid_stamped=%lu,log=%u\r\n",
                       mlat_stamp::Mode(), (unsigned long)m.edges, (unsigned long)m.ring_dropped,
                       (unsigned long)m.clears_posted, (unsigned long)m.clears_deferred, (unsigned long)m.clears_thread,
                       (unsigned long)m.isr_cycles, (unsigned long)m.isr_max_cycles, (unsigned long)m.stamped,
                       (unsigned long)m.unstamped, (unsigned long)m.batches_ok, (unsigned long)m.batches_mismatch,
-                      (unsigned long)m.orphans, (unsigned long)m.doubles);
+                      (unsigned long)m.orphans, (unsigned long)m.doubles, (unsigned long)m.rx_packets,
+                      (unsigned long)m.valid, (unsigned long)m.valid_stamped, mlat_stamp::LogCount());
     CPP_AT_SILENT_SUCCESS();
 }
 

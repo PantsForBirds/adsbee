@@ -104,6 +104,18 @@ void SetMode(uint8_t new_mode) {
     }
 }
 
+static LogEntry log_buf[kLogLen];
+static uint16_t log_count = 0;
+
+void LogValid(uint32_t icao, uint16_t df, uint64_t stamp) {
+    c.valid++;
+    if (mode != 0 && (stamp >> 63) == 0) c.valid_stamped++;
+    if (log_count < kLogLen) log_buf[log_count++] = {(icao & 0xFFFFFF) | (static_cast<uint32_t>(df) << 24), stamp};
+}
+uint16_t LogCount() { return log_count; }
+const LogEntry& LogAt(uint16_t i) { return log_buf[i]; }
+void LogClear() { log_count = 0; }
+
 static inline uint32_t Age(uint32_t boundary, uint32_t ticks) { return (boundary - ticks) & kTickMask; }
 
 void PairBatch(uint32_t boundary_ticks, bool exact_boundary, uint16_t num_packets, uint64_t* stamps) {
