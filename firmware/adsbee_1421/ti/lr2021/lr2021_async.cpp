@@ -33,6 +33,7 @@
 
 #include "hal.hh"
 #include "lr2021.hh"
+#include "mlat_stamp.hh"
 
 void LR2021::SPICallback(SPI_Handle handle, SPI_Transaction* transaction) {
     (void)handle;
@@ -53,6 +54,7 @@ void LR2021::SPICallback(SPI_Handle handle, SPI_Transaction* transaction) {
             // Loop-drain frame: end the NSS frame immediately so the chip starts processing (BUSY
             // pulse) during main-loop time instead of waiting for the next ServiceRxDrain() call.
             self->SetNSS(true);
+            self->loop_frame_done_ticks = mlat_stamp::Now();
             self->async_ok_ = (transaction->status == SPI_TRANSFER_COMPLETED);
             self->async_in_flight_ = false;
             self->async_done_ = true;  // Written last: thread level reads async_done_ before async_ok_.
@@ -291,6 +293,7 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                 if (!async_ok_) {
                     return EnterDrainError("GetRxFifoLevel opcode frame failed");
                 }
+                level_ticks = loop_frame_done_ticks;  // The chip samples the level after this frame.
                 ParseStat(UnpackU16(async_rx_buf_));
                 uintptr_t key = HwiP_disable();
                 if (drain_state_ == s) {

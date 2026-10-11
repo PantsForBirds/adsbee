@@ -144,6 +144,7 @@ class CommsManager {
     CPP_AT_HELP_CALLBACK(ATRxEnableHelpCallback);
     CPP_AT_CALLBACK(ATRxPositionCallback);
     CPP_AT_CALLBACK(ATRxStatsCallback);
+    CPP_AT_CALLBACK(ATMLATCallback);
     CPP_AT_CALLBACK(ATSettingsCallback);
     CPP_AT_CALLBACK(ATSubGRxModeCallback);
     CPP_AT_CALLBACK(ATUptimeCallback);

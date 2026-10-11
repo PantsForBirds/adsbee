@@ -1,4 +1,5 @@
 #include "adsbee.hh"
+#include "mlat_stamp.hh"
 
 #include <ti/devices/cc13x4_cc26x4/driverlib/ccfgread.h>
 #include <ti/devices/cc13x4_cc26x4/driverlib/osc.h>
@@ -218,6 +219,10 @@ bool ADSBee::ApplyReceiverConfigInner() {
     // is pending.
     GPIO_setCallback(bsp.kLR2021IrqPin, LRIrqLineCallback);
     GPIO_setCallback(bsp.kLR2021BusyPin, LRBusyLineCallback);
+    if (mlat_stamp::Mode() != 0) {
+        lr2021.ConfigSyncDio(true);  // A receiver (re)configuration resets the DIO routing.
+        mlat_stamp::Flush();
+    }
     GPIO_clearInt(bsp.kLR2021IrqPin);
     GPIO_enableInt(bsp.kLR2021IrqPin);
     return true;
@@ -659,7 +664,7 @@ bool ADSBee::UpdateLR2021() {
     // IRQ edge.
     LR2021::IrqDrainSlot* slot;
     while ((slot = lr2021.NextFilledSlot()) != nullptr) {
-        ParseLR2021RxFifo(slot->buf + 2, slot->len, slot->timestamp_us);
+        ParseLR2021RxFifo(slot->buf + 2, slot->len, slot->timestamp_us, slot->mlat_ticks, false);
         lr2021.ReleaseSlot();
     }
 
@@ -698,6 +703,7 @@ bool ADSBee::UpdateLR2021() {
     }
 
     bool success = true;
+    lr2021.ServiceSyncClear();  // MLAT prototype: deferred ClearIrq(SyncwordValid).
     LR2021::DrainResult drain_result = lr2021.ServiceRxDrain();
     switch (drain_result) {
         case LR2021::DrainResult::kDataReady: {
@@ -711,7 +717,8 @@ bool ADSBee::UpdateLR2021() {
                 // see it via AT+RX_STATS even with logging off.
                 lr2021_fifo_full_count++;
             }
-            ParseLR2021RxFifo(lr2021.drain_payload(), lr2021.drain_level(), get_time_since_boot_us());
+            ParseLR2021RxFifo(lr2021.drain_payload(), lr2021.drain_level(), get_time_since_boot_us(), lr2021.level_ticks,
+                              true);
             lr2021.FinishRxDrain();
             break;
         }
@@ -791,12 +798,31 @@ bool ADSBee::UpdateLR2021() {
     return success;
 }
 
-void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us) {
+bool ADSBee::SetMLATMode(uint8_t mode) {
+    GPIO_disableInt(bsp.kLR2021IrqPin);
+    mlat_stamp::SetMode(0);
+    bool ok = lr2021.ConfigSyncDio(mode != 0);
+    lr2021.sync_clear_pending = false;
+    mlat_stamp::SetMode(ok ? mode : 0);
+    mlat_stamp::ResetCounters();
+    GPIO_clearInt(bsp.kLR2021IrqPin);
+    GPIO_enableInt(bsp.kLR2021IrqPin);
+    return ok;
+}
+
+void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us,
+                               uint32_t mlat_boundary_ticks, bool mlat_exact_boundary) {
     // The FIFO packet length depends on the preamble mode: DF17 mode captures a shorter
     // remainder because the detector consumed the preamble + DF17 header bits.
     const bool df17_mode = LR2021::IsOokDF17PreambleMode(r1090_preamble_mode_);
     const uint16_t packet_len_bytes = LR2021::GetOokRxPacketLenBytes(r1090_preamble_mode_);
     uint16_t num_packets = packet_len_bytes ? (rx_len_bytes / packet_len_bytes) : 0;
+    static constexpr uint16_t kMaxBatchPackets = 20;  // 256-byte FIFO / 14-byte packets = 18.
+    uint64_t mlat_stamps[kMaxBatchPackets];
+    const bool mlat_on = mlat_stamp::Mode() != 0 && num_packets <= kMaxBatchPackets;
+    if (mlat_on) {
+        mlat_stamp::PairBatch(mlat_boundary_ticks, mlat_exact_boundary, num_packets, mlat_stamps);
+    }
     for (uint16_t i = 0; i < num_packets; i++) {
         const uint32_t capture_start_cycles = CycleCounter::Now();
         const uint8_t* packet_start = rx_buf + i * packet_len_bytes;
@@ -813,6 +839,11 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
         }
         RawModeSPacket raw_packet(rx_word_buf, RawModeSPacket::kExtendedSquitterPacketNumWords32);
         raw_packet.mlat_48mhz_64bit_counts = mlat_timestamp_us * 48;
+        if (mlat_on) {
+            // Stamped: the captured SyncwordValid time. Unstamped: batch time with bit 63 set.
+            raw_packet.mlat_48mhz_64bit_counts =
+                mlat_stamps[i] != 0 ? mlat_stamps[i] : (raw_packet.mlat_48mhz_64bit_counts | (1ull << 63));
+        }
         lr2021_frames_since_valid_++;  // Zeroed on any valid decode; feeds the validity watchdog.
         // Record demod + raw frame metrics (valid frames are recorded during dictionary
         // ingestion). All LR2021 captures are 112-bit extended-squitter-length frames.

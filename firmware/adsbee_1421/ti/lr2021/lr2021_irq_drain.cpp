@@ -39,6 +39,7 @@
 
 #include "hal.hh"
 #include "lr2021.hh"
+#include "mlat_stamp.hh"
 
 // Minimal Stat validation for ISR context: command-status field (bits 11:9) must be CMD_OK / CMD_DAT.
 // last_stat_ is thread-owned and must not be written from here.
@@ -156,6 +157,7 @@ void LR2021::HandleIrqLine() {
     }
     irq_drain_count = irq_drain_count + 1;
     slot.timestamp_us = get_time_since_boot_us();
+    slot.mlat_ticks = mlat_stamp::Now();
     StartChainSegment();
 }
 
@@ -241,6 +243,22 @@ void LR2021::HandleChainFrameComplete() {
                 // go straight into another read. Same >= threshold guarantee as a fresh edge.
                 irq_drain_restarts = irq_drain_restarts + 1;
                 next_slot.timestamp_us = get_time_since_boot_us();
+                next_slot.mlat_ticks = mlat_stamp::Now();
+                StartChainSegment();
+            } else {
+                drain_state_ = DrainState::kIdle;
+            }
+            return;
+        }
+        case DrainState::kChainSyncClear: {
+            // MLAT prototype: ClearIrq(SyncwordValid) done. Hand the bus back; start a FIFO chain if LR_IRQ rose
+            // meanwhile (HandleIrqLine ignores edges while a chain state is active).
+            SetNSS(true);
+            IrqDrainSlot& next_slot = irq_slots_[irq_slot_fill_idx_];
+            if (async_ok_ && IrqLineHigh() && !next_slot.filled && !abort_requested_) {
+                irq_drain_count = irq_drain_count + 1;
+                next_slot.timestamp_us = get_time_since_boot_us();
+                next_slot.mlat_ticks = mlat_stamp::Now();
                 StartChainSegment();
             } else {
                 drain_state_ = DrainState::kIdle;
@@ -271,4 +289,63 @@ LR2021::IrqDrainSlot* LR2021::NextFilledSlot() {
 void LR2021::ReleaseSlot() {
     irq_slots_[irq_slot_parse_idx_].filled = false;
     irq_slot_parse_idx_ = (irq_slot_parse_idx_ + 1) % kNumIrqDrainSlots;
+}
+
+// --- MLAT prototype (t-0364) ---
+
+void LR2021::HandleSyncEdge() {
+    // Capture interrupt, same priority as the GPIO HWIs. Post ClearIrq(SyncwordValid) so the next packet raises
+    // DIO5 again. Only when nothing else owns the bus: otherwise the clear is deferred (the drain chain's
+    // GetAndClearIrq clears the bit anyway; the main loop posts the rest).
+    if (abort_requested_ || spi_handle_ == nullptr) {
+        return;
+    }
+    if (drain_state_ != DrainState::kIdle || async_in_flight_ || sync_txn_active || IsBusy()) {
+        sync_clear_pending = true;
+        mlat_stamp::c.clears_deferred = mlat_stamp::c.clears_deferred + 1;
+        return;
+    }
+    drain_state_ = DrainState::kChainSyncClear;
+    chain_start_ms_ = get_time_since_boot_ms();
+    if (!PostAsyncFrame(sync_clear_tx_buf_, sizeof(sync_clear_tx_buf_), chain_rx_scratch_)) {
+        drain_state_ = DrainState::kIdle;
+        sync_clear_pending = true;
+        return;
+    }
+    sync_clear_pending = false;
+    mlat_stamp::c.clears_posted = mlat_stamp::c.clears_posted + 1;
+}
+
+void LR2021::ServiceSyncClear() {
+    // Main loop: post a clear that the capture interrupt had to defer.
+    if (!sync_clear_pending || mlat_stamp::Mode() != 1 || abort_requested_ || spi_handle_ == nullptr) {
+        return;
+    }
+    uintptr_t key = HwiP_disable();
+    if (drain_state_ == DrainState::kIdle && !async_in_flight_ && !sync_txn_active && !IsBusy()) {
+        drain_state_ = DrainState::kChainSyncClear;
+        chain_start_ms_ = get_time_since_boot_ms();
+        if (PostAsyncFrame(sync_clear_tx_buf_, sizeof(sync_clear_tx_buf_), chain_rx_scratch_)) {
+            sync_clear_pending = false;
+            mlat_stamp::c.clears_thread = mlat_stamp::c.clears_thread + 1;
+        } else {
+            drain_state_ = DrainState::kIdle;
+        }
+    }
+    HwiP_restore(key);
+}
+
+bool LR2021::ConfigSyncDio(bool enable) {
+    // SetDioFunction(DIO5, IRQ or none, pull-up), SetDioIrqConfig(DIO5, SyncwordValid), ClearIrq(SyncwordValid).
+    const uint8_t func[4] = {0x01, 0x12, 0x05, static_cast<uint8_t>(((enable ? 1 : 0) << 4) | 2)};
+    const uint8_t mask[7] = {0x01, 0x15, 0x05, 0x00, 0x00, 0x00, static_cast<uint8_t>(enable ? 0x40 : 0x00)};
+    uint8_t rx[8];
+    bool ok = true;
+    const struct { const uint8_t* tx; size_t len; } frames[] = {{func, sizeof(func)}, {mask, sizeof(mask)}, {sync_clear_tx_buf_, sizeof(sync_clear_tx_buf_)}};
+    for (const auto& f : frames) {
+        if (!BeginTransaction()) return false;
+        ok &= SPITransfer(f.tx, rx, f.len);
+        EndTransaction();
+    }
+    return ok;
 }

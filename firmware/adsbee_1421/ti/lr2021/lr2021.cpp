@@ -145,6 +145,7 @@ bool LR2021::WaitUntilReady(uint32_t timeout_ms) {
 }
 
 bool LR2021::BeginTransaction() {
+    sync_txn_active = true;  // Before the pump: the capture interrupt must not post from here on.
     // Bus-ownership guard: a synchronous command may be issued (AT handlers, config paths) while the
     // async RX drain is mid-sequence, since a drain spans main-loop iterations. Pump the drain to a
     // quiescent state (idle / data-ready / error: no DMA in flight, NSS high) so the two can't
@@ -153,6 +154,7 @@ bool LR2021::BeginTransaction() {
     while (drain_state_ != DrainState::kIdle && drain_state_ != DrainState::kDataReady &&
            drain_state_ != DrainState::kError) {
         if (abort_requested_) {
+            sync_txn_active = false;
             return false;
         }
         ServiceRxDrain();
@@ -161,13 +163,17 @@ bool LR2021::BeginTransaction() {
     // LR2021 will immediately raise BUSY once it sees the NSS falling edge, so
     // checking BUSY *after* asserting NSS would race with the hardware.
     if (!WaitUntilReady()) {
+        sync_txn_active = false;
         return false;
     }
     SetNSS(false);
     return true;
 }
 
-void LR2021::EndTransaction() { SetNSS(true); }
+void LR2021::EndTransaction() {
+    SetNSS(true);
+    sync_txn_active = false;
+}
 
 void LR2021::ParseStat(uint16_t raw) {
     // Table 6-38:

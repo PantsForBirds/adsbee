@@ -4,6 +4,7 @@
 #include <cstring>   // for strcat
 #include <iostream>  // for AT command ingestion
 
+#include "mlat_stamp.hh"
 #include "adsbee.hh"
 #include "ccfg_bootloader_flash.hh"
 #include "comms.hh"
@@ -338,6 +339,28 @@ CPP_AT_CALLBACK(CommsManager::ATR1090RxBoostCallback) {
         }
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
+    // MLAT prototype (t-0364): AT+MLAT=<0|1|2> sets the mode and zeroes the counters, AT+MLAT? prints them.
+    if (op == '=') {
+        uint16_t mode = 0;
+        CPP_AT_TRY_ARG2NUM(0, mode);
+        if (mode > 2 || !adsbee.SetMLATMode(static_cast<uint8_t>(mode))) {
+            CPP_AT_ERROR("MLAT mode not set.");
+        }
+        CPP_AT_SUCCESS();
+    }
+    const mlat_stamp::Counters& m = mlat_stamp::c;
+    CPP_AT_CMD_PRINTF("=mode=%u,edges=%lu,ring_dropped=%lu,clears_posted=%lu,clears_deferred=%lu,clears_thread=%lu,"
+                      "isr_cycles=%lu,isr_max_cycles=%lu,stamped=%lu,unstamped=%lu,batches_ok=%lu,batches_mismatch=%lu,"
+                      "orphans=%lu,doubles=%lu\r\n",
+                      mlat_stamp::Mode(), (unsigned long)m.edges, (unsigned long)m.ring_dropped,
+                      (unsigned long)m.clears_posted, (unsigned long)m.clears_deferred, (unsigned long)m.clears_thread,
+                      (unsigned long)m.isr_cycles, (unsigned long)m.isr_max_cycles, (unsigned long)m.stamped,
+                      (unsigned long)m.unstamped, (unsigned long)m.batches_ok, (unsigned long)m.batches_mismatch,
+                      (unsigned long)m.orphans, (unsigned long)m.doubles);
+    CPP_AT_SILENT_SUCCESS();
 }
 
 CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
@@ -1360,6 +1383,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 8,
      .help_callback = ATRxPositionHelpCallback,
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxPositionCallback, comms_manager)},
+    {.command = "MLAT", .min_args = 0, .max_args = 1, .help_string = "MLAT prototype mode and counters.", .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATMLATCallback, comms_manager)},
     {.command = "RX_STATS",
      .min_args = 0,
      .max_args = 1,

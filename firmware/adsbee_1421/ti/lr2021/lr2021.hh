@@ -303,6 +303,7 @@ class LR2021 {
         uint8_t buf[2 + kIrqDrainThresholdBytes];  // [0:1] = Stat, [2..] = FIFO payload (DMA target).
         volatile uint16_t len = 0;                 // Payload bytes valid at buf + 2.
         volatile uint64_t timestamp_us = 0;
+        volatile uint32_t mlat_ticks = 0;  // MLAT counter at the LR_IRQ edge handler.
         volatile bool filled = false;  // Written last by the producer; cleared by ReleaseSlot().
     };
 
@@ -315,6 +316,17 @@ class LR2021 {
     void ReleaseSlot();
 
     // IRQ chain diagnostics, reported/reset via AT+RX_STATS.
+    // MLAT prototype (t-0364). HandleSyncEdge: capture interrupt (same priority as the GPIO HWIs), posts
+    // ClearIrq(SyncwordValid) when the bus is free. ServiceSyncClear: main loop, posts a deferred clear.
+    // ConfigSyncDio: routes SyncwordValid to DIO5 (enable) or releases DIO5.
+    void HandleSyncEdge();
+    void ServiceSyncClear();
+    bool ConfigSyncDio(bool enable);
+    volatile bool sync_txn_active = false;     // A synchronous (thread) transaction owns the bus.
+    volatile bool sync_clear_pending = false;  // An edge could not be cleared at once.
+    volatile uint32_t loop_frame_done_ticks = 0;  // MLAT counter at the last loop-drain frame completion.
+    volatile uint32_t level_ticks = 0;            // MLAT counter when the FIFO level was sampled.
+    uint8_t sync_clear_tx_buf_[6] = {0x01, 0x16, 0x00, 0x00, 0x00, 0x40};
     volatile uint32_t irq_drain_count = 0;         // Chains started from the LR_IRQ edge.
     volatile uint32_t irq_drain_skip_busy = 0;     // Edge ignored: drain not claimable (in flight/terminal).
     volatile uint32_t irq_drain_skip_slots = 0;    // Edge ignored: no free staging slot.
@@ -1452,6 +1464,7 @@ class LR2021 {
         kChainIrqCmd,            // GetAndClearIrq frame 1 (2 B) in flight.
         kChainIrqRspWait,        // Waiting to post GetAndClearIrq response frame.
         kChainIrqRsp,            // GetAndClearIrq frame 2 (6 B) in flight; completion decides restart/finish.
+        kChainSyncClear,         // MLAT prototype: ClearIrq(SyncwordValid) frame (6 B) in flight.
     };
     static constexpr bool IsChainState(DrainState s) { return s >= DrainState::kChainFifoWait; }
 

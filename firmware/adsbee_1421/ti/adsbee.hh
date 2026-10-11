@@ -122,6 +122,8 @@ class ADSBee {
     // drain cost (hundreds of us) means the LR2021 path is stalling the loop again. Reported and reset
     // via AT+RX_STATS.
     uint32_t max_lr2021_us = 0;
+    // MLAT prototype (t-0364): 0 stock, 1 per-packet clear, 2 sparse. Routes DIO5 and starts the capture.
+    bool SetMLATMode(uint8_t mode);
     // Longest wall time of one complete async RX drain (StartRxDrain -> data ready), in microseconds.
     // Must stay well under the ~2.2 ms the 256-byte LR2021 FIFO buys at worst-case 1090 traffic.
     // Reported and reset via AT+RX_STATS.
@@ -145,7 +147,8 @@ class ADSBee {
     // decoding. rx_buf points at the drain payload (valid until FinishRxDrain() / ReleaseSlot()).
     // mlat_timestamp_us stamps every packet in the batch (IRQ-edge time for chain slots, parse time
     // for loop-drain payloads).
-    void ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us);
+    void ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us,
+                           uint32_t mlat_boundary_ticks = 0, bool mlat_exact_boundary = false);
     // (Re)applies the current receiver configuration (sync mode, gain, CRC filter) to the LR2021.
     bool ApplyReceiverConfig();
 
