@@ -78,7 +78,8 @@ void Init() {
     inited = true;
 }
 
-uint32_t Now() { return HWREG(GPT0_BASE + GPT_O_TAV) & kTickMask; }
+// 0 until Init(): GPT0 has no clock before that, and reading it would fault.
+uint32_t Now() { return inited ? (HWREG(GPT0_BASE + GPT_O_TAV) & kTickMask) : 0; }
 uint8_t Mode() { return mode; }
 
 void Flush() {
