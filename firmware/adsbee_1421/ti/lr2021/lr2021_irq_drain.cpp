@@ -304,7 +304,9 @@ void LR2021::HandleSyncEdge() {
     // A parked loop drain (nothing on the bus) is stolen under the same rules as HandleIrqLine; the next
     // UpdateLR2021 pass restarts it. A running FIFO chain is left alone: its GetAndClearIrq clears the bit.
     bool blocked = IsChainState(s) || async_in_flight_ || sync_txn_active || s == DrainState::kDataReady ||
-                   s == DrainState::kError || s == DrainState::kClearFifoRspWait || IsBusy();
+                   s == DrainState::kError || s == DrainState::kClearFifoRspWait ||
+                   s == DrainState::kFifoRead ||  // Completed read: its payload is not parsed yet.
+                   IsBusy();
     if (blocked) {
         sync_clear_pending = !IsChainState(s);
         mlat_stamp::c.clears_deferred = mlat_stamp::c.clears_deferred + 1;
