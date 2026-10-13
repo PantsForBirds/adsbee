@@ -378,6 +378,14 @@ CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
             adsbee.lr2021.mlat_fast = static_cast<uint8_t>(fast > 2 ? 2 : fast);
             CPP_AT_SUCCESS();
         }
+        if (args[0].compare("STRESS") == 0) {
+            uint16_t kind = 0, count = 0;
+            CPP_AT_TRY_ARG2NUM(1, kind);
+            CPP_AT_TRY_ARG2NUM(2, count);
+            adsbee.mlat_stress_kind = static_cast<uint8_t>(kind);
+            adsbee.mlat_stress_count = static_cast<uint8_t>(count);
+            CPP_AT_SUCCESS();
+        }
         if (args[0].compare("PACE") == 0) {
             uint16_t pace = 0;
             CPP_AT_TRY_ARG2NUM(1, pace);

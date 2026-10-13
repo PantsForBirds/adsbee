@@ -11,6 +11,7 @@ class ADSBee {
     bool SetMLATMode(uint8_t mode, bool isr_capture = false);
     uint8_t mlat_pace = 0;  // Start a loop sweep only every n-th main-loop pass (0, 1: every pass, as stock).
     uint8_t mlat_pace_count_ = 0;
+    uint8_t mlat_stress_kind = 0, mlat_stress_count = 0;  // Cost probe: extra commands per completed sweep.
     static constexpr uint32_t kDefaultWatchdogTimeoutSec = 10;
 
     struct ADSBeeConfig {

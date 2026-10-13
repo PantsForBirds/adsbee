@@ -327,6 +327,7 @@ class LR2021 {
     mlat_stamp::Sweep mlat_sweep;
     // Routes SyncwordValid to DIO5 and selects the sync timestamp, per mode bits; 0 releases both.
     bool ConfigMlat(uint8_t mode);
+    void MlatStress(uint8_t kind);  // Cost probe: one synchronous command of the given kind.
     volatile uint32_t irq_drain_skip_unparsed = 0;  // Edge ignored: loop drain holds a FIFO read not parsed yet.
     volatile uint32_t irq_drain_skip_slots = 0;    // Edge ignored: no free staging slot.
     volatile uint32_t irq_drain_restarts = 0;      // Chain looped straight into another read (line still high).

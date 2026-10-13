@@ -831,6 +831,21 @@ bool ADSBee::UpdateLR2021() {
         ApplyReceiverConfig();  // Stamps lr2021_last_recovery_ms_ for the backoff.
     }
 
+    // MLAT prototype, cost probe: extra commands of one kind after each completed sweep, to measure what a command
+    // costs the receiver. 1 ClearIrq(SyncwordValid), 2 GetTimestampValue, 3 GetRxFifoLevel, 4 GetStatus.
+    if (mlat_stress_count != 0 && lr2021.DrainIdle() &&
+        (drain_result == LR2021::DrainResult::kDataReady || drain_result == LR2021::DrainResult::kNoData)) {
+        GPIO_disableInt(bsp.kLR2021IrqPin);
+        for (uint8_t i = 0; i < mlat_stress_count; i++) {
+            lr2021.MlatStress(mlat_stress_kind);
+        }
+        GPIO_clearInt(bsp.kLR2021IrqPin);
+        GPIO_enableInt(bsp.kLR2021IrqPin);
+        if (lr2021.IrqLineHigh()) {
+            lr2021.HandleIrqLine();  // An edge during the probe would be lost: start the chain by hand.
+        }
+    }
+
     uint32_t elapsed_us = get_time_since_boot_us() - start_us;
     if (elapsed_us > max_lr2021_us) {
         max_lr2021_us = elapsed_us;

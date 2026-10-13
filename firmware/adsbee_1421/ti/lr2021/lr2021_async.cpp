@@ -594,3 +594,20 @@ bool LR2021::ConfigMlat(uint8_t mode) {
     }
     return ok && CheckLastCommandStatus("LR2021::ConfigMlat");
 }
+
+void LR2021::MlatStress(uint8_t kind) {
+    static const uint8_t status[2] = {0x01, 0x00}, level[2] = {0x01, 0x1C};
+    const uint8_t zeros[6] = {};
+    uint8_t rx[8];
+    const uint8_t* tx = kind == 1 ? mlat_clear_tx_buf_ : kind == 2 ? mlat_ts_tx_buf_ : kind == 3 ? level : status;
+    size_t len = kind == 1 ? sizeof(mlat_clear_tx_buf_) : kind == 2 ? sizeof(mlat_ts_tx_buf_) : 2;
+    if (!BeginTransaction()) return;
+    SPITransfer(tx, rx, len);
+    EndTransaction();
+    if (kind != 1) {  // Read commands: clock the answer out.
+        if (!BeginTransaction()) return;
+        SPITransfer(zeros, rx, kind == 3 ? 4 : 6);
+        EndTransaction();
+    }
+    mlat_stamp::c.frames += kind == 1 ? 1 : 2;
+}
