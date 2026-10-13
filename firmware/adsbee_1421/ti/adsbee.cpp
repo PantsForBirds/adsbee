@@ -1,3 +1,4 @@
+#include "mlat_stamp.hh"
 #include "adsbee.hh"
 
 #include <ti/devices/cc13x4_cc26x4/driverlib/ccfgread.h>
@@ -218,6 +219,10 @@ bool ADSBee::ApplyReceiverConfigInner() {
     // is pending.
     GPIO_setCallback(bsp.kLR2021IrqPin, LRIrqLineCallback);
     GPIO_setCallback(bsp.kLR2021BusyPin, LRBusyLineCallback);
+    if (mlat_stamp::Mode() != 0) {
+        lr2021.ConfigMlat(mlat_stamp::Mode());  // A receiver (re)configuration resets the chip.
+        mlat_stamp::Boundary();
+    }
     GPIO_clearInt(bsp.kLR2021IrqPin);
     GPIO_enableInt(bsp.kLR2021IrqPin);
     return true;
@@ -591,6 +596,8 @@ void ADSBee::IngestAndForwardPackets() {
         // Check for any new valid packets and push all decoded packets to the reporting queue, even if the aircraft
         // dictionary didn't know what to do with them.
         if (decoded_packet.is_valid) {
+            mlat_stamp::LogValid(decoded_packet.icao_address, decoded_packet.downlink_format,
+                                 decoded_packet.raw.mlat_48mhz_64bit_counts);
             lr2021_frames_since_valid_ = 0;  // Healthy stream: reset the validity watchdog.
             // Counted, not logged: at high packet rates a per-packet CONSOLE_ERROR here floods the UART
             // TX ring and stalls the main loop -- the very thing that makes the queue overflow.
@@ -657,10 +664,18 @@ bool ADSBee::UpdateLR2021() {
     // Consume staging slots filled by the IRQ-paced drain chain (lr2021_irq_drain.cpp) first: they
     // predate anything the loop drain is currently reading, and their timestamps were captured at the
     // IRQ edge.
+    const bool mlat_on = mlat_stamp::Mode() != 0;
+    if (mlat_on) {
+        mlat_stamp::Poll();
+    }
     LR2021::IrqDrainSlot* slot;
     while ((slot = lr2021.NextFilledSlot()) != nullptr) {
         ParseLR2021RxFifo(slot->buf + 2, slot->len, slot->timestamp_us);
         lr2021.ReleaseSlot();
+        if (mlat_on) {
+            mlat_stamp::Boundary();  // A chain read is never paired.
+            mlat_stamp::c.chain_packets += LR2021::kIrqDrainThresholdBytes / LR2021::kOokFifoPacketLenBytes;
+        }
     }
 
     // FIFO tear hazard observed (level read back full, or a Full/Overflow/Underflow sub-flag seen by
@@ -682,6 +697,7 @@ bool ADSBee::UpdateLR2021() {
         bool resync_ok = lr2021.SetStandby(LR2021::kSysStandbyRc) && lr2021.ClearRxFifo() &&
                          lr2021.ClearFifoIrqFlags(0x3F, 0) && lr2021.GetAndClearIrq(&irq_rsp) &&
                          lr2021.SetRxAdv(0xFFFFFF);
+        mlat_stamp::Boundary();
         if (resync_ok) {
             lr2021.fifo_overflow_pending = false;
             lr2021_fifo_resync_count++;
@@ -699,7 +715,29 @@ bool ADSBee::UpdateLR2021() {
 
     bool success = true;
     LR2021::DrainResult drain_result = lr2021.ServiceRxDrain();
+    if (mlat_on && lr2021.mlat_fast >= 2 &&
+        (drain_result == LR2021::DrainResult::kDataReady || drain_result == LR2021::DrainResult::kNoData)) {
+        // Fastest sweep: parse, then start the next sweep in this pass (its read is parsed in the next pass).
+        if (drain_result == LR2021::DrainResult::kDataReady) {
+            uint64_t stamps[kMlatMaxBatchPackets];
+            uint16_t n = lr2021.drain_level() / LR2021::kOokFifoPacketLenBytes;
+            mlat_stamp::PairSweep(lr2021.mlat_sweep, n, stamps);
+            ParseLR2021RxFifo(lr2021.drain_payload(), lr2021.drain_level(), get_time_since_boot_us(), stamps);
+            lr2021.FinishRxDrain();
+        } else {
+            mlat_stamp::PairSweep(lr2021.mlat_sweep, 0, nullptr);
+        }
+        if (lr2021.DrainIdle() && lr2021.StartRxDrain()) {
+            lr2021_drain_start_us_ = get_time_since_boot_us();
+        }
+        drain_result = lr2021.ServiceRxDrain();
+    }
     switch (drain_result) {
+        case LR2021::DrainResult::kNoData:
+            if (mlat_on) {
+                mlat_stamp::PairSweep(lr2021.mlat_sweep, 0, nullptr);
+            }
+            break;
         case LR2021::DrainResult::kDataReady: {
             uint32_t drain_us = get_time_since_boot_us() - lr2021_drain_start_us_;
             if (drain_us > lr2021_drain_max_us) {
@@ -711,7 +749,14 @@ bool ADSBee::UpdateLR2021() {
                 // see it via AT+RX_STATS even with logging off.
                 lr2021_fifo_full_count++;
             }
-            ParseLR2021RxFifo(lr2021.drain_payload(), lr2021.drain_level(), get_time_since_boot_us());
+            if (mlat_on) {
+                uint64_t stamps[kMlatMaxBatchPackets];
+                uint16_t n = lr2021.drain_level() / LR2021::kOokFifoPacketLenBytes;
+                mlat_stamp::PairSweep(lr2021.mlat_sweep, n, stamps);
+                ParseLR2021RxFifo(lr2021.drain_payload(), lr2021.drain_level(), get_time_since_boot_us(), stamps);
+            } else {
+                ParseLR2021RxFifo(lr2021.drain_payload(), lr2021.drain_level(), get_time_since_boot_us());
+            }
             lr2021.FinishRxDrain();
             break;
         }
@@ -791,7 +836,23 @@ bool ADSBee::UpdateLR2021() {
     return success;
 }
 
-void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us) {
+bool ADSBee::SetMLATMode(uint8_t mode, bool isr_capture) {
+    GPIO_disableInt(bsp.kLR2021IrqPin);
+    lr2021.mlat_mode = 0;
+    mlat_stamp::SetMode(0, isr_capture);
+    bool ok = lr2021.ConfigMlat(mode);
+    if (ok) {
+        mlat_stamp::SetMode(mode, isr_capture);
+        lr2021.mlat_mode = mode;
+    }
+    mlat_stamp::ResetCounters();
+    GPIO_clearInt(bsp.kLR2021IrqPin);
+    GPIO_enableInt(bsp.kLR2021IrqPin);
+    return ok;
+}
+
+void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us,
+                               const uint64_t* mlat_stamps) {
     // The FIFO packet length depends on the preamble mode: DF17 mode captures a shorter
     // remainder because the detector consumed the preamble + DF17 header bits.
     const bool df17_mode = LR2021::IsOokDF17PreambleMode(r1090_preamble_mode_);
@@ -813,6 +874,11 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
         }
         RawModeSPacket raw_packet(rx_word_buf, RawModeSPacket::kExtendedSquitterPacketNumWords32);
         raw_packet.mlat_48mhz_64bit_counts = mlat_timestamp_us * 48;
+        if (mlat_stamps != nullptr) {
+            raw_packet.mlat_48mhz_64bit_counts = mlat_stamps[i];
+        } else if (mlat_stamp::Mode() != 0) {
+            raw_packet.mlat_48mhz_64bit_counts = mlat_stamp::kUnstamped | (15ull << 56);  // Chain read.
+        }
         lr2021_frames_since_valid_++;  // Zeroed on any valid decode; feeds the validity watchdog.
         // Record demod + raw frame metrics (valid frames are recorded during dictionary
         // ingestion). All LR2021 captures are 112-bit extended-squitter-length frames.

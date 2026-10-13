@@ -35,6 +35,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "../mlat_stamp.hh"
 #include "lr2021_drain_state.hh"     // Drain states and the chain steal rule.
 #include "lr2021_ook_adsb.hh"  // Mode S detector patterns and AGC settings.
 #include "lr2021_status_tracker.hh"  // Which command a Stat word reports on.
@@ -318,6 +319,14 @@ class LR2021 {
     // IRQ chain diagnostics, reported/reset via AT+RX_STATS.
     volatile uint32_t irq_drain_count = 0;         // Chains started from the LR_IRQ edge.
     volatile uint32_t irq_drain_skip_busy = 0;     // Edge ignored: drain not claimable (in flight/terminal).
+    // MLAT prototype (t-0394). mlat_mode: mlat_stamp mode bits used by the loop sweep (clear the SyncwordValid
+    // latch, read the internal timestamp). mlat_fast: the sweep busy-waits through its short frames instead of
+    // taking one main-loop pass per frame. mlat_sweep: times and timestamp of the sweep that just finished.
+    volatile uint8_t mlat_mode = 0;
+    volatile uint8_t mlat_fast = 0;
+    mlat_stamp::Sweep mlat_sweep;
+    // Routes SyncwordValid to DIO5 and selects the sync timestamp, per mode bits; 0 releases both.
+    bool ConfigMlat(uint8_t mode);
     volatile uint32_t irq_drain_skip_unparsed = 0;  // Edge ignored: loop drain holds a FIFO read not parsed yet.
     volatile uint32_t irq_drain_skip_slots = 0;    // Edge ignored: no free staging slot.
     volatile uint32_t irq_drain_restarts = 0;      // Chain looped straight into another read (line still high).
@@ -1496,6 +1505,11 @@ class LR2021 {
     // Loop-drain tail command buffers: the tail runs AFTER the FIFO payload has landed in
     // async_rx_buf_, so its frames must not touch the async buffers (would clobber the unparsed
     // payload / break the async_tx_buf_ "[2..] zeros" invariant).
+    uint8_t mlat_clear_tx_buf_[6] = {0x01, 0x16, 0x00, 0x00, 0x00, 0x40};  // ClearIrq(SyncwordValid).
+    uint8_t mlat_ts_tx_buf_[3] = {0x02, 0x17, 0x00};                       // GetTimestampValue(index 0).
+    uint8_t mlat_rx_buf_[8] = {};
+    // Fast sweep: waits up to 200 us for the frame in flight (wait_done) or for BUSY low. False: not done.
+    bool MlatSpin(DrainState s, bool wait_done);
     uint8_t tail_tx_buf_[4] = {};
     uint8_t tail_rx_buf_[8] = {};
     volatile bool async_ok_ = false;         // Transfer status; written by SPICallback before async_done_.

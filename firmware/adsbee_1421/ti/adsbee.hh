@@ -7,6 +7,8 @@
 
 class ADSBee {
    public:
+    // MLAT prototype (t-0394): mlat_stamp mode bits (0 = stock). isr_capture: capture interrupt instead of uDMA.
+    bool SetMLATMode(uint8_t mode, bool isr_capture = false);
     static constexpr uint32_t kDefaultWatchdogTimeoutSec = 10;
 
     struct ADSBeeConfig {
@@ -145,7 +147,9 @@ class ADSBee {
     // decoding. rx_buf points at the drain payload (valid until FinishRxDrain() / ReleaseSlot()).
     // mlat_timestamp_us stamps every packet in the batch (IRQ-edge time for chain slots, parse time
     // for loop-drain payloads).
-    void ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us);
+    static constexpr uint16_t kMlatMaxBatchPackets = 20;  // 256-byte FIFO / 14-byte packets = 18.
+    void ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_timestamp_us,
+                           const uint64_t* mlat_stamps = nullptr);
     // (Re)applies the current receiver configuration (sync mode, gain, CRC filter) to the LR2021.
     bool ApplyReceiverConfig();
 

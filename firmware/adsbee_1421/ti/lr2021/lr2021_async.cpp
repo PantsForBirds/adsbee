@@ -32,6 +32,7 @@
 
 #include <ti/drivers/dpl/HwiP.h>
 
+#include "cycle_counter.hh"
 #include "hal.hh"
 #include "lr2021.hh"
 
@@ -70,6 +71,7 @@ bool LR2021::PostAsyncFrame(const uint8_t* tx_buf, size_t len, uint8_t* rx_buf) 
     if (spi_handle_ == nullptr) {
         return false;
     }
+    mlat_stamp::c.frames++;
     async_done_ = false;
     async_ok_ = false;
     async_txn_ = {
@@ -149,7 +151,17 @@ bool LR2021::StartRxDrain() {
         HwiP_restore(key);
         return false;
     }
-    EnterBusyWait(DrainState::kLevelCmdWait);
+    DrainState first = DrainState::kLevelCmdWait;
+    if (mlat_mode != 0) {
+        // The latch is set (DIO5 high): clear it first, so the next sync event raises an edge.
+        if ((mlat_mode & mlat_stamp::kModeEdge) && mlat_stamp::PinHigh()) {
+            first = DrainState::kSyncClearWait;
+        } else if (mlat_mode & mlat_stamp::kModeTs) {
+            first = DrainState::kTsCmdWait;
+        }
+        mlat_sweep = mlat_stamp::Sweep();
+    }
+    EnterBusyWait(first);
     HwiP_restore(key);
     // Field resets after the claim: if the chain steals the drain before they matter, they are
     // re-initialized by the next StartRxDrain anyway.
@@ -158,6 +170,23 @@ bool LR2021::StartRxDrain() {
     drain_fifo_full_ = false;
     drain_error_str_ = nullptr;
     return true;
+}
+
+bool LR2021::MlatSpin(DrainState s, bool wait_done) {
+    if (mlat_fast == 0 || s >= DrainState::kFifoRead) {
+        return false;
+    }
+    static constexpr uint32_t kMaxCycles = 200 * 48;
+    uint32_t start = CycleCounter::Now(), cycles = 0;
+    bool done = false;
+    while (!(done = wait_done ? async_done_ : !IsBusy()) && cycles < kMaxCycles) {
+        cycles = CycleCounter::Since(start);
+    }
+    cycles = CycleCounter::Since(start);
+    mlat_stamp::c.spins++;
+    mlat_stamp::c.spin_cycles += cycles;
+    if (cycles > mlat_stamp::c.spin_max_cycles) mlat_stamp::c.spin_max_cycles = cycles;
+    return done;
 }
 
 LR2021::DrainResult LR2021::ServiceRxDrain() {
@@ -222,6 +251,9 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
 
             // BUSY-wait states: post the next frame once the chip is ready. Post + transition are
             // HwiP-guarded so a chain steal can't interleave.
+            case DrainState::kSyncClearWait:
+            case DrainState::kTsCmdWait:
+            case DrainState::kTsRspWait:
             case DrainState::kLevelCmdWait:
             case DrainState::kLevelRspWait:
             case DrainState::kFifoWait:
@@ -229,7 +261,7 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
             case DrainState::kClearFifoRspWait:
             case DrainState::kIrqCmdWait:
             case DrainState::kIrqRspWait: {
-                if (IsBusy()) {
+                if (IsBusy() && !MlatSpin(s, false)) {
                     if (get_time_since_boot_ms() - busy_wait_start_ms_ > kBusyTimeoutMs) {
                         return EnterDrainError(s, "BUSY timeout");
                     }
@@ -243,12 +275,29 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                 bool posted = false;
                 DrainState next = s;
                 switch (s) {
+                    case DrainState::kSyncClearWait:
+                        posted = PostAsyncFrame(mlat_clear_tx_buf_, sizeof(mlat_clear_tx_buf_), mlat_rx_buf_);
+                        next = DrainState::kSyncClear;
+                        mlat_stamp::c.clears++;
+                        break;
+                    case DrainState::kTsCmdWait:
+                        // The timestamp counts back from this frame's NSS falling edge.
+                        mlat_sweep.ts_nss_ticks = mlat_stamp::Now();
+                        posted = PostAsyncFrame(mlat_ts_tx_buf_, sizeof(mlat_ts_tx_buf_), mlat_rx_buf_);
+                        next = DrainState::kTsCmd;
+                        break;
+                    case DrainState::kTsRspWait:
+                        posted = PostAsyncFrame(nullptr, 6, mlat_rx_buf_);  // 2 (stat) + 4 (ticks).
+                        next = DrainState::kTsRsp;
+                        break;
                     case DrainState::kLevelCmdWait:
+                        mlat_sweep.level_a_ticks = mlat_stamp::Now();  // The level is sampled after this.
                         PackU16(async_tx_buf_, kOpcodeGetRxFifoLevel);
                         posted = PostAsyncFrame(async_tx_buf_, 2);
                         next = DrainState::kLevelCmd;
                         break;
                     case DrainState::kLevelRspWait:
+                        mlat_sweep.level_b_ticks = mlat_stamp::Now();  // BUSY is low: the level was sampled.
                         posted = PostAsyncFrame(nullptr, 4);  // 2 (stat) + 2 (level).
                         next = DrainState::kLevelRsp;
                         break;
@@ -293,8 +342,35 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
 
             // DMA-in-flight states: parse and advance on completion. Transitions are HwiP-guarded
             // (once async_in_flight_ drops, the chain may steal this drain).
+            case DrainState::kSyncClear:
+            case DrainState::kTsCmd:
+            case DrainState::kTsRsp: {
+                if (!async_done_ && !MlatSpin(s, true)) {
+                    return AsyncStillInFlight();
+                }
+                if (!async_ok_) {
+                    return EnterDrainError(s, "MLAT frame failed");
+                }
+                DrainState next = DrainState::kLevelCmdWait;
+                if (s == DrainState::kSyncClear && (mlat_mode & mlat_stamp::kModeTs)) {
+                    next = DrainState::kTsCmdWait;
+                } else if (s == DrainState::kTsCmd) {
+                    next = DrainState::kTsRspWait;
+                } else if (s == DrainState::kTsRsp) {
+                    uint8_t cs = (UnpackU16(mlat_rx_buf_) >> 9) & 0x7;
+                    mlat_sweep.ts_value = UnpackU32(mlat_rx_buf_ + 2);
+                    mlat_sweep.has_ts = cs == CommandStatus::kOk || cs == CommandStatus::kDat;
+                    mlat_stamp::c.ts_reads++;
+                }
+                uintptr_t key = HwiP_disable();
+                if (drain_state_ == s) {
+                    EnterBusyWait(next);
+                }
+                HwiP_restore(key);
+                break;
+            }
             case DrainState::kLevelCmd: {
-                if (!async_done_) {
+                if (!async_done_ && !MlatSpin(s, true)) {
                     return AsyncStillInFlight();
                 }
                 if (!async_ok_) {
@@ -309,7 +385,7 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                 break;  // Loop: BUSY may already be low, or we were stolen.
             }
             case DrainState::kLevelRsp: {
-                if (!async_done_) {
+                if (!async_done_ && !MlatSpin(s, true)) {
                     return AsyncStillInFlight();
                 }
                 if (!async_ok_) {
@@ -494,4 +570,25 @@ void LR2021::CancelAsync() {
     drain_state_ = DrainState::kIdle;
     HwiP_restore(key);
     SetNSS(true);  // Harmless DOUT update if the pin was tri-stated by the SYNC ISR.
+}
+
+bool LR2021::ConfigMlat(uint8_t mode) {
+    // SetDioFunction(DIO5, IRQ or none, pull-up), SetDioIrqConfig(DIO5, SyncwordValid), ClearIrq(SyncwordValid),
+    // SetTimestampSource(0, sync or none).
+    const bool edge = mode & mlat_stamp::kModeEdge;
+    const uint8_t func[4] = {0x01, 0x12, 0x05, static_cast<uint8_t>(((edge ? 1 : 0) << 4) | 2)};
+    const uint8_t mask[7] = {0x01, 0x15, 0x05, 0x00, 0x00, 0x00, static_cast<uint8_t>(edge ? 0x40 : 0x00)};
+    const uint8_t ts[3] = {0x02, 0x16, static_cast<uint8_t>((mode & mlat_stamp::kModeTs) ? kTsSync : kTsNone)};
+    uint8_t rx[8];
+    bool ok = true;
+    const struct {
+        const uint8_t* tx;
+        size_t len;
+    } frames[] = {{func, sizeof(func)}, {mask, sizeof(mask)}, {mlat_clear_tx_buf_, sizeof(mlat_clear_tx_buf_)}, {ts, sizeof(ts)}};
+    for (const auto& f : frames) {
+        if (!BeginTransaction()) return false;
+        ok &= SPITransfer(f.tx, rx, f.len);
+        EndTransaction();
+    }
+    return ok && CheckLastCommandStatus("LR2021::ConfigMlat");
 }

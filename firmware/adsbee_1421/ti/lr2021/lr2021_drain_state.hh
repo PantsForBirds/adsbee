@@ -7,6 +7,13 @@
 
 enum class LR2021DrainState : uint8_t {
     kIdle = 0,
+    // MLAT prototype (t-0394): optional frames of the loop drain ahead of the level read.
+    kSyncClearWait,  // Waiting for BUSY low to post ClearIrq(SyncwordValid).
+    kSyncClear,      // ClearIrq frame (6 B) DMA in flight.
+    kTsCmdWait,      // Waiting for BUSY low to post the GetTimestampValue opcode frame.
+    kTsCmd,          // GetTimestampValue frame 1 (3 B) DMA in flight.
+    kTsRspWait,      // Waiting for BUSY low to post the GetTimestampValue response frame.
+    kTsRsp,          // GetTimestampValue frame 2 (6 B) DMA in flight.
     // Thread-paced loop drain (advanced by ServiceRxDrain): unconditional level-read sweep, then a
     // conditional IRQ-latch clear tail whenever the LR_IRQ line reads high.
     kLevelCmdWait,   // Waiting for BUSY low to post the GetRxFifoLevel opcode frame.

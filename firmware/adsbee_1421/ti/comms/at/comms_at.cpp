@@ -1,3 +1,4 @@
+#include "mlat_stamp.hh"
 #include <stdio.h>  // for printing
 
 #include <cmath>     // for lroundf
@@ -338,6 +339,82 @@ CPP_AT_CALLBACK(CommsManager::ATR1090RxBoostCallback) {
         }
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
+    // MLAT prototype (t-0394). AT+MLAT=<mode 0-3>[,<isr 0|1>] | FAST,<0-2> | WIN,<min_us>,<max_us> |
+    // AGREE,<center>,<tol> (1/96 us) | CLEAR | DUMP; AT+MLAT? prints the counters.
+    mlat_stamp::Counters& m = mlat_stamp::c;
+    if (op == '=') {
+        if (args[0].compare("DUMP") == 0) {
+            // One line per logged valid frame: ICAO, downlink format, stamp word.
+            for (uint16_t i = 0; i < mlat_stamp::LogCount(); i++) {
+                const mlat_stamp::LogEntry& e = mlat_stamp::LogAt(i);
+                CPP_AT_PRINTF("#ML %06lX %u %08lX%08lX\r\n", (unsigned long)(e.icao_df & 0xFFFFFF),
+                              (unsigned)(e.icao_df >> 24), (unsigned long)(e.stamp >> 32),
+                              (unsigned long)(e.stamp & 0xFFFFFFFF));
+            }
+            mlat_stamp::LogClear();
+            CPP_AT_SUCCESS();
+        }
+        if (args[0].compare("CLEAR") == 0) {
+            mlat_stamp::LogClear();
+            mlat_stamp::ResetCounters();
+            CPP_AT_SUCCESS();
+        }
+        if (args[0].compare("FAST") == 0) {
+            uint16_t fast = 0;
+            CPP_AT_TRY_ARG2NUM(1, fast);
+            adsbee.lr2021.mlat_fast = static_cast<uint8_t>(fast > 2 ? 2 : fast);
+            CPP_AT_SUCCESS();
+        }
+        if (args[0].compare("WIN") == 0) {
+            uint32_t min_us = 0, max_us = 0;
+            CPP_AT_TRY_ARG2NUM(1, min_us);
+            CPP_AT_TRY_ARG2NUM(2, max_us);
+            mlat_stamp::delay_min_ticks = min_us * mlat_stamp::kTicksPerUs;
+            mlat_stamp::delay_max_ticks = max_us * mlat_stamp::kTicksPerUs;
+            CPP_AT_SUCCESS();
+        }
+        if (args[0].compare("AGREE") == 0) {
+            int32_t center = 0, tol = 0;
+            CPP_AT_TRY_ARG2NUM(1, center);
+            CPP_AT_TRY_ARG2NUM(2, tol);
+            mlat_stamp::agree_center = center;
+            mlat_stamp::agree_tol = tol;
+            CPP_AT_SUCCESS();
+        }
+        uint16_t mode = 0, isr = 0;
+        CPP_AT_TRY_ARG2NUM(0, mode);
+        if (CPP_AT_HAS_ARG(1)) {
+            CPP_AT_TRY_ARG2NUM(1, isr);
+        }
+        if (mode > 3 || !adsbee.SetMLATMode(static_cast<uint8_t>(mode), isr != 0)) {
+            CPP_AT_ERROR("MLAT mode not set.");
+        }
+        CPP_AT_SUCCESS();
+    }
+    CPP_AT_CMD_PRINTF(
+        "=mode=%u,isr=%u,fast=%u,win_min=%lu,win_max=%lu,pin=%u,edges=%lu,dma_rearms=%lu,dma_overruns=%lu,isr_edges=%lu,"
+        "isr_cycles=%lu,isr_max_cycles=%lu,sweeps=%lu,reads1=%lu,reads2=%lu,reads3p=%lu,chain_packets=%lu,clears=%lu,"
+        "ts_reads=%lu,stamped_edge=%lu,stamped_ts=%lu,stamped_both=%lu,un_none=%lu,un_ambiguous=%lu,un_multi=%lu,"
+        "rej_disagree=%lu,rej_orphan=%lu,rej_extra=%lu,spins=%lu,spin_cycles=%lu,spin_max_cycles=%lu,frames=%lu,"
+        "valid=%lu,valid_stamped=%lu,delay_lo=%lu,delay_hi=%lu,agree_min=%ld,agree_max=%ld,log=%u\r\n",
+        mlat_stamp::Mode(), mlat_stamp::IsrCapture() ? 1u : 0u, adsbee.lr2021.mlat_fast,
+        (unsigned long)(mlat_stamp::delay_min_ticks / mlat_stamp::kTicksPerUs),
+        (unsigned long)(mlat_stamp::delay_max_ticks / mlat_stamp::kTicksPerUs),
+        (mlat_stamp::Inited() && mlat_stamp::PinHigh()) ? 1u : 0u, (unsigned long)m.edges,
+        (unsigned long)m.dma_rearms, (unsigned long)m.dma_overruns, (unsigned long)m.isr_edges,
+        (unsigned long)m.isr_cycles, (unsigned long)m.isr_max_cycles, (unsigned long)m.sweeps,
+        (unsigned long)m.reads1, (unsigned long)m.reads2, (unsigned long)m.reads3p, (unsigned long)m.chain_packets,
+        (unsigned long)m.clears, (unsigned long)m.ts_reads, (unsigned long)m.stamped_edge,
+        (unsigned long)m.stamped_ts, (unsigned long)m.stamped_both, (unsigned long)m.un_none,
+        (unsigned long)m.un_ambiguous, (unsigned long)m.un_multi, (unsigned long)m.rej_disagree,
+        (unsigned long)m.rej_orphan, (unsigned long)m.rej_extra, (unsigned long)m.spins,
+        (unsigned long)m.spin_cycles, (unsigned long)m.spin_max_cycles, (unsigned long)m.frames,
+        (unsigned long)m.valid, (unsigned long)m.valid_stamped, (unsigned long)m.delay_lo_ticks,
+        (unsigned long)m.delay_hi_ticks, (long)m.agree_min, (long)m.agree_max, mlat_stamp::LogCount());
+    CPP_AT_SILENT_SUCCESS();
 }
 
 CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
@@ -1362,6 +1439,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 8,
      .help_callback = ATRxPositionHelpCallback,
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxPositionCallback, comms_manager)},
+    {.command = "MLAT",
+     .min_args = 0,
+     .max_args = 3,
+     .help_string = "MLAT prototype mode and counters.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATMLATCallback, comms_manager)},
     {.command = "RX_STATS",
      .min_args = 0,
      .max_args = 1,

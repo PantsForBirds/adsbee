@@ -58,6 +58,7 @@ add_compile_options(-Wno-packed-bitfield-compat) # Ignore the packed bitfield co
 # Create executable
 add_executable(${PROJECT_NAME}
     main.cpp
+    mlat_stamp.cpp
 )
 set_target_properties(${PROJECT_NAME} PROPERTIES
     OUTPUT_NAME "${PROJECT_NAME}.elf"
