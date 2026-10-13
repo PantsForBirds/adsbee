@@ -14,8 +14,9 @@
 
 namespace mlat_probe {
 
-static constexpr uint32_t kProbeIoid = IOID_13;  // LR2021 DIO5.
-static constexpr uint16_t kRingLen = 256;        // Power of 2.
+static uint32_t probe_ioid = IOID_13;       // LR2021 DIO5.
+static constexpr uint32_t kTrigIoid = IOID_12;  // LR2021 DIO6.
+static constexpr uint16_t kRingLen = 1024;  // Power of 2.
 
 volatile bool hold = false;
 
@@ -27,13 +28,52 @@ static volatile uint16_t tail = 0;  // Thread reads.
 static volatile uint32_t dropped = 0;
 static volatile uint32_t total = 0;
 static volatile bool one_shot = false;
+static volatile bool count_only = false;
+static volatile uint8_t trig_edges = 0;
+static volatile uint16_t trig_width = 0, trig_delay = 0;
+static Stats stats;
+static uint32_t last_rise = 0, last_fall = 0;
+static bool have_rise = false, have_fall = false;
 
 static void CaptureIsr(uintptr_t /*arg*/) {
     TimerIntClear(GPT0_BASE, TIMER_CAPA_EVENT);
     // In edge-time mode TAR holds the captured count: prescaler (extension) in [23:16], timer in [15:0].
     uint32_t ticks = HWREG(GPT0_BASE + GPT_O_TAR) & 0x00FFFFFF;
-    uint8_t level = static_cast<uint8_t>(GPIO_readDio(kProbeIoid));
+    uint8_t level = static_cast<uint8_t>(GPIO_readDio(probe_ioid));
+    if (trig_edges & (level ? 2 : 1)) {
+        for (volatile uint16_t i = 0; i < trig_delay; i = i + 1) {
+        }
+        GPIO_setDio(kTrigIoid);
+        for (volatile uint16_t i = 0; i < trig_width; i = i + 1) {
+        }
+        GPIO_clearDio(kTrigIoid);
+        stats.trig_pulses++;
+    }
     total = total + 1;
+    if (level) {
+        stats.rising++;
+        if (have_fall) {
+            uint32_t w = (ticks - last_fall) & 0x00FFFFFF;
+            if (w < stats.low_min) stats.low_min = w;
+            if (w > stats.low_max) stats.low_max = w;
+            stats.low_sum += w;
+        }
+        last_rise = ticks;
+        have_rise = true;
+    } else {
+        stats.falling++;
+        if (have_rise) {
+            uint32_t w = (ticks - last_rise) & 0x00FFFFFF;
+            if (w < stats.high_min) stats.high_min = w;
+            if (w > stats.high_max) stats.high_max = w;
+            stats.high_sum += w;
+        }
+        last_fall = ticks;
+        have_fall = true;
+    }
+    if (count_only) {
+        return;
+    }
     uint16_t next = static_cast<uint16_t>((head + 1) & (kRingLen - 1));
     if (next == tail) {
         // Ring full: a fast signal on the pin. Stop capturing until the next Flush() so the ISR can't starve the
@@ -60,7 +100,7 @@ void Init() {
     PRCMLoadSet();
 
     // DIO_13 as an input routed to MCU port event 0, which is the default capture source of GPT0A.
-    IOCPortConfigureSet(kProbeIoid, IOC_PORT_MCU_PORT_EVENT0, IOC_STD_INPUT | IOC_IOPULL_DOWN);
+    IOCPortConfigureSet(probe_ioid, IOC_PORT_MCU_PORT_EVENT0, IOC_STD_INPUT | IOC_IOPULL_DOWN);
 
     TimerDisable(GPT0_BASE, TIMER_A);
     TimerConfigure(GPT0_BASE, TIMER_CFG_SPLIT_PAIR | TIMER_CFG_A_CAP_TIME_UP);
@@ -83,7 +123,7 @@ bool IsInited() { return inited; }
 
 uint32_t Now() { return HWREG(GPT0_BASE + GPT_O_TAV) & 0x00FFFFFF; }
 
-uint8_t PinLevel() { return static_cast<uint8_t>(GPIO_readDio(kProbeIoid)); }
+uint8_t PinLevel() { return static_cast<uint8_t>(GPIO_readDio(probe_ioid)); }
 
 void SetEdges(uint8_t mode) {
     uint8_t edges = mode & 3;
@@ -114,7 +154,53 @@ void Flush() {
     tail = head;
     dropped = 0;
     total = 0;
+    stats = Stats{};
+    stats.high_min = stats.low_min = 0xFFFFFFFF;
+    have_rise = have_fall = false;
     Arm();
+}
+
+void SetSource(uint8_t ioid) {
+    TimerIntDisable(GPT0_BASE, TIMER_CAPA_EVENT);
+    IOCPortConfigureSet(probe_ioid, IOC_PORT_GPIO, IOC_STD_INPUT | IOC_IOPULL_DOWN);
+    probe_ioid = ioid;
+    IOCPortConfigureSet(probe_ioid, IOC_PORT_MCU_PORT_EVENT0, IOC_STD_INPUT | IOC_NO_IOPULL);
+    Flush();
+}
+
+void SetCountOnly(bool on) { count_only = on; }
+
+Stats GetStats() {
+    uintptr_t key = HwiP_disable();
+    Stats copy = stats;
+    HwiP_restore(key);
+    return copy;
+}
+
+void TrigEnable(bool enable) {
+    trig_edges = 0;
+    if (enable) {
+        GPIO_clearDio(kTrigIoid);
+        IOCPortConfigureSet(kTrigIoid, IOC_PORT_GPIO, IOC_STD_OUTPUT);
+        GPIO_setOutputEnableDio(kTrigIoid, GPIO_OUTPUT_ENABLE);
+    } else {
+        GPIO_setOutputEnableDio(kTrigIoid, GPIO_OUTPUT_DISABLE);
+        IOCPortConfigureSet(kTrigIoid, IOC_PORT_GPIO, IOC_STD_INPUT | IOC_IOPULL_DOWN);
+    }
+}
+
+void TrigLevel(bool high) {
+    if (high) {
+        GPIO_setDio(kTrigIoid);
+    } else {
+        GPIO_clearDio(kTrigIoid);
+    }
+}
+
+void TrigAuto(uint8_t edges, uint16_t width, uint16_t delay) {
+    trig_width = width;
+    trig_delay = delay;
+    trig_edges = edges;
 }
 
 }  // namespace mlat_probe

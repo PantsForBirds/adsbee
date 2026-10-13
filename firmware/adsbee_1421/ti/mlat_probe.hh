@@ -28,6 +28,23 @@ uint32_t DroppedEdges();
 uint32_t TotalEdges();
 void Flush();
 
+// Capture input: any CC1314 IOID (13 = LR2021 DIO5, 12 = LR2021 DIO6, 14 = LR2021 BUSY). Reboot to undo.
+void SetSource(uint8_t ioid);
+// With count_only the ISR keeps the statistics below and stores no edges.
+void SetCountOnly(bool count_only);
+struct Stats {
+    uint32_t rising, falling;
+    uint32_t high_min, high_max, low_min, low_max;  // Pulse widths in ticks (24-bit wrap).
+    uint64_t high_sum, low_sum;
+    uint32_t trig_pulses;
+};
+Stats GetStats();
+// RX trigger loop (t-0406): DIO_12 (LR2021 DIO6, set to RX_TRIGGER on the chip first) driven by the CC1314.
+// edges: bit 0 = pulse on a falling capture, bit 1 = on a rising capture. width = busy-loop count of the pulse.
+void TrigEnable(bool enable);
+void TrigLevel(bool high);
+void TrigAuto(uint8_t edges, uint16_t width, uint16_t delay);
+
 // True while AT+MLAT=HOLD,1 is in effect: the normal LR2021 servicing in ADSBee::UpdateLR2021 is frozen.
 extern volatile bool hold;
 

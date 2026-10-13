@@ -965,8 +965,8 @@ static int MlatHexToBytes(std::string_view hex, uint8_t* out, size_t max_len) {
 
 static void MlatPrintHex(const uint8_t* buf, size_t len) {
     static const char kDigits[] = "0123456789ABCDEF";
-    char line[2 * 64 + 1];
-    size_t n = len > 64 ? 64 : len;
+    char line[2 * 132 + 1];
+    size_t n = len > 132 ? 132 : len;
     for (size_t i = 0; i < n; i++) {
         line[2 * i] = kDigits[buf[i] >> 4];
         line[2 * i + 1] = kDigits[buf[i] & 0xF];
@@ -995,6 +995,7 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
             adsbee.BeginDirectLR2021Access();
             mlat_probe::hold = true;
         } else {
+            mlat_probe::TrigEnable(false);  // Before the chip's DIO6 becomes an output again.
             mlat_probe::hold = false;
             if (!adsbee.EndDirectLR2021Access()) {
                 CPP_AT_ERROR("Receiver re-init failed.");
@@ -1015,11 +1016,80 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
         mlat_probe::Flush();
         CPP_AT_SUCCESS();
     }
+    if (args[0].compare("SRC") == 0 && CPP_AT_HAS_ARG(1)) {
+        uint8_t ioid = 13;
+        CPP_AT_TRY_ARG2NUM(1, ioid);
+        if (ioid != 12 && ioid != 13 && ioid != 14) {
+            CPP_AT_ERROR("Source must be 12, 13 or 14.");
+        }
+        mlat_probe::SetSource(ioid);
+        CPP_AT_SUCCESS();
+    }
+    if (args[0].compare("STAT") == 0) {
+        mlat_probe::Stats st = mlat_probe::GetStats();
+        CPP_AT_PRINTF("MLAT STAT pin=%u rising=%lu falling=%lu high_min=%lu high_max=%lu high_sum=%lu%09lu low_min=%lu "
+                      "low_max=%lu low_sum=%lu%09lu trig=%lu dropped=%lu\r\n",
+                      mlat_probe::PinLevel(), (unsigned long)st.rising, (unsigned long)st.falling,
+                      (unsigned long)st.high_min, (unsigned long)st.high_max,
+                      (unsigned long)(st.high_sum / 1000000000ULL), (unsigned long)(st.high_sum % 1000000000ULL),
+                      (unsigned long)st.low_min, (unsigned long)st.low_max,
+                      (unsigned long)(st.low_sum / 1000000000ULL), (unsigned long)(st.low_sum % 1000000000ULL),
+                      (unsigned long)st.trig_pulses, (unsigned long)mlat_probe::DroppedEdges());
+        if (CPP_AT_HAS_ARG(1)) {
+            mlat_probe::Flush();
+        }
+        CPP_AT_SUCCESS();
+    }
+    if (args[0].compare("COUNT") == 0 && CPP_AT_HAS_ARG(1)) {
+        uint8_t on = 0;
+        CPP_AT_TRY_ARG2NUM(1, on);
+        mlat_probe::SetCountOnly(on != 0);
+        mlat_probe::Flush();
+        CPP_AT_SUCCESS();
+    }
     if (!mlat_probe::hold) {
         CPP_AT_ERROR("Run AT+MLAT=HOLD,1 first.");
     }
+    if (args[0].compare("TRIG") == 0 && CPP_AT_HAS_ARG(1)) {
+        // TRIG,EN,<0|1> | TRIG,LEVEL,<0|1> | TRIG,AUTO,<edges>,<width> | TRIG,PULSE,<width>
+        uint32_t a = 0, b = 0;
+        if (CPP_AT_HAS_ARG(2)) {
+            CPP_AT_TRY_ARG2NUM(2, a);
+        }
+        if (CPP_AT_HAS_ARG(3)) {
+            CPP_AT_TRY_ARG2NUM(3, b);
+        }
+        if (args[1].compare("EN") == 0) {
+            mlat_probe::TrigEnable(a != 0);
+        } else if (args[1].compare("LEVEL") == 0) {
+            mlat_probe::TrigLevel(a != 0);
+        } else if (args[1].compare("AUTO") == 0) {
+            // b = width + 256 * delay (busy-loop counts).
+            mlat_probe::TrigAuto(static_cast<uint8_t>(a & 3), static_cast<uint16_t>(b & 0xFF),
+                                 static_cast<uint16_t>(b >> 8));
+        } else if (args[1].compare("PULSE") == 0) {
+            mlat_probe::Flush();
+            uint32_t now = mlat_probe::Now();
+            mlat_probe::TrigLevel(true);
+            for (volatile uint16_t i = 0; i < a; i = i + 1) {
+            }
+            mlat_probe::TrigLevel(false);
+            // Wait up to 20 ms for the first captured edge (RF switch pin rising = chip in RX).
+            mlat_probe::Edge edge = {0, 0};
+            bool got = false;
+            uint64_t start_us = get_time_since_boot_us();
+            while (!got && get_time_since_boot_us() - start_us < 20000) {
+                got = mlat_probe::PopEdge(edge);
+            }
+            CPP_AT_PRINTF("MLAT TRIG t=%06lx got=%u edge=%06lx level=%u\r\n", (unsigned long)now, got,
+                          (unsigned long)edge.ticks, edge.level);
+        } else {
+            CPP_AT_ERROR("TRIG,<EN|LEVEL|AUTO|PULSE>,...");
+        }
+        CPP_AT_SUCCESS();
+    }
     if (args[0].compare("RAW") == 0 && CPP_AT_HAS_ARG(1)) {
-        uint8_t tx[40], rx1[40], rsp[64];
+        uint8_t tx[40], rx1[40], rsp[132];
         int tx_len = MlatHexToBytes(args[1], tx, sizeof(tx));
         uint16_t rsp_len = 0;
         if (CPP_AT_HAS_ARG(2)) {
@@ -1055,6 +1125,17 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
         uint32_t last_drain_ms = start_ms;
         uint32_t drained_bytes = 0;
         uint32_t edges_seen = 0, unstuck = 0, stuck_passes = 0;
+        uint32_t records = 0, matched = 0, fifo_fail = 0;
+        const bool quiet = (flags & 512) != 0;
+        auto count_records = [&](const uint8_t* buf, uint16_t len) {
+            // 14-byte captures; test frames carry ICAO 0xADF0xx in bytes 1-2.
+            for (uint16_t i = 0; i + 14 <= len; i += 14) {
+                records++;
+                if (buf[i + 1] == 0xAD && buf[i + 2] == 0xF0) {
+                    matched++;
+                }
+            }
+        };
         char c;
         while (get_time_since_boot_ms() - start_ms < duration_ms &&
                !iface_getc(SettingsManager::SerialInterface::kConsole, c)) {
@@ -1064,7 +1145,17 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
             while (mlat_probe::PopEdge(edge)) {
                 had_edge = true;
                 edges_seen++;
-                CPP_AT_PRINTF("#E %06lx %u\r\n", (unsigned long)edge.ticks, edge.level);
+                if (!quiet) {
+                    CPP_AT_PRINTF("#E %06lx %u\r\n", (unsigned long)edge.ticks, edge.level);
+                }
+                if (!edge.level && (flags & 128)) {
+                    // Packet end (RF switch pin fell): take one capture with a direct read, no level command.
+                    if (lr.ReadRxFifo(fifo, 14)) {
+                        count_records(fifo, 14);
+                    } else {
+                        fifo_fail++;
+                    }
+                }
                 if (edge.level) {
                     if (flags & 4) {
                         for (uint8_t index = 0; index < 3; index++) {
@@ -1124,6 +1215,20 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
                 }
                 mlat_probe::Arm();
             }
+            if (flags & 256) {
+                // Count captures in continuous RX: level command, then direct reads of whole captures.
+                uint16_t level = fifo_level();
+                level = static_cast<uint16_t>(level - level % 14);
+                while (level > 0) {
+                    uint16_t chunk = level > 56 ? 56 : level;
+                    if (!lr.ReadRxFifo(fifo, chunk)) {
+                        fifo_fail++;
+                        break;
+                    }
+                    count_records(fifo, chunk);
+                    level -= chunk;
+                }
+            }
             if ((flags & 16) && !had_edge && get_time_since_boot_ms() - last_drain_ms >= 5) {
                 last_drain_ms = get_time_since_boot_ms();
                 uint16_t level = fifo_level();
@@ -1137,9 +1242,10 @@ CPP_AT_CALLBACK(CommsManager::ATMlatCallback) {
                 }
             }
         }
-        CPP_AT_PRINTF("#D edges=%lu dropped=%lu drained=%lu pin=%u unstuck=%lu\r\n",
+        CPP_AT_PRINTF("#D edges=%lu dropped=%lu drained=%lu pin=%u unstuck=%lu records=%lu matched=%lu fifo_fail=%lu\r\n",
                       (unsigned long)mlat_probe::TotalEdges(), (unsigned long)mlat_probe::DroppedEdges(),
-                      (unsigned long)drained_bytes, mlat_probe::PinLevel(), (unsigned long)unstuck);
+                      (unsigned long)drained_bytes, mlat_probe::PinLevel(), (unsigned long)unstuck,
+                      (unsigned long)records, (unsigned long)matched, (unsigned long)fifo_fail);
         CPP_AT_SUCCESS();
     }
     CPP_AT_ERROR("Unknown MLAT sub-command or missing arguments.");
@@ -1640,7 +1746,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "MLAT",
      .min_args = 1,
      .max_args = 4,
-     .help_string = "MLAT bench probe (t-0354). AT+MLAT=<INIT|HOLD|PIN|EDGES|RAW|CAP>,...",
+     .help_string = "MLAT bench probe (t-0354). AT+MLAT=<INIT|HOLD|PIN|EDGES|RAW|CAP|SRC|STAT|COUNT|TRIG>,...",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATMlatCallback, comms_manager)},
     {.command = "UPTIME",
      .min_args = 0,
