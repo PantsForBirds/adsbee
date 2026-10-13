@@ -337,6 +337,9 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                 if (!posted) {
                     return EnterDrainError(s, "SPI_transfer post failed");
                 }
+                if (mlat_fast != 0 && next < DrainState::kFifoRead) {
+                    break;  // Fast sweep: wait for this short frame here.
+                }
                 return DrainResult::kInProgress;
             }
 
