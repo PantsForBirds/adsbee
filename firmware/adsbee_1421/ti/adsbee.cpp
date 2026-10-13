@@ -709,8 +709,10 @@ bool ADSBee::UpdateLR2021() {
     // Async RX drain: kick one off when idle, then advance it as far as the DMA/BUSY state allows.
     // Each call does at most one phase's worth of parsing plus posting the next DMA frame -- the long
     // SPI clocking (up to 258 B) happens in the background while the rest of the loop runs.
-    if (lr2021.DrainIdle() && lr2021.StartRxDrain()) {
+    // MLAT prototype: mlat_pace > 1 starts a sweep only every mlat_pace-th pass.
+    if (lr2021.DrainIdle() && (mlat_pace <= 1 || ++mlat_pace_count_ >= mlat_pace) && lr2021.StartRxDrain()) {
         lr2021_drain_start_us_ = start_us;
+        mlat_pace_count_ = 0;
     }
 
     bool success = true;

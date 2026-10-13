@@ -9,6 +9,8 @@ class ADSBee {
    public:
     // MLAT prototype (t-0394): mlat_stamp mode bits (0 = stock). isr_capture: capture interrupt instead of uDMA.
     bool SetMLATMode(uint8_t mode, bool isr_capture = false);
+    uint8_t mlat_pace = 0;  // Start a loop sweep only every n-th main-loop pass (0, 1: every pass, as stock).
+    uint8_t mlat_pace_count_ = 0;
     static constexpr uint32_t kDefaultWatchdogTimeoutSec = 10;
 
     struct ADSBeeConfig {
