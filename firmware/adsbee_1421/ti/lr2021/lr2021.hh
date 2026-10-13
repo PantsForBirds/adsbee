@@ -1508,6 +1508,7 @@ class LR2021 {
     uint8_t mlat_clear_tx_buf_[6] = {0x01, 0x16, 0x00, 0x00, 0x00, 0x40};  // ClearIrq(SyncwordValid).
     uint8_t mlat_ts_tx_buf_[3] = {0x02, 0x17, 0x00};                       // GetTimestampValue(index 0).
     uint8_t mlat_rx_buf_[8] = {};
+    uint32_t mlat_nss_ticks_ = 0;  // MLAT counter at the NSS falling edge of the last posted frame.
     // Fast sweep: waits up to 200 us for the frame in flight (wait_done) or for BUSY low. False: not done.
     bool MlatSpin(DrainState s, bool wait_done);
     uint8_t tail_tx_buf_[4] = {};

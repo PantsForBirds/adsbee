@@ -82,6 +82,7 @@ bool LR2021::PostAsyncFrame(const uint8_t* tx_buf, size_t len, uint8_t* rx_buf) 
         .status = SPI_TRANSFER_QUEUED,
     };
     status_tracker_.OnFrame(FrameOpcode(tx_buf, len));  // Which command the next Stat word reports on.
+    mlat_nss_ticks_ = mlat_stamp::Now();  // Right at the NSS edge: GetTimestampValue counts back from it.
     SetNSS(false);
     async_in_flight_ = true;
     if (!SPI_transfer(spi_handle_, &async_txn_)) {
@@ -281,9 +282,8 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                         mlat_stamp::c.clears++;
                         break;
                     case DrainState::kTsCmdWait:
-                        // The timestamp counts back from this frame's NSS falling edge.
-                        mlat_sweep.ts_nss_ticks = mlat_stamp::Now();
                         posted = PostAsyncFrame(mlat_ts_tx_buf_, sizeof(mlat_ts_tx_buf_), mlat_rx_buf_);
+                        mlat_sweep.ts_nss_ticks = mlat_nss_ticks_;
                         next = DrainState::kTsCmd;
                         break;
                     case DrainState::kTsRspWait:
