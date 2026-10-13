@@ -157,8 +157,6 @@ bool LR2021::StartRxDrain() {
         // The latch is set (DIO5 high): clear it first, so the next sync event raises an edge.
         if ((mlat_mode & mlat_stamp::kModeEdge) && mlat_stamp::PinHigh()) {
             first = DrainState::kSyncClearWait;
-        } else if (mlat_mode & mlat_stamp::kModeTs) {
-            first = DrainState::kTsCmdWait;
         }
         mlat_sweep = mlat_stamp::Sweep();
     }
@@ -354,12 +352,13 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                 if (!async_ok_) {
                     return EnterDrainError(s, "MLAT frame failed");
                 }
+                // Clear, then the level read. The timestamp is read after the level, only when there is a packet
+                // to read: the latest sync event is then the last packet of the read, or a packet still on its way.
                 DrainState next = DrainState::kLevelCmdWait;
-                if (s == DrainState::kSyncClear && (mlat_mode & mlat_stamp::kModeTs)) {
-                    next = DrainState::kTsCmdWait;
-                } else if (s == DrainState::kTsCmd) {
+                if (s == DrainState::kTsCmd) {
                     next = DrainState::kTsRspWait;
                 } else if (s == DrainState::kTsRsp) {
+                    next = DrainState::kFifoWait;
                     uint8_t cs = (UnpackU16(mlat_rx_buf_) >> 9) & 0x7;
                     mlat_sweep.ts_value = UnpackU32(mlat_rx_buf_ + 2);
                     mlat_sweep.has_ts = cs == CommandStatus::kOk || cs == CommandStatus::kDat;
@@ -420,7 +419,7 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                     drain_fifo_full_ = full;
                     drain_fifo_level_ = read_len;
                     if (read_len > 0) {
-                        EnterBusyWait(DrainState::kFifoWait);
+                        EnterBusyWait((mlat_mode & mlat_stamp::kModeTs) ? DrainState::kTsCmdWait : DrainState::kFifoWait);
                     } else if (IrqLineHigh()) {
                         // Nothing (whole) to read but the latched IRQ line is asserted: run the clear
                         // tail so edge generation recovers, then finish as kNoData.

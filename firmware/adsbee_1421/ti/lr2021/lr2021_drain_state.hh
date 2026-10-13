@@ -7,7 +7,8 @@
 
 enum class LR2021DrainState : uint8_t {
     kIdle = 0,
-    // MLAT prototype (t-0394): optional frames of the loop drain ahead of the level read.
+    // MLAT prototype (t-0394): optional frames of the loop drain. The clear runs ahead of the level read, the
+    // timestamp read between the level read and the FIFO read.
     kSyncClearWait,  // Waiting for BUSY low to post ClearIrq(SyncwordValid).
     kSyncClear,      // ClearIrq frame (6 B) DMA in flight.
     kTsCmdWait,      // Waiting for BUSY low to post the GetTimestampValue opcode frame.

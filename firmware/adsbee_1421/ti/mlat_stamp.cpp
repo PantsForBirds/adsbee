@@ -318,10 +318,9 @@ void PairSweep(const Sweep& sweep, uint16_t k, uint64_t* stamps) {
     if (edges_here > k) c.rej_extra++;
 
     // Which packet an event that is surely here belongs to. Edge: the first event after a clear, so the packet is
-    // known only when it is alone. Timestamp: the latest event before the request, so it is the last packet when no
-    // later packet can have completed before the level sample.
-    const uint64_t nss = sweep.has_ts ? To64(sweep.ts_nss_ticks) : 0;
-    const bool ts_is_last = sweep.has_ts && (k == 1 || b - nss < delay_min_ticks);
+    // known only when it is alone. Timestamp: read after the level sample, it is the latest event of all, so its
+    // packet is the last one of the read.
+    const bool ts_is_last = sweep.has_ts;
     bool edge_ok = edge_here && edges_here == 1 && k == 1;
     bool ts_ok = ts_here && ts_is_last;
     if (edge_ok && ts_ok) {
