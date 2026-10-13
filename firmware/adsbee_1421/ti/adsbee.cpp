@@ -1,3 +1,4 @@
+#include <ti/drivers/dpl/HwiP.h>
 #include "mlat_stamp.hh"
 #include "adsbee.hh"
 
@@ -841,9 +842,9 @@ bool ADSBee::UpdateLR2021() {
         }
         GPIO_clearInt(bsp.kLR2021IrqPin);
         GPIO_enableInt(bsp.kLR2021IrqPin);
-        if (lr2021.IrqLineHigh()) {
-            lr2021.HandleIrqLine();  // An edge during the probe would be lost: start the chain by hand.
-        }
+        uintptr_t key = HwiP_disable();
+        lr2021.HandleIrqLine();  // An edge during the probe would be lost: start the chain by hand if the line is high.
+        HwiP_restore(key);
     }
 
     uint32_t elapsed_us = get_time_since_boot_us() - start_us;
