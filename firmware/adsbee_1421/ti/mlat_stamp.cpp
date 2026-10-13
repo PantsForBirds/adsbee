@@ -229,8 +229,23 @@ void Boundary() {
     boundary64 = now64;
 }
 
+DebugEntry dbg[kDbgLen];
+uint16_t dbg_count = 0;
+
 void PairSweep(const Sweep& sweep, uint16_t k, uint64_t* stamps) {
     Poll();
+    if (dbg_count < kDbgLen && (k > 0 || num_pending > 0)) {
+        uint64_t a0 = To64(sweep.level_a_ticks);
+        DebugEntry& e = dbg[dbg_count++];
+        e.k = static_cast<uint8_t>(k);
+        e.pending = static_cast<uint8_t>(num_pending);
+        e.ab = static_cast<uint16_t>((sweep.level_b_ticks - sweep.level_a_ticks) & kTickMask);
+        e.age_a = num_pending ? static_cast<int32_t>(a0 - pending[0]) : 0;
+        e.since_boundary = static_cast<int32_t>(a0 - boundary64);
+        e.ts_age = sweep.has_ts ? static_cast<int32_t>(((sweep.level_a_ticks - sweep.ts_nss_ticks) & kTickMask) +
+                                                       sweep.ts_value * 3 / 2)
+                                : 0;
+    }
     c.sweeps++;
     const uint64_t a = To64(sweep.level_a_ticks), b = To64(sweep.level_b_ticks);
     const uint8_t kfield = k > 14 ? 15 : static_cast<uint8_t>(k);

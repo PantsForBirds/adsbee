@@ -76,6 +76,18 @@ struct Sweep {
 };
 void PairSweep(const Sweep& sweep, uint16_t num_packets, uint64_t* stamps);
 
+// Per-sweep debug log (sweeps with packets or pending edges): ticks.
+struct DebugEntry {
+    uint8_t k, pending;
+    uint16_t ab;             // level_b - level_a.
+    int32_t age_a;           // level_a - oldest pending edge.
+    int32_t since_boundary;  // level_a - boundary.
+    int32_t ts_age;          // level_a - timestamp event.
+};
+static constexpr uint16_t kDbgLen = 200;
+extern DebugEntry dbg[kDbgLen];
+extern uint16_t dbg_count;
+
 struct LogEntry {
     uint32_t icao_df;  // ICAO in [23:0], downlink format in [31:24].
     uint64_t stamp;

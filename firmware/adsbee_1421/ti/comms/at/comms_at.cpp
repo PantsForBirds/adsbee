@@ -357,7 +357,17 @@ CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
             mlat_stamp::LogClear();
             CPP_AT_SUCCESS();
         }
+        if (args[0].compare("DBG") == 0) {
+            for (uint16_t i = 0; i < mlat_stamp::dbg_count; i++) {
+                const mlat_stamp::DebugEntry& e = mlat_stamp::dbg[i];
+                CPP_AT_PRINTF("#DB %u %u %u %ld %ld %ld\r\n", e.k, e.pending, e.ab, (long)e.age_a,
+                              (long)e.since_boundary, (long)e.ts_age);
+            }
+            mlat_stamp::dbg_count = 0;
+            CPP_AT_SUCCESS();
+        }
         if (args[0].compare("CLEAR") == 0) {
+            mlat_stamp::dbg_count = 0;
             mlat_stamp::LogClear();
             mlat_stamp::ResetCounters();
             CPP_AT_SUCCESS();
