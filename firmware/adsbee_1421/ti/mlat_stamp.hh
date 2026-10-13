@@ -44,7 +44,8 @@ struct Counters {
     uint32_t valid = 0, valid_stamped = 0;
     // Edge to "packet complete in the FIFO": bounds seen. lo = largest age of an event at a level read that did not
     // hold its packet; hi = smallest age of an event at a level read that did.
-    uint32_t delay_lo_ticks = 0, delay_hi_ticks = 0xFFFFFFFF;
+    uint32_t delay_lo_ticks = 0, delay_hi_ticks = 0xFFFFFFFF;       // lo: age at level_a; hi: age at level_b.
+    uint32_t delay_lo_b_ticks = 0, delay_hi_a_ticks = 0xFFFFFFFF;  // lo: age at level_b; hi: age at level_a.
     int32_t agree_min = 0x7FFFFFFF, agree_max = -0x7FFFFFFF;  // Edge minus internal timestamp, 1/96 us.
 };
 extern Counters c;
@@ -82,7 +83,8 @@ struct DebugEntry {
     uint16_t ab;             // level_b - level_a.
     int32_t age_a;           // level_a - oldest pending edge.
     int32_t since_boundary;  // level_a - boundary.
-    int32_t ts_age;          // level_a - timestamp event.
+    uint16_t nss_a;          // level_a - timestamp request NSS edge.
+    uint32_t ts_value;       // Raw GetTimestampValue (32 MHz ticks).
 };
 static constexpr uint16_t kDbgLen = 200;
 extern DebugEntry dbg[kDbgLen];

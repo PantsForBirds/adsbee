@@ -360,8 +360,8 @@ CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
         if (args[0].compare("DBG") == 0) {
             for (uint16_t i = 0; i < mlat_stamp::dbg_count; i++) {
                 const mlat_stamp::DebugEntry& e = mlat_stamp::dbg[i];
-                CPP_AT_PRINTF("#DB %u %u %u %ld %ld %ld\r\n", e.k, e.pending, e.ab, (long)e.age_a,
-                              (long)e.since_boundary, (long)e.ts_age);
+                CPP_AT_PRINTF("#DB %u %u %u %ld %ld %u %lu\r\n", e.k, e.pending, e.ab, (long)e.age_a,
+                              (long)e.since_boundary, e.nss_a, (unsigned long)e.ts_value);
             }
             mlat_stamp::dbg_count = 0;
             CPP_AT_SUCCESS();
@@ -409,7 +409,8 @@ CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
         "isr_cycles=%lu,isr_max_cycles=%lu,sweeps=%lu,reads1=%lu,reads2=%lu,reads3p=%lu,chain_packets=%lu,clears=%lu,"
         "ts_reads=%lu,stamped_edge=%lu,stamped_ts=%lu,stamped_both=%lu,un_none=%lu,un_ambiguous=%lu,un_multi=%lu,"
         "rej_disagree=%lu,rej_orphan=%lu,rej_extra=%lu,spins=%lu,spin_cycles=%lu,spin_max_cycles=%lu,frames=%lu,"
-        "valid=%lu,valid_stamped=%lu,delay_lo=%lu,delay_hi=%lu,agree_min=%ld,agree_max=%ld,log=%u\r\n",
+        "valid=%lu,valid_stamped=%lu,delay_lo=%lu,delay_hi=%lu,delay_lo_b=%lu,delay_hi_a=%lu,agree_min=%ld,agree_max=%ld,"
+        "log=%u\r\n",
         mlat_stamp::Mode(), mlat_stamp::IsrCapture() ? 1u : 0u, adsbee.lr2021.mlat_fast,
         (unsigned long)(mlat_stamp::delay_min_ticks / mlat_stamp::kTicksPerUs),
         (unsigned long)(mlat_stamp::delay_max_ticks / mlat_stamp::kTicksPerUs),
@@ -423,7 +424,8 @@ CPP_AT_CALLBACK(CommsManager::ATMLATCallback) {
         (unsigned long)m.rej_orphan, (unsigned long)m.rej_extra, (unsigned long)m.spins,
         (unsigned long)m.spin_cycles, (unsigned long)m.spin_max_cycles, (unsigned long)m.frames,
         (unsigned long)m.valid, (unsigned long)m.valid_stamped, (unsigned long)m.delay_lo_ticks,
-        (unsigned long)m.delay_hi_ticks, (long)m.agree_min, (long)m.agree_max, mlat_stamp::LogCount());
+        (unsigned long)m.delay_hi_ticks, (unsigned long)m.delay_lo_b_ticks,
+        (unsigned long)m.delay_hi_a_ticks, (long)m.agree_min, (long)m.agree_max, mlat_stamp::LogCount());
     CPP_AT_SILENT_SUCCESS();
 }
 

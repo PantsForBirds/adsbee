@@ -242,9 +242,8 @@ void PairSweep(const Sweep& sweep, uint16_t k, uint64_t* stamps) {
         e.ab = static_cast<uint16_t>((sweep.level_b_ticks - sweep.level_a_ticks) & kTickMask);
         e.age_a = num_pending ? static_cast<int32_t>(a0 - pending[0]) : 0;
         e.since_boundary = static_cast<int32_t>(a0 - boundary64);
-        e.ts_age = sweep.has_ts ? static_cast<int32_t>(((sweep.level_a_ticks - sweep.ts_nss_ticks) & kTickMask) +
-                                                       sweep.ts_value * 3 / 2)
-                                : 0;
+        e.nss_a = static_cast<uint16_t>((sweep.level_a_ticks - sweep.ts_nss_ticks) & kTickMask);
+        e.ts_value = sweep.has_ts ? sweep.ts_value : 0;
     }
     c.sweeps++;
     const uint64_t a = To64(sweep.level_a_ticks), b = To64(sweep.level_b_ticks);
@@ -269,10 +268,14 @@ void PairSweep(const Sweep& sweep, uint16_t k, uint64_t* stamps) {
     // Delay bounds, for isolated frames: one pending edge, newer than the last read.
     if (num_pending == 1 && pending[0] > boundary64) {
         uint64_t t = pending[0];
-        if (k == 0 && a > t && a - t < 1000 * kTicksPerUs && a - t > c.delay_lo_ticks) {
-            c.delay_lo_ticks = static_cast<uint32_t>(a - t);
+        if (k == 0 && a > t && a - t < 1000 * kTicksPerUs) {
+            if (a - t > c.delay_lo_ticks) c.delay_lo_ticks = static_cast<uint32_t>(a - t);
+            if (b - t > c.delay_lo_b_ticks) c.delay_lo_b_ticks = static_cast<uint32_t>(b - t);
         }
-        if (k == 1 && b - t < c.delay_hi_ticks) c.delay_hi_ticks = static_cast<uint32_t>(b - t);
+        if (k == 1 && a > t) {
+            if (b - t < c.delay_hi_ticks) c.delay_hi_ticks = static_cast<uint32_t>(b - t);
+            if (a - t < c.delay_hi_a_ticks) c.delay_hi_a_ticks = static_cast<uint32_t>(a - t);
+        }
     }
 
     // Edges: the oldest one that is surely here. Edges possibly in an earlier read are dropped.
