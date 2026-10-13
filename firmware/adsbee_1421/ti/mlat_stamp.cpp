@@ -27,7 +27,7 @@ static constexpr uint32_t kProbeIoid = IOID_13;  // LR2021 DIO5.
 static constexpr uint16_t kHalf = 64;            // Ring half: one uDMA transfer.
 static constexpr uint16_t kRingLen = 2 * kHalf;
 static constexpr uint16_t kMaxPending = 32;
-static constexpr uint32_t kTsMinValue = 30 * 32;                // 32 MHz ticks.
+static constexpr int32_t kTsMaxAfter = 300 * 32;                // 32 MHz ticks: latest event after the request.
 static constexpr uint32_t kStaleTicks = 100000 * kTicksPerUs;  // Events older than 100 ms are dropped.
 
 Counters c;
@@ -301,10 +301,11 @@ void PairSweep(const Sweep& sweep, uint16_t k, uint64_t* stamps) {
     // Internal timestamp: the latest sync event before the request.
     bool ts_here = false, ts_unsure = false;
     uint64_t ts_t2 = 0;  // 1/96 us.
-    // A value under 30 us is skipped: an event that lands while the request is clocked in may read as "just now".
-    if (sweep.has_ts && sweep.ts_value >= kTsMinValue && sweep.ts_value < 0x40000000u) {
+    // The value is signed: an event between the request's NSS edge and the chip latching the answer reads negative.
+    const int32_t ts_value = static_cast<int32_t>(sweep.ts_value);
+    if (sweep.has_ts && ts_value > -kTsMaxAfter && ts_value < 0x40000000) {
         // 32 MHz ticks to 96 MHz: x3.
-        ts_t2 = To64(sweep.ts_nss_ticks) * 2 - static_cast<uint64_t>(sweep.ts_value) * 3;
+        ts_t2 = static_cast<uint64_t>(static_cast<int64_t>(To64(sweep.ts_nss_ticks) * 2) - static_cast<int64_t>(ts_value) * 3);
         Where w = where(ts_t2 / 2);
         ts_here = w == kHere;
         ts_unsure = w == kUnsure;
