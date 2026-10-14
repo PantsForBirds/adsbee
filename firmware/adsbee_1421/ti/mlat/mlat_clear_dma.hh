@@ -6,7 +6,7 @@
 // and GPT0B, fed from the same port event, requests uDMA channel 10. Channel 10 runs a memory scatter-gather list:
 // NSS low, the 6-byte ClearIrq into the SPI0 TX FIFO, re-arm channel 11, start GPT1A as a one-shot delay. When
 // GPT1A times out it requests channel 11, whose list pops the 6 received bytes from the SPI0 RX FIFO, re-arms
-// channel 10, raises NSS and asks channel 12 to store the GPT0 counter in a ring (the clear time).
+// channel 10 and raises NSS. Both lists ask channel 12 to store the GPT0 counter in a ring (NSS low, NSS high).
 //
 // Bus sharing: the chain only runs while armed. Everything else that uses the SPI (drain sweep, IRQ-paced chain,
 // synchronous commands) calls Disarm() first, which masks channel 10's request and waits for a chain in progress
@@ -33,7 +33,8 @@ void SetDelayTicks(uint32_t ticks);
 uint32_t DelayTicks();
 
 static constexpr uint16_t kRingLen = 64;
-// Clear times (GPT0 counter when NSS went high), oldest first. Same contract as mlat_capture::Read().
+// GPT0 counter values in pairs: NSS low (start of the clear) and NSS high (end), oldest first. Same contract as
+// mlat_capture::Read().
 uint16_t ReadClears(uint32_t* out, bool* overrun);
 
 struct Counters {

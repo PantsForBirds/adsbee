@@ -62,7 +62,7 @@ static uint16_t tail = 0;
     uDMATaskStructEntry(count, size, src_inc, const_cast<void*>(reinterpret_cast<const volatile void*>(src)), dst_inc, \
                         const_cast<void*>(reinterpret_cast<const volatile void*>(dst)), arb, mode)
 
-static tDMAControlTable clear_list[9];
+static tDMAControlTable clear_list[10];
 static tDMAControlTable end_list[7];
 
 static void BuildLists(const uint8_t* clear_cmd) {
@@ -77,6 +77,7 @@ static void BuildLists(const uint8_t* clear_cmd) {
     const tDMAControlTable clear[] = {
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kOne, UDMA_DST_INC_NONE, &chain_busy, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kNssMask, UDMA_DST_INC_NONE, doutclr, UDMA_ARB_1, mem),
+        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kRingBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, mem),
         TASK(kClearBytes, UDMA_SIZE_8, UDMA_SRC_INC_8, clear_cmd, UDMA_DST_INC_NONE, txdata, UDMA_ARB_8, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &end_control, UDMA_DST_INC_NONE,
              &dmaGPT1APriControlTableEntry.ui32Control, UDMA_ARB_1, mem),

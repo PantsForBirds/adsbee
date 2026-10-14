@@ -164,6 +164,7 @@ void ADSBee::StartMlat() {
     }
     mlat_edge_history_count_ = 0;
     mlat_last_cleared_edge_ = 0;
+    mlat_clear_start_pending_ = false;
     lr2021.SetMlatSweepEnabled(true);
     mlat_active_ = true;
 }
@@ -186,13 +187,17 @@ void ADSBee::RestartMlatTimebase() {
 }
 
 void ADSBee::PollMlat() {
+    // Rings first, then the counter: every capture is then older than the counter value it is extended against.
+    static uint32_t captures[mlat_capture::kRingLen];  // Static: too large for the stack on every pass.
+    bool overrun = false;
+    const uint16_t num_captures = mlat_capture::Read(captures, &overrun);
+    static uint32_t clears[mlat_clear_dma::kRingLen];
+    bool clear_overrun = false;
+    const uint16_t num_clears = mlat_clear_dma::Running() ? mlat_clear_dma::ReadClears(clears, &clear_overrun) : 0;
     if (!mlat_timebase_.Update(mlat_capture::Counter(), static_cast<uint32_t>(get_time_since_boot_us()))) {
         mlat_timebase_restarts++;
         RestartMlatTimebase();
     }
-    static uint32_t captures[mlat_capture::kRingLen];  // Static: too large for the stack on every pass.
-    bool overrun = false;
-    const uint16_t num_captures = mlat_capture::Read(captures, &overrun);
     const bool clock_is_crystal = mlat_capture::ClockIsCrystal();
     if (overrun) {
         mlat_capture_overruns++;
@@ -215,40 +220,51 @@ void ADSBee::PollMlat() {
     for (uint16_t i = 0; i < num_captures; i++) {
         mlat_edge_history_[mlat_edge_history_count_++ % kMlatEdgeHistory] = mlat_timebase_.Extend(captures[i]);
     }
-    if (!mlat_clear_dma::Running()) {
-        return;
-    }
-    static uint32_t clears[mlat_clear_dma::kRingLen];
-    bool clear_overrun = false;
-    const uint16_t num_clears = mlat_clear_dma::ReadClears(clears, &clear_overrun);
     if (clear_overrun) {
         cs.clear_overruns++;
+        mlat_clear_start_pending_ = false;
     }
     for (uint16_t i = 0; i < num_clears; i++) {
         const uint64_t c = mlat_timebase_.Extend(clears[i]);
+        if (!mlat_clear_start_pending_) {
+            mlat_clear_start_ = c;  // NSS low.
+            mlat_clear_start_pending_ = true;
+            continue;
+        }
+        mlat_clear_start_pending_ = false;
+        const uint64_t start = mlat_clear_start_;
+        const uint32_t frame = static_cast<uint32_t>(c - start);
+        if (frame > cs.frame_max_ticks) cs.frame_max_ticks = frame;
+        if (frame < cs.frame_min_ticks) cs.frame_min_ticks = frame;
         cs.clears++;
         uint64_t edge = 0;
         const uint16_t n = mlat_edge_history_count_ < kMlatEdgeHistory ? mlat_edge_history_count_ : kMlatEdgeHistory;
         for (uint16_t k = 0; k < n; k++) {
             const uint64_t e = mlat_edge_history_[(mlat_edge_history_count_ - 1 - k) % kMlatEdgeHistory];
-            if (e <= c) {
+            if (e <= start) {
                 edge = e;
                 break;
             }
         }
         if (edge == 0 || edge == mlat_last_cleared_edge_) {
             cs.extra_clears++;
-        } else {
-            const uint64_t lat = c - edge;
-            const uint32_t lat_ticks = lat > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<uint32_t>(lat);
-            cs.latency_sum_ticks += lat_ticks;
-            if (lat_ticks > cs.latency_max_ticks) cs.latency_max_ticks = lat_ticks;
-            static const uint32_t kBoundsUs[7] = {10, 15, 20, 50, 100, 200, 500};
-            uint16_t b = 0;
-            while (b < 7 && lat_ticks >= kBoundsUs[b] * MlatTimebase::kTicksPerUs) b++;
-            cs.latency_hist[b]++;
-            mlat_last_cleared_edge_ = edge;
+            continue;
         }
+        const uint64_t lat = c - edge;
+        const uint32_t lat_ticks = lat > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<uint32_t>(lat);
+        cs.latency_sum_ticks += lat_ticks;
+        if (lat_ticks > cs.latency_max_ticks) cs.latency_max_ticks = lat_ticks;
+        static const uint32_t kBoundsUs[MlatClearStats::kHistBins - 1] = {6, 8, 10, 12, 15, 20, 50, 100, 200};
+        uint16_t b = 0;
+        while (b < MlatClearStats::kHistBins - 1 && lat_ticks >= kBoundsUs[b] * MlatTimebase::kTicksPerUs) b++;
+        cs.latency_hist[b]++;
+        const uint32_t start_ticks = static_cast<uint32_t>(start - edge);
+        if (start_ticks < 50 * MlatTimebase::kTicksPerUs) {
+            cs.start_sum_ticks += start_ticks;
+            cs.start_count++;
+            if (start_ticks > cs.start_max_ticks) cs.start_max_ticks = start_ticks;
+        }
+        mlat_last_cleared_edge_ = edge;
     }
 }
 

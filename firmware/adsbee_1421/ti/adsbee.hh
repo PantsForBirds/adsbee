@@ -57,7 +57,14 @@ class ADSBee {
         uint32_t extra_clears = 0;     // Clears with no new edge since the previous clear.
         uint32_t latency_max_ticks = 0;
         uint64_t latency_sum_ticks = 0;
-        uint32_t latency_hist[8] = {};  // Edge to NSS high: <10, <15, <20, <50, <100, <200, <500, >=500 us.
+        // Edge to NSS high: <6, <8, <10, <12, <15, <20, <50, <100, <200, >=200 us.
+        static constexpr uint16_t kHistBins = 10;
+        uint32_t latency_hist[kHistBins] = {};
+        uint32_t start_max_ticks = 0;  // Edge to NSS low, for clears started by the edge itself (not by a kick).
+        uint64_t start_sum_ticks = 0;
+        uint32_t start_count = 0;
+        uint32_t frame_max_ticks = 0;  // NSS low to NSS high.
+        uint32_t frame_min_ticks = 0xFFFFFFFF;
         uint32_t clear_overruns = 0;
     };
     MlatClearStats mlat_clear_stats;
@@ -222,6 +229,8 @@ class ADSBee {
     uint64_t mlat_edge_history_[kMlatEdgeHistory] = {};
     uint16_t mlat_edge_history_count_ = 0;
     uint64_t mlat_last_cleared_edge_ = 0;
+    bool mlat_clear_start_pending_ = false;
+    uint64_t mlat_clear_start_ = 0;
     // Shortest time between sweep starts while MLAT is active. Only a packet alone in its FIFO read can be
     // stamped, so a shorter interval stamps more packets, and costs reception: the LR2021 can miss a preamble
     // while it serves a command.
