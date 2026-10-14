@@ -286,8 +286,10 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                     }
                     return DrainResult::kInProgress;
                 }
-                if (mlat_scheme_ != 0 && mlat_sweep_enabled_ && s < DrainState::kFifoRead &&
-                    mlat_clear_dma::ClearPending()) {
+                // Only ahead of a command frame: a response frame returns the answer to the frame before it.
+                const bool command_next = s == DrainState::kSyncClearWait || s == DrainState::kTimestampCmdWait ||
+                                          s == DrainState::kLevelCmdWait || s == DrainState::kFifoWait;
+                if (mlat_scheme_ != 0 && mlat_sweep_enabled_ && command_next && mlat_clear_dma::ClearPending()) {
                     break;  // An edge came during the sweep: its clear ran first. Wait for BUSY again.
                 }
                 uintptr_t key = HwiP_disable();
