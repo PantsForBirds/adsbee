@@ -18,8 +18,8 @@
 #include "mlat_capture.hh"
 #include "ti_drivers_config.h"
 
-// Channel 10 (GPT0B): the clear. Channel 11 (GPT1A): the end of the frame. Channel 12 (GPT1B, software requests
-// only): the clear time ring. The linker script places these control structures in the driver's control table.
+// Channel 10 (GPT0B): the clear. Channel 11 (GPT1A, software requests only): the end of the frame. Channel 12
+// (GPT1B, software requests only): the clear time ring. The linker script places these control structures in the driver's control table.
 ALLOCATE_CONTROL_TABLE_ENTRY(dmaGPT0BPriControlTableEntry, (UDMA_CHAN_TIMER0_B + UDMA_PRI_SELECT));
 ALLOCATE_CONTROL_TABLE_ENTRY(dmaGPT0BAltControlTableEntry, (UDMA_CHAN_TIMER0_B + UDMA_ALT_SELECT));
 ALLOCATE_CONTROL_TABLE_ENTRY(dmaGPT1APriControlTableEntry, (UDMA_CHAN_TIMER1_A + UDMA_PRI_SELECT));
@@ -41,12 +41,11 @@ static uint32_t kNssMask = 1u << LR_CS;
 static uint32_t kClearBit = 1u << kChClear;
 static uint32_t kEndBit = 1u << kChEnd;
 static uint32_t kRingBit = 1u << kChRing;
-static uint32_t kGpt1Start = GPT_CTL_TAEN;
 static uint32_t kOne = 1;
 static uint32_t kZero = 0;
 static uint32_t clear_control = 0;  // Channel 10 primary control word when armed.
 static uint32_t end_control = 0;    // Channel 11 primary control word when armed.
-static uint32_t delay_ticks = 240;  // 5 us: 48 bits at 12 MHz take 4 us.
+static uint32_t delay_ticks = 0;  // Unused since the GPT1A delay was dropped; kept for the AT knob.
 
 static volatile uint32_t chain_busy = 0;  // 1 from the first task of the clear list to the last task of the end list.
 static volatile uint8_t rx_sink[kClearBytes];
@@ -62,7 +61,7 @@ static uint16_t tail = 0;
     uDMATaskStructEntry(count, size, src_inc, const_cast<void*>(reinterpret_cast<const volatile void*>(src)), dst_inc, \
                         const_cast<void*>(reinterpret_cast<const volatile void*>(dst)), arb, mode)
 
-static tDMAControlTable clear_list[10];
+static tDMAControlTable clear_list[8];
 static tDMAControlTable end_list[7];
 
 static void BuildLists(const uint8_t* clear_cmd) {
@@ -74,28 +73,27 @@ static void BuildLists(const uint8_t* clear_cmd) {
     void* const enaset = reinterpret_cast<void*>(UDMA0_BASE + UDMA_O_SETCHANNELEN);
     void* const prialt_clr = reinterpret_cast<void*>(UDMA0_BASE + UDMA_O_CLEARCHNLPRIALT);
     void* const softreq = reinterpret_cast<void*>(UDMA0_BASE + UDMA_O_SOFTREQ);
+    // Order matters: each task costs about 1.3 us of uDMA time. NSS low and the bytes go first; the 48 bits take
+    // 4 us to shift out, which the tasks after them cover before the end list reads the RX FIFO and raises NSS.
     const tDMAControlTable clear[] = {
-        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kOne, UDMA_DST_INC_NONE, &chain_busy, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kNssMask, UDMA_DST_INC_NONE, doutclr, UDMA_ARB_1, mem),
-        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kRingBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, mem),
         TASK(kClearBytes, UDMA_SIZE_8, UDMA_SRC_INC_8, clear_cmd, UDMA_DST_INC_NONE, txdata, UDMA_ARB_8, mem),
+        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kRingBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, mem),
+        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kOne, UDMA_DST_INC_NONE, &chain_busy, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &end_control, UDMA_DST_INC_NONE,
              &dmaGPT1APriControlTableEntry.ui32Control, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kEndBit, UDMA_DST_INC_NONE, prialt_clr, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kEndBit, UDMA_DST_INC_NONE, enaset, UDMA_ARB_1, mem),
-        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &delay_ticks, UDMA_DST_INC_NONE,
-             reinterpret_cast<void*>(GPT1_BASE + GPT_O_TAV), UDMA_ARB_1, mem),
-        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kGpt1Start, UDMA_DST_INC_NONE,
-             reinterpret_cast<void*>(GPT1_BASE + GPT_O_CTL), UDMA_ARB_1, UDMA_MODE_AUTO),
+        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kEndBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, UDMA_MODE_AUTO),
     };
     const tDMAControlTable end[] = {
         TASK(kClearBytes, UDMA_SIZE_8, UDMA_SRC_INC_NONE, rxdata, UDMA_DST_INC_8, rx_sink, UDMA_ARB_8, mem),
+        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kNssMask, UDMA_DST_INC_NONE, doutset, UDMA_ARB_1, mem),
+        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kRingBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &clear_control, UDMA_DST_INC_NONE,
              &dmaGPT0BPriControlTableEntry.ui32Control, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kClearBit, UDMA_DST_INC_NONE, prialt_clr, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kClearBit, UDMA_DST_INC_NONE, enaset, UDMA_ARB_1, mem),
-        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kNssMask, UDMA_DST_INC_NONE, doutset, UDMA_ARB_1, mem),
-        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kRingBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kZero, UDMA_DST_INC_NONE, &chain_busy, UDMA_ARB_1, UDMA_MODE_AUTO),
     };
     static_assert(sizeof(clear) <= sizeof(clear_list) && sizeof(end) <= sizeof(end_list), "task lists");
@@ -142,25 +140,20 @@ void Start(const uint8_t* clear_cmd) {
     if (running || !mlat_capture::Running()) {
         return;
     }
-    Power_setDependency(PowerCC26XX_PERIPH_GPT1);
-    // GPT1A: one-shot delay, started by the clear list; its timeout requests channel 11.
-    TimerDisable(GPT1_BASE, TIMER_BOTH);
-    TimerConfigure(GPT1_BASE, TIMER_CFG_SPLIT_PAIR | TIMER_CFG_A_ONE_SHOT | TIMER_CFG_B_ONE_SHOT);
-    TimerPrescaleSet(GPT1_BASE, TIMER_A, 0);
-    TimerLoadSet(GPT1_BASE, TIMER_A, delay_ticks);
-    TimerIntDisable(GPT1_BASE, TIMER_TIMA_TIMEOUT | TIMER_TIMB_TIMEOUT);
-    HWREG(GPT1_BASE + GPT_O_DMAEV) = GPT_DMAEV_TATODMAEN;
 
     ChannelReset(kChClear);
     ChannelReset(kChEnd);
     ChannelReset(kChRing);
-    uDMAChannelAttributeEnable(UDMA0_BASE, kChClear, UDMA_ATTR_HIGH_PRIORITY | UDMA_ATTR_REQMASK);
-    uDMAChannelAttributeEnable(UDMA0_BASE, kChEnd, UDMA_ATTR_HIGH_PRIORITY);
+    // The ring channel outranks the lists so its records land when they are asked for.
+    uDMAChannelAttributeEnable(UDMA0_BASE, kChClear, UDMA_ATTR_REQMASK);
+    uDMAChannelAttributeDisable(UDMA0_BASE, kChClear, UDMA_ATTR_HIGH_PRIORITY);
+    uDMAChannelAttributeDisable(UDMA0_BASE, kChEnd, UDMA_ATTR_HIGH_PRIORITY);
+    uDMAChannelAttributeEnable(UDMA0_BASE, kChRing, UDMA_ATTR_HIGH_PRIORITY);
     BuildLists(clear_cmd);
     HWREG(EVENT_BASE + EVENT_O_UDMACH10SSEL) = EVENT_UDMACH10SSEL_EV_GPT0B_DMABREQ;
     HWREG(EVENT_BASE + EVENT_O_UDMACH10BSEL) = EVENT_UDMACH10BSEL_EV_GPT0B_DMABREQ;
-    HWREG(EVENT_BASE + EVENT_O_UDMACH11SSEL) = EVENT_UDMACH11SSEL_EV_GPT1A_DMABREQ;
-    HWREG(EVENT_BASE + EVENT_O_UDMACH11BSEL) = EVENT_UDMACH11BSEL_EV_GPT1A_DMABREQ;
+    HWREG(EVENT_BASE + EVENT_O_UDMACH11SSEL) = EVENT_UDMACH11SSEL_EV_NONE;
+    HWREG(EVENT_BASE + EVENT_O_UDMACH11BSEL) = EVENT_UDMACH11BSEL_EV_NONE;
     HWREG(EVENT_BASE + EVENT_O_UDMACH12SSEL) = EVENT_UDMACH12SSEL_EV_NONE;
     HWREG(EVENT_BASE + EVENT_O_UDMACH12BSEL) = EVENT_UDMACH12BSEL_EV_NONE;
     StartRing();
@@ -186,12 +179,9 @@ void Stop() {
     running = false;
     HWREG(GPT0_BASE + GPT_O_DMAEV) &= ~GPT_DMAEV_CBEDMAEN;
     TimerDisable(GPT0_BASE, TIMER_B);
-    TimerDisable(GPT1_BASE, TIMER_BOTH);
-    HWREG(GPT1_BASE + GPT_O_DMAEV) = 0;
     uDMAChannelDisable(UDMA0_BASE, kChClear);
     uDMAChannelDisable(UDMA0_BASE, kChEnd);
     uDMAChannelDisable(UDMA0_BASE, kChRing);
-    Power_releaseDependency(PowerCC26XX_PERIPH_GPT1);
 }
 
 bool Running() { return running; }
@@ -271,9 +261,6 @@ bool Disarm() {
 
 void SetDelayTicks(uint32_t ticks) {
     delay_ticks = ticks;
-    if (running) {
-        TimerLoadSet(GPT1_BASE, TIMER_A, ticks);
-    }
 }
 uint32_t DelayTicks() { return delay_ticks; }
 
