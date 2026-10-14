@@ -219,6 +219,9 @@ class ADSBee {
     bool mlat_enabled_ = false;
     bool mlat_active_ = false;
     uint8_t mlat_scheme_ = 0;
+    // After a sweep, wait this long for the BUSY pulse of its last frame to end before arming the uDMA clear, instead
+    // of a whole main-loop pass.
+    static constexpr uint32_t kMlatArmBusyWaitUs = 30;
     // Recent edges and the last edge a clear was matched to, for the clear latency statistics.
     static constexpr uint16_t kMlatEdgeHistory = 32;
     uint64_t mlat_edge_history_[kMlatEdgeHistory] = {};

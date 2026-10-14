@@ -28,6 +28,8 @@
 
 #pragma once
 
+#include "cycle_counter.hh"
+
 // TI drivers
 #include <ti/drivers/GPIO.h>
 #include <ti/drivers/SPI.h>
@@ -300,9 +302,18 @@ class LR2021 {
     uint8_t mlat_scheme() const { return mlat_scheme_; }
     const uint8_t* mlat_clear_frame() const { return mlat_clear_tx_buf_; }
     // The bus is free for the uDMA clear chain: no drain or chain, no kept read, BUSY low.
-    bool MlatClearMayArm() {
-        return drain_state_ == DrainState::kIdle && !kept_read_pending_ && !abort_requested_ && spi_handle_ != nullptr &&
-               !IsBusy();
+    // max_wait_us: how long to wait for BUSY low (the BUSY pulse of the sweep's last frame).
+    bool MlatClearMayArm(uint32_t max_wait_us = 0) {
+        if (drain_state_ != DrainState::kIdle || kept_read_pending_ || abort_requested_ || spi_handle_ == nullptr) {
+            return false;
+        }
+        const uint32_t start = CycleCounter::Now();
+        while (IsBusy()) {
+            if (CycleCounter::Since(start) >= max_wait_us * (CycleCounter::kCpuHz / 1000000)) {
+                return false;
+            }
+        }
+        return true;
     }
     // Capture timer values of the sweep that just returned kDataReady or kNoData.
     struct MlatSweep {
