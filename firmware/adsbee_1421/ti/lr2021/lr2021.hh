@@ -338,6 +338,7 @@ class LR2021 {
     void ReleaseSlot();
 
     // IRQ chain diagnostics, reported/reset via AT+RX_STATS.
+    volatile uint32_t bench_frames = 0;
     volatile uint32_t irq_drain_count = 0;         // Chains started from the LR_IRQ edge.
     volatile uint32_t irq_drain_skip_busy = 0;     // Edge ignored: drain not claimable (in flight/terminal).
     volatile uint32_t irq_drain_kept_reads = 0;    // Chain took over a loop drain holding an unparsed read.

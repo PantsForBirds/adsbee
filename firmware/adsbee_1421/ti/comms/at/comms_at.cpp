@@ -389,7 +389,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 "parse_max_cyc=%lu,decode_max_cyc=%lu,loop_max_cyc=%lu,loop_avg_cyc=%lu,cpu_1090_pm=%lu,"
                 "cfg_perrs=%lu,rx_cfg_error=%u,irq_kept_reads=%lu,"
                 "mlat_stamped=%lu,mlat_no_event=%lu,mlat_ambiguous=%lu,mlat_multiple=%lu,mlat_disagree=%lu,"
-                "mlat_orphans=%lu,mlat_edge_drops=%lu,mlat_overruns=%lu,mlat_restarts=%lu",
+                "mlat_orphans=%lu,mlat_edge_drops=%lu,mlat_overruns=%lu,mlat_restarts=%lu,"
+                "parsed=%lu,valid=%lu,valid_stamped=%lu,sweeps=%lu,frames=%lu,diff_min=%ld,diff_max=%ld",
                 stats.pkt_rx, stats.crc_error, stats.len_error, stats.pbl_det, stats.sync_ok, stats.sync_fail,
                 stats.timeout, (unsigned long)adsbee.lr2021_fifo_full_count,
                 (unsigned long)packet_decoder.raw_queue_overflow_count,
@@ -423,11 +424,27 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)adsbee.mlat_counters().unstamped_disagree,
                 (unsigned long)adsbee.mlat_counters().orphan_events,
                 (unsigned long)adsbee.mlat_counters().dropped_edges, (unsigned long)adsbee.mlat_capture_overruns,
-                (unsigned long)adsbee.mlat_timebase_restarts);
+                (unsigned long)adsbee.mlat_timebase_restarts, (unsigned long)adsbee.bench_parsed_packets,
+                (unsigned long)adsbee.bench_valid_packets, (unsigned long)adsbee.bench_valid_stamped,
+                (unsigned long)adsbee.bench_sweeps, (unsigned long)adsbee.lr2021.bench_frames,
+                (long)adsbee.mlat_counters().bench_diff_min, (long)adsbee.mlat_counters().bench_diff_max);
             CPP_AT_SILENT_SUCCESS();
             break;
         }
         case '=': {
+            if (CPP_AT_HAS_ARG(0) && args[0].compare("SWEEP") == 0) {
+                CPP_AT_TRY_ARG2NUM(1, adsbee.bench_mlat_interval_us);
+                if (CPP_AT_HAS_ARG(2)) CPP_AT_TRY_ARG2NUM(2, adsbee.bench_mlat_hold);
+                CPP_AT_SUCCESS();
+            }
+            if (CPP_AT_HAS_ARG(0) && args[0].compare("DUMP") == 0) {
+                for (uint16_t i = 0; i < adsbee.bench_log_count; i++) {
+                    const ADSBee::BenchLog& e = adsbee.bench_log[i];
+                    CPP_AT_PRINTF("#ML %08lX %08lX%08lX %u\r\n", (unsigned long)e.icao_df, (unsigned long)(e.counts >> 32),
+                                  (unsigned long)(e.counts & 0xFFFFFFFF), e.no_stamp ? 1u : 0u);
+                }
+                CPP_AT_SUCCESS();
+            }
             if (!CPP_AT_HAS_ARG(0) || args[0].compare("RESET") != 0) {
                 CPP_AT_ERROR("Only AT+RX_STATS=RESET is supported.");
             }
@@ -436,6 +453,9 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             }
             adsbee.lr2021_fifo_full_count = 0;
             adsbee.ResetMlatCounters();
+            adsbee.bench_parsed_packets = adsbee.bench_valid_packets = adsbee.bench_valid_stamped = adsbee.bench_sweeps = 0;
+            adsbee.bench_log_count = 0;
+            adsbee.lr2021.bench_frames = 0;
             packet_decoder.raw_queue_overflow_count = 0;
             packet_decoder.bitflips_fixed_count = 0;
             subg_radio.rx_error_restart_count = 0;
@@ -1456,7 +1476,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxPositionCallback, comms_manager)},
     {.command = "RX_STATS",
      .min_args = 0,
-     .max_args = 1,
+     .max_args = 3,
      .help_string = "AT+RX_STATS?\r\n\tQuery LR2021 OOK Rx stats (pkt_rx, crc_error, len_error, pbl_det, sync_ok, "
                     "sync_fail, timeout) plus health counters (fifo_full, q_ovf, bitflips_fixed, "
                     "uat_rx_restarts, uat_setlen_errs = failed CMD_PROP_SET_LEN commands, "

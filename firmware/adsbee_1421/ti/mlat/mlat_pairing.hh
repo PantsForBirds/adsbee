@@ -91,6 +91,7 @@ class MlatPairer {
         uint32_t unstamped_disagree = 0;   // Edge and timestamp name different events.
         uint32_t orphan_events = 0;        // An edge surely in a read with fewer packets than edges.
         uint32_t dropped_edges = 0;        // Pending queue full.
+        int32_t bench_diff_min = 0x7FFFFFFF, bench_diff_max = -0x7FFFFFFF;
     };
 
     // One loop drain sweep. Times are 64-bit ticks.
@@ -175,6 +176,10 @@ class MlatPairer {
         // The edge is the first event after a clear and the timestamp is the latest event of all. When they are
         // one event, no other event came between the clear and the read, so the read's packet is this event's.
         const int64_t diff_half_ticks = static_cast<int64_t>(here_ticks * 2) - sweep.timestamp_half_ticks;
+        if (diff_half_ticks > -100000 && diff_half_ticks < 100000) {
+            if (diff_half_ticks < counters_.bench_diff_min) counters_.bench_diff_min = static_cast<int32_t>(diff_half_ticks);
+            if (diff_half_ticks > counters_.bench_diff_max) counters_.bench_diff_max = static_cast<int32_t>(diff_half_ticks);
+        }
         if (diff_half_ticks < kAgreeCenterHalfTicks - kAgreeToleranceHalfTicks ||
             diff_half_ticks > kAgreeCenterHalfTicks + kAgreeToleranceHalfTicks) {
             counters_.unstamped_disagree++;

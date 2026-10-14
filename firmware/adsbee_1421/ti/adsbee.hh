@@ -108,6 +108,13 @@ class ADSBee {
 
     // Health / diagnostics counter, reported and reset via AT+RX_STATS. Incremented when the LR2021
     // RX FIFO reads back completely full (the poll loop fell behind; frames were likely dropped).
+    uint32_t bench_parsed_packets = 0, bench_valid_packets = 0, bench_valid_stamped = 0, bench_sweeps = 0;
+    struct BenchLog { uint32_t icao_df; uint64_t counts; bool no_stamp; };
+    static constexpr uint16_t kBenchLogLen = 300;
+    BenchLog bench_log[kBenchLogLen];
+    uint16_t bench_log_count = 0;
+    uint32_t bench_mlat_interval_us = kMlatSweepIntervalUs;
+    uint32_t bench_mlat_hold = 1;
     uint32_t lr2021_fifo_full_count = 0;
 
     // Recovery counters, reported and reset via AT+RX_STATS. In a healthy install fifo_resync tracks

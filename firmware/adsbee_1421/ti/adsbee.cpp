@@ -688,6 +688,12 @@ void ADSBee::IngestAndForwardPackets() {
         // Check for any new valid packets and push all decoded packets to the reporting queue, even if the aircraft
         // dictionary didn't know what to do with them.
         if (decoded_packet.is_valid) {
+            bench_valid_packets++;
+            if (mlat_enabled_ && !decoded_packet.raw.no_mlat_timestamp) bench_valid_stamped++;
+            if (bench_log_count < kBenchLogLen) {
+                bench_log[bench_log_count++] = {(decoded_packet.icao_address & 0xFFFFFF) | (static_cast<uint32_t>(decoded_packet.downlink_format) << 24),
+                                                decoded_packet.raw.mlat_48mhz_64bit_counts, decoded_packet.raw.no_mlat_timestamp};
+            }
             lr2021_frames_since_valid_ = 0;  // Healthy stream: reset the validity watchdog.
             // Counted, not logged: at high packet rates a per-packet CONSOLE_ERROR here floods the UART
             // TX ring and stalls the main loop -- the very thing that makes the queue overflow.
@@ -810,9 +816,10 @@ bool ADSBee::UpdateLR2021() {
     // DMA/BUSY state allows. Each call does at most one phase's worth of parsing plus posting the next DMA
     // frame -- the long SPI clocking (up to 258 B) happens in the background while the rest of the loop runs.
     // With MLAT timestamps the sweep runs more often, and waits for a fresh sync event's packet to be surely in the FIFO.
-    const bool sweep_due = start_us - lr2021_drain_start_us_ >= (mlat_active_ ? kMlatSweepIntervalUs : kLR2021SweepIntervalUs);
-    const bool mlat_holds_sweep = mlat_active_ && mlat_pairer_.HasYoungEdge(mlat_timebase_.ticks());
+    const bool sweep_due = start_us - lr2021_drain_start_us_ >= (mlat_active_ ? bench_mlat_interval_us : kLR2021SweepIntervalUs);
+    const bool mlat_holds_sweep = mlat_active_ && bench_mlat_hold && mlat_pairer_.HasYoungEdge(mlat_timebase_.ticks());
     if (lr2021.DrainIdle() && sweep_due && !mlat_holds_sweep && lr2021.StartRxDrain()) {
+        bench_sweeps++;
         lr2021_drain_start_us_ = start_us;
     }
 
@@ -930,6 +937,7 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
     const bool df17_mode = LR2021::IsOokDF17PreambleMode(r1090_preamble_mode_);
     const uint16_t packet_len_bytes = LR2021::GetOokRxPacketLenBytes(r1090_preamble_mode_);
     uint16_t num_packets = packet_len_bytes ? (rx_len_bytes / packet_len_bytes) : 0;
+    bench_parsed_packets += num_packets;
     for (uint16_t i = 0; i < num_packets; i++) {
         const uint32_t capture_start_cycles = CycleCounter::Now();
         const uint8_t* packet_start = rx_buf + i * packet_len_bytes;

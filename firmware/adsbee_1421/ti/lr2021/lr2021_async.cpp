@@ -81,6 +81,7 @@ bool LR2021::PostAsyncFrame(const uint8_t* tx_buf, size_t len, uint8_t* rx_buf) 
     if (spi_handle_ == nullptr) {
         return false;
     }
+    bench_frames = bench_frames + 1;
     async_done_ = false;
     async_ok_ = false;
     async_txn_ = {
