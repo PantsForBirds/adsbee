@@ -284,3 +284,121 @@ TEST(MlatTimebase, ExtendsCapturesBeforeTheLastUpdate) {
                                 static_cast<uint32_t>((update - start) / kUs)));
     EXPECT_EQ(timebase.Extend(static_cast<uint32_t>(capture) & MlatTimebase::kCounterMask), capture);
 }
+
+// Count pairing (PairBatch), used with the per-packet uDMA clear.
+struct BatchTest : testing::Test {
+    MlatPairer pairer;
+    uint64_t stamps[MlatPairer::kMaxBatchPackets] = {};
+    bool stamped[MlatPairer::kMaxBatchPackets] = {};
+
+    uint16_t Read(uint64_t request_ticks, uint16_t num_packets, bool with_ts = false, bool has_ts = false,
+                  int64_t ts = 0) {
+        MlatPairer::Sweep sweep = SweepAt(request_ticks, has_ts, ts);
+        return pairer.PairBatch(sweep, num_packets, sweep.level_answer_ticks + 500 * kUs, with_ts, stamps, stamped);
+    }
+};
+
+TEST_F(BatchTest, EdgesMatchingPacketsAreStampedInOrder) {
+    const uint64_t a = 10000 * kUs, b = a + 140 * kUs, c = b + 300 * kUs;
+    pairer.AddEdge(a);
+    pairer.AddEdge(b);
+    pairer.AddEdge(c);
+    ASSERT_EQ(Read(c + 200 * kUs, 3), 3);
+    EXPECT_EQ(stamps[0], a);
+    EXPECT_EQ(stamps[1], b);
+    EXPECT_EQ(stamps[2], c);
+    EXPECT_EQ(pairer.counters().batches_stamped, 1u);
+}
+
+TEST_F(BatchTest, SyncWithoutEdgeDropsTheBatch) {
+    // A second sync came while the latch was still set: two packets, one edge.
+    const uint64_t a = 10000 * kUs;
+    pairer.AddEdge(a);
+    EXPECT_EQ(Read(a + 600 * kUs, 2), 0);
+    EXPECT_FALSE(stamped[0]);
+    EXPECT_FALSE(stamped[1]);
+    EXPECT_EQ(pairer.counters().batches_more_packets, 1u);
+    EXPECT_EQ(pairer.counters().unstamped_mismatch, 2u);
+}
+
+TEST_F(BatchTest, YoungEdgeIsLeftForTheNextRead) {
+    // b is too young to be in the read; the read holds a only.
+    const uint64_t a = 10000 * kUs, b = a + 300 * kUs;
+    pairer.AddEdge(a);
+    pairer.AddEdge(b);
+    ASSERT_EQ(Read(b + 50 * kUs, 1), 1);
+    EXPECT_EQ(stamps[0], a);
+    ASSERT_EQ(Read(b + 1000 * kUs, 1), 1);
+    EXPECT_EQ(stamps[0], b);
+}
+
+TEST_F(BatchTest, AmbiguousEdgeCarriesOverAfterAMatchedRead) {
+    // b sits between "surely in" and "surely later" for the first read. The counts agree (1 packet, 1 sure edge), so
+    // b's packet was not in it and b stays usable.
+    const uint64_t a = 10000 * kUs, b = a + 300 * kUs;
+    pairer.AddEdge(a);
+    pairer.AddEdge(b);
+    ASSERT_EQ(Read(b + 100 * kUs, 1), 1);  // b + 145 > request, b + 125 <= answer (request + 170).
+    ASSERT_EQ(Read(b + 2000 * kUs, 1), 1);
+    EXPECT_EQ(stamps[0], b);
+}
+
+TEST_F(BatchTest, AmbiguousEdgeIsDroppedAfterAMismatch) {
+    const uint64_t a = 10000 * kUs, b = a + 300 * kUs;
+    pairer.AddEdge(a);
+    pairer.AddEdge(b);
+    EXPECT_EQ(Read(b + 100 * kUs, 2), 0);  // b's packet may be the second one.
+    EXPECT_EQ(Read(b + 2000 * kUs, 1), 0);  // b is unknown now: its packet may have been read.
+    EXPECT_EQ(pairer.counters().batches_more_packets, 2u);
+}
+
+TEST_F(BatchTest, EdgeWithoutPacketIsCounted) {
+    const uint64_t a = 10000 * kUs, b = a + 200 * kUs;
+    pairer.AddEdge(a);
+    pairer.AddEdge(b);
+    EXPECT_EQ(Read(b + 600 * kUs, 1), 0);
+    EXPECT_EQ(pairer.counters().batches_more_edges, 1u);
+    EXPECT_EQ(pairer.counters().orphan_events, 1u);
+}
+
+TEST_F(BatchTest, TimestampVetoesAMatchThatDisagrees) {
+    // Count agrees, but the latest event (surely in the read) is not the last edge.
+    const uint64_t a = 10000 * kUs, missed = a + 200 * kUs;
+    pairer.AddEdge(a);
+    EXPECT_EQ(Read(missed + 400 * kUs, 1, true, true, TimestampOf(missed)), 0);
+    EXPECT_EQ(pairer.counters().timestamp_vetoes, 1u);
+}
+
+TEST_F(BatchTest, TimestampOfALaterEventDoesNotVeto) {
+    const uint64_t a = 10000 * kUs, later = a + 500 * kUs;
+    pairer.AddEdge(a);
+    EXPECT_EQ(Read(later + 50 * kUs, 1, true, true, TimestampOf(later)), 1);
+}
+
+TEST_F(BatchTest, TimestampReanchorsTheLastPacketOfAMismatch) {
+    // The second sync of three made no edge; the timestamp names the third, surely in the read.
+    const uint64_t a = 10000 * kUs, c = a + 400 * kUs;
+    pairer.AddEdge(a);
+    pairer.AddEdge(c);
+    ASSERT_EQ(Read(c + 300 * kUs, 3, true, true, TimestampOf(c)), 1);
+    EXPECT_FALSE(stamped[0]);
+    EXPECT_FALSE(stamped[1]);
+    ASSERT_TRUE(stamped[2]);
+    EXPECT_EQ(stamps[2], c);
+    EXPECT_EQ(pairer.counters().reanchored, 1u);
+}
+
+TEST_F(BatchTest, EmptyReadKeepsEdges) {
+    const uint64_t a = 10000 * kUs;
+    pairer.AddEdge(a);
+    EXPECT_EQ(Read(a + 50 * kUs, 0), 0);
+    ASSERT_EQ(Read(a + 400 * kUs, 1), 1);
+    EXPECT_EQ(stamps[0], a);
+}
+
+TEST_F(BatchTest, BreakDropsEdgesBeforeIt) {
+    const uint64_t a = 10000 * kUs;
+    pairer.AddEdge(a);
+    pairer.Break(a + 300 * kUs);
+    EXPECT_EQ(Read(a + 600 * kUs, 1), 0);
+}
