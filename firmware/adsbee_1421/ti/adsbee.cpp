@@ -269,8 +269,12 @@ uint16_t ADSBee::PairMlatBatch(uint16_t num_packets, uint64_t* stamps, bool* sta
 }
 
 void ADSBee::ArmMlatClear() {
-    if (mlat_active_ && mlat_scheme_ != 0 && !mlat_clear_dma::Armed() && lr2021.MlatClearMayArm(kMlatArmBusyWaitUs)) {
-        mlat_clear_dma::Arm();
+    if (mlat_active_ && mlat_scheme_ != 0 && !mlat_clear_dma::Armed()) {
+        if (lr2021.MlatClearMayArm(kMlatArmBusyWaitUs)) {
+            mlat_clear_dma::Arm();
+        } else if (lr2021.DrainIdle()) {
+            bench_arm_refused_busy++;
+        }
     }
 }
 

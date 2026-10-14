@@ -28,6 +28,9 @@ void Arm();
 // reason: who takes the bus (bench statistics only).
 bool Disarm(uint8_t reason = 0);
 bool Armed();
+// Disarmed, between two frames of another SPI user, with BUSY low: when DIO5 is latched (an edge came while
+// disarmed), runs the clear now by software request and waits for it to end. True: a clear ran (BUSY is high).
+bool ClearPending();
 
 // No effect since the GPT1A delay was dropped (kept for the bench knob).
 void SetDelayTicks(uint32_t ticks);
@@ -45,6 +48,8 @@ struct Counters {
     uint32_t disarm_wait_max_cycles = 0;
     uint32_t rx_flushed_bytes = 0;   // Bytes left in the SPI0 RX FIFO after a chain (should stay 0).
     // Disarmed time until the next Arm(), by the reason of the disarm: count, total and max in CPU cycles.
+    uint32_t between_frames = 0;  // Clears run by ClearPending().
+    uint32_t arm_refused_spi = 0;  // Arm() found the SPI disabled or busy.
     static constexpr uint8_t kReasons = 6;
     uint32_t off_count[kReasons] = {};
     uint64_t off_sum_cycles[kReasons] = {};

@@ -134,6 +134,7 @@ class ADSBee {
     uint16_t bench_log_count = 0;
     uint32_t bench_mlat_interval_us = kMlatSweepIntervalUs;
     uint32_t bench_mlat_hold = 1;
+    uint32_t bench_arm_refused_busy = 0;
     uint32_t lr2021_fifo_full_count = 0;
 
     // Recovery counters, reported and reset via AT+RX_STATS. In a healthy install fifo_resync tracks

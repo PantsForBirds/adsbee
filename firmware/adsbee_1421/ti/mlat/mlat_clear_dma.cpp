@@ -206,6 +206,7 @@ void Arm() {
     }
     // A chain pushes bytes into the TX FIFO: only with the SPI enabled and idle.
     if (!(HWREG(SPI0_BASE + SPI_O_CTL1) & SPI_CTL1_ENABLE) || (HWREG(SPI0_BASE + SPI_O_STAT) & SPI_STAT_BUSY)) {
+        counters_.arm_refused_spi++;
         return;
     }
     uintptr_t key = HwiP_disable();
@@ -225,6 +226,40 @@ void Arm() {
     }
     armed = true;
     HwiP_restore(key);
+}
+
+static bool WaitChainIdle(uint32_t max_us) {
+    const uint32_t start = CycleCounter::Now();
+    const uint32_t settle = CycleCounter::kCpuHz / 1000000;
+    const uint32_t limit = max_us * (CycleCounter::kCpuHz / 1000000);
+    while (true) {
+        const uint32_t elapsed = CycleCounter::Since(start);
+        if (!ChainActive() && elapsed >= settle) {
+            return true;
+        }
+        if (elapsed > limit) {
+            return false;
+        }
+    }
+}
+
+bool ClearPending() {
+    if (!running || armed || !mlat_capture::PinHigh() || chain_busy != 0) {
+        return false;
+    }
+    if (!(HWREG(SPI0_BASE + SPI_O_CTL1) & SPI_CTL1_ENABLE) || (HWREG(SPI0_BASE + SPI_O_STAT) & SPI_STAT_BUSY)) {
+        return false;
+    }
+    uintptr_t key = HwiP_disable();
+    HWREG(UDMA0_BASE + UDMA_O_SOFTREQ) = kClearBit;  // Software requests pass the request mask.
+    const bool ok = WaitChainIdle(kDisarmWaitMaxUs);
+    if (!ok) {
+        counters_.disarm_timeouts++;
+    }
+    FlushRx();
+    HwiP_restore(key);
+    counters_.between_frames++;
+    return true;
 }
 
 bool Disarm(uint8_t reason) {

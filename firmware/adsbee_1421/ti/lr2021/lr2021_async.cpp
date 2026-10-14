@@ -286,6 +286,10 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                     }
                     return DrainResult::kInProgress;
                 }
+                if (mlat_scheme_ != 0 && mlat_sweep_enabled_ && s < DrainState::kFifoRead &&
+                    mlat_clear_dma::ClearPending()) {
+                    break;  // An edge came during the sweep: its clear ran first. Wait for BUSY again.
+                }
                 uintptr_t key = HwiP_disable();
                 if (drain_state_ != s) {  // Stolen by the chain: re-evaluate.
                     HwiP_restore(key);

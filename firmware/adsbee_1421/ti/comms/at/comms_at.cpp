@@ -459,7 +459,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                     CPP_AT_PRINTF("%s%lu/%lu/%lu", r ? "," : "", (unsigned long)dc.off_count[r],
                                   (unsigned long)(dc.off_sum_cycles[r] / 48), (unsigned long)(dc.off_max_cycles[r] / 48));
                 }
-                CPP_AT_PRINTF("\r\n");
+                CPP_AT_PRINTF(",between=%lu,refused_spi=%lu,refused_busy=%lu\r\n", (unsigned long)dc.between_frames, (unsigned long)dc.arm_refused_spi,
+                              (unsigned long)adsbee.bench_arm_refused_busy);
             }
             CPP_AT_SILENT_SUCCESS();
             break;
