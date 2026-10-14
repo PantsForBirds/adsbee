@@ -292,6 +292,11 @@ class LR2021 {
     // 1: a uDMA chain clears the latch after every edge (mlat/mlat_clear_dma.hh), the sweep sends neither. 2: as 1,
     // and the sweep reads the timestamp before every non-empty FIFO read.
     void SetMlatScheme(uint8_t scheme) { mlat_scheme_ = scheme; }
+    // Schemes 1 and 2: arm the uDMA clear from the BUSY-fall interrupt right after the drain's FIFO read, instead of
+    // at the end of the next main-loop pass.
+    void SetMlatFastArm(bool fast) { mlat_fast_arm_ = fast; }
+    bool mlat_fast_arm() const { return mlat_fast_arm_; }
+    volatile uint32_t mlat_fast_arms = 0;
     uint8_t mlat_scheme() const { return mlat_scheme_; }
     const uint8_t* mlat_clear_frame() const { return mlat_clear_tx_buf_; }
     // The bus is free for the uDMA clear chain: no drain or chain, no kept read, BUSY low.
@@ -1547,6 +1552,8 @@ class LR2021 {
     uint8_t mlat_rx_buf_[6] = {};
     volatile bool mlat_sweep_enabled_ = false;
     volatile uint8_t mlat_scheme_ = 0;
+    volatile bool mlat_fast_arm_ = false;
+    volatile bool mlat_arm_on_busy_fall_ = false;
     MlatSweep mlat_sweep_;
     static constexpr uint32_t kMlatSweepWaitMaxUs = 200;
     // MLAT sweep, frames ahead of the FIFO read: waits for the frame in flight (wait_done) or for BUSY low.

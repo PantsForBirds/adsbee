@@ -65,6 +65,13 @@ void LR2021::SPICallback(SPI_Handle handle, SPI_Transaction* transaction) {
             }
             // Loop-drain frame: end the NSS frame immediately so the chip starts processing (BUSY
             // pulse) during main-loop time instead of waiting for the next ServiceRxDrain() call.
+            if (self->mlat_fast_arm_ && self->mlat_scheme_ != 0 && self->drain_state_ == DrainState::kFifoRead &&
+                self->async_ok_ && !self->IrqLineHigh()) {
+                // The drain ends with this frame: hand the bus to the uDMA clear once BUSY falls (armed before NSS
+                // rises, as for the chain).
+                self->mlat_arm_on_busy_fall_ = true;
+                self->ArmBusyInterrupt();
+            }
             self->SetNSS(true);
             self->async_in_flight_ = false;
             self->async_done_ = true;  // Written last: thread level reads async_done_ before async_ok_.
@@ -93,6 +100,14 @@ bool LR2021::PostAsyncFrame(const uint8_t* tx_buf, size_t len, uint8_t* rx_buf) 
         .status = SPI_TRANSFER_QUEUED,
     };
     status_tracker_.OnFrame(FrameOpcode(tx_buf, len));  // Which command the next Stat word reports on.
+    if (mlat_scheme_ != 0 && mlat_clear_dma::Armed()) {
+        // Armed early (fast arm): a clear may have run since the caller saw BUSY low.
+        mlat_arm_on_busy_fall_ = false;
+        mlat_clear_dma::Disarm();
+        const uint32_t start = CycleCounter::Now();
+        while (IsBusy() && CycleCounter::Since(start) < 50 * (CycleCounter::kCpuHz / 1000000)) {
+        }
+    }
     if (mlat_sweep_enabled_) {
         mlat_nss_counter_ = mlat_capture::Counter();  // GetTimestampValue counts back from the NSS edge.
     }

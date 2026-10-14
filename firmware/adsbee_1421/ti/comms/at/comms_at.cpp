@@ -437,7 +437,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                     "MLAT_DMA=scheme=%u,delay=%lu,b_stamped=%lu,b_more_pkts=%lu,b_more_edges=%lu,u_mismatch=%lu,"
                     "reanchored=%lu,vetoes=%lu,edges=%lu,clears=%lu,extra_clears=%lu,lat_max=%lu,lat_sum=%lu,"
                     "lat_h=%lu/%lu/%lu/%lu/%lu/%lu/%lu/%lu,clear_ovr=%lu,kicks=%lu,disarms=%lu,dwaits=%lu,dtimeouts=%lu,"
-                    "dwait_max_cyc=%lu,rx_flushed=%lu\r\n",
+                    "dwait_max_cyc=%lu,rx_flushed=%lu,fast=%u,fast_arms=%lu\r\n",
                     adsbee.mlat_scheme(), (unsigned long)mlat_clear_dma::DelayTicks(), (unsigned long)mc.batches_stamped,
                     (unsigned long)mc.batches_more_packets, (unsigned long)mc.batches_more_edges,
                     (unsigned long)mc.unstamped_mismatch, (unsigned long)mc.reanchored, (unsigned long)mc.timestamp_vetoes,
@@ -448,7 +448,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                     (unsigned long)cs.latency_hist[6], (unsigned long)cs.latency_hist[7], (unsigned long)cs.clear_overruns,
                     (unsigned long)dc.kicks, (unsigned long)dc.disarms, (unsigned long)dc.disarm_waits,
                     (unsigned long)dc.disarm_timeouts, (unsigned long)dc.disarm_wait_max_cycles,
-                    (unsigned long)dc.rx_flushed_bytes);
+                    (unsigned long)dc.rx_flushed_bytes, adsbee.lr2021.mlat_fast_arm() ? 1u : 0u,
+                    (unsigned long)adsbee.lr2021.mlat_fast_arms);
             }
             CPP_AT_SILENT_SUCCESS();
             break;
@@ -466,6 +467,11 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                     uint32_t delay = 0;
                     CPP_AT_TRY_ARG2NUM(2, delay);
                     mlat_clear_dma::SetDelayTicks(delay);
+                }
+                if (CPP_AT_HAS_ARG(3)) {
+                    uint32_t fast = 0;
+                    CPP_AT_TRY_ARG2NUM(3, fast);
+                    adsbee.lr2021.SetMlatFastArm(fast != 0);
                 }
                 if (!adsbee.SetMlatScheme(static_cast<uint8_t>(scheme))) {
                     CPP_AT_ERROR("Scheme must be 0, 1 or 2.");
@@ -499,6 +505,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.max_lr2021_us = 0;
             adsbee.lr2021_drain_max_us = 0;
             adsbee.lr2021.irq_drain_count = 0;
+            adsbee.lr2021.mlat_fast_arms = 0;
             adsbee.lr2021.irq_drain_skip_busy = 0;
             adsbee.lr2021.irq_drain_kept_reads = 0;
             adsbee.lr2021.irq_drain_skip_slots = 0;
@@ -1511,7 +1518,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxPositionCallback, comms_manager)},
     {.command = "RX_STATS",
      .min_args = 0,
-     .max_args = 4,
+     .max_args = 5,
      .help_string = "AT+RX_STATS?\r\n\tQuery LR2021 OOK Rx stats (pkt_rx, crc_error, len_error, pbl_det, sync_ok, "
                     "sync_fail, timeout) plus health counters (fifo_full, q_ovf, bitflips_fixed, "
                     "uat_rx_restarts, uat_setlen_errs = failed CMD_PROP_SET_LEN commands, "

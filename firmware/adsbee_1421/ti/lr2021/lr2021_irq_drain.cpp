@@ -221,6 +221,14 @@ void LR2021::HandleBusyFall() {
             PostChainFrame();
             break;
         default:
+            if (mlat_arm_on_busy_fall_) {
+                // The loop drain's FIFO read ended and BUSY fell: the bus is free until the next frame.
+                mlat_arm_on_busy_fall_ = false;
+                if (drain_state_ == DrainState::kFifoRead || drain_state_ == DrainState::kDataReady) {
+                    mlat_clear_dma::Arm();
+                    mlat_fast_arms = mlat_fast_arms + 1;
+                }
+            }
             break;  // Disarmed late / state already advanced (thread assist): nothing to do.
     }
 }
