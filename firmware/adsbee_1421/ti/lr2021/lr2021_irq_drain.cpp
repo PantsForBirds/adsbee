@@ -169,7 +169,7 @@ void LR2021::HandleIrqLine() {
         // dropped a pending read-response, the chip discards it when the next command frame arrives
         // (pipelined protocol).
     }
-    mlat_clear_dma::Disarm();  // Waits a few microseconds at most; StartChainSegment checks BUSY after it.
+    mlat_clear_dma::Disarm(2);  // Waits a few microseconds at most; StartChainSegment checks BUSY after it.
     irq_drain_count = irq_drain_count + 1;
     slot.timestamp_us = get_time_since_boot_us();
     StartChainSegment();

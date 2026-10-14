@@ -103,7 +103,7 @@ bool LR2021::PostAsyncFrame(const uint8_t* tx_buf, size_t len, uint8_t* rx_buf) 
     if (mlat_scheme_ != 0 && mlat_clear_dma::Armed()) {
         // Armed early (fast arm): a clear may have run since the caller saw BUSY low.
         mlat_arm_on_busy_fall_ = false;
-        mlat_clear_dma::Disarm();
+        mlat_clear_dma::Disarm(4);
         const uint32_t start = CycleCounter::Now();
         while (IsBusy() && CycleCounter::Since(start) < 50 * (CycleCounter::kCpuHz / 1000000)) {
         }
@@ -185,7 +185,7 @@ bool LR2021::StartRxDrain() {
     const bool clear_sync = mlat_sweep_enabled_ && mlat_scheme_ == 0 && !mlat_traffic_dense_ && mlat_capture::PinHigh();
     EnterBusyWait(clear_sync ? DrainState::kSyncClearWait : DrainState::kLevelCmdWait);
     HwiP_restore(key);
-    mlat_clear_dma::Disarm();  // Before the first BUSY check: a clear in progress ends with BUSY high.
+    mlat_clear_dma::Disarm(1);  // Before the first BUSY check: a clear in progress ends with BUSY high.
     // Field resets after the claim: if the chain steals the drain before they matter, they are
     // re-initialized by the next StartRxDrain anyway.
     drain_irq_flags_ = 0;

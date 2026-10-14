@@ -25,7 +25,8 @@ bool Running();
 // Starts the chain on the next edge. Call with the bus free and BUSY low.
 void Arm();
 // Masks the trigger and waits for a chain in progress to end. False: it did not end in time (bus state unknown).
-bool Disarm();
+// reason: who takes the bus (bench statistics only).
+bool Disarm(uint8_t reason = 0);
 bool Armed();
 
 // No effect since the GPT1A delay was dropped (kept for the bench knob).
@@ -43,6 +44,11 @@ struct Counters {
     uint32_t disarm_timeouts = 0;    // Disarm() gave up waiting.
     uint32_t disarm_wait_max_cycles = 0;
     uint32_t rx_flushed_bytes = 0;   // Bytes left in the SPI0 RX FIFO after a chain (should stay 0).
+    // Disarmed time until the next Arm(), by the reason of the disarm: count, total and max in CPU cycles.
+    static constexpr uint8_t kReasons = 6;
+    uint32_t off_count[kReasons] = {};
+    uint64_t off_sum_cycles[kReasons] = {};
+    uint32_t off_max_cycles[kReasons] = {};
 };
 const Counters& counters();
 void ResetCounters();

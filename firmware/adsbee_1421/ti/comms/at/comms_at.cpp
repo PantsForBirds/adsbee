@@ -452,6 +452,15 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                     (unsigned long)dc.rx_flushed_bytes, adsbee.lr2021.mlat_fast_arm() ? 1u : 0u,
                     (unsigned long)adsbee.lr2021.mlat_fast_arms);
             }
+            {
+                const mlat_clear_dma::Counters& dc = mlat_clear_dma::counters();
+                CPP_AT_PRINTF("MLAT_OFF=");
+                for (uint8_t r = 0; r < mlat_clear_dma::Counters::kReasons; r++) {
+                    CPP_AT_PRINTF("%s%lu/%lu/%lu", r ? "," : "", (unsigned long)dc.off_count[r],
+                                  (unsigned long)(dc.off_sum_cycles[r] / 48), (unsigned long)(dc.off_max_cycles[r] / 48));
+                }
+                CPP_AT_PRINTF("\r\n");
+            }
             CPP_AT_SILENT_SUCCESS();
             break;
         }

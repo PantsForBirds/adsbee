@@ -52,6 +52,8 @@ static volatile uint8_t rx_sink[kClearBytes];
 
 static bool running = false;
 static bool armed = false;
+static uint8_t off_reason = 0;
+static uint32_t off_start = 0;
 static Counters counters_;
 
 static volatile uint32_t ring[kRingLen];
@@ -175,7 +177,7 @@ void Stop() {
     if (!running) {
         return;
     }
-    Disarm();
+    Disarm(5);
     running = false;
     HWREG(GPT0_BASE + GPT_O_DMAEV) &= ~GPT_DMAEV_CBEDMAEN;
     TimerDisable(GPT0_BASE, TIMER_B);
@@ -207,6 +209,13 @@ void Arm() {
         return;
     }
     uintptr_t key = HwiP_disable();
+    if (off_reason < Counters::kReasons) {
+        const uint32_t off = CycleCounter::Since(off_start);
+        counters_.off_count[off_reason]++;
+        counters_.off_sum_cycles[off_reason] += off;
+        if (off > counters_.off_max_cycles[off_reason]) counters_.off_max_cycles[off_reason] = off;
+        off_reason = 0xFF;
+    }
     // Latched high: no edge can come until a clear, so the software request is the only start.
     const bool latched = mlat_capture::PinHigh();
     HWREG(UDMA0_BASE + UDMA_O_CLEARREQMASK) = kClearBit;
@@ -218,7 +227,7 @@ void Arm() {
     HwiP_restore(key);
 }
 
-bool Disarm() {
+bool Disarm(uint8_t reason) {
     if (!running) {
         return true;
     }
@@ -230,6 +239,8 @@ bool Disarm() {
     HWREG(UDMA0_BASE + UDMA_O_SETREQMASK) = kClearBit;
     armed = false;
     counters_.disarms++;
+    off_reason = reason;
+    off_start = CycleCounter::Now();
     // A request taken just before the mask shows within a few cycles: look twice, 1 us apart.
     const uint32_t start = CycleCounter::Now();
     const uint32_t settle = CycleCounter::kCpuHz / 1000000;
