@@ -41,6 +41,7 @@
 #include "hal.hh"
 #include "lr2021.hh"
 #include "mlat/mlat_capture.hh"
+#include "mlat/mlat_clear_dma.hh"
 
 void LR2021::SPICallback(SPI_Handle handle, SPI_Transaction* transaction) {
     (void)handle;
@@ -166,9 +167,10 @@ bool LR2021::StartRxDrain() {
     }
     // The SyncwordValid latch is set: clear it first, so the next sync event raises an edge on DIO5. Not in dense
     // traffic, where no read holds a single packet: the command would only cost reception.
-    const bool clear_sync = mlat_sweep_enabled_ && !mlat_traffic_dense_ && mlat_capture::PinHigh();
+    const bool clear_sync = mlat_sweep_enabled_ && mlat_scheme_ == 0 && !mlat_traffic_dense_ && mlat_capture::PinHigh();
     EnterBusyWait(clear_sync ? DrainState::kSyncClearWait : DrainState::kLevelCmdWait);
     HwiP_restore(key);
+    mlat_clear_dma::Disarm();  // Before the first BUSY check: a clear in progress ends with BUSY high.
     // Field resets after the claim: if the chain steals the drain before they matter, they are
     // re-initialized by the next StartRxDrain anyway.
     drain_irq_flags_ = 0;
@@ -424,9 +426,9 @@ LR2021::DrainResult LR2021::ServiceRxDrain() {
                     if (read_len > 0) {
                         // Only a packet alone in its read can be stamped. The timestamp is read after the
                         // level: it then names that packet, or a packet that is still on its way.
-                        EnterBusyWait(mlat_sweep_enabled_ && read_len == kOokFifoPacketLenBytes
-                                          ? DrainState::kTimestampCmdWait
-                                          : DrainState::kFifoWait);
+                        const bool read_timestamp =
+                            mlat_sweep_enabled_ && (mlat_scheme_ == 2 || (mlat_scheme_ == 0 && read_len == kOokFifoPacketLenBytes));
+                        EnterBusyWait(read_timestamp ? DrainState::kTimestampCmdWait : DrainState::kFifoWait);
                     } else if (IrqLineHigh()) {
                         // Nothing (whole) to read but the latched IRQ line is asserted: run the clear
                         // tail so edge generation recovers, then finish as kNoData.

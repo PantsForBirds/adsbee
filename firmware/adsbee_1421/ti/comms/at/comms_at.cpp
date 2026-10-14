@@ -7,6 +7,7 @@
 #include "adsbee.hh"
 #include "ccfg_bootloader_flash.hh"
 #include "comms.hh"
+#include "mlat/mlat_clear_dma.hh"
 #include "object_dictionary.hh"
 #include "packet_decoder.hh"
 #include "flash_utils.hh"
@@ -428,6 +429,27 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)adsbee.bench_valid_packets, (unsigned long)adsbee.bench_valid_stamped,
                 (unsigned long)adsbee.bench_sweeps, (unsigned long)adsbee.lr2021.bench_frames,
                 (long)adsbee.mlat_counters().bench_diff_min, (long)adsbee.mlat_counters().bench_diff_max);
+            {
+                const MlatPairer::Counters& mc = adsbee.mlat_counters();
+                const ADSBee::MlatClearStats& cs = adsbee.mlat_clear_stats;
+                const mlat_clear_dma::Counters& dc = mlat_clear_dma::counters();
+                CPP_AT_PRINTF(
+                    "MLAT_DMA=scheme=%u,delay=%lu,b_stamped=%lu,b_more_pkts=%lu,b_more_edges=%lu,u_mismatch=%lu,"
+                    "reanchored=%lu,vetoes=%lu,edges=%lu,clears=%lu,extra_clears=%lu,lat_max=%lu,lat_sum=%lu,"
+                    "lat_h=%lu/%lu/%lu/%lu/%lu/%lu/%lu/%lu,clear_ovr=%lu,kicks=%lu,disarms=%lu,dwaits=%lu,dtimeouts=%lu,"
+                    "dwait_max_cyc=%lu,rx_flushed=%lu\r\n",
+                    adsbee.mlat_scheme(), (unsigned long)mlat_clear_dma::DelayTicks(), (unsigned long)mc.batches_stamped,
+                    (unsigned long)mc.batches_more_packets, (unsigned long)mc.batches_more_edges,
+                    (unsigned long)mc.unstamped_mismatch, (unsigned long)mc.reanchored, (unsigned long)mc.timestamp_vetoes,
+                    (unsigned long)cs.edges, (unsigned long)cs.clears, (unsigned long)cs.extra_clears,
+                    (unsigned long)cs.latency_max_ticks, (unsigned long)cs.latency_sum_ticks,
+                    (unsigned long)cs.latency_hist[0], (unsigned long)cs.latency_hist[1], (unsigned long)cs.latency_hist[2],
+                    (unsigned long)cs.latency_hist[3], (unsigned long)cs.latency_hist[4], (unsigned long)cs.latency_hist[5],
+                    (unsigned long)cs.latency_hist[6], (unsigned long)cs.latency_hist[7], (unsigned long)cs.clear_overruns,
+                    (unsigned long)dc.kicks, (unsigned long)dc.disarms, (unsigned long)dc.disarm_waits,
+                    (unsigned long)dc.disarm_timeouts, (unsigned long)dc.disarm_wait_max_cycles,
+                    (unsigned long)dc.rx_flushed_bytes);
+            }
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -435,6 +457,19 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             if (CPP_AT_HAS_ARG(0) && args[0].compare("SWEEP") == 0) {
                 CPP_AT_TRY_ARG2NUM(1, adsbee.bench_mlat_interval_us);
                 if (CPP_AT_HAS_ARG(2)) CPP_AT_TRY_ARG2NUM(2, adsbee.bench_mlat_hold);
+                CPP_AT_SUCCESS();
+            }
+            if (CPP_AT_HAS_ARG(0) && args[0].compare("MLATDMA") == 0) {
+                uint32_t scheme = adsbee.mlat_scheme();
+                CPP_AT_TRY_ARG2NUM(1, scheme);
+                if (CPP_AT_HAS_ARG(2)) {
+                    uint32_t delay = 0;
+                    CPP_AT_TRY_ARG2NUM(2, delay);
+                    mlat_clear_dma::SetDelayTicks(delay);
+                }
+                if (!adsbee.SetMlatScheme(static_cast<uint8_t>(scheme))) {
+                    CPP_AT_ERROR("Scheme must be 0, 1 or 2.");
+                }
                 CPP_AT_SUCCESS();
             }
             if (CPP_AT_HAS_ARG(0) && args[0].compare("DUMP") == 0) {
@@ -1476,7 +1511,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxPositionCallback, comms_manager)},
     {.command = "RX_STATS",
      .min_args = 0,
-     .max_args = 3,
+     .max_args = 4,
      .help_string = "AT+RX_STATS?\r\n\tQuery LR2021 OOK Rx stats (pkt_rx, crc_error, len_error, pbl_det, sync_ok, "
                     "sync_fail, timeout) plus health counters (fifo_full, q_ovf, bitflips_fixed, "
                     "uat_rx_restarts, uat_setlen_errs = failed CMD_PROP_SET_LEN commands, "

@@ -81,7 +81,8 @@ class MlatPairer {
     static constexpr int32_t kAgreeCenterHalfTicks = 80;
     static constexpr int32_t kAgreeToleranceHalfTicks = 96;
 
-    static constexpr uint16_t kMaxPendingEdges = 16;
+    static constexpr uint16_t kMaxPendingEdges = 32;
+    static constexpr uint16_t kMaxBatchPackets = 20;  // A full FIFO holds 18.
 
     struct Counters {
         uint32_t stamped = 0;
@@ -91,6 +92,13 @@ class MlatPairer {
         uint32_t unstamped_disagree = 0;   // Edge and timestamp name different events.
         uint32_t orphan_events = 0;        // An edge surely in a read with fewer packets than edges.
         uint32_t dropped_edges = 0;        // Pending queue full.
+        // Count pairing (PairBatch).
+        uint32_t batches_stamped = 0;
+        uint32_t batches_more_packets = 0;  // Fewer edges surely in the read than packets: a sync without an edge.
+        uint32_t batches_more_edges = 0;    // More edges surely in the read than packets: an edge without a packet.
+        uint32_t unstamped_mismatch = 0;    // Packets of those batches.
+        uint32_t reanchored = 0;            // Last packet of a mismatched batch stamped through the timestamp.
+        uint32_t timestamp_vetoes = 0;      // Matched batch dropped: the timestamp contradicts the edges.
         int32_t bench_diff_min = 0x7FFFFFFF, bench_diff_max = -0x7FFFFFFF;
     };
 
@@ -188,6 +196,99 @@ class MlatPairer {
         counters_.stamped++;
         *stamp_ticks = here_ticks;
         return true;
+    }
+
+    // Count pairing for reads of any size, with a per-packet clear: every sync event raises an edge unless it comes
+    // while the latch is still set. The read's packets are exactly the packets of the edges surely in the read when
+    // the counts agree, because every such edge has its packet in the read (it was in the FIFO at the level
+    // sample, and not in an earlier read). Then the n-th edge is the n-th packet. Otherwise no packet is stamped.
+    // with_timestamp: the sweep's timestamp names the latest sync event. A matched batch whose last edge disagrees
+    // with a timestamp that is surely in the read is dropped; a mismatched batch whose last edge agrees with such a
+    // timestamp gets its last packet stamped (nothing can come between the latest event and the read's end).
+    // Returns how many packets got stamps: stamped[i] says which, stamps[i] holds them.
+    uint16_t PairBatch(const Sweep& sweep, uint16_t num_packets, uint64_t now_ticks, bool with_timestamp,
+                       uint64_t* stamps, bool* stamped) {
+        for (uint16_t i = 0; i < num_packets && i < kMaxBatchPackets; i++) {
+            stamped[i] = false;
+        }
+        uint64_t here[kMaxBatchPackets + 1];
+        uint16_t num_here = 0, num_kept = 0;
+        uint64_t oldest_ambiguous = 0;
+        bool has_ambiguous = false;
+        for (uint16_t i = 0; i < num_pending_; i++) {
+            const uint64_t t = pending_[i];
+            if (now_ticks - t > kStaleTicks || t + kLaterTicks <= boundary_ticks_) {
+                continue;  // Too old, or possibly in an earlier read.
+            }
+            if (t + kHereTicks <= sweep.level_request_ticks) {
+                if (num_here <= kMaxBatchPackets) here[num_here] = t;
+                num_here++;
+            } else {
+                // Surely later, or ambiguous: kept. An ambiguous edge is resolved below.
+                if (t + kLaterTicks <= sweep.level_answer_ticks && !has_ambiguous) {
+                    has_ambiguous = true;
+                    oldest_ambiguous = t;
+                }
+                pending_[num_kept++] = t;
+            }
+        }
+        num_pending_ = num_kept;
+        if (num_packets == 0) {
+            if (num_here > 0) counters_.orphan_events += num_here;
+            return 0;  // Nothing was popped: the boundary stays.
+        }
+        // Ambiguous edges: when the counts agree their packets are surely not in this read, so they stay usable for
+        // the next one. Otherwise they may be in this read and the boundary drops them.
+        const bool match = num_here == num_packets && num_packets <= kMaxBatchPackets;
+        boundary_ticks_ = sweep.level_answer_ticks;
+        if (match && has_ambiguous && oldest_ambiguous + kLaterTicks - 1 < boundary_ticks_) {
+            boundary_ticks_ = oldest_ambiguous + kLaterTicks - 1;
+        }
+        // The timestamp's event is surely in this read when it is old enough at the level request.
+        bool ts_here = false;
+        int64_t last_diff = 0;
+        if (with_timestamp && sweep.has_timestamp && num_here > 0 && num_here <= kMaxBatchPackets) {
+            ts_here = sweep.timestamp_half_ticks + 2 * static_cast<int64_t>(kHereTicks) <=
+                      static_cast<int64_t>(sweep.level_request_ticks * 2);
+            last_diff = static_cast<int64_t>(here[num_here - 1] * 2) - sweep.timestamp_half_ticks;
+        }
+        const bool last_agrees = last_diff >= kAgreeCenterHalfTicks - kAgreeToleranceHalfTicks &&
+                                 last_diff <= kAgreeCenterHalfTicks + kAgreeToleranceHalfTicks;
+        if (match) {
+            if (ts_here && !last_agrees) {
+                counters_.timestamp_vetoes++;
+                counters_.unstamped_mismatch += num_packets;
+                return 0;
+            }
+            for (uint16_t i = 0; i < num_packets; i++) {
+                stamps[i] = here[i];
+                stamped[i] = true;
+            }
+            counters_.batches_stamped++;
+            counters_.stamped += num_packets;
+            return num_packets;
+        }
+        if (num_here < num_packets) {
+            counters_.batches_more_packets++;
+        } else {
+            counters_.batches_more_edges++;
+            counters_.orphan_events += num_here - num_packets;
+        }
+        if (ts_here && last_agrees && num_packets <= kMaxBatchPackets) {
+            stamps[num_packets - 1] = here[num_here - 1];
+            stamped[num_packets - 1] = true;
+            counters_.reanchored++;
+            counters_.stamped++;
+            counters_.unstamped_mismatch += num_packets - 1;
+            return 1;
+        }
+        counters_.unstamped_mismatch += num_packets;
+        return 0;
+    }
+
+    // True while the youngest pending edge is younger than kHereTicks.
+    bool HasYoungEdgeAny(uint64_t now_ticks) const {
+        return num_pending_ > 0 && now_ticks - pending_[num_pending_ - 1] < kHereTicks;
     }
 
     const Counters& counters() const { return counters_; }

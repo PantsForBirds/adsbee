@@ -288,6 +288,17 @@ class LR2021 {
     // (kMlatSweepWaitMaxUs each at most) and posts the FIFO read in the pass it started in: a stamp needs the
     // level read close to the packet. Enable only with the MLAT capture timer running.
     void SetMlatSweepEnabled(bool enabled) { mlat_sweep_enabled_ = enabled; }
+    // t-0421 prototype. 0: the sweep clears the latch and reads the timestamp for single-packet reads (as above).
+    // 1: a uDMA chain clears the latch after every edge (mlat/mlat_clear_dma.hh), the sweep sends neither. 2: as 1,
+    // and the sweep reads the timestamp before every non-empty FIFO read.
+    void SetMlatScheme(uint8_t scheme) { mlat_scheme_ = scheme; }
+    uint8_t mlat_scheme() const { return mlat_scheme_; }
+    const uint8_t* mlat_clear_frame() const { return mlat_clear_tx_buf_; }
+    // The bus is free for the uDMA clear chain: no drain or chain, no kept read, BUSY low.
+    bool MlatClearMayArm() {
+        return drain_state_ == DrainState::kIdle && !kept_read_pending_ && !abort_requested_ && spi_handle_ != nullptr &&
+               !IsBusy();
+    }
     // Capture timer values of the sweep that just returned kDataReady or kNoData.
     struct MlatSweep {
         uint32_t level_request_counter = 0;  // Just before the NSS falling edge of the GetRxFifoLevel request.
@@ -1535,6 +1546,7 @@ class LR2021 {
     uint8_t mlat_timestamp_tx_buf_[3] = {};
     uint8_t mlat_rx_buf_[6] = {};
     volatile bool mlat_sweep_enabled_ = false;
+    volatile uint8_t mlat_scheme_ = 0;
     MlatSweep mlat_sweep_;
     static constexpr uint32_t kMlatSweepWaitMaxUs = 200;
     // MLAT sweep, frames ahead of the FIFO read: waits for the frame in flight (wait_done) or for BUSY low.

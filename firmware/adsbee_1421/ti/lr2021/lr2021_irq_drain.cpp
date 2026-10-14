@@ -43,6 +43,7 @@
 
 #include "hal.hh"
 #include "lr2021.hh"
+#include "mlat/mlat_clear_dma.hh"
 
 // Minimal Stat validation for ISR context: command-status field (bits 11:9) must be CMD_OK / CMD_DAT.
 // last_stat_ is thread-owned and must not be written from here.
@@ -168,6 +169,7 @@ void LR2021::HandleIrqLine() {
         // dropped a pending read-response, the chip discards it when the next command frame arrives
         // (pipelined protocol).
     }
+    mlat_clear_dma::Disarm();  // Waits a few microseconds at most; StartChainSegment checks BUSY after it.
     irq_drain_count = irq_drain_count + 1;
     slot.timestamp_us = get_time_since_boot_us();
     StartChainSegment();

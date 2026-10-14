@@ -1,4 +1,5 @@
 #include "lr2021.hh"
+#include "mlat/mlat_clear_dma.hh"
 
 #include <cstring>
 
@@ -159,6 +160,7 @@ bool LR2021::BeginTransaction() {
         }
         ServiceRxDrain();
     }
+    mlat_clear_dma::Disarm();
     // Always verify the chip is idle before asserting NSS.  Per §5.4.1.1 the
     // LR2021 will immediately raise BUSY once it sees the NSS falling edge, so
     // checking BUSY *after* asserting NSS would race with the hardware.

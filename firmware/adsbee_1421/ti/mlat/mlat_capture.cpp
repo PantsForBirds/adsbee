@@ -83,7 +83,8 @@ void Start() {
     Power_setDependency(PowerCC26XX_PERIPH_UDMA);
     IOCPortConfigureSet(kCaptureIoid, IOC_PORT_MCU_PORT_EVENT0, IOC_STD_INPUT | IOC_IOPULL_DOWN);
     TimerDisable(GPT0_BASE, TIMER_A);
-    TimerConfigure(GPT0_BASE, TIMER_CFG_SPLIT_PAIR | TIMER_CFG_A_CAP_TIME_UP);
+    // Timer B stays off unless mlat_clear_dma uses it as the clear trigger.
+    TimerConfigure(GPT0_BASE, TIMER_CFG_SPLIT_PAIR | TIMER_CFG_A_CAP_TIME_UP | TIMER_CFG_B_CAP_TIME_UP);
     TimerPrescaleSet(GPT0_BASE, TIMER_A, 0xFF);  // In capture mode the prescaler extends the timer to 24 bits.
     TimerLoadSet(GPT0_BASE, TIMER_A, 0xFFFF);
     TimerEventControl(GPT0_BASE, TIMER_A, TIMER_EVENT_POS_EDGE);

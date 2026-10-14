@@ -14,6 +14,7 @@
 #include "cycle_counter.hh"
 #include "led.hh"
 #include "mlat/mlat_capture.hh"
+#include "mlat/mlat_clear_dma.hh"
 #include "packet_decoder.hh"
 #include "sub_ghz_radio.hh"
 #include "uat_packet_decoder.hh"
@@ -136,6 +137,17 @@ bool ADSBee::SetMLATEnabled(bool enabled) {
     return ApplyReceiverConfig();  // From a reset chip, so disabling leaves no LR2021 setting behind.
 }
 
+bool ADSBee::SetMlatScheme(uint8_t scheme) {
+    if (scheme > 2) {
+        return false;
+    }
+    if (scheme == mlat_scheme_) {
+        return true;
+    }
+    mlat_scheme_ = scheme;
+    return !mlat_enabled_ || ApplyReceiverConfig();
+}
+
 void ADSBee::StartMlat() {
     if (!mlat_enabled_ || LR2021::IsOokDF17PreambleMode(r1090_preamble_mode_)) {
         return;
@@ -146,11 +158,18 @@ void ADSBee::StartMlat() {
     }
     mlat_capture::Start();
     RestartMlatTimebase();
+    lr2021.SetMlatScheme(mlat_scheme_);
+    if (mlat_scheme_ != 0) {
+        mlat_clear_dma::Start(lr2021.mlat_clear_frame());
+    }
+    mlat_edge_history_count_ = 0;
+    mlat_last_cleared_edge_ = 0;
     lr2021.SetMlatSweepEnabled(true);
     mlat_active_ = true;
 }
 
 void ADSBee::StopMlat() {
+    mlat_clear_dma::Stop();
     lr2021.SetMlatSweepEnabled(false);  // Before the timer stops: the sweep reads it.
     mlat_capture::Stop();
     mlat_active_ = false;
@@ -189,6 +208,72 @@ void ADSBee::PollMlat() {
         }
     }
     mlat_clock_was_crystal_ = clock_is_crystal;
+
+    // Clear latency statistics (scheme 1 and 2): each clear against the latest edge before it.
+    MlatClearStats& cs = mlat_clear_stats;
+    cs.edges += num_captures;
+    for (uint16_t i = 0; i < num_captures; i++) {
+        mlat_edge_history_[mlat_edge_history_count_++ % kMlatEdgeHistory] = mlat_timebase_.Extend(captures[i]);
+    }
+    if (!mlat_clear_dma::Running()) {
+        return;
+    }
+    static uint32_t clears[mlat_clear_dma::kRingLen];
+    bool clear_overrun = false;
+    const uint16_t num_clears = mlat_clear_dma::ReadClears(clears, &clear_overrun);
+    if (clear_overrun) {
+        cs.clear_overruns++;
+    }
+    for (uint16_t i = 0; i < num_clears; i++) {
+        const uint64_t c = mlat_timebase_.Extend(clears[i]);
+        cs.clears++;
+        uint64_t edge = 0;
+        const uint16_t n = mlat_edge_history_count_ < kMlatEdgeHistory ? mlat_edge_history_count_ : kMlatEdgeHistory;
+        for (uint16_t k = 0; k < n; k++) {
+            const uint64_t e = mlat_edge_history_[(mlat_edge_history_count_ - 1 - k) % kMlatEdgeHistory];
+            if (e <= c) {
+                edge = e;
+                break;
+            }
+        }
+        if (edge == 0 || edge == mlat_last_cleared_edge_) {
+            cs.extra_clears++;
+        } else {
+            const uint64_t lat = c - edge;
+            const uint32_t lat_ticks = lat > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<uint32_t>(lat);
+            cs.latency_sum_ticks += lat_ticks;
+            if (lat_ticks > cs.latency_max_ticks) cs.latency_max_ticks = lat_ticks;
+            static const uint32_t kBoundsUs[7] = {10, 15, 20, 50, 100, 200, 500};
+            uint16_t b = 0;
+            while (b < 7 && lat_ticks >= kBoundsUs[b] * MlatTimebase::kTicksPerUs) b++;
+            cs.latency_hist[b]++;
+            mlat_last_cleared_edge_ = edge;
+        }
+    }
+}
+
+uint16_t ADSBee::PairMlatBatch(uint16_t num_packets, uint64_t* stamps, bool* stamped) {
+    PollMlat();
+    const LR2021::MlatSweep& lr_sweep = lr2021.mlat_sweep();
+    if (num_packets > 0 && (lr_sweep.clear_tail_ran || lr2021.drain_fifo_was_full() || lr2021.fifo_overflow_pending)) {
+        mlat_pairer_.Break(mlat_timebase_.ticks());
+        mlat_pairer_.CountUnpaired(num_packets);
+        return 0;
+    }
+    MlatPairer::Sweep sweep;
+    sweep.level_request_ticks = mlat_timebase_.Extend(lr_sweep.level_request_counter);
+    sweep.level_answer_ticks = mlat_timebase_.Extend(lr_sweep.level_answer_counter);
+    sweep.has_timestamp = lr_sweep.has_timestamp;
+    sweep.timestamp_half_ticks =
+        static_cast<int64_t>(mlat_timebase_.Extend(lr_sweep.timestamp_request_counter) * 2) -
+        static_cast<int64_t>(lr_sweep.timestamp_value) * 3;
+    return mlat_pairer_.PairBatch(sweep, num_packets, mlat_timebase_.ticks(), mlat_scheme_ == 2, stamps, stamped);
+}
+
+void ADSBee::ArmMlatClear() {
+    if (mlat_active_ && mlat_scheme_ != 0 && !mlat_clear_dma::Armed() && lr2021.MlatClearMayArm()) {
+        mlat_clear_dma::Arm();
+    }
 }
 
 bool ADSBee::PairMlatSweep(uint16_t num_packets, uint64_t* stamp_ticks) {
@@ -837,9 +922,18 @@ bool ADSBee::UpdateLR2021() {
                 // see it via AT+RX_STATS even with logging off.
                 lr2021_fifo_full_count++;
             }
+            const uint16_t num_packets = lr2021.drain_level() / LR2021::kOokFifoPacketLenBytes;
+            if (mlat_active_ && mlat_scheme_ != 0) {
+                uint64_t stamps[MlatPairer::kMaxBatchPackets];
+                bool stamped[MlatPairer::kMaxBatchPackets];
+                const uint16_t num_stamped = PairMlatBatch(num_packets, stamps, stamped);
+                ParseLR2021RxFifo(lr2021.drain_payload(), lr2021.drain_level(), CoarseCounts(get_time_since_boot_us()),
+                                  true, num_stamped > 0 ? stamps : nullptr, num_stamped > 0 ? stamped : nullptr);
+                lr2021.FinishRxDrain();
+                break;
+            }
             uint64_t stamp_ticks = 0;
-            const bool stamped =
-                mlat_active_ && PairMlatSweep(lr2021.drain_level() / LR2021::kOokFifoPacketLenBytes, &stamp_ticks);
+            const bool stamped = mlat_active_ && PairMlatSweep(num_packets, &stamp_ticks);
             ParseLR2021RxFifo(lr2021.drain_payload(), lr2021.drain_level(),
                               stamped ? stamp_ticks : CoarseCounts(get_time_since_boot_us()),
                               mlat_enabled_ && !stamped);
@@ -847,7 +941,9 @@ bool ADSBee::UpdateLR2021() {
             break;
         }
         case LR2021::DrainResult::kNoData:
-            if (mlat_active_) {
+            if (mlat_active_ && mlat_scheme_ != 0) {
+                PairMlatBatch(0, nullptr, nullptr);
+            } else if (mlat_active_) {
                 uint64_t stamp_ticks = 0;
                 PairMlatSweep(0, &stamp_ticks);  // An empty read places pending sync events too.
             }
@@ -867,6 +963,8 @@ bool ADSBee::UpdateLR2021() {
             // kIdle / kInProgress: nothing to consume this iteration.
             break;
     }
+
+    ArmMlatClear();  // Bus free and BUSY low: the uDMA clear chain may run until the next SPI user.
 
     // RX health ladder. Continuous RX is armed only when the receiver config is applied; if the chip
     // ever leaves RX (or a config attempt failed and left the SPI closed), the drain just polls an
@@ -931,7 +1029,7 @@ bool ADSBee::UpdateLR2021() {
 }
 
 void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_48mhz_64bit_counts,
-                               bool no_mlat_timestamp) {
+                               bool no_mlat_timestamp, const uint64_t* stamps, const bool* stamped) {
     // The FIFO packet length depends on the preamble mode: DF17 mode captures a shorter
     // remainder because the detector consumed the preamble + DF17 header bits.
     const bool df17_mode = LR2021::IsOokDF17PreambleMode(r1090_preamble_mode_);
@@ -955,6 +1053,10 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
         RawModeSPacket raw_packet(rx_word_buf, RawModeSPacket::kExtendedSquitterPacketNumWords32);
         raw_packet.mlat_48mhz_64bit_counts = mlat_48mhz_64bit_counts;
         raw_packet.no_mlat_timestamp = no_mlat_timestamp;
+        if (stamps != nullptr && i < MlatPairer::kMaxBatchPackets && stamped[i]) {
+            raw_packet.mlat_48mhz_64bit_counts = stamps[i];
+            raw_packet.no_mlat_timestamp = false;
+        }
         lr2021_frames_since_valid_++;  // Zeroed on any valid decode; feeds the validity watchdog.
         // Record demod + raw frame metrics (valid frames are recorded during dictionary
         // ingestion). All LR2021 captures are 112-bit extended-squitter-length frames.

@@ -3,6 +3,7 @@
 #include "aircraft_dictionary.hh"
 #include "bsp.hh"
 #include "lr2021.hh"
+#include "mlat/mlat_clear_dma.hh"
 #include "mlat/mlat_pairing.hh"
 #include "settings.hh"
 
@@ -46,6 +47,20 @@ class ADSBee {
     // time. Off: every packet carries the time its FIFO read was parsed, unmarked. Reconfigures the receiver.
     bool SetMLATEnabled(bool enabled);
     bool MLATIsEnabled() const { return mlat_enabled_; }
+    // t-0421 prototype: 0 = sweep clear + timestamp (#319), 1 = uDMA clear per edge + count pairing, 2 = 1 with a
+    // timestamp per read.
+    bool SetMlatScheme(uint8_t scheme);
+    uint8_t mlat_scheme() const { return mlat_scheme_; }
+    struct MlatClearStats {
+        uint32_t edges = 0;            // Edges captured.
+        uint32_t clears = 0;           // Clears the chain finished (NSS high).
+        uint32_t extra_clears = 0;     // Clears with no new edge since the previous clear.
+        uint32_t latency_max_ticks = 0;
+        uint64_t latency_sum_ticks = 0;
+        uint32_t latency_hist[8] = {};  // Edge to NSS high: <10, <15, <20, <50, <100, <200, <500, >=500 us.
+        uint32_t clear_overruns = 0;
+    };
+    MlatClearStats mlat_clear_stats;
     // Reported and reset via AT+RX_STATS.
     const MlatPairer::Counters& mlat_counters() const { return mlat_pairer_.counters(); }
     uint32_t mlat_capture_overruns = 0;  // Capture ring overflows: edges lost, nothing stamped across them.
@@ -54,6 +69,8 @@ class ADSBee {
         mlat_pairer_.ResetCounters();
         mlat_capture_overruns = 0;
         mlat_timebase_restarts = 0;
+        mlat_clear_stats = MlatClearStats();
+        mlat_clear_dma::ResetCounters();
     }
     // Bracket code that drives the LR2021 directly (e.g. the AT+TEST hardware unit tests). Begin disarms the LR2021
     // interrupts. End re-applies the receiver config (honoring AT+LR_ENABLE and AT+RX_ENABLE) and returns false if
@@ -169,7 +186,7 @@ class ADSBee {
     // Every packet in the batch gets mlat_48mhz_64bit_counts and no_mlat_timestamp. With MLAT timestamps off
     // the counts are the IRQ-edge time for chain slots and the parse time for loop-drain payloads.
     void ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_48mhz_64bit_counts,
-                           bool no_mlat_timestamp);
+                           bool no_mlat_timestamp, const uint64_t* stamps = nullptr, const bool* stamped = nullptr);
     // (Re)applies the current receiver configuration (sync mode, gain, CRC filter) to the LR2021.
     bool ApplyReceiverConfig();
 
@@ -199,6 +216,12 @@ class ADSBee {
     // frame); every packet is then marked no_mlat_timestamp.
     bool mlat_enabled_ = false;
     bool mlat_active_ = false;
+    uint8_t mlat_scheme_ = 0;
+    // Recent edges and the last edge a clear was matched to, for the clear latency statistics.
+    static constexpr uint16_t kMlatEdgeHistory = 32;
+    uint64_t mlat_edge_history_[kMlatEdgeHistory] = {};
+    uint16_t mlat_edge_history_count_ = 0;
+    uint64_t mlat_last_cleared_edge_ = 0;
     // Shortest time between sweep starts while MLAT is active. Only a packet alone in its FIFO read can be
     // stamped, so a shorter interval stamps more packets, and costs reception: the LR2021 can miss a preamble
     // while it serves a command.
@@ -215,6 +238,9 @@ class ADSBee {
     // Pairs the loop drain sweep that just completed with num_packets packets. True: its one packet gets
     // *stamp_ticks.
     bool PairMlatSweep(uint16_t num_packets, uint64_t* stamp_ticks);
+    // Schemes 1 and 2: pairs a read of num_packets packets. Returns how many got stamps (stamped[i], stamps[i]).
+    uint16_t PairMlatBatch(uint16_t num_packets, uint64_t* stamps, bool* stamped);
+    void ArmMlatClear();
     // A FIFO read that is never paired: marks its packets and keeps earlier sync events from later packets.
     void BreakMlat(uint16_t num_packets);
     // Receive time for a packet without an MLAT timestamp, on the time base the stamped packets use.
