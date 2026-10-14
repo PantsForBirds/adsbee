@@ -37,6 +37,7 @@
  *   5   | rf_freq[7:0]
  */
 bool LR2021::SetRfFrequency(uint32_t rf_freq) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 6;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -69,6 +70,7 @@ bool LR2021::SetRfFrequency(uint32_t rf_freq) {
  *   2   | rx_path & 0x1
  */
 bool LR2021::SetRxPath(RxPath rx_path) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -102,6 +104,7 @@ bool LR2021::SetRxPath(RxPath rx_path) {
  *   3   | rx_boost & 0x7
  */
 bool LR2021::SetRxPathAdv(RxPath rx_path, RxBoost rx_boost) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -136,6 +139,7 @@ bool LR2021::SetRxPathAdv(RxPath rx_path, RxBoost rx_boost) {
  *   3   | pa_lf_slices & 0xF
  */
 bool LR2021::SetPaConfig(PaSel pa_sel, PaLfMode pa_lf_mode, uint8_t pa_lf_duty_cycle, uint8_t pa_lf_slices) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -169,6 +173,7 @@ bool LR2021::SetPaConfig(PaSel pa_sel, PaLfMode pa_lf_mode, uint8_t pa_lf_duty_c
  */
 bool LR2021::SetPaConfigAdv(PaSel pa_sel, PaLfMode pa_lf_mode, uint8_t pa_lf_duty_cycle, uint8_t pa_lf_slices,
                             uint8_t pa_hf_duty_cycle) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 5;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -206,6 +211,7 @@ bool LR2021::SetPaConfigAdv(PaSel pa_sel, PaLfMode pa_lf_mode, uint8_t pa_lf_dut
  *   3   | ramp_time
  */
 bool LR2021::SetTxParams(int8_t tx_power, RampTime ramp_time) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -239,6 +245,7 @@ bool LR2021::SetTxParams(int8_t tx_power, RampTime ramp_time) {
  *   2   | fallback_mode & 0x3
  */
 bool LR2021::SetRxTxFallbackMode(FallbackMode fallback_mode) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -271,6 +278,7 @@ bool LR2021::SetRxTxFallbackMode(FallbackMode fallback_mode) {
  *   2   | packet_type
  */
 bool LR2021::SetPacketType(PacketType packet_type) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -303,6 +311,7 @@ bool LR2021::SetPacketType(PacketType packet_type) {
  *   2   | stop_on_preamble ? 1 : 0
  */
 bool LR2021::SetStopTimeout(bool stop_on_preamble) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -334,6 +343,7 @@ bool LR2021::SetStopTimeout(bool stop_on_preamble) {
  *   1   | 0x0A
  */
 bool LR2021::ResetRxStats() {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 2;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -357,6 +367,7 @@ bool LR2021::ResetRxStats() {
  * SetRx (opcode 0x020C, 2 bytes) – uses default timeout
  */
 bool LR2021::SetRx() {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 2;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -388,6 +399,7 @@ bool LR2021::SetRx() {
  *   4   | rx_timeout[7:0]
  */
 bool LR2021::SetRxAdv(uint32_t rx_timeout) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 5;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -414,6 +426,7 @@ bool LR2021::SetRxAdv(uint32_t rx_timeout) {
  * SetTx (opcode 0x020D, 2 bytes) – uses default timeout
  */
 bool LR2021::SetTx() {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 2;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -445,6 +458,7 @@ bool LR2021::SetTx() {
  *   4   | tx_timeout[7:0]
  */
 bool LR2021::SetTxAdv(uint32_t tx_timeout) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 5;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -477,6 +491,7 @@ bool LR2021::SetTxAdv(uint32_t tx_timeout) {
  *   2   | test_mode
  */
 bool LR2021::SetTxTestMode(TxTestMode test_mode) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -509,6 +524,7 @@ bool LR2021::SetTxTestMode(TxTestMode test_mode) {
  *   2   | pa_sel & 0x1
  */
 bool LR2021::SelPa(PaSel pa_sel) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -547,6 +563,7 @@ bool LR2021::SelPa(PaSel pa_sel) {
  *   8   | (use_lora_cad ? 16 : 0) | dram_ret & 0x7
  */
 bool LR2021::SetRxDutyCycle(uint32_t rx_max_time, uint32_t cycle_time, bool use_lora_cad, uint8_t dram_ret) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 9;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -588,6 +605,7 @@ bool LR2021::SetRxDutyCycle(uint32_t rx_max_time, uint32_t cycle_time, bool use_
  *   9   | delay[7:0]
  */
 bool LR2021::SetAutoRxTx(bool clear, AutoTxrxMode auto_txrx_mode, uint32_t timeout, uint32_t delay) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 10;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -623,6 +641,7 @@ bool LR2021::SetAutoRxTx(bool clear, AutoTxrxMode auto_txrx_mode, uint32_t timeo
  *   2   | power_offset & 0x3F
  */
 bool LR2021::SetPowerOffset(uint8_t power_offset) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -660,6 +679,7 @@ bool LR2021::SetPowerOffset(uint8_t power_offset) {
  *   7   | tx_timeout[7:0]
  */
 bool LR2021::SetDefaultRxTxTimeout(uint32_t rx_timeout, uint32_t tx_timeout) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 8;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -693,6 +713,7 @@ bool LR2021::SetDefaultRxTxTimeout(uint32_t rx_timeout, uint32_t tx_timeout) {
  *   2   | (timestamp_index & 0x3) << 4 | timestamp_source & 0xF
  */
 bool LR2021::SetTimestampSource(TimestampIndex timestamp_index, TimestampSource timestamp_source) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -728,6 +749,7 @@ bool LR2021::SetTimestampSource(TimestampIndex timestamp_index, TimestampSource 
  *   4   | duration[7:0]
  */
 bool LR2021::SetCca(uint32_t duration) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 5;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -757,6 +779,7 @@ bool LR2021::SetCca(uint32_t duration) {
  *   5   | gain
  */
 bool LR2021::SetCcaAdv(uint32_t duration, uint8_t gain) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 6;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -790,6 +813,7 @@ bool LR2021::SetCcaAdv(uint32_t duration, uint8_t gain) {
  *   2   | gain_step & 0xF
  */
 bool LR2021::SetAgcGainManual(uint8_t gain_step) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -829,6 +853,7 @@ bool LR2021::SetAgcGainManual(uint8_t gain_step) {
  *   9   | trx_timeout[7:0]
  */
 bool LR2021::SetCadParams(uint32_t cad_timeout, uint8_t threshold, ExitMode exit_mode, uint32_t trx_timeout) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 10;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -858,6 +883,7 @@ bool LR2021::SetCadParams(uint32_t cad_timeout, uint8_t threshold, ExitMode exit
  * SetCad (opcode 0x021C, 2 bytes)
  */
 bool LR2021::SetCad() {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 2;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -893,6 +919,7 @@ bool LR2021::SetCad() {
  *   [2]    packet_type
  */
 bool LR2021::GetPacketType(PacketTypeRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) {
         CONSOLE_ERROR("LR2021::GetPacketType", "rsp_out is null.");
         return false;
@@ -950,6 +977,7 @@ bool LR2021::GetPacketType(PacketTypeRsp* rsp_out) {
  * Actual signal power = -rssi/2 (dBm).
  */
 bool LR2021::GetRssiInst(RssiInstRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) {
         CONSOLE_ERROR("LR2021::GetRssiInst", "rsp_out is null.");
         return false;
@@ -1003,6 +1031,7 @@ bool LR2021::GetRssiInst(RssiInstRsp* rsp_out) {
  *   [2:3]  pkt_length (big-endian)
  */
 bool LR2021::GetRxPktLength(RxPktLengthRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) {
         CONSOLE_ERROR("LR2021::GetRxPktLength", "rsp_out is null.");
         return false;
@@ -1058,6 +1087,7 @@ bool LR2021::GetRxPktLength(RxPktLengthRsp* rsp_out) {
  *   [2:5]  timestamp (big-endian, HF clock ticks)
  */
 bool LR2021::GetTimestampValue(TimestampIndex timestamp_index, TimestampValueRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) {
         CONSOLE_ERROR("LR2021::GetTimestampValue", "rsp_out is null.");
         return false;
@@ -1121,6 +1151,7 @@ bool LR2021::GetTimestampValue(TimestampIndex timestamp_index, TimestampValueRsp
  * Actual power = -rssi/2 (dBm) for each value.
  */
 bool LR2021::GetCcaResult(CcaResultRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) {
         CONSOLE_ERROR("LR2021::GetCcaResult", "rsp_out is null.");
         return false;

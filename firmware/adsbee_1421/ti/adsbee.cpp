@@ -777,8 +777,8 @@ bool ADSBee::UpdateLR2021() {
     // slice failing CRC -- reception looks dead while the chip-side counters keep climbing). Flush the
     // FIFO to realign, then clear the (possibly re-latched) FIFO sub-flags and the global IRQ latch so
     // edge generation recovers. LR_IRQ is disarmed around the sequence so a fresh edge can't start a
-    // chain between the commands; each command's BeginTransaction pumps any in-flight drain/chain to
-    // quiescence first. Already-staged data is still parsed: slices from before the tear are good, the
+    // chain between the commands; each command's bus lock waits for any in-flight drain/chain to
+    // finish first. Already-staged data is still parsed: slices from before the tear are good, the
     // rest fail CRC harmlessly.
     if (lr2021.fifo_overflow_pending) {
         GPIO_disableInt(bsp.kLR2021IrqPin);

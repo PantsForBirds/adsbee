@@ -350,6 +350,7 @@ class LR2021 {
     volatile uint32_t fifo_overflow_count = 0;     // FIFO overflow sub-flag observations (either drain path).
     volatile uint32_t drain_dma_timeouts = 0;      // Loop-drain DMA completions that never arrived (cancelled).
     volatile uint32_t irq_stale_edges = 0;         // Latched LR_IRQ edges ignored because the line had dropped.
+    volatile uint32_t irq_drain_defer_sync = 0;    // Edge deferred: a synchronous command held the bus.
     // Latched when either drain tail observes the FIFO overflow sub-flag: the FIFO byte stream may be
     // torn mid-packet, and 14-byte-aligned reads would stay misaligned (every slice failing CRC) until
     // the FIFO is flushed. Set from the chain SWI or the loop-drain thread parse; cleared only by the
@@ -1408,6 +1409,28 @@ class LR2021 {
     /** Drives NSS high, ending the current SPI frame. */
     void EndTransaction();
 
+    // Synchronous bus ownership (lr2021_drain_state.hh LR2021SyncBus). Every command holds a BusLock from its
+    // request frame through its response frame, so no drain or chain frame can come between them. Acquiring waits
+    // for (and advances) a drain or chain in flight; an LR_IRQ edge while held starts the chain at release. A frame
+    // outside a BusLock holds the bus for itself only.
+    bool AcquireBus();
+    void ReleaseBus();
+    class BusLock {
+       public:
+        explicit BusLock(LR2021* lr) : lr_(lr), held_(lr->AcquireBus()) {}
+        ~BusLock() {
+            if (held_) {
+                lr_->ReleaseBus();
+            }
+        }
+        BusLock(const BusLock&) = delete;
+        BusLock& operator=(const BusLock&) = delete;
+
+       private:
+        LR2021* lr_;
+        bool held_;  // False only on abort: BeginTransaction then fails too.
+    };
+
     /**
      * Decodes a raw 16-bit Stat word into last_stat_.
      *
@@ -1555,6 +1578,10 @@ class LR2021 {
     bool drain_fifo_full_ = false;
     volatile bool kept_read_pending_ = false;  // Set by the chain (HWI/SWI) on a takeover, cleared by ReleaseKeptRead().
     volatile bool skipped_edge_pending_ = false;  // HandleIrqLine() skipped an edge that RetrySkippedEdge() retries.
+    LR2021SyncBus sync_bus_;
+    bool frame_holds_bus_ = false;  // BeginTransaction() acquired the bus for one frame outside a BusLock.
+    // A held command read or cleared the FIFO: an edge skipped before it no longer guarantees a full threshold.
+    bool sync_popped_fifo_ = false;
     const char* drain_error_str_ = nullptr;
 
     // Synchronous shim state (see SPITransfer() in lr2021_ll.cpp).

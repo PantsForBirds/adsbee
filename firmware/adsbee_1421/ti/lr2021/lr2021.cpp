@@ -1,6 +1,8 @@
 #include "lr2021.hh"
 #include "mlat/mlat_clear_dma.hh"
 
+#include <ti/drivers/dpl/HwiP.h>
+
 #include <cstring>
 
 #include "comms.hh"  // For debug logging.
@@ -147,31 +149,71 @@ bool LR2021::WaitUntilReady(uint32_t timeout_ms) {
     return true;
 }
 
-bool LR2021::BeginTransaction() {
-    // Bus-ownership guard: a synchronous command may be issued (AT handlers, config paths) while the
-    // async RX drain is mid-sequence, since a drain spans main-loop iterations. Pump the drain to a
-    // quiescent state (idle / data-ready / error: no DMA in flight, NSS high) so the two can't
-    // interleave NSS frames. Bounded: in-flight DMA completes in microseconds and every BUSY wait has
-    // its own kBusyTimeoutMs, so the worst case is the tail of one drain sequence (~sub-millisecond).
-    while (drain_state_ != DrainState::kIdle && drain_state_ != DrainState::kDataReady &&
-           drain_state_ != DrainState::kError) {
+bool LR2021::AcquireBus() {
+    // Every synchronous command reaches here (BusLock, or BeginTransaction for a frame outside one). A drain or chain
+    // mid-sequence is advanced to idle or a terminal state first: in-flight DMA completes in microseconds and every
+    // BUSY wait has its own timeout, so this waits for the tail of one sequence at most (~sub-millisecond). The claim
+    // itself runs with interrupts off, so no LR_IRQ edge can start a chain between the check and the claim.
+    while (true) {
         if (abort_requested_) {
             return false;
         }
+        uintptr_t key = HwiP_disable();
+        bool acquired = sync_bus_.TryAcquire(drain_state_);
+        if (acquired) {
+            // A loop-drain FIFO read can leave the BUSY-fall interrupt armed to arm the uDMA clear: that fall could
+            // come between this command's request and response frames. UpdateLR2021 arms the clear again.
+            mlat_arm_on_busy_fall_ = false;
+        }
+        HwiP_restore(key);
+        if (acquired) {
+            return true;
+        }
         ServiceRxDrain();
+    }
+}
+
+void LR2021::ReleaseBus() {
+    uintptr_t key = HwiP_disable();
+    bool released = sync_bus_.Release();
+    if (released && sync_popped_fifo_) {
+        // The line can stay latched over fewer than kIrqDrainThresholdBytes: no blind chain read. The loop drain
+        // sees the line high and runs the clear tail.
+        sync_popped_fifo_ = false;
+        skipped_edge_pending_ = false;
+    }
+    HwiP_restore(key);
+    if (released) {
+        RetrySkippedEdge();  // An edge that came while the bus was held starts its chain now.
+    }
+}
+
+bool LR2021::BeginTransaction() {
+    if (sync_bus_.depth() == 0) {
+        if (!AcquireBus()) {
+            return false;
+        }
+        frame_holds_bus_ = true;
     }
     mlat_clear_dma::Disarm();  // The uDMA clear shares the bus; a clear in progress ends with BUSY high.
     // Always verify the chip is idle before asserting NSS.  Per §5.4.1.1 the
     // LR2021 will immediately raise BUSY once it sees the NSS falling edge, so
     // checking BUSY *after* asserting NSS would race with the hardware.
     if (!WaitUntilReady()) {
+        EndTransaction();
         return false;
     }
     SetNSS(false);
     return true;
 }
 
-void LR2021::EndTransaction() { SetNSS(true); }
+void LR2021::EndTransaction() {
+    SetNSS(true);
+    if (frame_holds_bus_) {
+        frame_holds_bus_ = false;
+        ReleaseBus();
+    }
+}
 
 void LR2021::ParseStat(uint16_t raw) {
     // Table 6-38:

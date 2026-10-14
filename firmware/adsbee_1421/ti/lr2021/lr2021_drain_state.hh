@@ -79,3 +79,45 @@ constexpr bool LR2021ChainRetriesSkippedEdge(LR2021DrainState s) {
     return s == LR2021DrainState::kLevelCmd || s == LR2021DrainState::kLevelRsp || s == LR2021DrainState::kIrqRsp ||
            s == LR2021DrainState::kDataReady;
 }
+
+// Whether a synchronous command may take the bus with the drain in state s: no drain frame or chain on the bus and
+// no loop drain mid-sequence (only idle or a terminal state).
+constexpr bool LR2021SyncMayTakeBus(LR2021DrainState s) {
+    return s == LR2021DrainState::kIdle || s == LR2021DrainState::kDataReady || s == LR2021DrainState::kError;
+}
+
+// Synchronous command ownership of the LR2021 bus, from the request frame through the BUSY wait to the response
+// frame. Holds nest (a command inside a held sequence). While owned, an LR_IRQ edge defers the chain until Release().
+class LR2021SyncBus {
+   public:
+    // Thread level. The outermost acquire runs with interrupts off. False: a drain or chain is mid-sequence; advance
+    // it and retry.
+    bool TryAcquire(LR2021DrainState s) {
+        if (depth_ > 0) {
+            depth_++;
+            return true;
+        }
+        if (!LR2021SyncMayTakeBus(s)) {
+            return false;
+        }
+        depth_ = 1;
+        owned_ = true;
+        return true;
+    }
+    // Thread level, interrupts off for the outermost release. True when the outermost hold ended: retry an edge
+    // that was deferred.
+    bool Release() {
+        if (depth_ == 0 || --depth_ > 0) {
+            return false;
+        }
+        owned_ = false;
+        return true;
+    }
+    // Read by the GPIO HWIs.
+    bool owned() const { return owned_; }
+    uint8_t depth() const { return depth_; }
+
+   private:
+    volatile bool owned_ = false;
+    uint8_t depth_ = 0;  // Thread only.
+};

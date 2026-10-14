@@ -37,6 +37,7 @@
  * @retval false  Invalid arguments, SPI error, or device reported non-OK status.
  */
 bool LR2021::WriteTxFifo(const uint8_t* buffer, size_t len) {
+    BusLock bus(this);
     if (buffer == nullptr || len == 0 || len > kRxFifoMaxDepthBytes) {
         CONSOLE_ERROR("LR2021::WriteTxFifo", "Invalid arguments: len=%u.", static_cast<unsigned>(len));
         return false;
@@ -79,6 +80,7 @@ bool LR2021::WriteTxFifo(const uint8_t* buffer, size_t len) {
  * @retval false  Invalid arguments, SPI error, or device reported an error status.
  */
 bool LR2021::ReadRxFifo(uint8_t* buffer, size_t len) {
+    BusLock bus(this);
     if (buffer == nullptr || len == 0 || len > kRxFifoMaxDepthBytes) {
         CONSOLE_ERROR("LR2021::ReadRxFifo", "Invalid arguments: len=%u.", static_cast<unsigned>(len));
         return false;
@@ -94,6 +96,7 @@ bool LR2021::ReadRxFifo(uint8_t* buffer, size_t len) {
         CONSOLE_ERROR("LR2021::ReadRxFifo", "Failed to begin SPI transaction.");
         return false;
     }
+    sync_popped_fifo_ = true;
     SPITransfer(opcode_tx, opcode_rx, sizeof(opcode_tx));
     ParseStat(static_cast<uint16_t>(opcode_rx[0] << 8) | opcode_rx[1]);
 

@@ -15,6 +15,9 @@
 // the loop drain's ReadRxFifo frame (HandLoopTailToChain). A read the loop drain had completed is kept for the main
 // loop (kept_read_pending()).
 //
+// A synchronous command owns the bus from its request frame to its response frame (LR2021::BusLock): an edge while
+// it holds the bus starts no chain, and ReleaseBus() retries it.
+//
 // The inter-frame BUSY pulses are absorbed by hardware edges instead of CPU spins. Each GPIO handler
 // is a few microseconds; that matters because GPIO HWIs (0xC0) preempt the UAT RF SWI's ~15 us
 // CMD_PROP_SET_LEN deadline. The main loop parses filled slots later (ADSBee::UpdateLR2021 ->
@@ -133,6 +136,13 @@ void LR2021::HandleIrqLine() {
         // would blind-read 126 bytes from a FIFO that may hold fewer, popping the read pointer past
         // the write pointer and tearing the stream.
         irq_stale_edges = irq_stale_edges + 1;
+        return;
+    }
+    if (sync_bus_.owned()) {
+        // A synchronous command holds the bus from its request frame to its response frame: a chain frame between
+        // them would take the response. ReleaseBus() retries this edge (the line stays latched).
+        irq_drain_defer_sync = irq_drain_defer_sync + 1;
+        skipped_edge_pending_ = true;
         return;
     }
     IrqDrainSlot& slot = irq_slots_[irq_slot_fill_idx_];

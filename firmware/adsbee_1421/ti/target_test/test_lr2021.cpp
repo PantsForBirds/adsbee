@@ -489,8 +489,8 @@ UTEST(LR2021, AsyncRxDrainCompletesAndYieldsBus) {
     }
     ASSERT_TRUE(adsbee.lr2021.DrainIdle());
 
-    // Start another drain and immediately issue a synchronous command: BeginTransaction's bus-ownership
-    // guard must pump the drain to a quiescent state so the two never interleave NSS frames.
+    // Start another drain and immediately issue a synchronous command: its bus lock must pump the drain to a
+    // quiescent state so the two never interleave NSS frames.
     ASSERT_TRUE(adsbee.lr2021.StartRxDrain());
     LR2021::StatusRsp status;
     ASSERT_TRUE(adsbee.lr2021.GetStatus(&status));

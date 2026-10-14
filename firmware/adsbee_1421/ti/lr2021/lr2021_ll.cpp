@@ -239,6 +239,7 @@ bool LR2021::SequenceStepFailed(const char* sequence, const char* step) {
 }
 
 bool LR2021::CheckLastCommandStatus(const char* observer) {
+    BusLock bus(this);
     uint8_t tx_buf[2];
     uint8_t rx_buf[2] = {0, 0};
     PackU16(tx_buf, kOpcodeGetStatus);

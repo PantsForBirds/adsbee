@@ -24,6 +24,7 @@
  *   N*4+4| DataN[7:0]          | 0x00
  */
 bool LR2021::WriteRegMem32(uint32_t addr, const uint32_t* data, size_t num_words) {
+    BusLock bus(this);
     if (data == nullptr || num_words == 0 || num_words > kMaxBlockWords) {
         CONSOLE_ERROR("LR2021::WriteRegMem32", "Invalid arguments: num_words=%u.", static_cast<unsigned>(num_words));
         return false;
@@ -81,6 +82,7 @@ bool LR2021::WriteRegMem32(uint32_t addr, const uint32_t* data, size_t num_words
  *  12   | Data[7:0]           | 0x00
  */
 bool LR2021::WriteRegMemMask32(uint32_t addr, uint32_t mask, uint32_t data) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 13;  // 2 + 3 + 4 + 4
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -138,6 +140,7 @@ bool LR2021::WriteRegMemMask32(uint32_t addr, uint32_t mask, uint32_t data) {
  *   N*4+5  | 0x00                | IrqStatus[7:0]
  */
 bool LR2021::ReadRegMem32(uint32_t addr, uint32_t* data, size_t num_words) {
+    BusLock bus(this);
     if (data == nullptr || num_words == 0 || num_words > kMaxBlockWords) {
         CONSOLE_ERROR("LR2021::ReadRegMem32", "Invalid arguments: num_words=%u.", static_cast<unsigned>(num_words));
         return false;

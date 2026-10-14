@@ -36,6 +36,7 @@
  *   [2:5]  IrqStatus (big-endian)
  */
 bool LR2021::GetStatus(StatusRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -89,6 +90,7 @@ bool LR2021::GetStatus(StatusRsp* rsp_out) {
  *   [3]    minor version
  */
 bool LR2021::GetVersion(VersionRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -142,6 +144,7 @@ bool LR2021::GetVersion(VersionRsp* rsp_out) {
  *   [2:3]  error_flags (big-endian, 16-bit)
  */
 bool LR2021::GetErrors(ErrorsRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -194,6 +197,7 @@ bool LR2021::GetErrors(ErrorsRsp* rsp_out) {
  *   [2:5]  irq_flags (big-endian, 32-bit)
  */
 bool LR2021::GetAndClearIrq(GetAndClearIrqRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -247,6 +251,7 @@ bool LR2021::GetAndClearIrq(GetAndClearIrqRsp* rsp_out) {
  *   [3]    tx_flags
  */
 bool LR2021::GetFifoIrqFlags(FifoIrqFlagsRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -300,6 +305,7 @@ bool LR2021::GetFifoIrqFlags(FifoIrqFlagsRsp* rsp_out) {
  *   [2:3]  level in bytes (big-endian)
  */
 bool LR2021::GetRxFifoLevel(FifoLevelRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -352,6 +358,7 @@ bool LR2021::GetRxFifoLevel(FifoLevelRsp* rsp_out) {
  *   [2:3]  level in bytes (big-endian)
  */
 bool LR2021::GetTxFifoLevel(FifoLevelRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -410,6 +417,7 @@ bool LR2021::GetTxFifoLevel(FifoLevelRsp* rsp_out) {
  *   [2:3]  value (big-endian; interpretation depends on vbat_format)
  */
 bool LR2021::GetVBat(VbatFormat vbat_format, AdcRes adc_res, VBatRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -475,6 +483,7 @@ bool LR2021::GetVBat(VbatFormat vbat_format, AdcRes adc_res, VBatRsp* rsp_out) {
  *   if buf[2] bit 7 set: temp = raw - 8192
  */
 bool LR2021::GetTemp(TempSrc temp_src, AdcRes adc_res, TempRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -534,6 +543,7 @@ bool LR2021::GetTemp(TempSrc temp_src, AdcRes adc_res, TempRsp* rsp_out) {
  *   [2:5]  random number (big-endian, 32-bit)
  */
 bool LR2021::GetRandomNumber(RandomNumberRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -590,6 +600,7 @@ bool LR2021::GetRandomNumber(RandomNumberRsp* rsp_out) {
  * Frame 2 layout: same as GetRandomNumber.
  */
 bool LR2021::GetRandomNumberAdv(uint8_t source, RandomNumberRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -644,6 +655,7 @@ bool LR2021::GetRandomNumberAdv(uint8_t source, RandomNumberRsp* rsp_out) {
  *   [3]    tx_flags
  */
 bool LR2021::GetAndClearFifoIrqFlags(FifoIrqFlagsRsp* rsp_out) {
+    BusLock bus(this);
     if (rsp_out == nullptr) return false;
 
     // Frame 1
@@ -697,6 +709,7 @@ bool LR2021::GetAndClearFifoIrqFlags(FifoIrqFlagsRsp* rsp_out) {
  * ClearErrors (opcode 0x0111, 2 bytes)
  */
 bool LR2021::ClearErrors() {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 2;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -729,6 +742,7 @@ bool LR2021::ClearErrors() {
  *   3   | (dio_func & 0xF) << 4 | (pull_drive & 0xF)
  */
 bool LR2021::SetDioFunction(DioNum dio_num, DioFunc dio_func, PullDrive pull_drive) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -764,6 +778,7 @@ bool LR2021::SetDioFunction(DioNum dio_num, DioFunc dio_func, PullDrive pull_dri
  *   3   | tx_hf<<4 | rx_hf<<3 | tx_lf<<2 | rx_lf<<1 | standby
  */
 bool LR2021::SetDioRfSwitchConfig(DioNum dio_num, bool tx_hf, bool rx_hf, bool tx_lf, bool rx_lf, bool standby) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -799,6 +814,7 @@ bool LR2021::SetDioRfSwitchConfig(DioNum dio_num, bool tx_hf, bool rx_hf, bool t
  *   3   | tx_flags
  */
 bool LR2021::ClearFifoIrqFlags(uint8_t rx_flags, uint8_t tx_flags) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -836,6 +852,7 @@ bool LR2021::ClearFifoIrqFlags(uint8_t rx_flags, uint8_t tx_flags) {
  *   6   | irqs[7:0]
  */
 bool LR2021::SetDioIrqConfig(DioNum dio_num, uint32_t irqs) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 7;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -872,6 +889,7 @@ bool LR2021::SetDioIrqConfig(DioNum dio_num, uint32_t irqs) {
  *   5   | irqs[7:0]
  */
 bool LR2021::ClearIrq(uint32_t irqs) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 6;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -904,6 +922,7 @@ bool LR2021::ClearIrq(uint32_t irqs) {
  *   2   | lf_clock & 0x3
  */
 bool LR2021::ConfigLfClock(LfClock lf_clock) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -936,6 +955,7 @@ bool LR2021::ConfigLfClock(LfClock lf_clock) {
  *   2   | clk_scaling
  */
 bool LR2021::ConfigClkOutputs(ClkScaling clk_scaling) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -969,6 +989,7 @@ bool LR2021::ConfigClkOutputs(ClkScaling clk_scaling) {
  *   3   | tx_irq_enable
  */
 bool LR2021::ConfigFifoIrq(uint8_t rx_irq_enable, uint8_t tx_irq_enable) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1012,6 +1033,7 @@ bool LR2021::ConfigFifoIrq(uint8_t rx_irq_enable, uint8_t tx_irq_enable) {
  */
 bool LR2021::ConfigFifoIrqAdv(uint8_t rx_irq_enable, uint8_t tx_irq_enable, uint16_t rx_high_threshold,
                               uint16_t tx_low_threshold, uint16_t rx_low_threshold, uint16_t tx_high_threshold) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 12;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1043,6 +1065,7 @@ bool LR2021::ConfigFifoIrqAdv(uint8_t rx_irq_enable, uint8_t tx_irq_enable, uint
  * ClearRxFifo (opcode 0x011E, 2 bytes)
  */
 bool LR2021::ClearRxFifo() {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 2;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1054,6 +1077,7 @@ bool LR2021::ClearRxFifo() {
         CONSOLE_ERROR("LR2021::ClearRxFifo", "Failed to begin SPI transaction.");
         return false;
     }
+    sync_popped_fifo_ = true;
     SPITransfer(tx_buf, rx_buf, kFrameLen);
     EndTransaction();
 
@@ -1068,6 +1092,7 @@ bool LR2021::ClearRxFifo() {
  * ClearTxFifo (opcode 0x011F, 2 bytes)
  */
 bool LR2021::ClearTxFifo() {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 2;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1099,6 +1124,7 @@ bool LR2021::ClearTxFifo() {
  *   2   | simo_usage & 0x3
  */
 bool LR2021::SetRegMode(SimoUsage simo_usage) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1137,6 +1163,7 @@ bool LR2021::SetRegMode(SimoUsage simo_usage) {
 bool LR2021::SetRegModeAdv(SimoUsage simo_usage, RampTimeUnit rc2ru_unit, uint8_t rc2ru, RampTimeUnit tx2ru_unit,
                            uint8_t tx2ru, RampTimeUnit ru2rc_unit, uint8_t ru2rc, RampTimeUnit ramp_down_unit,
                            uint8_t ramp_down) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 7;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1173,6 +1200,7 @@ bool LR2021::SetRegModeAdv(SimoUsage simo_usage, RampTimeUnit rc2ru_unit, uint8_
  *   2   | pa_offset<<6 | meas_unit<<4 | aaf<<3 | pll<<2 | hf_rc<<1 | lf_rc
  */
 bool LR2021::Calibrate(bool pa_offset, bool meas_unit, bool aaf, bool pll, bool hf_rc, bool lf_rc) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1211,6 +1239,7 @@ bool LR2021::Calibrate(bool pa_offset, bool meas_unit, bool aaf, bool pll, bool 
  *   7   | freq3[7:0]
  */
 bool LR2021::CalibFe(uint16_t freq1, uint16_t freq2, uint16_t freq3) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 8;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1245,6 +1274,7 @@ bool LR2021::CalibFe(uint16_t freq1, uint16_t freq2, uint16_t freq3) {
  *   2   | (ret_en & 0xF) << 1 | clk_32k_en
  */
 bool LR2021::SetSleep(bool clk_32k_en, uint8_t ret_en) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1281,6 +1311,7 @@ bool LR2021::SetSleep(bool clk_32k_en, uint8_t ret_en) {
  *   6   | sleep_time[7:0]
  */
 bool LR2021::SetSleepAdv(bool clk_32k_en, uint8_t ret_en, uint32_t sleep_time) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 7;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1314,6 +1345,7 @@ bool LR2021::SetSleepAdv(bool clk_32k_en, uint8_t ret_en, uint32_t sleep_time) {
  *   2   | standby_mode & 0x1
  */
 bool LR2021::SetStandby(SysStandbyMode standby_mode) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1340,6 +1372,7 @@ bool LR2021::SetStandby(SysStandbyMode standby_mode) {
  * SetFs (opcode 0x0129, 2 bytes)
  */
 bool LR2021::SetFs() {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 2;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1374,6 +1407,7 @@ bool LR2021::SetFs() {
  *   5   | addr[7:0]
  */
 bool LR2021::SetAdditionalRegToRetain(uint8_t slot, uint32_t addr) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 6;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1407,6 +1441,7 @@ bool LR2021::SetAdditionalRegToRetain(uint8_t slot, uint32_t addr) {
  *   2   | enable<<3 | (eol_trim & 0x7)
  */
 bool LR2021::SetEolConfig(EolTrim eol_trim, bool enable) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1443,6 +1478,7 @@ bool LR2021::SetEolConfig(EolTrim eol_trim, bool enable) {
  *   6   | start_time[7:0]
  */
 bool LR2021::SetTcxoMode(TcxoVoltage tcxo_voltage, uint32_t start_time) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 7;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1477,6 +1513,7 @@ bool LR2021::SetTcxoMode(TcxoVoltage tcxo_voltage, uint32_t start_time) {
  *   3   | xtb & 0x3F
  */
 bool LR2021::SetXoscCpTrim(uint8_t xta, uint8_t xtb) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1512,6 +1549,7 @@ bool LR2021::SetXoscCpTrim(uint8_t xta, uint8_t xtb) {
  *   4   | delay_us
  */
 bool LR2021::SetXoscCpTrimAdv(uint8_t xta, uint8_t xtb, uint8_t delay_us) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 5;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1546,6 +1584,7 @@ bool LR2021::SetXoscCpTrimAdv(uint8_t xta, uint8_t xtb, uint8_t delay_us) {
  *   2   | ntc_en<<2 | (comp_mode & 0x3)
  */
 bool LR2021::SetTempCompCfg(bool ntc_en, CompMode comp_mode) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 3;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -1582,6 +1621,7 @@ bool LR2021::SetTempCompCfg(bool ntc_en, CompMode comp_mode) {
  *   6   | delay
  */
 bool LR2021::SetNtcParams(uint16_t ntc_r_ratio, uint16_t ntc_beta, uint8_t delay) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 7;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];

@@ -40,6 +40,7 @@
  *   7   | rx_bw
  */
 bool LR2021::SetOokModulationParams(uint32_t bitrate, OokPulseShape pulse_shape, OokRxBw rx_bw) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 8;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -71,6 +72,7 @@ bool LR2021::SetOokModulationParams(uint32_t bitrate, OokPulseShape pulse_shape,
  *   8   | ook_depth & 0x1
  */
 bool LR2021::SetOokModulationParamsAdv(uint32_t bitrate, OokPulseShape pulse_shape, OokRxBw rx_bw, OokDepth ook_depth) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 9;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -112,6 +114,7 @@ bool LR2021::SetOokModulationParamsAdv(uint32_t bitrate, OokPulseShape pulse_sha
  */
 bool LR2021::SetOokPacketParams(uint16_t pre_len_tx, OokAddrComp addr_comp, OokPktFormat pkt_format, uint16_t pld_len,
                                 OokCrc crc, OokEncoding encoding) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 8;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -154,6 +157,7 @@ bool LR2021::SetOokPacketParams(uint16_t pre_len_tx, OokAddrComp addr_comp, OokP
  *   9   | init[7:0]
  */
 bool LR2021::SetOokCrcParams(uint32_t polynom, uint32_t init) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 10;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -191,6 +195,7 @@ bool LR2021::SetOokCrcParams(uint32_t polynom, uint32_t init) {
  *   6   | (bit_order & 0x1) << 7 | nb_bits & 0x7F
  */
 bool LR2021::SetOokSyncWord(uint32_t syncword, OokBitOrder bit_order, uint8_t nb_bits) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 7;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -225,6 +230,7 @@ bool LR2021::SetOokSyncWord(uint32_t syncword, OokBitOrder bit_order, uint8_t nb
  *   3   | addr_bcast
  */
 bool LR2021::SetOokAddress(uint8_t addr_node, uint8_t addr_bcast) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 4;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -263,6 +269,7 @@ bool LR2021::SetOokAddress(uint8_t addr_node, uint8_t addr_bcast) {
  */
 bool LR2021::SetOokDetector(uint16_t preamble_pattern, uint8_t pattern_length, uint8_t pattern_num_repeats,
                             bool sw_is_raw, OokSfdKind sfd_kind, uint8_t sfd_length) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 7;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -302,6 +309,7 @@ bool LR2021::SetOokDetector(uint16_t preamble_pattern, uint8_t pattern_length, u
  *   5   | init[7:0]
  */
 bool LR2021::SetOokWhiteningParams(uint8_t bit_idx, uint16_t polynom, uint16_t init) {
+    BusLock bus(this);
     constexpr size_t kFrameLen = 6;
     uint8_t tx_buf[kFrameLen];
     uint8_t rx_buf[kFrameLen];
@@ -344,6 +352,7 @@ bool LR2021::SetOokWhiteningParams(uint8_t bit_idx, uint16_t polynom, uint16_t i
  *   [6:7]  len_error
  */
 bool LR2021::GetOokRxStats(OokRxStats* stats_out) {
+    BusLock bus(this);
     if (stats_out == nullptr) {
         CONSOLE_ERROR("LR2021::GetOokRxStats", "stats_out is null.");
         return false;
@@ -405,6 +414,7 @@ bool LR2021::GetOokRxStats(OokRxStats* stats_out) {
  *   [14:15] timeout
  */
 bool LR2021::GetOokRxStatsAdv(OokRxStatsAdv* stats_out) {
+    BusLock bus(this);
     if (stats_out == nullptr) {
         CONSOLE_ERROR("LR2021::GetOokRxStatsAdv", "stats_out is null.");
         return false;
@@ -472,6 +482,7 @@ bool LR2021::GetOokRxStatsAdv(OokRxStatsAdv* stats_out) {
  *   [7]    lqi
  */
 bool LR2021::GetOokPacketStatus(OokPacketStatus* status_out) {
+    BusLock bus(this);
     if (status_out == nullptr) {
         CONSOLE_ERROR("LR2021::GetOokPacketStatus", "status_out is null.");
         return false;
