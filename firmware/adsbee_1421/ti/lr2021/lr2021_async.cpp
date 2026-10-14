@@ -12,8 +12,9 @@
 //     and the UAT RF SWI must issue CMD_PROP_SET_LEN within ~15 us of sync detect (see
 //     sub_ghz_radio.cpp) -- nothing heavier may run in the SWI band.
 //
-// The loop drain is an UNCONDITIONAL level-read sweep: GetRxFifoLevel -> ReadRxFifo -> (only when the
-// LR_IRQ line reads high) GetAndClearFifoIrqFlags + GetAndClearIrq. It deliberately does not gate on the
+// The loop drain is an UNCONDITIONAL level-read sweep, started every ADSBee::kLR2021SweepIntervalUs:
+// GetRxFifoLevel -> ReadRxFifo -> (only when the LR_IRQ line reads high) GetAndClearFifoIrqFlags +
+// GetAndClearIrq. It deliberately does not gate on the
 // kIrqRxFifo flag: with the FIFO high threshold at kIrqDrainThresholdBytes (9 packets), sub-threshold
 // packets would otherwise never be read. The clear tail keeps the latched IRQ line (and its edge
 // generation for the IRQ-paced chain, lr2021_irq_drain.cpp) healthy whenever it is seen high.

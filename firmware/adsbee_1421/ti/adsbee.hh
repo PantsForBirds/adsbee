@@ -224,7 +224,12 @@ class ADSBee {
 
     uint32_t watchdog_timeout_sec_ = kDefaultWatchdogTimeoutSec;
 
-    // Timestamp of the current async RX drain's StartRxDrain() call, for lr2021_drain_max_us.
+    // Shortest time between the starts of two loop drain sweeps. The LR2021 can miss a preamble while it serves a
+    // command, so polling the FIFO less often receives more packets. A packet waits up to this long in the FIFO;
+    // the IRQ-paced chain empties a FIFO that reaches 9 packets sooner.
+    static constexpr uint32_t kLR2021SweepIntervalUs = 4000;
+
+    // Timestamp of the last async RX drain's StartRxDrain() call, for lr2021_drain_max_us and the sweep interval.
     uint32_t lr2021_drain_start_us_ = 0;
 
     // RX health ladder (see UpdateLR2021): the LR2021 is armed for continuous RX only when the config
