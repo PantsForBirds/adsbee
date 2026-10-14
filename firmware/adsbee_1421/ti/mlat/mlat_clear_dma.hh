@@ -4,9 +4,9 @@
 //
 // The SyncwordValid edge on LR2021 DIO5 (CC1314 DIO_13) is captured twice: GPT0A stores its time (mlat_capture),
 // and GPT0B, fed from the same port event, requests uDMA channel 10. Channel 10 runs a memory scatter-gather list:
-// NSS low, the 6-byte ClearIrq into the SPI0 TX FIFO, re-arm channel 11 and request it. Channel 11's list pops the 6
-// received bytes from the SPI0 RX FIFO, raises NSS and re-arms channel 10. Both lists ask channel 12 to store the
-// GPT0 counter in a ring (after the bytes went in, and after NSS rose).
+// NSS low, the 6-byte ClearIrq into the SPI0 TX FIFO, re-arm channel 11 and request it. Channel 11's list raises NSS,
+// asks channel 12 to store the GPT0 counter in a ring (the clear time), pops the 6 received bytes from the SPI0 RX
+// FIFO and re-arms channel 10.
 
 // Bus sharing: the chain only runs while armed. Everything else that uses the SPI (drain sweep, IRQ-paced chain,
 // synchronous commands) calls Disarm() first, which masks channel 10's request and waits for a chain in progress
@@ -33,8 +33,7 @@ void SetDelayTicks(uint32_t ticks);
 uint32_t DelayTicks();
 
 static constexpr uint16_t kRingLen = 64;
-// GPT0 counter values in pairs: bytes in the TX FIFO (start of the clear) and NSS high (end), oldest first. Same contract as
-// mlat_capture::Read().
+// Clear times (GPT0 counter just after NSS rose), oldest first. Same contract as mlat_capture::Read().
 uint16_t ReadClears(uint32_t* out, bool* overrun);
 
 struct Counters {

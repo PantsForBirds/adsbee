@@ -1552,7 +1552,7 @@ class LR2021 {
     uint8_t mlat_rx_buf_[6] = {};
     volatile bool mlat_sweep_enabled_ = false;
     volatile uint8_t mlat_scheme_ = 0;
-    volatile bool mlat_fast_arm_ = false;
+    volatile bool mlat_fast_arm_ = true;
     volatile bool mlat_arm_on_busy_fall_ = false;
     MlatSweep mlat_sweep_;
     static constexpr uint32_t kMlatSweepWaitMaxUs = 200;

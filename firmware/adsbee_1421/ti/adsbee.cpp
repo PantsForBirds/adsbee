@@ -164,7 +164,6 @@ void ADSBee::StartMlat() {
     }
     mlat_edge_history_count_ = 0;
     mlat_last_cleared_edge_ = 0;
-    mlat_clear_start_pending_ = false;
     lr2021.SetMlatSweepEnabled(true);
     mlat_active_ = true;
 }
@@ -222,26 +221,15 @@ void ADSBee::PollMlat() {
     }
     if (clear_overrun) {
         cs.clear_overruns++;
-        mlat_clear_start_pending_ = false;
     }
     for (uint16_t i = 0; i < num_clears; i++) {
         const uint64_t c = mlat_timebase_.Extend(clears[i]);
-        if (!mlat_clear_start_pending_) {
-            mlat_clear_start_ = c;  // NSS low.
-            mlat_clear_start_pending_ = true;
-            continue;
-        }
-        mlat_clear_start_pending_ = false;
-        const uint64_t start = mlat_clear_start_;
-        const uint32_t frame = static_cast<uint32_t>(c - start);
-        if (frame > cs.frame_max_ticks) cs.frame_max_ticks = frame;
-        if (frame < cs.frame_min_ticks) cs.frame_min_ticks = frame;
         cs.clears++;
         uint64_t edge = 0;
         const uint16_t n = mlat_edge_history_count_ < kMlatEdgeHistory ? mlat_edge_history_count_ : kMlatEdgeHistory;
         for (uint16_t k = 0; k < n; k++) {
             const uint64_t e = mlat_edge_history_[(mlat_edge_history_count_ - 1 - k) % kMlatEdgeHistory];
-            if (e <= start) {
+            if (e <= c) {
                 edge = e;
                 break;
             }
@@ -258,12 +246,6 @@ void ADSBee::PollMlat() {
         uint16_t b = 0;
         while (b < MlatClearStats::kHistBins - 1 && lat_ticks >= kBoundsUs[b] * MlatTimebase::kTicksPerUs) b++;
         cs.latency_hist[b]++;
-        const uint32_t start_ticks = static_cast<uint32_t>(start - edge);
-        if (start_ticks < 50 * MlatTimebase::kTicksPerUs) {
-            cs.start_sum_ticks += start_ticks;
-            cs.start_count++;
-            if (start_ticks > cs.start_max_ticks) cs.start_max_ticks = start_ticks;
-        }
         mlat_last_cleared_edge_ = edge;
     }
 }

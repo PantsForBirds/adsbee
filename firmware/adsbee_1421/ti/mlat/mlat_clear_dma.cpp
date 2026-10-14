@@ -73,12 +73,12 @@ static void BuildLists(const uint8_t* clear_cmd) {
     void* const enaset = reinterpret_cast<void*>(UDMA0_BASE + UDMA_O_SETCHANNELEN);
     void* const prialt_clr = reinterpret_cast<void*>(UDMA0_BASE + UDMA_O_CLEARCHNLPRIALT);
     void* const softreq = reinterpret_cast<void*>(UDMA0_BASE + UDMA_O_SOFTREQ);
-    // Order matters: each task costs about 1.3 us of uDMA time. NSS low and the bytes go first; the 48 bits take
-    // 4 us to shift out, which the tasks after them cover before the end list reads the RX FIFO and raises NSS.
+    // Order matters: each task costs about 1.4 us of uDMA time. NSS low and the bytes go first; the 48 bits take
+    // 4 us to shift out, which the five tasks after them cover before the end list raises NSS. The RX FIFO is
+    // emptied after NSS rises: only the next chain or the next driver transfer needs it empty.
     const tDMAControlTable clear[] = {
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kNssMask, UDMA_DST_INC_NONE, doutclr, UDMA_ARB_1, mem),
         TASK(kClearBytes, UDMA_SIZE_8, UDMA_SRC_INC_8, clear_cmd, UDMA_DST_INC_NONE, txdata, UDMA_ARB_8, mem),
-        TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kRingBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kOne, UDMA_DST_INC_NONE, &chain_busy, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &end_control, UDMA_DST_INC_NONE,
              &dmaGPT1APriControlTableEntry.ui32Control, UDMA_ARB_1, mem),
@@ -87,9 +87,9 @@ static void BuildLists(const uint8_t* clear_cmd) {
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kEndBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, UDMA_MODE_AUTO),
     };
     const tDMAControlTable end[] = {
-        TASK(kClearBytes, UDMA_SIZE_8, UDMA_SRC_INC_NONE, rxdata, UDMA_DST_INC_8, rx_sink, UDMA_ARB_8, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kNssMask, UDMA_DST_INC_NONE, doutset, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kRingBit, UDMA_DST_INC_NONE, softreq, UDMA_ARB_1, mem),
+        TASK(kClearBytes, UDMA_SIZE_8, UDMA_SRC_INC_NONE, rxdata, UDMA_DST_INC_8, rx_sink, UDMA_ARB_8, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &clear_control, UDMA_DST_INC_NONE,
              &dmaGPT0BPriControlTableEntry.ui32Control, UDMA_ARB_1, mem),
         TASK(1, UDMA_SIZE_32, UDMA_SRC_INC_NONE, &kClearBit, UDMA_DST_INC_NONE, prialt_clr, UDMA_ARB_1, mem),

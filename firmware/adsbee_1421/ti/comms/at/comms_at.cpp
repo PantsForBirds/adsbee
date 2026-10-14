@@ -436,7 +436,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 CPP_AT_PRINTF(
                     "MLAT_DMA=scheme=%u,delay=%lu,b_stamped=%lu,b_more_pkts=%lu,b_more_edges=%lu,u_mismatch=%lu,"
                     "reanchored=%lu,vetoes=%lu,edges=%lu,clears=%lu,extra_clears=%lu,lat_max=%lu,lat_sum=%lu,"
-                    "lat_h=%lu/%lu/%lu/%lu/%lu/%lu/%lu/%lu/%lu/%lu,start_max=%lu,start_sum=%lu,start_n=%lu,frame_min=%lu,frame_max=%lu,clear_ovr=%lu,kicks=%lu,disarms=%lu,dwaits=%lu,dtimeouts=%lu,"
+                    "lat_h=%lu/%lu/%lu/%lu/%lu/%lu/%lu/%lu/%lu/%lu,clear_ovr=%lu,kicks=%lu,disarms=%lu,dwaits=%lu,dtimeouts=%lu,"
                     "dwait_max_cyc=%lu,rx_flushed=%lu,fast=%u,fast_arms=%lu\r\n",
                     adsbee.mlat_scheme(), (unsigned long)mlat_clear_dma::DelayTicks(), (unsigned long)mc.batches_stamped,
                     (unsigned long)mc.batches_more_packets, (unsigned long)mc.batches_more_edges,
@@ -446,9 +446,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                     (unsigned long)cs.latency_hist[0], (unsigned long)cs.latency_hist[1], (unsigned long)cs.latency_hist[2],
                     (unsigned long)cs.latency_hist[3], (unsigned long)cs.latency_hist[4], (unsigned long)cs.latency_hist[5],
                     (unsigned long)cs.latency_hist[6], (unsigned long)cs.latency_hist[7], (unsigned long)cs.latency_hist[8],
-                    (unsigned long)cs.latency_hist[9], (unsigned long)cs.start_max_ticks,
-                    (unsigned long)cs.start_sum_ticks, (unsigned long)cs.start_count, (unsigned long)cs.frame_min_ticks,
-                    (unsigned long)cs.frame_max_ticks, (unsigned long)cs.clear_overruns,
+                    (unsigned long)cs.latency_hist[9], (unsigned long)cs.clear_overruns,
                     (unsigned long)dc.kicks, (unsigned long)dc.disarms, (unsigned long)dc.disarm_waits,
                     (unsigned long)dc.disarm_timeouts, (unsigned long)dc.disarm_wait_max_cycles,
                     (unsigned long)dc.rx_flushed_bytes, adsbee.lr2021.mlat_fast_arm() ? 1u : 0u,
