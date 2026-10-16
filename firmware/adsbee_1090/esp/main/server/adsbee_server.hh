@@ -175,6 +175,8 @@ class ADSBeeServer {
      * Broadcasts metrics message to all connected network metrics websocket clients.
      */
     void SendNetworkMetricsMessage();
+    // Sends one metrics message unless it was cut short.
+    void BroadcastNetworkMetrics(const char* message);
 
     /**
      * Broadcasts the next frames of the aircraft JSON report to all connected /aircraft websocket clients, until the
