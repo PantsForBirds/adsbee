@@ -61,6 +61,9 @@ bool s_tx_legacy_configured = false;
 bool s_tx_coded_configured = false;
 bool s_tx_legacy_want = false;     // Requested by settings (applied once the host syncs).
 bool s_tx_coded_want = false;
+// Set from ble_gap_ext_adv_start's result, so the status reports what is really on the air.
+bool s_tx_legacy_advertising = false;
+bool s_tx_coded_advertising = false;
 
 // Wraps ODID payload bytes in the ASTM Remote ID BLE Service Data AD structure and pushes them into an advertising
 // instance. Layout: [len][0x16][UUID lo][UUID hi][app code][msg counter][ODID bytes...].
@@ -134,6 +137,20 @@ bool ConfigureAdvInstance(uint8_t instance, bool legacy) {
     return true;
 }
 
+// Loads new ODID data into an instance and starts it if it isn't running. Data changes while advertising (one HCI
+// command per tick), so the scan and the other set aren't disturbed. Returns whether it is advertising afterwards.
+bool ReloadAdvInstance(uint8_t instance, const uint8_t* odid, uint16_t odid_len,
+                       RawRemoteIDPacket::Transport transport) {
+    if (!SetAdvODIDPayload(instance, odid, odid_len, transport)) return false;
+    if (ble_gap_ext_adv_active(instance)) return true;
+    int rc = ble_gap_ext_adv_start(instance, /*duration=*/0, /*max_events=*/0);
+    if (rc != 0) {
+        CONSOLE_ERROR("remote_id_ble", "ble_gap_ext_adv_start(%u) failed, rc=%d.", instance, rc);
+        return false;
+    }
+    return true;
+}
+
 // Refreshes the advertised payload for whichever transmit instances are running. Called on the transmit tick.
 void ServiceAdvertisingPayloads() {
     if (!s_tx_host_ready) return;
@@ -144,24 +161,15 @@ void ServiceAdvertisingPayloads() {
     if (s_tx_legacy_configured) {
         // BT4 legacy advertising fits exactly one 25-byte ODID message; cycle through the message types.
         uint16_t len = transmitter.BuildNextSingleMessage(buf);
-        if (len > 0) {
-            // The instance must be stopped to change its data; restart it right after.
-            ble_gap_ext_adv_stop(kAdvInstanceLegacy);
-            if (SetAdvODIDPayload(kAdvInstanceLegacy, buf, len, RawRemoteIDPacket::kTransportBT4Legacy)) {
-                ble_gap_ext_adv_start(kAdvInstanceLegacy, /*duration=*/0, /*max_events=*/0);
-            }
-        }
+        s_tx_legacy_advertising =
+            len > 0 && ReloadAdvInstance(kAdvInstanceLegacy, buf, len, RawRemoteIDPacket::kTransportBT4Legacy);
     }
 
     if (s_tx_coded_configured) {
         // BT5 Long Range extended advertising carries the whole message pack in one advertisement.
         uint16_t len = transmitter.BuildMessagePack(buf);
-        if (len > 0) {
-            ble_gap_ext_adv_stop(kAdvInstanceCoded);
-            if (SetAdvODIDPayload(kAdvInstanceCoded, buf, len, RawRemoteIDPacket::kTransportBT5LongRange)) {
-                ble_gap_ext_adv_start(kAdvInstanceCoded, /*duration=*/0, /*max_events=*/0);
-            }
-        }
+        s_tx_coded_advertising =
+            len > 0 && ReloadAdvInstance(kAdvInstanceCoded, buf, len, RawRemoteIDPacket::kTransportBT5LongRange);
     }
 }
 
@@ -175,6 +183,7 @@ void StartRequestedAdvertising() {
         ble_gap_ext_adv_stop(kAdvInstanceLegacy);
         ble_gap_ext_adv_remove(kAdvInstanceLegacy);
         s_tx_legacy_configured = false;
+        s_tx_legacy_advertising = false;
     }
 
     if (s_tx_coded_want && !s_tx_coded_configured) {
@@ -183,6 +192,7 @@ void StartRequestedAdvertising() {
         ble_gap_ext_adv_stop(kAdvInstanceCoded);
         ble_gap_ext_adv_remove(kAdvInstanceCoded);
         s_tx_coded_configured = false;
+        s_tx_coded_advertising = false;
     }
 
     // Load an initial payload (and start the instances) immediately so transmission begins without waiting a tick.
@@ -266,10 +276,20 @@ void StartExtDiscovery() {
     }
 }
 
+void OnHostReset(int reason) {
+    CONSOLE_WARNING("remote_id_ble", "Bluetooth host reset, reason=%d.", reason);
+}
+
 void OnHostSync() {
     // Controller/host are in sync; safe to start scanning and/or advertising. Either may have been requested before the
-    // host finished syncing, so both are (re)applied here.
+    // host finished syncing, so both are (re)applied here. After a host reset the controller has lost its scan and
+    // advertising sets (NimBLE still marks the sets configured), so everything is set up again.
     s_tx_host_ready = true;
+    s_scanning = false;
+    s_tx_legacy_configured = false;
+    s_tx_coded_configured = false;
+    s_tx_legacy_advertising = false;
+    s_tx_coded_advertising = false;
     if (s_scan_want) StartExtDiscovery();
     StartRequestedAdvertising();
 }
@@ -293,6 +313,7 @@ bool EnsureHostInitialized() {
         return false;
     }
     ble_hs_cfg.sync_cb = OnHostSync;
+    ble_hs_cfg.reset_cb = OnHostReset;
     nimble_port_freertos_init(HostTask);
     s_ble_initialized = true;
     return true;
@@ -363,23 +384,28 @@ void RemoteIDManager::BLETxStop() {
     ble_tx_coded_running_ = false;
 }
 
+void RemoteIDManager::BLETxUpdateStatus() {
+    status_ &= ~(kStatusTxBLELegacyActive | kStatusTxBLECodedActive | kStatusTxBlocked);
+    if (tx_blocked_by_policy_) status_ |= kStatusTxBlocked;
+    if (s_tx_legacy_advertising) status_ |= kStatusTxBLELegacyActive;
+    if (s_tx_coded_advertising) status_ |= kStatusTxBLECodedActive;
+    // Until the host syncs, nothing is on the air yet and nothing has failed either.
+    if (s_tx_host_ready && ((s_tx_legacy_want && !s_tx_legacy_advertising) ||
+                            (s_tx_coded_want && !s_tx_coded_advertising))) {
+        status_ |= kStatusTxBlocked;
+    }
+}
+
 void RemoteIDManager::BLETxServiceTick() {
-    // An instance the controller refused to configure isn't advertising.
-    if (s_tx_host_ready) {
-        if (s_tx_legacy_want && !s_tx_legacy_configured) {
-            status_ = (status_ & ~kStatusTxBLELegacyActive) | kStatusTxBlocked;
+    if (s_tx_legacy_configured || s_tx_coded_configured) {
+        // Refresh the ODID content (position moves, message counters advance) and push it into the running instances.
+        if (!tx_.RefreshFromDeviceState()) {
+            status_ |= kStatusTxNoPosition;
+            if (!tx_.PositionSourceAllowed()) status_ |= kStatusTxPositionSourceNotAllowed;
         }
-        if (s_tx_coded_want && !s_tx_coded_configured) {
-            status_ = (status_ & ~kStatusTxBLECodedActive) | kStatusTxBlocked;
-        }
+        ServiceAdvertisingPayloads();
     }
-    if (!s_tx_legacy_configured && !s_tx_coded_configured) return;
-    // Refresh the ODID content (position moves, message counters advance) and push it into the running instances.
-    if (!tx_.RefreshFromDeviceState()) {
-        status_ |= kStatusTxNoPosition;
-        if (!tx_.PositionSourceAllowed()) status_ |= kStatusTxPositionSourceNotAllowed;
-    }
-    ServiceAdvertisingPayloads();
+    BLETxUpdateStatus();
 }
 
 void RemoteIDManager::BLEReleaseIfIdle() {
@@ -399,6 +425,8 @@ void RemoteIDManager::BLEReleaseIfIdle() {
     s_scanning = false;
     s_tx_legacy_configured = false;
     s_tx_coded_configured = false;
+    s_tx_legacy_advertising = false;
+    s_tx_coded_advertising = false;
 }
 
 bool RemoteIDManager::BluetoothIsSupported() { return true; }
@@ -411,6 +439,7 @@ bool RemoteIDManager::BLETxStart(bool, bool) { return false; }
 void RemoteIDManager::BLETxStop() {}
 void RemoteIDManager::BLEReleaseIfIdle() {}
 void RemoteIDManager::BLETxServiceTick() {}
+void RemoteIDManager::BLETxUpdateStatus() {}
 bool RemoteIDManager::BluetoothIsSupported() { return false; }
 
 #endif  // CONFIG_BT_ENABLED && CONFIG_BT_NIMBLE_ENABLED

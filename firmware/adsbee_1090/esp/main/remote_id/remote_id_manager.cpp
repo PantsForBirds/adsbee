@@ -232,10 +232,7 @@ void RemoteIDManager::ReconcileTx() {
             status_ |= kStatusNotInBuild | kStatusTxBlocked;
         } else if (BLEStackUp() ||
                    HardwareCapabilities::GetInternalFreeBytes() >= BLEStartFreeBytes(kMinHeapFreeBytesForTx)) {
-            if (BLETxStart(want_ble_legacy, want_ble_coded)) {
-                if (ble_tx_legacy_running_) status_ |= kStatusTxBLELegacyActive;
-                if (ble_tx_coded_running_) status_ |= kStatusTxBLECodedActive;
-            } else {
+            if (!BLETxStart(want_ble_legacy, want_ble_coded)) {
                 status_ |= kStatusTxBlocked;
             }
         } else {
@@ -261,6 +258,9 @@ void RemoteIDManager::ReconcileTx() {
     } else {
         WiFiTxStop();
     }
+
+    tx_blocked_by_policy_ = (status_ & kStatusTxBlocked) != 0;
+    BLETxUpdateStatus();
 }
 
 void RemoteIDManager::ServiceTxTick() {

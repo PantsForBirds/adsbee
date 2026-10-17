@@ -163,6 +163,7 @@ class RemoteIDManager {
     bool BLETxStart(bool enable_legacy, bool enable_coded_phy);
     void BLETxStop();
     void BLETxServiceTick();  // Refreshes the advertised ODID content; call at the transmit cadence.
+    void BLETxUpdateStatus();  // Sets the BLE TX status bits from what is actually advertising.
     void BLEReleaseIfIdle();  // Frees the NimBLE host and controller once neither scanning nor advertising.
     static bool BluetoothIsSupported();  // False when Bluetooth isn't compiled into this firmware.
 
@@ -201,6 +202,7 @@ class RemoteIDManager {
     // Transmit state.
     bool ble_tx_legacy_running_ = false;
     bool ble_tx_coded_running_ = false;
+    bool tx_blocked_by_policy_ = false;  // ReconcileTx refused or failed a transmit transport.
     bool wifi_tx_running_ = false;
     uint32_t last_tx_tick_ms_ = 0;
     // Builds the transmitted Open Drone ID message content. One instance shared by every transmit transport so they

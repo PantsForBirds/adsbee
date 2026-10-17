@@ -804,6 +804,8 @@ CPP_AT_CALLBACK(CommsManager::ATRemoteIDCallback) {
             }
             settings_manager.settings.remote_id_rx_enabled = rx_enabled;
             settings_manager.settings.remote_id_transports = transports;
+            // Push the new receive configuration to the ESP32, which owns the radios.
+            settings_manager.SyncToCoprocessors();
             char names[RemoteIDGuard::kTransportsStrMaxLen];
             CPP_AT_CMD_PRINTF(": remote_id_rx_enabled: %d, transports: %s\r\n",
                               settings_manager.settings.remote_id_rx_enabled,
