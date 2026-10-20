@@ -6,6 +6,12 @@
 #include "cpu_utils.hh"
 #include "hal.hh"               // For get_time_since_boot_ms().
 
+void GNSSReceiver::ParkTx() {
+    gpio_set_dir(config_.uart_tx_pin, GPIO_IN);
+    gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_SIO);
+    gpio_disable_pulls(config_.uart_tx_pin);
+}
+
 void GNSSReceiver::ClaimUart() {
     // Bring the GNSS UART up to a known state. uart0 is shared with the ESP32 flasher (GPIO 16/17),
     // which calls uart_deinit(uart0) when it finishes; claim the GNSS pins (GPIO 0/1) and
@@ -18,7 +24,12 @@ void GNSSReceiver::ClaimUart() {
     // uart_deinit() first mirrors the clean-peripheral state the ESP32 flasher's DeInit() hands us on
     // the post-flash path (which is why GNSS bring-up is reliable there but flaky on cold boot).
     uart_deinit(config_.uart_handle);
-    gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_UART);
+    if (module_type_ == BSP::kGNSSModuleUbloxMAXM10 && (!active_ || initializing_)) {
+        ParkTx();
+    } else {
+        gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_UART);
+    }
+    gpio_disable_pulls(config_.uart_rx_pin);
     gpio_set_function(config_.uart_rx_pin, GPIO_FUNC_UART);
     uart_set_translate_crlf(config_.uart_handle, false);
     uart_init(config_.uart_handle, GetDefaultBaudrate());
@@ -39,8 +50,6 @@ bool GNSSReceiver::Init() {
         return false;
     }
 
-    active_ = true;
-
     SetEnable(false);
 
     // ClaimUart() already brings the hardware up at GetDefaultBaudrate() so we can talk to the
@@ -48,8 +57,10 @@ bool GNSSReceiver::Init() {
     // argument into settings_manager.settings.baud_rates[kGNSSUART], which would silently overwrite
     // the user-configured/persisted baud rate with the receiver's hardcoded probing default on every
     // boot.
-    ClaimUart();
-    EnableRxInterrupt();
+    if (module_type_ != BSP::kGNSSModuleUbloxMAXM10) {
+        ClaimUart();
+        EnableRxInterrupt();
+    }
 
     // Do not send anything here. Update() starts a generic receiver's passive probe immediately and
     // applies the non-blocking power-on delay only to vendor-specific initialization commands.
@@ -64,7 +75,7 @@ bool GNSSReceiver::Init() {
     notify_has_emitted_ = false;
     notify_last_timestamp_ms_ = 0;
 
-     SetEnable(true);
+    SetEnable(true);
 
     return true;
 }
@@ -92,6 +103,9 @@ bool GNSSReceiver::Update() {
             module_type_ == BSP::kGNSSModuleGeneric ? 0 : kVendorPowerOnDelayMs;
         if (now_ms - power_on_timestamp_ms_ < power_on_delay_ms) return true;
         initializing_ = false;
+        if (module_type_ == BSP::kGNSSModuleUbloxMAXM10) {
+            gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_UART);
+        }
 
         // This is the first communication with the receiver after power was asserted.
         switch (module_type_) {
@@ -259,13 +273,27 @@ void GNSSReceiver::ResumeAfterUartHandover() {
     // through comms_manager.SetBaudRate() here and clobber the persisted setting.
     ClaimUart();
     EnableRxInterrupt();
-    // The module kept running throughout, so no re-power/boot delay is needed. Re-assert only the
-    // runtime message-output config (cheap, non-destructive) so NMEA output resumes.
-    ResendRuntimeConfig();
+    // A running module needs only runtime configuration. Startup retains its original delay.
+    if (!initializing_) ResendRuntimeConfig();
     suspended_ = false;
 }
 
 void GNSSReceiver::SetEnable(bool enabled) {
+    if (module_type_ == BSP::kGNSSModuleUbloxMAXM10) {
+        if (!enabled) {
+            ParkTx();
+            suspended_ = false;
+            healthy_ = false;
+        } else if (!active_) {
+            // Arm reception before power, then leave TX disconnected for the startup interval.
+            initializing_ = true;
+            ClaimUart();
+            EnableRxInterrupt();
+            power_on_timestamp_ms_ = get_time_since_boot_ms();
+            last_init_attempt_timestamp_ms_ = power_on_timestamp_ms_;
+            unhealthy_retry_count_ = 0;
+        }
+    }
     if (!enabled) {
         parser_.InvalidateUTC();
         power_enable_pending_ = false;

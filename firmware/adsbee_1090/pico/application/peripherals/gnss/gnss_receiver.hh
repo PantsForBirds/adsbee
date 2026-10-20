@@ -85,7 +85,8 @@ class GNSSReceiver {
     void ResumeAfterUartHandover();
 
     /**
-     * Enable or disable module power via the active-low enable pin. No-op if no enable pin.
+     * Enable or disable the receiver, switching power when an enable pin is connected.
+     * MAX-M10 TX stays disconnected until Update() completes its startup delay.
      */
     void SetEnable(bool enabled);
 
@@ -143,6 +144,7 @@ class GNSSReceiver {
      * receiver's default baud. Interrupt reception is enabled separately after final baud setup.
      */
     void ClaimUart();
+    void ParkTx();
 
     void EnablePPSInterrupt();
 
