@@ -14,6 +14,7 @@
 #include "main.hh"    // For ISR core assignment.
 #include "mode_s_packet.hh"
 #include "mode_s_soft_demod.hh"
+#include "overlap_stats.hh"
 #include "r1090_rssi.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
@@ -29,7 +30,9 @@ class ADSBee {
     // already rate-limits these to ~1 Hz per drone, so a shallow queue suffices.
     static constexpr uint16_t kRawRemoteIDPacketQueueDepth = 16;
 
-    static constexpr uint16_t kTLMaxPWMCount = 5000;  // Clock is 125MHz, shoot for 25kHz PWM.
+    static constexpr uint32_t kSysClkMHz = SYS_CLK_HZ / 1'000'000;  // clk_sys, set at boot by the SDK.
+    static_assert(SYS_CLK_HZ % 1'000'000 == 0, "MLAT scaling needs a whole number of MHz.");
+    static constexpr uint16_t kTLMaxPWMCount = 5000;  // 25kHz PWM at 125MHz.
     static constexpr int kVDDMV = 3300;               // [mV] Voltage of positive supply rail.
     static constexpr int kTLOffsetMaxMV = 2000;       // [mV]
     static constexpr int kTLOffsetMinMV = 0;          // [mV]
@@ -103,6 +106,9 @@ class ADSBee {
         int16_t rssi_mv;
         uint8_t num_words;
         uint8_t source;  // State machine index.
+#ifdef ADSBEE_OVERLAP_STATS
+        overlap_stats::CaptureTag tag;
+#endif
     };
 
     struct ADSBeeConfig {
@@ -224,7 +230,9 @@ class ADSBee {
      * @param[in] sys_clk_counts Number of MLAT jitter PWM slice counts.
      * @retval Equivalent number of 48MHz MLAT counter counts.
      */
-    static inline uint32_t MLATJitterCountsTo48MHzCounts(uint32_t sys_clk_counts) { return sys_clk_counts * 48 / 125; }
+    static inline uint32_t MLATJitterCountsTo48MHzCounts(uint32_t sys_clk_counts) {
+        return sys_clk_counts * 48 / kSysClkMHz;
+    }
 
     /**
      * Returns the current value of the MLAT jitter PWM slice's internal counter, which counts the system clock.
@@ -535,6 +543,9 @@ class ADSBee {
     volatile bool capture_is_short_[BSP::kMaxNumDemodStateMachines] = {false};
     uint32_t capture_begin_us_[BSP::kMaxNumDemodStateMachines] = {0};
     int short_capture_alarm_num_ = -1;
+#ifdef ADSBEE_OVERLAP_STATS
+    overlap_stats::CaptureTag ov_tag_[BSP::kMaxNumDemodStateMachines];
+#endif
     volatile int8_t short_capture_sm_index_ = -1;  // State machine the short capture alarm is armed for, or -1.
 
     /**
@@ -554,6 +565,10 @@ class ADSBee {
      * @param[in] num_words Number of sample words captured.
      */
     void FinishCapture(uint16_t sm_index, uint16_t num_words);
+#ifdef ADSBEE_OVERLAP_STATS
+    void OverlapRecord(const Capture& capture, const mode_s_soft_demod::Result* result, uint32_t packet_mlat_lo);
+    uint32_t ov_isolated_count_ = 0;
+#endif
     uint32_t mlat_jitter_pwm_slice_ = 0;
     uint16_t mlat_jitter_counts_on_demod_begin_[BSP::kMaxNumDemodStateMachines] = {0};
     uint16_t mlat_jitter_counts_on_fifo_pull_[BSP::kMaxNumDemodStateMachines] = {0};

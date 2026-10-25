@@ -2489,6 +2489,70 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiSTANetworkCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+#ifdef ADSBEE_OVERLAP_STATS
+#include "hardware/clocks.h"
+#include "hardware/spi.h"
+#include "overlap_stats.hh"
+// Lab only. AT+OVERLAP=<on>[,<interval_ms>[,<shadow>[,<dump_overlapped>[,<dump_isolated_every>[,<records>]]]]],
+// AT+OVERLAP=RESET,
+// AT+OVERLAP? (settings, clocks, histograms).
+CPP_AT_CALLBACK(ATOverlapCallback) {
+    using overlap_stats::stats;
+    switch (op) {
+        case '?': {
+            CPP_AT_CMD_PRINTF("=%d,%lu,%d,%d,%u,%d", stats.enabled, (unsigned long)stats.interval_ms, stats.shadow,
+                              stats.dump_overlapped, stats.dump_isolated_every, stats.records);
+            CPP_AT_PRINTF("#OVCLK,sys=%lu,peri=%lu,usb=%lu,adc=%lu,spi1=%lu,spi0=%lu,pio0div=0x%08lx,pio1div=0x%08lx\r\n",
+                          (unsigned long)clock_get_hz(clk_sys), (unsigned long)clock_get_hz(clk_peri),
+                          (unsigned long)clock_get_hz(clk_usb), (unsigned long)clock_get_hz(clk_adc),
+                          (unsigned long)spi_get_baudrate(spi1), (unsigned long)spi_get_baudrate(spi0),
+                          (unsigned long)pio0->sm[0].clkdiv, (unsigned long)pio1->sm[0].clkdiv);
+            stats.PrintHistograms();
+            CPP_AT_SILENT_SUCCESS();
+        }
+        case '=': {
+            if (CPP_AT_HAS_ARG(0) && args[0] == "RESET") {
+                stats.Reset();
+                CPP_AT_SUCCESS();
+            }
+            if (CPP_AT_HAS_ARG(0)) {
+                bool on;
+                CPP_AT_TRY_ARG2NUM(0, on);
+                if (CPP_AT_HAS_ARG(1)) {
+                    uint32_t interval_ms;
+                    CPP_AT_TRY_ARG2NUM(1, interval_ms);
+                    stats.interval_ms = interval_ms;
+                }
+                if (CPP_AT_HAS_ARG(2)) {
+                    bool shadow;
+                    CPP_AT_TRY_ARG2NUM(2, shadow);
+                    stats.shadow = shadow;
+                }
+                if (CPP_AT_HAS_ARG(3)) {
+                    bool dump_overlapped;
+                    CPP_AT_TRY_ARG2NUM(3, dump_overlapped);
+                    stats.dump_overlapped = dump_overlapped;
+                }
+                if (CPP_AT_HAS_ARG(4)) {
+                    uint16_t every;
+                    CPP_AT_TRY_ARG2NUM(4, every);
+                    stats.dump_isolated_every = every;
+                }
+                if (CPP_AT_HAS_ARG(5)) {
+                    bool records;
+                    CPP_AT_TRY_ARG2NUM(5, records);
+                    stats.records = records;
+                }
+                stats.enabled = on;
+                CPP_AT_SUCCESS();
+            }
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+#endif  // ADSBEE_OVERLAP_STATS
+
 const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "ASTERIX_SAC_SIC",
      .min_args = 0,
@@ -2709,6 +2773,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 4,
      .help_callback = CPP_AT_BIND_MEMBER_HELP_CALLBACK(CommsManager::ATOTAHelpCallback, comms_manager),
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATOTACallback, comms_manager)},
+#ifdef ADSBEE_OVERLAP_STATS
+    {.command = "OVERLAP",
+     .min_args = 0,
+     .max_args = 6,
+     .help_string = "Lab: capture overlap stats. AT+OVERLAP=<on>,<interval_ms>,<shadow>,<dump_ov>,<dump_iso_every>,<records>",
+     .callback = ATOverlapCallback},
+#endif
     {.command = "PROTOCOL_OUT",
      .min_args = 0,
      .max_args = 2,
