@@ -17,7 +17,8 @@
  * decided by pulse position: more HI samples in its first half-bit chip than in its second is a 1. The difference is
  * the bit's confidence. The start of the data is found by trying a few sample offsets and keeping the one with the
  * most confident first bits. Frames with a CRC over the whole message (DF11, DF17, DF18) get up to two of their
- * least confident bits flipped if that makes the CRC pass.
+ * least confident bits flipped if that makes the CRC pass. A frame that still does not validate is read again at the
+ * next most confident offsets.
  */
 namespace mode_s_soft_demod {
 
@@ -33,6 +34,15 @@ static constexpr uint16_t kMinStartOffsetSamples = 2;
 static constexpr uint16_t kMaxStartOffsetSamples = 7;
 static constexpr uint16_t kNominalStartOffsetSamples = 5;
 static constexpr uint16_t kTimingSearchBits = 12;  // Bits used to pick the start offset.
+// Retries: a frame that fails its CRC (or, for an address/parity format, names no tracked aircraft) is read again at
+// up to kMaxRetries other offsets, most confident first, and kept only if it validates there. A wrong pick is usually
+// a sample or two off, so retries stay within kMaxRetryShiftSamples of it. It can also be a whole chip early, on the
+// tail of the last preamble pulse: then it reads a format without parity, and one chip later is tried too. Offsets
+// 3 to 5 samples off read each bit across both of its chips and are never tried. A retry must also have no more than
+// kMaxTiesInSearchBits ties: a message read a chip off ties about half its bits.
+static constexpr uint16_t kMaxRetryShiftSamples = 2;
+static constexpr uint16_t kMaxRetryOffsetSamples = kMaxStartOffsetSamples + kMaxRetryShiftSamples;  // 9
+static constexpr uint16_t kMaxRetries = 3;
 // Message timing for multilateration. Every data bit has an edge in its middle: falling for a 1, rising for a 0. A
 // stronger signal widens the comparator pulses, so rising edges come earlier and falling edges later, by about the
 // same amount. The mean position of both kinds stays put, and averaging over several bits resolves it finer than
@@ -45,6 +55,9 @@ static constexpr uint16_t kCaptureSamples = kMaxMessageBits * kSamplesPerBit + k
 static constexpr uint16_t kCaptureWords = (kCaptureSamples + 31) / 32;  // 43
 static constexpr uint16_t kShortCaptureWords =
     (kShortMessageBits * kSamplesPerBit + kMaxStartOffsetSamples + 31) / 32;  // 22
+static_assert(kMaxMessageBits * kSamplesPerBit + kMaxRetryOffsetSamples <= kCaptureWords * 32 &&
+                  kShortMessageBits * kSamplesPerBit + kMaxRetryOffsetSamples <= kShortCaptureWords * 32,
+              "Retry offsets must fit in the capture.");
 
 static constexpr uint16_t kMaxWeakBits = 6;          // Least confident bits that may be flipped.
 static constexpr uint16_t kMaxFlippedBits = 2;       // Bits flipped at most to make the CRC pass.
@@ -63,6 +76,50 @@ struct Result {
     // it does not depend on the signal level the way start_offset_samples and the sampler start do.
     int16_t data_start_48mhz_counts = 0;
     uint8_t num_flipped_bits = 0;  // Bits changed by the CRC guided fix.
+    uint8_t num_retries = 0;       // Offsets read after the first one.
+    bool retry_validated = false;  // The message comes from a retry.
+};
+
+/**
+ * Tells whether an address belongs to a tracked aircraft. Address/parity formats (DF0, 4, 5, 16, 20, 21) have no CRC
+ * of their own: their CRC remainder is the sender's address. Must be callable from the demodulator's core.
+ */
+typedef bool (*KnownAddressFn)(uint32_t address);
+
+/**
+ * Addresses of tracked aircraft for the retry, which runs where the aircraft dictionary can't be read. A Bloom
+ * filter: it may say yes for an untracked address (3 % of them with 400 aircraft), which only costs a missed
+ * retry. The dictionary still checks every address/parity message it forwards.
+ */
+class KnownAddressFilter {
+   public:
+    static constexpr uint16_t kNumBits = 4096;
+
+    void Clear() {
+        for (uint32_t& word : bits_) {
+            word = 0;
+        }
+    }
+    void Add(uint32_t address) {
+        uint32_t a, b;
+        Hash(address, a, b);
+        bits_[a >> 5] |= 1u << (a & 31);
+        bits_[b >> 5] |= 1u << (b & 31);
+    }
+    bool Contains(uint32_t address) const {
+        uint32_t a, b;
+        Hash(address, a, b);
+        return (bits_[a >> 5] >> (a & 31) & 1) && (bits_[b >> 5] >> (b & 31) & 1);
+    }
+
+   private:
+    static void Hash(uint32_t address, uint32_t& a, uint32_t& b) {
+        address &= 0xFFFFFF;
+        a = (address * 0x9E3779B1u) >> 20;  // 12 bit indexes from two multiplicative hashes.
+        b = (address * 0x85EBCA77u) >> 20;
+    }
+    static_assert(kNumBits == 1 << 12, "Hash() gives 12 bit indexes.");
+    uint32_t bits_[kNumBits / 32] = {0};
 };
 
 /**
@@ -145,8 +202,12 @@ static constexpr BitSyndromeTable kBitSyndromes = BitSyndromeTable();
  * @param[in] num_words Number of valid words in samples (kCaptureWords, or kShortCaptureWords for a capture that
  * was cut short after a 56 bit message).
  * @param[out] result Demodulated message. len_bits is 0 if the capture does not look like a message.
+ * @param[in] retry Read a frame that does not validate again at other offsets. Up to kMaxRetries + 1 times the work.
+ * @param[in] known_address Validates address/parity frames for the retry. Without it they are passed on unchecked and
+ * never taken from a retry.
  * @retval True if a message was written to result.
  */
-bool Demodulate(const uint32_t* samples, uint16_t num_words, Result& result);
+bool Demodulate(const uint32_t* samples, uint16_t num_words, Result& result, bool retry = false,
+                KnownAddressFn known_address = nullptr);
 
 }  // namespace mode_s_soft_demod

@@ -92,41 +92,40 @@ static int16_t SOFT_DEMOD_FUNC(DataStart48MHzCounts)(const uint32_t* samples, co
     return static_cast<int16_t>(offset_counts + numerator / denominator);
 }
 
-static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t num_words, Result& result) {
-    result = Result();
-    int margins[kBitsPerGroup];
+// Confidence and ties of the first kTimingSearchBits bits read from each start offset.
+struct OffsetScores {
+    uint32_t confidence[kMaxRetryOffsetSamples + 1] = {0};
+    uint32_t ties[kMaxRetryOffsetSamples + 1] = {0};
+};
 
-    // Timing: keep the start offset whose first bits are the most confident.
-    uint32_t best_offset = kNominalStartOffsetSamples;
-    uint32_t best_confidence = 0;
-    uint32_t best_ties = kTimingSearchBits;
-    for (uint32_t offset = kMinStartOffsetSamples; offset <= kMaxStartOffsetSamples; offset++) {
-        uint32_t confidence = 0;
-        uint32_t ties = 0;
+static void SOFT_DEMOD_FUNC(ScoreOffsets)(const uint32_t* samples, uint32_t first_offset, uint32_t last_offset,
+                                          OffsetScores& scores) {
+    int margins[kBitsPerGroup];
+    for (uint32_t offset = first_offset; offset <= last_offset; offset++) {
         for (uint32_t bits_done = 0; bits_done < kTimingSearchBits; bits_done += kBitsPerGroup) {
             uint32_t bits_in_group =
                 kTimingSearchBits - bits_done < kBitsPerGroup ? kTimingSearchBits - bits_done : kBitsPerGroup;
             BitMargins(samples, offset + bits_done * kSamplesPerBit, margins, bits_in_group);
             for (uint32_t i = 0; i < bits_in_group; i++) {
-                confidence += static_cast<uint32_t>(margins[i] < 0 ? -margins[i] : margins[i]);
-                ties += margins[i] == 0;
+                scores.confidence[offset] += static_cast<uint32_t>(margins[i] < 0 ? -margins[i] : margins[i]);
+                scores.ties[offset] += margins[i] == 0;
             }
         }
-        if (confidence > best_confidence) {
-            best_confidence = confidence;
-            best_offset = offset;
-            best_ties = ties;
-        }
     }
-    if (best_ties > kMaxTiesInSearchBits) {
-        return false;  // Noise or the tail of another message.
-    }
+}
+
+enum Check : uint8_t { kNoMessage, kCRCPassed, kCRCFailed, kNoCRC };
+
+// Reads the message whose first bit starts at offset, with the CRC guided fix.
+static Check SOFT_DEMOD_FUNC(DecodeAt)(const uint32_t* samples, uint16_t num_words, uint32_t offset, Result& result) {
+    result = Result();
+    int margins[kBitsPerGroup];
 
     // Bit decisions, one message byte at a time. The first bit of the downlink format tells the length: DF16 and up
     // are 112 bits.
     uint32_t len_bits = kMaxMessageBits;
-    uint32_t available_samples = num_words * 32 - best_offset;
-    uint32_t first_sample = best_offset;
+    uint32_t available_samples = num_words * 32 - offset;
+    uint32_t first_sample = offset;
     for (uint32_t bits_done = 0; bits_done < len_bits; bits_done += kBitsPerGroup, first_sample += kSamplesPerGroup) {
         BitMargins(samples, first_sample, margins);
         uint32_t byte = 0;
@@ -140,25 +139,25 @@ static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t nu
             }
             if (len_bits * kSamplesPerBit > available_samples) {
                 result.buffer[0] = 0;
-                return false;  // Capture was cut short but the message is long.
+                return kNoMessage;  // Capture was cut short but the message is long.
             }
         }
     }
     result.len_bits = static_cast<uint16_t>(len_bits);
-    result.start_offset_samples = static_cast<uint8_t>(best_offset);
+    result.start_offset_samples = static_cast<uint8_t>(offset);
 
     // CRC guided fix for formats whose parity covers the message alone.
     uint32_t downlink_format = result.buffer[0] >> 27;
     if (downlink_format != 11 && downlink_format != 17 && downlink_format != 18) {
-        return true;
+        return kNoCRC;
     }
     uint32_t remainder = CRC24Remainder(result.buffer, len_bits);
     if (remainder == 0 || (downlink_format == 11 && remainder < 0x80)) {
-        return true;  // Intact (DF11 replies carry an interrogator code in the low 7 bits).
+        return kCRCPassed;  // Intact (DF11 replies carry an interrogator code in the low 7 bits).
     }
     // The CRC failed: go over the message again for the confidence of every bit and collect the least confident.
     static uint8_t confidences[kMaxMessageBits];  // Static: called from one context, small stack.
-    first_sample = best_offset;
+    first_sample = offset;
     for (uint32_t bits_done = 0; bits_done < len_bits; bits_done += kBitsPerGroup, first_sample += kSamplesPerGroup) {
         BitMargins(samples, first_sample, margins);
         for (uint32_t i = 0; i < kBitsPerGroup; i++) {
@@ -180,7 +179,7 @@ static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t nu
         if (syndrome(weak_bits[a]) == remainder) {
             flip(weak_bits[a]);
             result.num_flipped_bits = 1;
-            return true;
+            return kCRCPassed;
         }
     }
     if (kMaxFlippedBits >= 2) {
@@ -190,16 +189,101 @@ static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t nu
                     flip(weak_bits[a]);
                     flip(weak_bits[b]);
                     result.num_flipped_bits = 2;
-                    return true;
+                    return kCRCPassed;
                 }
             }
         }
     }
-    return true;  // Not fixable here: the decoder decides what to do with it.
+    return kCRCFailed;  // Not fixable here: the decoder decides what to do with it.
 }
 
-bool SOFT_DEMOD_FUNC(Demodulate)(const uint32_t* samples, uint16_t num_words, Result& result) {
-    if (!DemodulateBits(samples, num_words, result)) {
+static inline bool IsAddressParityFormat(uint32_t downlink_format) {
+    return downlink_format == 0 || downlink_format == 4 || downlink_format == 5 || downlink_format == 16 ||
+           downlink_format == 20 || downlink_format == 21;
+}
+
+// Whether a message checks out. Without known_address, an address/parity message counts only if unchecked_ok.
+static bool SOFT_DEMOD_FUNC(Validated)(const Result& result, Check check, KnownAddressFn known_address,
+                                       bool unchecked_ok) {
+    if (check != kNoCRC) {
+        return check == kCRCPassed;
+    }
+    if (!IsAddressParityFormat(result.buffer[0] >> 27)) {
+        return false;  // A format without parity: likely misread.
+    }
+    if (known_address == nullptr) {
+        return unchecked_ok;
+    }
+    return known_address(CRC24Remainder(result.buffer, result.len_bits));
+}
+
+static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t num_words, Result& result, bool retry,
+                                            KnownAddressFn known_address) {
+    OffsetScores scores;
+    ScoreOffsets(samples, kMinStartOffsetSamples, kMaxStartOffsetSamples, scores);
+
+    // Timing: keep the start offset whose first bits are the most confident.
+    uint32_t best_offset = kNominalStartOffsetSamples;
+    uint32_t best_confidence = 0;
+    uint32_t best_ties = kTimingSearchBits;
+    for (uint32_t offset = kMinStartOffsetSamples; offset <= kMaxStartOffsetSamples; offset++) {
+        if (scores.confidence[offset] > best_confidence) {
+            best_confidence = scores.confidence[offset];
+            best_offset = offset;
+            best_ties = scores.ties[offset];
+        }
+    }
+    if (best_ties > kMaxTiesInSearchBits) {
+        result = Result();
+        return false;  // Noise or the tail of another message.
+    }
+
+    Check check = DecodeAt(samples, num_words, best_offset, result);
+    if (!retry || (check != kNoMessage && Validated(result, check, known_address, true))) {
+        return check != kNoMessage;
+    }
+
+    // Retry at the next most confident offsets near the first pick. A first pick that reads a format without parity
+    // may sit on the last preamble pulse: then one chip later too.
+    bool chip_later = check == kNoMessage || (check == kNoCRC && !IsAddressParityFormat(result.buffer[0] >> 27));
+    ScoreOffsets(samples, kMaxStartOffsetSamples + 1, kMaxRetryOffsetSamples, scores);
+    bool tried[kMaxRetryOffsetSamples + 1] = {false};
+    tried[best_offset] = true;
+    uint8_t num_retries = 0;
+    Result trial;
+    while (num_retries < kMaxRetries) {
+        uint32_t offset = 0;
+        uint32_t confidence = 0;
+        for (uint32_t o = kMinStartOffsetSamples; o <= kMaxRetryOffsetSamples; o++) {
+            uint32_t shift = o > best_offset ? o - best_offset : best_offset - o;
+            if (shift > kMaxRetryShiftSamples && !(chip_later && o == best_offset + kSamplesPerChip)) {
+                continue;
+            }
+            if (!tried[o] && scores.ties[o] <= kMaxTiesInSearchBits && scores.confidence[o] > confidence) {
+                offset = o;
+                confidence = scores.confidence[o];
+            }
+        }
+        if (offset == 0) {
+            break;
+        }
+        tried[offset] = true;
+        num_retries++;
+        Check trial_check = DecodeAt(samples, num_words, offset, trial);
+        if (trial_check != kNoMessage && Validated(trial, trial_check, known_address, false)) {
+            result = trial;
+            result.num_retries = num_retries;
+            result.retry_validated = true;
+            return true;
+        }
+    }
+    result.num_retries = num_retries;
+    return check != kNoMessage;
+}
+
+bool SOFT_DEMOD_FUNC(Demodulate)(const uint32_t* samples, uint16_t num_words, Result& result, bool retry,
+                                 KnownAddressFn known_address) {
+    if (!DemodulateBits(samples, num_words, result, retry, known_address)) {
         return false;
     }
     result.data_start_48mhz_counts = DataStart48MHzCounts(samples, result);

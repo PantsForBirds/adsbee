@@ -1019,16 +1019,20 @@ class AircraftDictionary {
         kCorrectionAddressParity2Bit,
         kCorrectionRejected,
         kCorrectionSkipped,  // Searches not made: over the per-update limit, or under load.
+        // Messages the 1090 demodulator read again at another start offset: DF11/17/18 that then passed their CRC,
+        // and address/parity replies that then named a tracked aircraft.
+        kCorrectionOffsetRetry,
+        kCorrectionOffsetRetryAddressParity,
         kNumCorrectionKinds
     };
     static constexpr const char* kCorrectionKindStrs[kNumCorrectionKinds] = {
         "extended_squitter_1_bit", "extended_squitter_2_bit", "address_parity_1_bit", "address_parity_2_bit",
-        "rejected", "skipped"};
+        "rejected", "skipped", "offset_retry", "offset_retry_address_parity"};
     // Address parity searches per dictionary update (1 s). Each one checks every tracked aircraft.
     static constexpr uint16_t kMaxAddressParityCorrectionAttemptsPerUpdate = 250;
 
     struct Metrics {
-        static const uint16_t kMetricsJSONMaxLen = 1000;  // Includes null terminator.
+        static const uint16_t kMetricsJSONMaxLen = 1100;  // Includes null terminator.
 
         uint32_t raw_squitter_frames = 0;
         uint32_t valid_squitter_frames = 0;
@@ -1148,6 +1152,10 @@ class AircraftDictionary {
     inline void LimitAddressParityCorrection(uint16_t num) { address_parity_correction_budget_ = num; }
     // Counts searches skipped elsewhere, e.g. the decoder's 2 bit searches.
     inline void RecordSkippedCorrections(uint32_t num) { metrics_counter_.corrected_frames[kCorrectionSkipped] += num; }
+    inline void RecordOffsetRetries(uint32_t num_crc, uint32_t num_address_parity) {
+        metrics_counter_.corrected_frames[kCorrectionOffsetRetry] += num_crc;
+        metrics_counter_.corrected_frames[kCorrectionOffsetRetryAddressParity] += num_address_parity;
+    }
 
     /**
      * Removes all aircraft from the aircraft dictionary.
