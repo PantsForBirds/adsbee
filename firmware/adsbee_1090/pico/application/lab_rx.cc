@@ -95,20 +95,20 @@ uint8_t ScorePreamble(const uint32_t* samples, uint8_t num_chips, int8_t& align)
     align = 0;
     // Trigger on chip 0 (the first pulse), or, for a one chip trigger, on chip 2 when the first pulse was missed.
     for (int h = 0; h <= (num_chips == 1 ? 2 : 0); h += 2) {
-        for (int a = -2; a <= 3; a++) {
+        for (int a = -8; a <= 9; a++) {
             uint8_t mismatches = 0;
             for (uint8_t c : kPulseChips) {
                 if (c < num_chips + h) continue;
                 int start = 6 * (c - num_chips - h) - 1 + a;
                 for (int s = 1; s <= 4; s++) {
-                    if (start + s >= 0 && !Sample(samples, start + s)) mismatches++;
+                    if (start + s < 0 || !Sample(samples, start + s)) mismatches++;  // Before the capture counts as a miss.
                 }
             }
             for (uint8_t c : kQuietChips) {
                 if (c < num_chips + h) continue;
                 int start = 6 * (c - num_chips - h) - 1 + a;
                 for (int s = 1; s <= 4; s++) {
-                    if (start + s >= 0 && Sample(samples, start + s)) mismatches++;
+                    if (start + s < 0 || Sample(samples, start + s)) mismatches++;
                 }
             }
             if (mismatches < best) {

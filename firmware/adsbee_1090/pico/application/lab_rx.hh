@@ -172,8 +172,8 @@ extern Lab lab;
 /**
  * Software preamble score. The sampler started at chip num_chips of the preamble (chip c starts about 6 * (c -
  * num_chips) - 1 samples into the capture). Counts the samples that disagree with the preamble pattern in the 4 inner
- * samples of each checked chip (the matcher's chips: pulses 0, 2, 7, 9; quiet 4, 5, 11-14) at alignments -2..+3
- * samples, and returns the smallest count; align gets the alignment (minus 6 per chip when the trigger was the
+ * samples of each checked chip (the matcher's chips: pulses 0, 2, 7, 9; quiet 4, 5, 11-14) at alignments -8..+9
+ * samples (a 3 chip match can land a chip off; samples before the capture count as mismatches), and returns the smallest count; align gets the alignment (minus 6 per chip when the trigger was the
  * second pulse, tried for a one chip trigger).
  */
 uint8_t ScorePreamble(const uint32_t* samples, uint8_t num_chips, int8_t& align);
