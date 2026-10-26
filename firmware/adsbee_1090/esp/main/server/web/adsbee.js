@@ -24,20 +24,7 @@ class ConsoleWebSocket {
         this.paused = false;
         this.captureCallback = null;
         this._reconnectTimer = null;
-        // The firmware update check keeps its AT+DEVICE_INFO? reply out of the terminal.
-        this.replyFilter = AdsbeeFirmwareRelease.deviceInfoFilter();
-        this._flushTimer = null;
         this.init();
-    }
-
-    // Hides the AT+DEVICE_INFO? reply for ms; other console text still shows.
-    hideDeviceInfoReply(ms) {
-        this.replyFilter.hide(ms);
-        clearTimeout(this._flushTimer);
-        this._flushTimer = setTimeout(() => {
-            const held = this.replyFilter.flush();
-            if (held) appendToTerminal(held);
-        }, ms + 50);
     }
 
     init() {
@@ -54,8 +41,7 @@ class ConsoleWebSocket {
         // Listen for messages
         this.ws.addEventListener('message', (event) => {
             const dispatch = (text) => {
-                const shown = this.replyFilter.filter(text);
-                if (shown) appendToTerminal(shown);
+                appendToTerminal(text);
                 if (this.captureCallback) this.captureCallback(text);
             };
             if (typeof event.data === 'string') {

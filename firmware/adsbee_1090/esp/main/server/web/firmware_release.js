@@ -28,41 +28,6 @@
     // AT+DEVICE_INFO? lines the pages capture. Anything else (MAC addresses etc.) is left out.
     const DEVICE_INFO_LINE = /^(Part Code|RP2040 Flash Unique ID|CC1314R10 Unique ID|OTA Key \d+|RP2040 Firmware Version|ESP32 Firmware Version|ESP32 Base MAC Address|CC1314R10 Firmware Version):/;
 
-    // Starts of the lines AT+DEVICE_INFO? prints (and its echo). It ends with no OK.
-    const DEVICE_INFO_REPLY = ['AT+DEVICE_INFO?', 'Part Code:', 'RP2040 ', 'OTA Key ', '1090MHz RF Frontend Version:',
-                               'ESP32 ', 'CC1314R10 '];
-
-    /**
-     * Keeps the update check's AT+DEVICE_INFO? reply out of a terminal on the same console stream (the ESP32 sends
-     * console output to every /console socket). While hidden, lines that start like a reply line are dropped and
-     * everything else, such as the welcome banner, passes at once. A partial line that could still become a reply
-     * line is held until it ends or the window closes. now() is injectable for tests.
-     * Returns {hide(ms), filter(text) -> text to show, flush() -> held text, hiding()}.
-     */
-    function deviceInfoFilter(now = () => Date.now()) {
-        let until = 0;
-        let held = '';
-        const isReply = (line) => DEVICE_INFO_REPLY.some((p) => line.replace(/^\r+/, '').startsWith(p));
-        const mayBecomeReply = (part) => {
-            const s = part.replace(/^\r+/, '');
-            return DEVICE_INFO_REPLY.some((p) => p.startsWith(s) || s.startsWith(p));
-        };
-        return {
-            hide(ms) { until = now() + ms; },
-            hiding() { return now() < until; },
-            filter(text) {
-                text = held + text;
-                held = '';
-                if (now() >= until) return text;
-                const lines = text.split(/(?<=\n)/);
-                const last = lines[lines.length - 1];
-                if (!last.endsWith('\n') && mayBecomeReply(last)) held = lines.pop();
-                return lines.filter((l) => !(l.endsWith('\n') && isReply(l))).join('');
-            },
-            flush() { const out = held; held = ''; return out; },
-        };
-    }
-
     class ReleaseError extends Error {
         constructor(code, message, retryAt) {
             super(message);
@@ -713,8 +678,7 @@
         };
     }
 
-    const api = { DEFAULT_API_BASE, API_BASE_KEY, GITHUB_RELEASES_URL, RC_WARNING, DEVICE_INFO_LINE, DEVICE_INFO_REPLY,
-                  deviceInfoFilter, CHECK_INTERVAL_MS,
+    const api = { DEFAULT_API_BASE, API_BASE_KEY, GITHUB_RELEASES_URL, RC_WARNING, DEVICE_INFO_LINE, CHECK_INTERVAL_MS,
                   CACHE_KEY, ReleaseError, FirmwareApi, parseVersion, formatVersion, compareVersions, parseDeviceInfo,
                   runningVersion, selectUpdate, cacheKey, readCache, PENDING_KEY, REBOOT_GRACE_MS, pendingKey, readPending,
                   updateOutcome, chipState, sha256Js, sha256Hex, mount };
