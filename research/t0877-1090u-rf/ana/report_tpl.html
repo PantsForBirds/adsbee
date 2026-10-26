@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1090U RF Front End</title>
+<style>
+:root{color-scheme:light;--surface:#fcfcfb;--bg:#fcfcfb;--text:#0b0b0b;--text-2:#52514e;--muted:#7a7974;--rule:#e4e3df;--grid:#ecebe7;
+--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#6250d6;--s5:#e87ba4;--accent:#2a78d6;--code:#f1f0ec}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--surface:#1a1a19;--bg:#1a1a19;--text:#f0efec;--text-2:#c3c2b7;--muted:#9a998f;--rule:#34332f;--grid:#2a2a28;
+--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#9085e9;--s5:#d55181;--accent:#3987e5;--code:#262624}}
+:root[data-theme="dark"]{color-scheme:dark;--surface:#1a1a19;--bg:#1a1a19;--text:#f0efec;--text-2:#c3c2b7;--muted:#9a998f;--rule:#34332f;--grid:#2a2a28;
+--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#9085e9;--s5:#d55181;--accent:#3987e5;--code:#262624}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-top:8px;border-top:1px solid var(--rule)}h3{font-size:16px;margin:20px 0 6px}
+.sub{color:var(--text-2);margin:0 0 18px}
+.tldr{border-left:3px solid var(--accent);padding:4px 0 4px 14px;margin:12px 0}
+.tldr li{margin:4px 0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:16px 0}
+.kpi{border:1px solid var(--rule);border-radius:8px;padding:10px 12px}.kpi b{display:block;font-size:22px}.kpi span{color:var(--text-2);font-size:13px}
+table{border-collapse:collapse;width:100%;font-size:13.5px;margin:8px 0}th,td{border-bottom:1px solid var(--rule);padding:5px 6px;text-align:left;vertical-align:top}
+th{color:var(--text-2);font-weight:600}td.src{color:var(--muted);font-size:12px}
+.wrap{overflow-x:auto}
+svg.chart{width:100%;height:auto;display:block;background:var(--surface)}
+svg .grid{stroke:var(--grid);stroke-width:1}svg .axis{stroke:var(--muted);stroke-width:1}svg .ref{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+svg .stem{stroke:var(--grid);stroke-width:2}
+svg text{fill:var(--text-2);font:12px system-ui,sans-serif}svg .lab{fill:var(--text-2);font-size:12px}svg .dl{fill:var(--text);font-size:12px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--text-2);margin:6px 0 4px}
+.legend i{display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.pair{grid-template-columns:1fr}}
+figure{margin:0}figcaption{font-size:13px;color:var(--text-2);margin:4px 0}
+.note{font-size:13px;color:var(--text-2)}
+code{background:var(--code);padding:1px 4px;border-radius:3px;font-size:12.5px}
+ol.steps li{margin:6px 0}
+.tag{font-size:11.5px;border:1px solid var(--rule);border-radius:10px;padding:0 6px;color:var(--text-2);white-space:nowrap}
+</style>
+</head>
+<body><main>
+<h1>ADSBee 1090U RF front end review</h1>
+<p class="sub">t-0877 · desk study, no hardware · 26 Oct 2026 · worker-5. Model numbers are simulation; "est." marks a calculation from datasheets; "measured" is bench or live-sky data from earlier tasks.</p>
+
+<div class="kpis">
+<div class="kpi"><b>{{NF}} dB</b><span>cascade NF to the detector (est.). LR2021 ≈ 5.5 dB (est.)</span></div>
+<div class="kpi"><b>{{BASE}} dBm</b><span>model 90 % point, thermal noise, TL offset {{TLBASE}} mV</span></div>
+<div class="kpi"><b>{{P600}} %</b><span>model ceiling at the default TL 600 mV: never reaches 90 %</span></div>
+<div class="kpi"><b>{{REALDUTY}} %</b><span>comparator HI on noise, live sky (measured). Model: {{MODDUTY}} %</span></div>
+</div>
+
+<div class="tldr"><ul>
+<li><b>The RF front end is fine.</b> Two BLB01s and two TFS1090Fs give ≈{{NF}} dB NF and {{GAIN}} dB gain (est.). That is about 4.7 dB better noise than the m1421's LR2021. The gap is not in the RF front end, so LNA and detector swaps cannot close it.</li>
+<li><b>The dB go after the detector.</b> Against a matched-filter receiver with the same NF ({{MATCHED}} dBm), the model loses {{D_BW}} dB to the 23.7 MHz SAW bandwidth, {{D_SLICE}} dB to the 1-bit slicer and demod, and {{D_PRE}} dB to the PIO preamble matcher. The matcher needs the TL well above the noise; the data bits would prefer it lower.</li>
+<li><b>The default TL offset (600 mV) is too low for the matcher.</b> It puts the threshold 55 mV (3 dB) above the mean log noise. Live-sky captures show the comparator HI {{REALDUTY}} % of the time on noise; the model gives {{MODDUTY}} %. At that duty, noise edges keep the 4 round-robin matchers busy, and the model misses about {{MISS}} % of frames at every level, strong ones included. At {{TLBASE}} mV it reaches {{BASE}} dBm.</li>
+<li><b>The bench −84 dBm is probably a bench artifact.</b> The bench TL readback (1.39–1.49 V at offset 600) implies a noise floor 2.6–8 dB above thermal. An in-band CW at −95 dBm (likely Pluto LO leakage at 1090 MHz) reproduces both that readback ({{CW95NF}} V) and the bench sensitivity ({{CW95}} dBm modeled vs −83.6 measured). In thermal noise the same model puts the 1090U at {{BASE}} dBm, ahead of the m1421 model ({{LR}} dBm; m1421 spec −89).</li>
+<li><b>Recommendation.</b> <b>Do:</b> confirm the bench leak (M1, 1 hour) before trusting any sensitivity number, m1421 included. <b>Do:</b> A/B the TL offset 600 vs 800 mV on air (free; model: the 90 % point appears at {{BASE}} dBm, decode rate above threshold {{P600}} % → {{P800}} % (model)). <b>Maybe:</b> C17 3 → 22 pF with the TL relearned (+2.3 dB model, one cap). <b>Maybe:</b> TA3003 as X2 (+1.2 dB alone, +3.2 dB with C17; not stocked). <b>Don't:</b> LNA, detector or comparator swaps.</li>
+</ul></div>
+
+<h2>1. Where the dB go</h2>
+{{LADDER}}
+<p class="note">Same frames (DF17, random payload), same CRC fix rules (up to 2 weak bits), thermal noise at 290 K unless noted. 90 % points are interpolated from 160–400 frames per level: Monte Carlo spread ≈ ±0.5 dB. Bench numbers are commanded levels, ±2.5 dB uncalibrated.</p>
+
+<h3>Ranked against the m1421 path (model, thermal noise)</h3>
+<div class="wrap"><table>
+<tr><th>#</th><th>Mechanism</th><th>1090U</th><th>m1421 (LR2021)</th><th>Net for 1090U</th><th>Confidence</th></tr>
+<tr><td>1</td><td>Bench in-band CW (Pluto LO leak) with the log detector + noise-tracking TL</td><td>−{{D_CW}} dB ({{BASE}} model → −83.6 measured)</td><td>unknown; OOK depth loss</td><td>explains the whole bench gap</td><td><span class="tag">hypothesis, fits 2 observations</span></td></tr>
+<tr><td>2</td><td>Noise figure</td><td>{{NF}} dB (est.)</td><td>≈5.5 dB (est. from LR20xx sensitivity tables, LF path, no boost)</td><td><b>+4.7 dB</b></td><td><span class="tag">datasheet</span></td></tr>
+<tr><td>3</td><td>Preamble detection</td><td>PIO matcher, 40 hard samples, 4 mismatches: −{{D_PRE}} dB vs perfect timing</td><td>16-chip hard pattern, 0 errors</td><td>part of −5 dB total detection loss each side</td><td><span class="tag">model</span></td></tr>
+<tr><td>4</td><td>Pre-detection bandwidth</td><td>23.7 MHz (2× TFS1090F): −{{D_BW}} dB</td><td>3.08 MHz IF filter, near matched</td><td>−{{D_BW}} dB</td><td><span class="tag">model</span></td></tr>
+<tr><td>5</td><td>Bit decisions</td><td>1-bit comparator, 6 samples/chip, soft count: −{{D_SLICE}} dB</td><td>1 sample/chip, compare halves</td><td>≈ even</td><td><span class="tag">model</span></td></tr>
+<tr><td></td><td><b>Total, thermal noise</b></td><td><b>{{BASE}} dBm</b></td><td><b>{{LR}} dBm</b> (spec −89)</td><td><b>1090U ahead by ≈{{AHEAD}} dB</b></td><td></td></tr>
+</table></div>
+<p class="note">The LR2021 model (3.08 MHz 4th-order filter, envelope sampled at chip centers, 16-chip preamble with no errors allowed, Manchester decisions, NF 5.5 dB) lands at {{LR}} dBm against the −89 dBm spec, which supports the method. With the 1090U's NF it would reach {{LR078}} dBm.</p>
+
+{{CURVES}}
+<p class="note">The default TL (blue) flattens at ~{{P600}} %. Missed frames there are almost all "no preamble match": the matcher whose turn it is was still busy with a noise edge when the frame arrived. The CW case (pink) is the only one that resembles the bench.</p>
+
+<h2>2. RX chain cascade</h2>
+<div class="wrap"><table>
+<tr><th>Stage</th><th>Gain dB</th><th>NF dB</th><th>BW</th><th>Cum. gain</th><th>Cum. NF</th><th>Source</th></tr>
+{{CASC}}
+</table></div>
+<ul>
+<li>Antenna-referred noise in the SAW bandwidth (ENBW 21.9 MHz): {{FENOISE}} dBm. This would read about 0.75 V at the detector (calibration in <code>r1090_rssi.hh</code>: 17.6 mV/dB, 1137 mV at −80 dBm).</li>
+<li>AD8313 own noise (0.6 nV/√Hz, −76 dBm over 3.5 GHz) referred to the antenna through {{GAIN}} dB plus ~8 dB match gain: {{DETNOISE}} dBm. Penalty {{DETPEN}} dB. The detector is not the noise limit even with 0 dB match gain (≈0.4 dB).</li>
+<li>Gain check: the firmware calibration puts the detector intercept at −144.6 dBm antenna-referred. With 33.6 dB of front-end gain that needs about 9–11 dB of match gain for the datasheet −93 to −100 dBm intercept. That is plausible but at the top of the range; see M6.</li>
+<li>Out-of-band: nothing filters ahead of U2 (BLB01, P1dB 17 dBm, abs. max +21 dBm). Covered by the limiter board study in the library.</li>
+</ul>
+
+<h3>Detector input match (C11 = C18 = 3 pF in series, L6 = 10 nH)</h3>
+<div class="wrap"><table><tr><th>Chip model (Rin ‖ Cin)</th><th>Voltage gain at 1090 MHz, dB</th><th>Return loss at 1090, dB</th><th>Peak</th></tr>{{MATCHTAB}}</table></div>
+<p class="note">Back-solved from the datasheet 900 MHz match (1.5 pF / 8.2 nH, 9 dB): about 330 Ω ‖ 2.5 pF with eval-board pads. The match resonates at 0.9–0.96 GHz, so 1090 MHz sits 1–5 dB below peak gain, and X2 is loaded by a 2–7 dB return loss. L6 = 6.8–7.5 nH centers it (est.). Sensitivity effect ≤0.3 dB (detector noise is far below), so this is a cleanup, not a fix.</p>
+
+<h2>3. Detector video bandwidth vs Mode S</h2>
+<div class="wrap"><table>
+<tr><th>Item</th><th>Value</th><th>Mode S need</th></tr>
+<tr><td>AD8313 output</td><td>2-pole, ≈12 MHz corner; 40 ns 10–90 % small signal; 110–160 ns no-signal → 0 dBm (datasheet)</td><td rowspan="4">Pulse 0.5 ± 0.05 µs, rise 0.05–0.1 µs. A matched video filter for 0.5 µs is ≈1 MHz; 2–3 MHz keeps PPM timing.</td></tr>
+<tr><td>FAST net (rev F+: R11 5.1 kΩ, C17 3 pF)</td><td>τ 15 ns, 10.4 MHz; rev D: 1 kΩ, 53 MHz</td></tr>
+<tr><td>Comparator (MCP6566)</td><td>tPHL 34 ns at 100 mV, 80–150 ns at 5–10 mV overdrive; tPLH ≈61 ns (1 kΩ pull-up)</td></tr>
+<tr><td>Net video path</td><td>≈6 MHz −3 dB, ≈55 ns rise (est.)</td></tr>
+<tr><td>AD8313 output drive</td><td>sources 400 µA, sinks 10 mA. R12 (1 kΩ to 3V3) supplies ≈2.5 mA, so the rising edge is not current-limited. Loads: R11, R13, R14 ≥ 5.1 kΩ.</td><td>OK</td></tr>
+</table></div>
+<p>The video path is 3–6× wider than Mode S needs, so the slicer sees about {{FASTRMS}} mV rms of noise on FAST (model; AD8313 out {{DETRMS}} mV rms) against a 55 mV TL step at default settings. Narrowing it with C17 is the cheapest sensitivity change found (section 5). The cost is slower edges and more amplitude-dependent delay on the capture timestamp: with 22 pF (τ 112 ns) a weak and a strong frame can trigger up to ~100 ns apart (est.), about 30 m in MLAT. Check this before shipping; 10 pF halves it.</p>
+
+<h2>4. Comparator, trigger level and the preamble matchers</h2>
+<ul>
+<li><b>TL network.</b> LEVEL = (DET·R9 + LEVEL_BIAS·R13)/(R9+R13) on 200 pF (τ 1.8 µs). It tracks the detector mean, so the setting only adds offset/11: 600 mV → 54.5 mV ≈ 3.1 dB above the mean log noise. During a frame LEVEL rises toward mid-pulse, which is why data bits survive a low TL.</li>
+<li><b>TL ripple.</b> PWM 25 kHz into 10 kΩ/100 nF: ≈31 mV p-p on LEVEL_BIAS, 2.8 mV p-p on LEVEL (est.). Noise on LEVEL is {{LEVRMS}} mV rms (model). Ripple is negligible.</li>
+<li><b>Comparator.</b> Hysteresis 1–5 mV (0.06–0.3 dB), negligible. Offset ±3 mV typ, ±10 mV max = ±33 / ±110 mV of TL setting. That moves each unit's optimum TL. A unit-level TL learn matters more than any comparator swap. A faster push-pull part (TLV3601) changed nothing in the model.</li>
+<li><b>Noise duty is measured, not assumed.</b> The comparator HI fraction in noise-only tails of {{REALN}} live-sky captures (t-0870, attic 1090U) is {{REALDUTY}} %. The model gives {{MODDUTY}} % at TL 600, with the same run-length shape: 76 % of HI runs last one sample (83 ns) in both. The attic unit's TL offset was not logged; the default is assumed.</li>
+<li><b>Why a low TL hurts.</b> At ≈1.2 noise edges/µs, each candidate holds a matcher for 1.3–2.3 µs before it spends its 4-mismatch budget. The token passes strictly in ring order (<code>wait 1 irq 4 rel</code>). If the matcher whose turn it is is still busy when a frame starts, it next waits for a falling edge and takes pulse 2 or later, misaligned. The frame is lost at any level.</li>
+</ul>
+<div class="pair"><figure><figcaption>Comparator HI fraction on noise vs TL setting</figcaption>{{DUTY}}</figure>
+<figure><figcaption>HI run lengths at TL 600: model vs live sky</figcaption>{{RUNS}}</figure></div>
+<h3>Model traces at −88 dBm (thermal noise)</h3>
+{{TRACES}}
+
+<h2>5. Changes ranked</h2>
+{{VARS}}
+<div class="wrap"><table>
+<tr><th>Change</th><th>Best 90 % pt, dBm</th><th>at TL mV</th><th>vs base {{BASE}} @ {{TLBASE}}</th><th>Part cost</th><th>Effort</th><th>Notes</th></tr>
+<tr><td><b>TL offset 600 → {{TLBASE}} mV</b> (setting, or <code>AT+TL_OFFSET=LEARN</code>)</td><td>{{BASE}}</td><td>{{TLBASE}}</td><td>from "never 90 %" ({{P600}} % ceiling) to {{P800}} %</td><td>$0</td><td>default constant</td><td>A/B on air first: the model gain rests on the matcher-ring mechanism (section 4).</td></tr>
+{{VROWS}}
+<tr><td>PIO matcher budget 4 → 8; remove D7</td><td colspan="3">budget 8: worse (never 90 % at TL 0.4–0.7); no D7: ±0.1 dB (first-pass sweep)</td><td>$0</td><td>—</td><td><b>Don't.</b></td></tr>
+<tr><td>L6 10 → 7.5 nH</td><td colspan="3">≤0.3 dB (est.)</td><td>$0</td><td>rework</td><td>Centers the detector match; better load for X2.</td></tr>
+<tr><td>LNA swap</td><td colspan="3">≤0.4 dB possible (NF already {{NF}} dB)</td><td>—</td><td>none pin-compatible</td><td><b>Don't.</b></td></tr>
+<tr><td>Detector swap (MAX2015 is the only drop-in)</td><td colspan="3">0 (detector noise is 18 dB below)</td><td>+$12</td><td>swap</td><td><b>Don't.</b></td></tr>
+</table></div>
+<h3>Layout and next revision</h3>
+<ul>
+<li><b>Self-interference check first (M2).</b> U2/X1/U3/X2 sit on the top side directly over the ESP32-S3-MINI-1U (bottom side). Clock harmonics in or near the SAW passband: 12 MHz × 91 = 1092 MHz (RP2040 Y1), 40 MHz × 27 = 1080 MHz (ESP32; X1+X2 pass it at ≈−1.7 dB), 48 MHz × 23 = 1104 MHz (CC1312 Y2, ≈−13 dB). A spur 5 dB over thermal noise would cost several dB in the same way as the bench CW. If M2 finds one: a shield can over U2–X2 and stitched ground between the RF strip and the module on rev H.</li>
+<li>Rev H options if the model holds on air: C17 footprint value 10–22 pF; L6 7.5 nH; a narrow SAW at X2 if one can be bought; keep D7 (harmless).</li>
+<li>Bigger lever, not RF: a soft preamble correlator on the 12 Msps sample stream would recover most of the {{D_PRE}} dB between {{BASE}} and the perfect-timing {{GENIE}} dBm. Simple PIO rule changes (budget 8, per-chip majority) gave ≤0.5 dB in the model.</li>
+</ul>
+
+<h2>6. Bench measurements to confirm (proposed, not run)</h2>
+<p class="note">pi-1 is busy: these are for whoever next has a quiet bench. Order is by value.</p>
+<ol class="steps">
+<li><b>M1 · Bench CW leak (1 h).</b> Waggler idle with its TX still enabled at 1090 MHz. (a) Read <code>AT+TL_READ?</code> 10× and average. (b) Unplug the bench feed at the 1090U and fit a 50 Ω U.FL terminator; read again. (c) Expected for thermal noise: TL_READ ≈ {{NFV}} V + offset (≈1.35 V at 600). A drop of more than 20 mV with the terminator means the feed carries in-band power. (d) Confirm on a spectrum view: feed the bench cable into the second Pluto's RX at 1090 MHz, 20 MSps, and compare idle-TX vs TX-disabled. (e) Re-run the t-0827 DF17 sweep with the waggler LO at 1110 MHz and frames synthesized at −20 MHz offset; X1+X2 then reject the leak by >40 dB. Do the same for the m1421.</li>
+<li><b>M2 · Terminated noise floor and self-interference (1 h).</b> 50 Ω on J1, bias tee off. Log <code>AT+TL_READ?</code> (minus offset) for each case: ESP32 Wi-Fi off, Wi-Fi on with traffic, Ethernet/feeds active, CC1312 RX on. Expected ≈{{NFV}} V; every 17.6 mV above is 1 dB of excess noise. Then look at TJ1 (MM8930 test port; the switch disconnects the detector) with the Pluto RX: 1070–1110 MHz, RBW ≈10 kHz, for lines at 1080, 1092 and 1104 MHz.</li>
+<li><b>M3 · Noise figure, Y-factor through the detector (1 h, needs a noise source).</b> Noise source (ENR 5–15 dB, e.g. a 346B or a calibrated diode) on J1, firmware noise floor (RSSI, mV) read with the source off and on, 64 averages each. Y(dB) = ΔV / 17.6 mV. NF = ENR − 10·log10(10^(Y/10) − 1). Expected NF ≈ {{NF}} dB, Y ≈ ENR. Pluto-only alternative: measure the noise power at TJ1 into the Pluto RX with the source off/on (backend NF is diluted by 33 dB of gain).</li>
+<li><b>M4 · Comparator duty and edge rate vs TL (30 min).</b> Antenna on, then terminated. TL offset 400–1200 mV in 100 mV steps. Logic analyzer on TP4 (PULSES) at ≥50 MSps, 1 s per step: HI fraction and rising edges per second. Compare with the model curve above (14.5 % / ≈1.2 edges/µs at 600, 7 % at 800). This tests the mechanism behind the TL recommendation directly.</li>
+<li><b>M5 · TL ripple and detector noise (30 min).</b> Scope, 10× probe, 20 MHz BW limit, short ground spring. TP1 (LEVEL_BIAS) AC: ≈31 mV p-p 25 kHz triangle. TP5 (LEVEL) AC: ≈2.8 mV p-p ripple under ≈{{LEVRMS}} mV rms noise. TP3 (FAST) AC: ≈{{FASTRMS}} mV rms; TP2 (DET) ≈{{DETRMS}} mV rms (model). Anything much larger points to pickup on the TL network.</li>
+<li><b>M6 · Detector match (30 min, VNA or Pluto + bridge).</b> S11 into TJ1 toward the detector, 0.8–1.3 GHz. Expected resonance 0.9–0.96 GHz, RL 2–7 dB at 1090 MHz. Retest with L6 = 7.5 nH.</li>
+<li><b>M7 · A/B on air (2 days, no lab time).</b> Same unit, alternating 30-min blocks of TL 600 / 800 (and 22 pF C17 at 400 / 500 on a reworked unit), as in t-0870: frames/s per aircraft and DF17 position rate per strong aircraft (expected 2.0/s). The model predicts the decode rate of frames above threshold going from {{P600}} % to {{P800}} %, strong aircraft included.</li>
+</ol>
+
+<h2>7. Method and confidence</h2>
+<ul>
+<li><b>Model.</b> Complex baseband at 96 MHz: thermal noise at NF {{NF}} dB → TFS1090F×2 response (t-0061 extraction) → log of envelope power with the firmware calibration and AD8313 noise → AD8313 2-pole video (40 ns rise) → FAST/LEVEL network with D7 (implicit Euler at 384 MHz, 1N4148 fit from the Comchip curve) → MCP6566 with hysteresis and a 10 ns input pole → 4 preamble matchers cycle-exact to <code>capture.pio</code> (48 MHz, round robin, budget 4) → 12 Msps sampler → the Python port of <code>mode_s_soft_demod.cc</code> (worker-2, t-0870) plus the #398 offset retry. No SPICE engine is installed here, so the analog network runs in this ODE model instead of LTspice.</li>
+<li><b>Validated against.</b> (1) Live-sky noise duty {{REALDUTY}} % vs {{MODDUTY}} % and the run-length shape. (2) Bench −83.6 dBm vs {{CW95}} dBm with a −95 dBm CW, whose detector floor matches the bench TL readback. (3) m1421 spec −89 dBm vs LR2021 model {{LR}} dBm.</li>
+<li><b>Not validated.</b> The CW-leak explanation; the matcher-ring loss on real hardware (from reading the PIO, not observed); AD8313 treated as an ideal log-of-envelope with a 2-pole output; linear-phase SAWs (group-delay ripple ignored); carrier offset 0 (bench case); LR2021 NF (5.5 dB est.); pulse shapes; one board revision (F+). On the bench, TL 500 beat TL 600 by 0.7 dB. The model agrees at a −92 dBm CW ({{CW92_500}} vs {{CW92}} dBm) but not at −95 dBm ({{CW95_500}} vs {{CW95}} dBm), so the leak level is uncertain within a few dB.</li>
+<li><b>Files.</b> Model and scripts: <code>/workspace/agents/worker-5/t0877/ana/</code> (<code>sim.py</code>, <code>ref.py</code>, <code>cascade.py</code>, <code>match.py</code>, <code>sweep.py</code>); results JSON in <code>/workspace/agents/worker-5/t0877/</code>; datasheets in <code>…/ds/web/</code>. Also on branch <code>t0877</code> under <code>research/t0877-1090u-rf/</code>. Sources: internal <code>projects/adsbee/kicad/adsbee_1090u</code> (rev G, 2026-10-07), adsbee <code>kicad/adsbee_1090u</code> rev D PDF, t-0827 bench report, t-0870 live-sky captures, library chats "Narrow SAW Filter" and "SAW limiter frontend".</li>
+</ul>
+</main></body></html>

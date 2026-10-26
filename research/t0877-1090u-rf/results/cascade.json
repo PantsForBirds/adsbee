@@ -1,0 +1,83 @@
+{
+ "rows": [
+  {
+   "stage": "U.FL J1 + 50 ohm trace",
+   "gain": -0.1,
+   "nf": 0.1,
+   "bw": "-",
+   "src": "est. Hirose U.FL ~0.1 dB at 1 GHz + ~5 mm trace",
+   "cum_gain": -0.10000000000000006,
+   "cum_nf": 0.09999999999999987
+  },
+  {
+   "stage": "ESD7351 (0.6 pF shunt)",
+   "gain": -0.05,
+   "nf": 0.05,
+   "bw": "-",
+   "src": "mismatch of 0.6 pF at 1090 MHz: |S21|^2 = -0.05 dB",
+   "cum_gain": -0.15000000000000013,
+   "cum_nf": 0.1500000000000003
+  },
+  {
+   "stage": "Bias tee L1 100 nH + C12 100 pF",
+   "gain": -0.05,
+   "nf": 0.05,
+   "bw": "-",
+   "src": "|Z_L1| > 600 ohm shunt, C12 Xc = 1.5 ohm",
+   "cum_gain": -0.2000000000000003,
+   "cum_nf": 0.20000000000000032
+  },
+  {
+   "stage": "U2 BLB01 @3.3 V",
+   "gain": 18.6,
+   "nf": 0.55,
+   "bw": "0.5-1.5 GHz",
+   "src": "BLB01 rev 6.5, Vd=3 V table, interp. 900/1500 MHz",
+   "cum_gain": 18.400000000000002,
+   "cum_nf": 0.7500000000000002
+  },
+  {
+   "stage": "X1 TFS1090F",
+   "gain": -1.58,
+   "nf": 1.58,
+   "bw": "27.5 MHz (-3 dB)",
+   "src": "TFS1090F vector plot (t-0061 results.json)",
+   "cum_gain": 16.82,
+   "cum_nf": 0.7731149661684524
+  },
+  {
+   "stage": "U3 BLB01 @3.3 V",
+   "gain": 18.6,
+   "nf": 0.55,
+   "bw": "0.5-1.5 GHz",
+   "src": "as U2",
+   "cum_gain": 35.42,
+   "cum_nf": 0.7833086601406389
+  },
+  {
+   "stage": "X2 TFS1090F",
+   "gain": -1.58,
+   "nf": 1.58,
+   "bw": "cascade 23.7 MHz",
+   "src": "as X1",
+   "cum_gain": 33.84,
+   "cum_nf": 0.7837654282959734
+  },
+  {
+   "stage": "TJ1 MM8930-2620 + traces",
+   "gain": -0.2,
+   "nf": 0.2,
+   "bw": "-",
+   "src": "est.",
+   "cum_gain": 33.64,
+   "cum_nf": 0.7838360093759837
+  }
+ ],
+ "nf_fe": 0.7838360093759837,
+ "gain_fe": 33.64,
+ "match_gain": 8.0,
+ "det_noise_ant_dbm": -117.59931955649726,
+ "fe_noise_ant_dbm": -99.81172284222282,
+ "det_penalty_db": 0.0716861738058919,
+ "intercept_chip_dbm": -102.96
+}
