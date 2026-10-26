@@ -5,13 +5,21 @@
 <section class="card">
   <h2 title="What a bee is given to report here">Enroll token</h2>
   {% if enroll_token %}
-  <p title="Shown once. Paste into the bee's console.">
-    <code class="copy">AT+SWARM=1,{{ base }},{{ enroll_token }}</code></p>
+  <p title="Paste into the bee's console, then AT+SETTINGS=SAVE">
+    <code class="copy" id="at-line">AT+SWARM=1,{{ base }},{{ enroll_token }}</code>
+    <button type="button" title="Copy" onclick="navigator.clipboard.writeText(document.getElementById('at-line').textContent)">⧉</button></p>
+  {% if made == 'rotate' %}<p class="dim" title="Old tokens still work for bees already on the account">✔ ⬡ {{ old_token_bees }}</p>
+  {% elif made == 'cut_off' %}<p class="warn" title="Every old token stopped working: each bee needs this line">⚠ ✕ old</p>{% endif %}
   {% else %}
-  <p class="mono" title="Only the start is kept">{{ account.enroll_token_prefix|default:"—" }}…</p>
+  <p><span class="mono" title="The current token starts with this">{{ current.prefix|default:"—" }}…</span>
+  {% if unavailable %}<span class="warn" title="Make a new token to see it here (it was made before tokens were kept, or the server's key changed). Bees keep reporting.">⚠</span>{% endif %}</p>
   {% endif %}
-  <form method="post" action="{% url 'adsbee_swarm:account_action' %}">{% csrf_token %}
-    <button name="action" value="rotate" title="New token: bees with the old one stop reporting" onclick="return confirm('Replace the enroll token?')">⟳</button></form>
+  <form method="post" action="{% url 'adsbee_swarm:account_action' %}" class="inline">{% csrf_token %}
+    {% if current and not enroll_token %}<button name="action" value="reveal" title="Show the AT+SWARM line">👁</button>{% endif %}
+    <button name="action" value="rotate" title="New token for new bees; bees already here keep theirs" onclick="return confirm('Make a new token? Bees already here keep reporting with the old one.')">⟳</button>
+    {% if current %}<button name="action" value="cut_off" class="bad" title="Cut off all bees: new token, every old one stops working" onclick="return confirm('Cut off all bees? Every bee stops reporting until it gets the new line.')">✕ ⬡</button>{% endif %}
+  </form>
+  {% if old_token_bees %}<p class="dim" title="Bees still on an old token: give them the new line when convenient">⚠ {{ old_token_bees }}</p>{% endif %}
 </section>
 <section class="card">
   <h2 title="For scripts: Authorization: Bearer <token>">API tokens</h2>

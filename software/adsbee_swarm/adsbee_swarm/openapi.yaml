@@ -114,6 +114,7 @@ components:
         range_dropped: {type: integer, description: "Last report: positions the bee dropped."}
         bins_ignored: {type: integer, description: "Last report: bins past the horizon limit, ignored here."}
         check_position: {type: boolean, description: "Any of the three above: show the user 'check position'."}
+        old_token: {type: boolean, description: "Its last report used a replaced enroll token: give it the new AT+SWARM line."}
     DeviceEdit:
       type: object
       properties:
@@ -210,9 +211,9 @@ paths:
       responses:
         '200': {description: Stored (or a duplicate), content: {application/json: {schema: {$ref: '#/components/schemas/ReportAnswer'}}}}
         '400': {$ref: '#/components/responses/Error'}
-        '401': {$ref: '#/components/responses/Error'}
+        '401': {description: "bad_token: unknown, cut off, or an old token from a bee that was not on the account when the token was replaced", content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '403': {$ref: '#/components/responses/Error'}
-        '410': {$ref: '#/components/responses/Error'}
+        '410': {description: "removed: until the owner restores it, or it reports with a token made after its removal", content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '429': {description: Slow down, headers: {Retry-After: {schema: {type: integer}}}}
         '503': {description: "The device verifier cannot decide now (unavailable): back off and retry", headers: {Retry-After: {schema: {type: integer}}}}
   /api/swarm/v1/account:
@@ -229,16 +230,28 @@ paths:
                   username: {type: string}
                   privileges: {type: array, items: {type: string}}
                   enroll_token_prefix: {type: string}
-                  enroll_token_rotated_at: {type: string, format: date-time, nullable: true}
+                  enroll_token_rotated_at: {type: string, format: date-time, nullable: true, description: "When the current token was made"}
+                  enroll_token_revealable: {type: boolean, description: "The current token can be shown again (reveal)"}
                   report_url: {type: string}
                   products: {type: object, additionalProperties: {type: string}}
   /api/swarm/v1/account/enroll-token:
     post:
-      summary: Replace the enroll token (bees holding the old one get 401)
+      summary: New enroll token. Bees already on the account keep reporting with old ones; cut_off stops every old one.
+      requestBody: {content: {application/json: {schema: {type: object, properties: {cut_off: {type: boolean, default: false}}}}}}
       responses:
         '200':
-          description: The new token, shown once
+          description: The new token
+          content: {application/json: {schema: {type: object, properties: {token: {type: string}, at_command: {type: string}, cut_off: {type: boolean}}}}}
+  /api/swarm/v1/account/enroll-token/reveal:
+    post:
+      summary: The current enroll token again. Signed-in session only (an API token gets 403 session_only).
+      security: [{session: []}]
+      responses:
+        '200':
+          description: The current token
           content: {application/json: {schema: {type: object, properties: {token: {type: string}, at_command: {type: string}}}}}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {description: "unavailable: made before tokens were kept, or the key changed; make a new one", content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
   /api/swarm/v1/account/api-tokens:
     get:
       summary: API tokens (prefixes only)

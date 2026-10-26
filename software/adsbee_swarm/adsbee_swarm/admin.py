@@ -1,14 +1,26 @@
 from django.contrib import admin
 
-from .models import Account, ApiToken, Device, Rollout, Sample, SampleRange
+from .models import Account, ApiToken, Device, EnrollToken, Rollout, Sample, SampleRange
+
+
+class EnrollTokenInline(admin.TabularInline):
+    """Which tokens exist; never the token itself (not even encrypted)."""
+    model = EnrollToken
+    fields = ('prefix', 'created_at', 'retired_at', 'cut_off')
+    readonly_fields = fields
+    extra = 0
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Account)
 class AccountAdmin(admin.ModelAdmin):
+    inlines = [EnrollTokenInline]
     list_display = ('user', 'privileges', 'disabled', 'enroll_token_prefix', 'created_at')
     list_filter = ('disabled',)
     search_fields = ('user__username', 'user__email')
-    readonly_fields = ('enroll_token_hash', 'enroll_token_prefix', 'enroll_token_rotated_at')
 
 
 @admin.register(ApiToken)
@@ -22,6 +34,7 @@ class DeviceAdmin(admin.ModelAdmin):
     list_display = ('unique_id', 'label', 'product', 'account', 'last_report_at', 'auto_update', 'removed_at')
     list_filter = ('product', 'auto_update')
     search_fields = ('unique_id', 'label', 'account__user__username')
+    readonly_fields = ('enroll_token',)
 
 
 @admin.register(Rollout)

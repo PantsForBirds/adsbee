@@ -1,7 +1,8 @@
 """
 POST /api/swarm/v1/report: what a bee sends every period (docs/swarm_api.md, "Device report").
 
-401 bad_token, 403 bad_key (the DEVICE_VERIFIER said no), 503 unavailable (it could not decide;
+401 bad_token (unknown, cut off, or an old token from a bee that wasn't on the account when it
+was replaced), 403 bad_key (the DEVICE_VERIFIER said no), 503 unavailable (it could not decide;
 Retry-After), 410 removed, 429 rate_limited (Retry-After), 400 bad_request. Errors are {"error": code, "detail"?: text}.
 """
 from __future__ import annotations
@@ -49,7 +50,8 @@ def report(request):
     if refused:
         return refused
     header = request.headers.get('Authorization', '')
-    account = services.account_by_enroll_token(header[7:].strip()) if header.startswith('Bearer ') else None
+    token = services.enroll_token_by(header[7:].strip()) if header.startswith('Bearer ') else None
+    account = token.account if token else None
     if account is None or not account.has('swarm'):
         return error(401, 'bad_token')
     if len(request.body) > conf.get('MAX_REPORT_BYTES'):
@@ -59,6 +61,10 @@ def report(request):
         parsed = protocol.parse(data)
     except (ValueError, UnicodeDecodeError) as exc:
         return error(400, 'bad_request', str(exc)[:200])
+
+    known = Device.objects.filter(account=account, product=parsed.product, unique_id=parsed.unique_id).first()
+    if not services.admits(token, known):
+        return error(401, 'bad_token')
 
     verifier = conf.hook('DEVICE_VERIFIER')
     try:
@@ -71,15 +77,19 @@ def report(request):
         log.info('bad_key account=%s device=%s:%s', account.pk, parsed.product, parsed.unique_id)
         return error(403, 'bad_key')
 
-    try:
-        device, _ = Device.objects.get_or_create(account=account, product=parsed.product, unique_id=parsed.unique_id)
-    except IntegrityError:      # the same bee's report racing itself
-        device = Device.objects.get(account=account, product=parsed.product, unique_id=parsed.unique_id)
-    if services.is_turned_away(device):
+    device = known
+    if device is None:
+        try:
+            device, _ = Device.objects.get_or_create(account=account, product=parsed.product,
+                                                     unique_id=parsed.unique_id)
+        except IntegrityError:      # the same bee's report racing itself
+            device = Device.objects.get(account=account, product=parsed.product, unique_id=parsed.unique_id)
+    if services.is_turned_away(device, token):
         return error(410, 'removed')
     refused = limited('report_device', str(device.pk))
     if refused:
         return refused
     protocol.store(device, parsed)
+    Device.objects.filter(pk=device.pk).exclude(enroll_token=token).update(enroll_token=token)
     device.refresh_from_db()
     return JsonResponse({'next_report_s': conf.get('REPORT_PERIOD_S'), 'firmware': rollout.target(device)})
