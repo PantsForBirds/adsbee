@@ -9,6 +9,7 @@ urlpatterns = [
     path('api/swarm/v1/report', api_device.report, name='report'),
     path('api/swarm/v1/account', api_user.account, name='account'),
     path('api/swarm/v1/account/enroll-token', api_user.rotate_enroll_token, name='enroll_token'),
+    path('api/swarm/v1/account/enroll-token/reveal', api_user.reveal_enroll_token, name='enroll_token_reveal'),
     path('api/swarm/v1/account/api-tokens', api_user.api_tokens, name='api_tokens'),
     path('api/swarm/v1/account/api-tokens/<int:pk>', api_user.api_token, name='api_token'),
     path('api/swarm/v1/devices', api_user.devices, name='devices'),

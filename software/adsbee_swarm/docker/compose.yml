@@ -25,6 +25,7 @@ services:
       DJANGO_ALLOWED_HOSTS: ${SWARM_DOMAIN}
       DJANGO_CSRF_TRUSTED_ORIGINS: https://${SWARM_DOMAIN}
       ADSBEE_SWARM_CLIENT_IP_HEADER: X-Forwarded-For
+      ADSBEE_SWARM_TOKEN_KEY: ${ADSBEE_SWARM_TOKEN_KEY:-}
 
   caddy:
     image: caddy:2

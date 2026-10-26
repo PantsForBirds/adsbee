@@ -31,8 +31,9 @@ def _csrf_refused(request):
     return CsrfViewMiddleware(lambda r: None).process_view(request, None, (), {})
 
 
-def user_api(*methods, privilege: str = 'swarm'):
-    """Resolves request.account (session or API token), checks the method, CSRF and privilege."""
+def user_api(*methods, privilege: str = 'swarm', session_only: bool = False):
+    """Resolves request.account (session or API token), checks the method, CSRF and privilege.
+    `session_only`: an API token gets 403 session_only."""
     def wrapper(func):
         @wraps(func)
         def inner(request, *args, **kwargs):
@@ -43,6 +44,8 @@ def user_api(*methods, privilege: str = 'swarm'):
                 account = services.account_by_api_token(header[7:].strip())
                 if account is None:
                     return error(401, 'bad_token')
+                if session_only:
+                    return error(403, 'session_only')
             else:
                 account = services.account_for(getattr(request, 'user', None))
                 if account is None or account.disabled:
@@ -121,7 +124,8 @@ def device_json(device: Device) -> dict:
             'last_report_at': device.last_report_at.isoformat() if device.last_report_at else None,
             'removed': device.removed, 'firmware_target': rollouts.target(device),
             'range_withheld': device.range_withheld, 'range_dropped': device.range_dropped,
-            'bins_ignored': device.bins_ignored, 'check_position': device.check_position}
+            'bins_ignored': device.bins_ignored, 'check_position': device.check_position,
+            'old_token': device.old_token}
 
 
 def rollout_json(rollout: Rollout) -> dict:
@@ -136,7 +140,7 @@ def rollout_json(rollout: Rollout) -> dict:
 
 
 def _devices(request):
-    devices = request.account.devices.all()
+    devices = request.account.devices.select_related('enroll_token')
     if request.GET.get('removed') != '1':
         devices = devices.filter(removed_at__isnull=True)
     return devices
@@ -147,18 +151,41 @@ def _devices(request):
 @user_api('GET')
 def account(request):
     a = request.account
+    current = a.enroll_token
     return _json({'username': a.user.get_username(), 'privileges': a.privileges,
-                  'enroll_token_prefix': a.enroll_token_prefix,
-                  'enroll_token_rotated_at': a.enroll_token_rotated_at.isoformat() if a.enroll_token_rotated_at else None,
+                  'enroll_token_prefix': current.prefix if current else '',
+                  'enroll_token_rotated_at': current.created_at.isoformat() if current else None,
+                  'enroll_token_revealable': bool(current and current.sealed),
                   'report_url': request.build_absolute_uri('/').rstrip('/'),
                   'products': {key: value['label'] for key, value in conf.products().items()}})
 
 
+def _secret(data: dict):
+    response = _json(data)
+    response['Cache-Control'] = 'no-store'
+    return response
+
+
 @user_api('POST')
 def rotate_enroll_token(request):
-    token = services.rotate_enroll_token(request.account)
+    """A new token; old ones keep working for bees already on the account. {"cut_off": true}:
+    every old token stops working."""
+    cut_off = _body(request).get('cut_off', False)
+    if not isinstance(cut_off, bool):
+        raise services.SwarmError('cut_off is true or false')
+    token = services.rotate_enroll_token(request.account, cut_off=cut_off, request=request)
     base = request.build_absolute_uri('/').rstrip('/')
-    return _json({'token': token, 'at_command': f'AT+SWARM=1,{base},{token}'})
+    return _secret({'token': token, 'at_command': f'AT+SWARM=1,{base},{token}', 'cut_off': cut_off})
+
+
+@user_api('POST', session_only=True)
+def reveal_enroll_token(request):
+    """The current token again: a signed-in session only. 404 unavailable: make a new one."""
+    token = services.reveal_enroll_token(request.account, request=request)
+    if token is None:
+        return error(404, 'unavailable', 'make a new token to see it here')
+    base = request.build_absolute_uri('/').rstrip('/')
+    return _secret({'token': token, 'at_command': f'AT+SWARM=1,{base},{token}'})
 
 
 @user_api('GET', 'POST')

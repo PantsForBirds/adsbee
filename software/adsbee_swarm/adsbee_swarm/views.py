@@ -57,7 +57,7 @@ def _picker(request, protocol: str, have: list[str]) -> dict:
 
 @swarm_page
 def device_list(request):
-    devices = list(request.account.devices.filter(removed_at__isnull=True))
+    devices = list(request.account.devices.filter(removed_at__isnull=True).select_related('enroll_token'))
     key, since, until = _window(request)
     protocol = _protocol(request)
     payload = queries.swarm_range(devices, since, until, protocol)
@@ -206,24 +206,40 @@ def rollout_page(request):
         'products': conf.products(), 'scopes': Rollout.SCOPES})
 
 
+def _account_context(request, **extra) -> dict:
+    account = request.account
+    return {'account': account, 'current': account.enroll_token,
+            'base': request.build_absolute_uri('/').rstrip('/'),
+            'tokens': account.api_tokens.order_by('-created_at'),
+            'old_token_bees': account.devices.filter(removed_at__isnull=True, enroll_token__retired_at__isnull=False,
+                                                     enroll_token__cut_off=False).count(), **extra}
+
+
+def _no_store(response):
+    response['Cache-Control'] = 'no-store'
+    return response
+
+
 @swarm_page
 def account_page(request):
-    return render(request, 'adsbee_swarm/account.html', {
-        'account': request.account, 'tokens': request.account.api_tokens.order_by('-created_at'),
-        'base': request.build_absolute_uri('/').rstrip('/')})
+    return render(request, 'adsbee_swarm/account.html', _account_context(request))
 
 
 @swarm_page
 @require_POST
 def account_action(request):
     action = request.POST.get('action')
-    context = {'account': request.account, 'base': request.build_absolute_uri('/').rstrip('/')}
-    if action == 'rotate':
-        context['enroll_token'] = services.rotate_enroll_token(request.account)
+    context = {}
+    if action in ('rotate', 'cut_off'):
+        context['enroll_token'] = services.rotate_enroll_token(request.account, cut_off=action == 'cut_off',
+                                                               request=request)
+        context['made'] = action
+    elif action == 'reveal':
+        context['enroll_token'] = services.reveal_enroll_token(request.account, request=request)
+        context['unavailable'] = context['enroll_token'] is None
     elif action == 'api_token':
         context['api_token'] = services.create_api_token(request.account, request.POST.get('name', ''))[1]
     elif action == 'delete_token':
         request.account.api_tokens.filter(pk=request.POST.get('token')).delete()
         return redirect('adsbee_swarm:account')
-    context['tokens'] = request.account.api_tokens.order_by('-created_at')
-    return render(request, 'adsbee_swarm/account.html', context)
+    return _no_store(render(request, 'adsbee_swarm/account.html', _account_context(request, **context)))
