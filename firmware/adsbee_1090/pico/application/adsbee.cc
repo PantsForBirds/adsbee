@@ -647,7 +647,8 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
         uint16_t demod_start_counts = GetMLATJitterPWMSliceCounts();
 #endif
         mode_s_soft_demod::Result result;
-        bool retry = capture_queue_.Length() < kMaxBacklogForOffsetRetry;
+        bool retry =
+            capture_queue_.Length() < kMaxBacklogForOffsetRetry && decoder.raw_mode_s_packet_in_queue.Length() == 0;
         bool found = mode_s_soft_demod::Demodulate(capture.samples, capture.num_words, result, retry,
                                                    retry ? IsKnownAddress : nullptr);
 #ifdef DEBUG_ISR_TIMING
