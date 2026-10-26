@@ -19,6 +19,7 @@
 #include "spi_coprocessor.hh"
 #include "stdint.h"
 #include "tl_learner.hh"
+#include "lab_rx.hh"
 
 class ADSBee {
    public:
@@ -99,7 +100,12 @@ class ADSBee {
     static constexpr uint16_t kMaxBacklogForOffsetRetry = 4;
 
     struct Capture {
+#ifdef ADSBEE_LAB_RX
+        uint32_t samples[lab_rx::kLabCaptureWords];
+        uint16_t lab_hi_samples;
+#else
         uint32_t samples[mode_s_soft_demod::kCaptureWords];
+#endif
         uint64_t mlat_48mhz_64bit_counts;  // Demod pin rising edge (OnDemodBegin()).
         uint16_t mlat_jitter_sys_clk_counts;  // Sampler start is this many system clocks before that edge.
         int16_t rssi_mv;
@@ -526,7 +532,17 @@ class ADSBee {
 
     // One DMA channel and capture buffer per pulse sampler (one spare word for bit windows that end in the last one).
     int sample_dma_channel_[BSP::kMaxNumDemodStateMachines] = {-1, -1, -1, -1};
+#ifdef ADSBEE_LAB_RX
+    uint32_t sample_buf_[BSP::kMaxNumDemodStateMachines][lab_rx::kLabCaptureWords + 1] = {};
+    // Trigger in use, copied from lab_rx::lab.settings by PIOInit() (core 1 stopped).
+    uint16_t lab_extra_samples_ = 0;
+    uint16_t lab_extra_words_ = 0;
+    uint8_t lab_num_chips_ = 15;
+    uint16_t lab_hi_samples_[BSP::kMaxNumDemodStateMachines] = {};
+    uint32_t lab_demod_buf_[mode_s_soft_demod::kCaptureWords + 1] = {};
+#else
     uint32_t sample_buf_[BSP::kMaxNumDemodStateMachines][mode_s_soft_demod::kCaptureWords + 1] = {};
+#endif
     // Written by FinishCapture() (interrupt), read by DemodulateCaptures() (loop), both on the receiver core. Unlocked:
     // a lock taken in an interrupt would deadlock against the loop it interrupted. Captures are filled and read in
     // place to keep copies out of the interrupt.

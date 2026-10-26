@@ -59,6 +59,11 @@ if (ON_EMBEDDED_DEVICE)
     add_compile_definitions(ON_PICO)
     # The ESP32 keeps the default of 200: it has no room for 400 without PSRAM. host_test sets 400 too.
     add_compile_definitions(AIRCRAFT_DICTIONARY_MAX_NUM_AIRCRAFT=400)
+    # Lab only (t-0875): receive path records and trigger experiments (AT+LABRX, AT+LABTRIG). Never in a release.
+    option(ADSBEE_LAB_RX "Receive path lab instrumentation, lab builds only" OFF)
+    if (ADSBEE_LAB_RX)
+        add_compile_definitions(ADSBEE_LAB_RX)
+    endif()
     add_compile_definitions(
         # Can't pass in expression in parentheses or else it's a "functional" macro that isn't supported.
         PICO_FLASH_SIZE_BYTES=16777216 # 16MB = 16*1024*1024 Bytes of flash.

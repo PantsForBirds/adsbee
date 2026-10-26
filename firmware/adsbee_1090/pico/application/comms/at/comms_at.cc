@@ -2489,6 +2489,86 @@ CPP_AT_CALLBACK(CommsManager::ATWiFiSTANetworkCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+#ifdef ADSBEE_LAB_RX
+#include "core1.hh"
+#include "lab_rx.hh"
+// Lab only (t-0875). AT+LABRX=<records>[,<dump_mask_hex>[,<interval_ms>[,<record_mask_hex>]]], AT+LABRX?
+// Masks: bit (kind letter - 'A').
+CPP_AT_CALLBACK(ATLabRxCallback) {
+    lab_rx::Settings& ls = lab_rx::lab.settings;
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d,%lx,%lu,%lx", ls.records, (unsigned long)ls.dump_mask, (unsigned long)ls.interval_ms,
+                              (unsigned long)ls.record_mask);
+            CPP_AT_SILENT_SUCCESS();
+        case '=': {
+            if (CPP_AT_HAS_ARG(1)) {
+                uint32_t mask;
+                CPP_AT_TRY_ARG2NUM_BASE(1, mask, 16);
+                ls.dump_mask = mask;
+            }
+            if (CPP_AT_HAS_ARG(2)) {
+                uint32_t interval_ms;
+                CPP_AT_TRY_ARG2NUM(2, interval_ms);
+                ls.interval_ms = interval_ms;
+            }
+            if (CPP_AT_HAS_ARG(3)) {
+                uint32_t mask;
+                CPP_AT_TRY_ARG2NUM_BASE(3, mask, 16);
+                ls.record_mask = mask;
+            }
+            if (CPP_AT_HAS_ARG(0)) {
+                bool on;
+                CPP_AT_TRY_ARG2NUM(0, on);
+                ls.records = on;
+            }
+            CPP_AT_SUCCESS();
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+// AT+LABTRIG=<pattern_hex>,<num_chips>,<budget>,<sw_mode>,<sw_budget>,<guard>,<mid_check>,<retry>, AT+LABTRIG?
+// Empty arguments keep their value. The matcher changes restart core 1.
+CPP_AT_CALLBACK(ATLabTrigCallback) {
+    lab_rx::Settings& ls = lab_rx::lab.settings;
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%08lx,%u,%u,%u,%u,%d,%d,%d", (unsigned long)ls.pattern, ls.num_chips, ls.budget,
+                              ls.sw_mode, ls.sw_budget, ls.guard, ls.mid_check, ls.retry);
+            CPP_AT_SILENT_SUCCESS();
+        case '=': {
+            uint32_t pattern = ls.pattern;
+            uint8_t num_chips = ls.num_chips, budget = ls.budget, sw_mode = ls.sw_mode, sw_budget = ls.sw_budget;
+            bool guard = ls.guard, mid_check = ls.mid_check, retry = ls.retry;
+            if (CPP_AT_HAS_ARG(0)) CPP_AT_TRY_ARG2NUM_BASE(0, pattern, 16);
+            if (CPP_AT_HAS_ARG(1)) CPP_AT_TRY_ARG2NUM(1, num_chips);
+            if (CPP_AT_HAS_ARG(2)) CPP_AT_TRY_ARG2NUM(2, budget);
+            if (CPP_AT_HAS_ARG(3)) CPP_AT_TRY_ARG2NUM(3, sw_mode);
+            if (CPP_AT_HAS_ARG(4)) CPP_AT_TRY_ARG2NUM(4, sw_budget);
+            if (CPP_AT_HAS_ARG(5)) CPP_AT_TRY_ARG2NUM(5, guard);
+            if (CPP_AT_HAS_ARG(6)) CPP_AT_TRY_ARG2NUM(6, mid_check);
+            if (CPP_AT_HAS_ARG(7)) CPP_AT_TRY_ARG2NUM(7, retry);
+            if (num_chips < 1 || num_chips > 15 || budget > 31 || sw_mode > 3) {
+                CPP_AT_ERROR("num_chips 1-15, budget 0-31, sw_mode 0-3.");
+            }
+            bool restart = pattern != ls.pattern || num_chips != ls.num_chips || budget != ls.budget;
+            if (restart) StopCore1();
+            ls.pattern = pattern;
+            ls.num_chips = num_chips;
+            ls.budget = budget;
+            ls.sw_mode = sw_mode;
+            ls.sw_budget = sw_budget;
+            ls.guard = guard;
+            ls.mid_check = mid_check;
+            ls.retry = retry;
+            if (restart) StartCore1();
+            CPP_AT_SUCCESS();
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+#endif  // ADSBEE_LAB_RX
+
 const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "ASTERIX_SAC_SIC",
      .min_args = 0,
@@ -2709,6 +2789,18 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 4,
      .help_callback = CPP_AT_BIND_MEMBER_HELP_CALLBACK(CommsManager::ATOTAHelpCallback, comms_manager),
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATOTACallback, comms_manager)},
+#ifdef ADSBEE_LAB_RX
+    {.command = "LABRX",
+     .min_args = 0,
+     .max_args = 4,
+     .help_string = "Lab: AT+LABRX=<records>,<dump_mask_hex>,<interval_ms>,<record_mask_hex>",
+     .callback = ATLabRxCallback},
+    {.command = "LABTRIG",
+     .min_args = 0,
+     .max_args = 8,
+     .help_string = "Lab: AT+LABTRIG=<pattern_hex>,<chips>,<budget>,<sw_mode>,<sw_budget>,<guard>,<mid>,<retry>",
+     .callback = ATLabTrigCallback},
+#endif
     {.command = "PROTOCOL_OUT",
      .min_args = 0,
      .max_args = 2,
