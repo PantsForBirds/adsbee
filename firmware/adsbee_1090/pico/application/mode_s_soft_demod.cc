@@ -46,6 +46,23 @@ static inline void BitMargins(const uint32_t* samples, uint32_t first_sample, in
     }
 }
 
+// Weighted bit margins of 8 consecutive bits (kChipTables): positive for a 1, never 0; the size is the confidence.
+static inline void WeightedMargins(const uint32_t* samples, uint32_t first_sample, int margins[kBitsPerGroup]) {
+    uint32_t a, b, c;
+    AlignGroup(samples, first_sample, a, b, c);
+    auto margin = [](uint32_t chip_1, uint32_t chip_2) {
+        return static_cast<int>(kChipTables.value[chip_1 & 0x3F]) - kChipTables.value[64 + (chip_2 & 0x3F)];
+    };
+    margins[0] = margin(a >> 26, a >> 20);
+    margins[1] = margin(a >> 14, a >> 8);
+    margins[2] = margin(a >> 2, (a << 4) | (b >> 28));
+    margins[3] = margin(b >> 22, b >> 16);
+    margins[4] = margin(b >> 10, b >> 4);
+    margins[5] = margin((b << 2) | (c >> 30), c >> 24);
+    margins[6] = margin(c >> 18, c >> 12);
+    margins[7] = margin(c >> 6, c);
+}
+
 // HI samples among the middle 6 samples (3 to 8) of each of 8 consecutive bits. The mid-bit edge of a bit lies in
 // this window: a falling edge (1 bit) is at sample 3 + count, a rising edge (0 bit) at sample 9 - count.
 static inline void MidBitHiCounts(const uint32_t* samples, uint32_t first_sample, uint8_t counts[kBitsPerGroup]) {
@@ -127,7 +144,7 @@ static Check SOFT_DEMOD_FUNC(DecodeAt)(const uint32_t* samples, uint16_t num_wor
     uint32_t available_samples = num_words * 32 - offset;
     uint32_t first_sample = offset;
     for (uint32_t bits_done = 0; bits_done < len_bits; bits_done += kBitsPerGroup, first_sample += kSamplesPerGroup) {
-        BitMargins(samples, first_sample, margins);
+        WeightedMargins(samples, first_sample, margins);
         uint32_t byte = 0;
         for (uint32_t i = 0; i < kBitsPerGroup; i++) {
             byte = (byte << 1) | (margins[i] > 0);
@@ -155,28 +172,37 @@ static Check SOFT_DEMOD_FUNC(DecodeAt)(const uint32_t* samples, uint16_t num_wor
     if (remainder == 0 || (downlink_format == 11 && remainder < 0x80)) {
         return kCRCPassed;  // Intact (DF11 replies carry an interrogator code in the low 7 bits).
     }
-    // The CRC failed: go over the message again for the confidence of every bit and collect the least confident.
-    static uint8_t confidences[kMaxMessageBits];  // Static: called from one context, small stack.
+    // The CRC failed: go over the message again and collect the least confident bits, by confidence and then position.
+    // Margins are odd, so a weak bit's confidence is one of kNumWeakLevels levels: each level keeps its first bits.
+    static constexpr uint32_t kNumWeakLevels = (kWeakBitMaxConfidence + 1) / 2;
+    uint8_t level_bits[kNumWeakLevels][kMaxWeakBits];
+    uint8_t level_counts[kNumWeakLevels] = {0};
     first_sample = offset;
     for (uint32_t bits_done = 0; bits_done < len_bits; bits_done += kBitsPerGroup, first_sample += kSamplesPerGroup) {
-        BitMargins(samples, first_sample, margins);
+        WeightedMargins(samples, first_sample, margins);
         for (uint32_t i = 0; i < kBitsPerGroup; i++) {
-            confidences[bits_done + i] = static_cast<uint8_t>(margins[i] < 0 ? -margins[i] : margins[i]);
+            uint32_t confidence = static_cast<uint32_t>(margins[i] < 0 ? -margins[i] : margins[i]);
+            if (confidence <= kWeakBitMaxConfidence) {
+                uint32_t level = confidence >> 1;
+                if (level_counts[level] < kMaxWeakBits) {
+                    level_bits[level][level_counts[level]++] = static_cast<uint8_t>(bits_done + i);
+                }
+            }
         }
     }
     uint16_t weak_bits[kMaxWeakBits];
     uint16_t num_weak_bits = 0;
-    for (uint32_t level = 0; level <= kWeakBitMaxConfidence && num_weak_bits < kMaxWeakBits; level++) {
-        for (uint32_t i = 0; i < len_bits && num_weak_bits < kMaxWeakBits; i++) {
-            if (confidences[i] == level) {
-                weak_bits[num_weak_bits++] = i;
-            }
+    for (uint32_t level = 0; level < kNumWeakLevels && num_weak_bits < kMaxWeakBits; level++) {
+        for (uint32_t k = 0; k < level_counts[level] && num_weak_bits < kMaxWeakBits; k++) {
+            weak_bits[num_weak_bits++] = level_bits[level][k];
         }
     }
     auto syndrome = [len_bits](uint16_t bit_index) { return kBitSyndromes.syndrome[len_bits - 1 - bit_index]; };
     auto flip = [&result](uint16_t bit_index) { result.buffer[bit_index >> 5] ^= 1u << (31 - (bit_index & 31)); };
+    // A DF11 may be left with an interrogator code in its parity; other formats must come out exact.
+    uint32_t max_left = downlink_format == 11 ? kMaxInterrogatorCode : 0;
     for (uint16_t a = 0; a < num_weak_bits; a++) {
-        if (syndrome(weak_bits[a]) == remainder) {
+        if ((syndrome(weak_bits[a]) ^ remainder) <= max_left) {
             flip(weak_bits[a]);
             result.num_flipped_bits = 1;
             return kCRCPassed;
@@ -185,7 +211,7 @@ static Check SOFT_DEMOD_FUNC(DecodeAt)(const uint32_t* samples, uint16_t num_wor
     if (kMaxFlippedBits >= 2) {
         for (uint16_t a = 0; a < num_weak_bits; a++) {
             for (uint16_t b = a + 1; b < num_weak_bits; b++) {
-                if ((syndrome(weak_bits[a]) ^ syndrome(weak_bits[b])) == remainder) {
+                if ((syndrome(weak_bits[a]) ^ syndrome(weak_bits[b]) ^ remainder) <= max_left) {
                     flip(weak_bits[a]);
                     flip(weak_bits[b]);
                     result.num_flipped_bits = 2;
@@ -243,9 +269,10 @@ static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t nu
         return check != kNoMessage;
     }
 
-    // Retry at the next most confident offsets near the first pick. A first pick that reads a format without parity
-    // may sit on the last preamble pulse: then one chip later too.
-    bool chip_later = check == kNoMessage || (check == kNoCRC && !IsAddressParityFormat(result.buffer[0] >> 27));
+    // Retry at the next most confident offsets near the first pick. A first pick that reads a format without parity,
+    // or fails its CRC, may sit on the last preamble pulse: then one chip later too.
+    bool chip_later = check == kNoMessage || check == kCRCFailed ||
+                      (check == kNoCRC && !IsAddressParityFormat(result.buffer[0] >> 27));
     ScoreOffsets(samples, kMaxStartOffsetSamples + 1, kMaxRetryOffsetSamples, scores);
     bool tried[kMaxRetryOffsetSamples + 1] = {false};
     tried[best_offset] = true;

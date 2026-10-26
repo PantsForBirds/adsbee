@@ -14,11 +14,12 @@
  * Software Mode S demodulator for the 1090MHz comparator sampler (pulse_sampler in soft_capture.pio).
  *
  * The sampler delivers the comparator output at 12 samples per bit, starting close to the first data bit. Each bit is
- * decided by pulse position: more HI samples in its first half-bit chip than in its second is a 1. The difference is
- * the bit's confidence. The start of the data is found by trying a few sample offsets and keeping the one with the
- * most confident first bits. Frames with a CRC over the whole message (DF11, DF17, DF18) get up to two of their
- * least confident bits flipped if that makes the CRC pass. A frame that still does not validate is read again at the
- * next most confident offsets.
+ * decided by pulse position: more HI samples in its first half-bit chip than in its second is a 1, with the samples
+ * weighted by their place in the chip (kChipWeights). The weighted difference is the bit's confidence. The start of
+ * the data is found by trying a few sample offsets and keeping the one with the most confident first bits (plain HI
+ * counts). Frames with a CRC over the whole message (DF11, DF17, DF18) get up to two of their least confident bits
+ * flipped if that makes the CRC pass (for a DF11, leaves an interrogator code). A frame that still does not validate
+ * is read again at the next most confident offsets.
  */
 namespace mode_s_soft_demod {
 
@@ -37,9 +38,9 @@ static constexpr uint16_t kTimingSearchBits = 12;  // Bits used to pick the star
 // Retries: a frame that fails its CRC (or, for an address/parity format, names no tracked aircraft) is read again at
 // up to kMaxRetries other offsets, most confident first, and kept only if it validates there. A wrong pick is usually
 // a sample or two off, so retries stay within kMaxRetryShiftSamples of it. It can also be a whole chip early, on the
-// tail of the last preamble pulse: then it reads a format without parity, and one chip later is tried too. Offsets
-// 3 to 5 samples off read each bit across both of its chips and are never tried. A retry must also have no more than
-// kMaxTiesInSearchBits ties: a message read a chip off ties about half its bits.
+// tail of the last preamble pulse: then it reads a format without parity or fails its CRC, and one chip later is
+// tried too. Offsets 3 to 5 samples off read each bit across both of its chips and are never tried. A retry must also
+// have no more than kMaxTiesInSearchBits ties: a message read a chip off ties about half its bits.
 static constexpr uint16_t kMaxRetryShiftSamples = 2;
 static constexpr uint16_t kMaxRetryOffsetSamples = kMaxStartOffsetSamples + kMaxRetryShiftSamples;  // 9
 static constexpr uint16_t kMaxRetries = 3;
@@ -59,9 +60,17 @@ static_assert(kMaxMessageBits * kSamplesPerBit + kMaxRetryOffsetSamples <= kCapt
                   kShortMessageBits * kSamplesPerBit + kMaxRetryOffsetSamples <= kShortCaptureWords * 32,
               "Retry offsets must fit in the capture.");
 
-static constexpr uint16_t kMaxWeakBits = 6;          // Least confident bits that may be flipped.
-static constexpr uint16_t kMaxFlippedBits = 2;       // Bits flipped at most to make the CRC pass.
-static constexpr uint8_t kWeakBitMaxConfidence = 2;  // A bit this confident or less (of 6) may be flipped.
+static constexpr uint16_t kMaxWeakBits = 6;     // Least confident bits that may be flipped.
+static constexpr uint16_t kMaxFlippedBits = 2;  // Bits flipped at most to make the CRC pass.
+// Bit decisions weigh the samples of each chip (kChipWeights): an ideal bit has a weighted margin of about
+// +/-kIdealMargin, and a bit kWeakBitMaxConfidence or less from zero may be flipped (a third of the ideal, as two of
+// six HI samples were).
+static constexpr uint8_t kIdealMargin = 36;
+static constexpr uint8_t kWeakBitMaxConfidence = 12;
+// A DF11 reply to an interrogator with a nonzero code carries the code in the low bits of its parity. The CRC guided
+// fix accepts a DF11 whose remainder after the flips is a code up to this one: the aircraft dictionary then checks its
+// address like an address/parity reply. CL=4 (SI codes 48-63), IC=15, as DecodedModeSPacket.
+static constexpr uint32_t kMaxInterrogatorCode = (4 << 4) | 0xF;
 // A message has one pulse per bit, so bits without any HI sample in either chip (or the same count in both) are
 // rare. More of them than this in the timing search bits means there is no message here.
 static constexpr uint16_t kMaxTiesInSearchBits = 3;
@@ -128,6 +137,39 @@ class KnownAddressFilter {
 MODE_S_SOFT_DEMOD_TABLE static constexpr uint8_t kPopCount6[64] = {
     0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
     1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6};
+
+/**
+ * Weights of the 6 samples of the first and second chip of a bit for its decision. Fitted (logistic regression) on
+ * the 385k low-confidence bits of 108k validated live-sky frames (attic-bee, t-0876), then rounded: the first sample
+ * of each chip, often set by the previous pulse's tail, counts least, and the second chip counts a little more than
+ * the first. Chip 1 HI pushes towards a 1 bit, chip 2 HI towards a 0.
+ */
+static constexpr uint8_t kChipWeights[2][6] = {{2, 3, 3, 3, 3, 3}, {1, 3, 4, 4, 4, 3}};
+
+/**
+ * Weighted HI count of each 6 bit chip value (first sample in the MSB), doubled: the first chip's at [value], the
+ * second chip's at [64 + value]. The first chip's has 1 added: a bit's margin, value[chip 1] - value[64 + chip 2], is
+ * then odd, so never a tie, and an even split decides 1 (which validates more live-sky frames than 0).
+ */
+struct ChipTables {
+    uint8_t value[128];
+    constexpr ChipTables() : value() {
+        for (uint16_t chip = 0; chip < 2; chip++) {
+            for (uint16_t v = 0; v < 64; v++) {
+                uint16_t sum = 0;
+                for (uint16_t sample = 0; sample < 6; sample++) {
+                    if (v & (0x20 >> sample)) {
+                        sum += kChipWeights[chip][sample];
+                    }
+                }
+                value[64 * chip + v] = static_cast<uint8_t>(2 * sum + (chip == 0 ? 1 : 0));
+            }
+        }
+    }
+};
+MODE_S_SOFT_DEMOD_TABLE static constexpr ChipTables kChipTables = ChipTables();
+static_assert(kChipTables.value[63] + kChipTables.value[127] - 1 == 2 * kIdealMargin,
+              "kIdealMargin: an ideal bit is 6 HI samples in one chip and none in the other.");
 
 /**
  * Returns the 12 samples of one bit, first sample in bit 11.

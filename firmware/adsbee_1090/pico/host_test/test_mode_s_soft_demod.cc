@@ -194,16 +194,27 @@ TEST(ModeSSoftDemod, NarrowAndWidePulses) {
     }
 }
 
-TEST(ModeSSoftDemod, FixesUpToTwoWeakBits) {
-    // A missing pulse leaves a bit without pulse position: it reads 0 with no confidence.
+TEST(ModeSSoftDemod, MissingPulseReadsOne) {
+    // A missing pulse leaves a bit without pulse position: it reads 1 with the lowest confidence. A 1 bit comes out
+    // right.
     Capture capture(kDF17, kNominalStartOffsetSamples);
     capture.BlankBit(kNominalStartOffsetSamples, 34);  // A 1 bit.
     Result result;
     ASSERT_TRUE(Demodulate(capture.words, kCaptureWords, result));
     EXPECT_EQ(BufferToHex(result), kDF17);
+    EXPECT_EQ(result.num_flipped_bits, 0);
+}
+
+TEST(ModeSSoftDemod, FixesUpToTwoWeakBits) {
+    // A missing pulse in a 0 bit reads 1 with the lowest confidence: the CRC guided fix flips it.
+    Capture capture(kDF17, kNominalStartOffsetSamples);
+    capture.BlankBit(kNominalStartOffsetSamples, 35);  // A 0 bit.
+    Result result;
+    ASSERT_TRUE(Demodulate(capture.words, kCaptureWords, result));
+    EXPECT_EQ(BufferToHex(result), kDF17);
     EXPECT_EQ(result.num_flipped_bits, 1);
 
-    capture.BlankBit(kNominalStartOffsetSamples, 64);  // Another 1 bit.
+    capture.BlankBit(kNominalStartOffsetSamples, 66);  // Another 0 bit.
     ASSERT_TRUE(Demodulate(capture.words, kCaptureWords, result));
     EXPECT_EQ(BufferToHex(result), kDF17);
     EXPECT_EQ(result.num_flipped_bits, 2);
@@ -223,7 +234,7 @@ TEST(ModeSSoftDemod, DoesNotFlipConfidentBits) {
 
 TEST(ModeSSoftDemod, ThreeWeakWrongBitsAreLeftAlone) {
     Capture capture(kDF17, kNominalStartOffsetSamples);
-    for (uint16_t bit : {5, 34, 64}) {  // All 1 bits.
+    for (uint16_t bit : {35, 50, 66}) {  // All 0 bits.
         capture.BlankBit(kNominalStartOffsetSamples, bit);
     }
     Result result;
@@ -236,7 +247,7 @@ TEST(ModeSSoftDemod, AllCallReplies) {
     // Squitter (interrogator code 0) with a missing pulse: fixed.
     std::string squitter = MakeDF11(0);
     Capture capture(squitter.c_str(), kNominalStartOffsetSamples);
-    capture.BlankBit(kNominalStartOffsetSamples, 9);  // A 1 bit of the address.
+    capture.BlankBit(kNominalStartOffsetSamples, 10);  // A 0 bit of the address.
     Result result;
     ASSERT_TRUE(Demodulate(capture.words, kCaptureWords, result));
     EXPECT_EQ(BufferToHex(result), squitter);
@@ -249,6 +260,35 @@ TEST(ModeSSoftDemod, AllCallReplies) {
     EXPECT_EQ(BufferToHex(result), reply);
     EXPECT_EQ(result.num_flipped_bits, 0);
     EXPECT_EQ(CRC24Remainder(result.buffer, 56), 5u);
+
+    // The same reply with a missing pulse: fixed, and the code is left in the parity for the aircraft dictionary.
+    reply_capture.BlankBit(kNominalStartOffsetSamples, 13);  // A 0 bit of the address.
+    ASSERT_TRUE(Demodulate(reply_capture.words, kCaptureWords, result));
+    EXPECT_EQ(BufferToHex(result), reply);
+    EXPECT_EQ(result.num_flipped_bits, 1);
+    EXPECT_EQ(CRC24Remainder(result.buffer, 56), 5u);
+
+    // A fix never leaves a remainder above the largest interrogator code.
+    std::string beyond = MakeDF11(kMaxInterrogatorCode + 1);
+    Capture beyond_capture(beyond.c_str(), kNominalStartOffsetSamples);
+    beyond_capture.BlankBit(kNominalStartOffsetSamples, 13);
+    ASSERT_TRUE(Demodulate(beyond_capture.words, kCaptureWords, result));
+    EXPECT_EQ(result.num_flipped_bits, 0);
+    EXPECT_NE(BufferToHex(result), beyond);
+}
+
+TEST(ModeSSoftDemod, ChipTables) {
+    // Margins of ideal bits and of a missing pulse, and the weights' order: the chips' first samples count least.
+    auto margin = [](uint32_t chip_1, uint32_t chip_2) {
+        return static_cast<int>(kChipTables.value[chip_1]) - kChipTables.value[64 + chip_2];
+    };
+    EXPECT_EQ(margin(0x3F, 0), 35);
+    EXPECT_EQ(margin(0, 0x3F), -37);
+    EXPECT_EQ(margin(0, 0), 1);
+    for (uint16_t sample = 1; sample < 6; sample++) {
+        EXPECT_LT(kChipTables.value[0x20], kChipTables.value[0x20 >> sample]);
+        EXPECT_LT(kChipTables.value[64 + 0x20], kChipTables.value[64 + (0x20 >> sample)]);
+    }
 }
 
 TEST(ModeSSoftDemod, RejectsNoise) {
@@ -275,13 +315,14 @@ TEST(ModeSSoftDemod, BenchCaptures) {
     ASSERT_TRUE(Demodulate(kShort, kShortCaptureWords, result));
     EXPECT_EQ(BufferToHex(result), kShortSent);
 
+    // The chip weights read one bit of each weak capture right that a plain HI count got wrong.
     ASSERT_TRUE(Demodulate(kWeakOneFix, kCaptureWords, result));
     EXPECT_EQ(BufferToHex(result), kWeakOneFixSent);
-    EXPECT_EQ(result.num_flipped_bits, 1);
+    EXPECT_EQ(result.num_flipped_bits, 0);
 
     ASSERT_TRUE(Demodulate(kWeakTwoFixes, kCaptureWords, result));
     EXPECT_EQ(BufferToHex(result), kWeakTwoFixesSent);
-    EXPECT_EQ(result.num_flipped_bits, 2);
+    EXPECT_EQ(result.num_flipped_bits, 1);
 }
 
 TEST(ModeSSoftDemod, DataStartOfIdealPulses) {
@@ -419,8 +460,28 @@ static const uint32_t kRetryWithFix[kCaptureWords + 1] = {
     0x02A001F7, 0xC02203F0, 0x00F80FED, 0x07F000F0, 0x0F80F80F, 0xF6000FC6, 0x00000000, 0x00000000,
 };
 
-// DF4 from tracked aircraft 0xA1CE16. The first pick, a chip early on the last preamble pulse, reads a DF9.
-// Cut short after 56 bits.
+// Live sky captures (attic-bee, t-0870) whose first pick still misreads the message with the chip weights (t-0876).
+
+// Clean DF17 one sample after the first pick.
+static const uint32_t kRetryOneSampleLateWeighted[kCaptureWords + 1] = {
+    0x87F821FE, 0x1EA16FF8, 0x62001BF8, 0x044001EF, 0xF801B81C, 0x5F800101, 0x1C08C01B, 0x78070320, 0x3603A001,
+    0xDFD04182, 0x2011FFF0, 0x01F7B000, 0xB01B8380, 0x1F4C8050, 0x00FE0CF0, 0x181B8113, 0x9800E7F8, 0x00CC0A61,
+    0x800840BC, 0x11F24008, 0x81BC04C0, 0x26D82300, 0x10001609, 0x81CC0D88, 0x000CE0BE, 0x07009C09, 0x9DC008C0,
+    0x8408C01C, 0x037C0020, 0x3303B000, 0x89D000C4, 0x04C00C50, 0x00C407E0, 0x9DF01CC0, 0x10040004, 0x30FB0FF4,
+    0x8008809F, 0xE82203D8, 0x26027013, 0x800DFC80, 0x0D1C4008, 0xC040EC13, 0xC0000000, 0x00000000,
+};
+
+// DF17 one sample after the first pick, with one weak bit fixed there.
+static const uint32_t kRetryWithFixWeighted[kCaptureWords + 1] = {
+    0x13F0007C, 0x02C05FF0, 0x1800077E, 0x01A0407C, 0x40016CC0, 0x08000200, 0x7C03FF00, 0x03003300, 0x007C07E0,
+    0x3007404C, 0x03400C03, 0xC03403E1, 0x01100038, 0x07B10070, 0x00FE07E0, 0x0001C038, 0x067E0007, 0xA08003E0,
+    0x3F100600, 0x70003600, 0x700003C0, 0x27D0005C, 0x03A03802, 0x603E0278, 0x0003EE00, 0x03CE00D0, 0x003E0340,
+    0x1E038800, 0x02F82E43, 0xDF800560, 0x3601E03E, 0x01E07E02, 0xEC007800, 0x3F80003E, 0x03B20078, 0x000EF007,
+    0x8003E09E, 0x03C01E01, 0xE01E0180, 0x33080380, 0x037B0003, 0xEE400380, 0x1C040000, 0x00000000,
+};
+
+// DF4 from tracked aircraft 0xA1CE16. The first pick, a chip early on the last preamble pulse, reads a DF11 that
+// fails its CRC (a DF9 without the chip weights). Cut short after 56 bits.
 static const uint32_t kRetryOneChipLate[kCaptureWords + 1] = {
     0x6007F03F, 0xFC003F03, 0xF03F03F0, 0x3F03F03F, 0x03F03F03, 0xF03F03F0, 0x3F03F03F, 0x03FFC003, 0xFFC0FC0F,
     0xC0FC003F, 0xFC0FC003, 0xF03F03F0, 0x3FFC0FC0, 0xFC003FFC, 0x0FC003FF, 0xC003FFC0, 0xFC0FC003, 0xFFC0FC0F,
@@ -450,22 +511,36 @@ static const uint32_t kJunkOverlap[kCaptureWords + 1] = {
 static bool KnownA1CE16(uint32_t address) { return address == 0xA1CE16; }
 static bool KnownAllButA1CE16(uint32_t address) { return address != 0xA1CE16; }
 
-TEST(ModeSSoftDemod, RetryReadsTheNextOffset) {
+TEST(ModeSSoftDemod, ChipWeightsReadFirstPicksRight) {
+    // The #398 retry captures, misread at the first pick by a plain HI count, read right there with the chip weights.
     Result result;
     ASSERT_TRUE(Demodulate(kRetryOneSampleLate, kCaptureWords, result));
-    EXPECT_EQ(BufferToHex(result), "8DA12B769914E388B8500944F0AA");
+    EXPECT_EQ(BufferToHex(result), "8DA12B769914E388B8500944F0AB");
+    EXPECT_EQ(result.start_offset_samples, 3);
+    EXPECT_EQ(result.num_flipped_bits, 1);
+
+    ASSERT_TRUE(Demodulate(kRetryWithFix, kCaptureWords, result));
+    EXPECT_EQ(BufferToHex(result), "8FAC8B2EE11B1E0000000031B985");
+    EXPECT_EQ(result.start_offset_samples, 4);
+    EXPECT_EQ(result.num_flipped_bits, 0);
+}
+
+TEST(ModeSSoftDemod, RetryReadsTheNextOffset) {
+    Result result;
+    ASSERT_TRUE(Demodulate(kRetryOneSampleLateWeighted, kCaptureWords, result));
+    EXPECT_EQ(BufferToHex(result), "8DA43EAA192910C1041E88D13F52");
     EXPECT_FALSE(result.retry_validated);
 
-    ASSERT_TRUE(Demodulate(kRetryOneSampleLate, kCaptureWords, result, true));
-    EXPECT_EQ(BufferToHex(result), "8DA12B769914E388B8500944F0AB");
-    EXPECT_EQ(result.start_offset_samples, 4);
+    ASSERT_TRUE(Demodulate(kRetryOneSampleLateWeighted, kCaptureWords, result, true));
+    EXPECT_EQ(BufferToHex(result), "8DA43EEA582910E1041E88F13F53");
+    EXPECT_EQ(result.start_offset_samples, 6);
     EXPECT_EQ(result.num_retries, 1);
     EXPECT_TRUE(result.retry_validated);
     EXPECT_EQ(result.num_flipped_bits, 0);
 
-    ASSERT_TRUE(Demodulate(kRetryWithFix, kCaptureWords, result, true));
-    EXPECT_EQ(BufferToHex(result), "8FAC8B2EE11B1E0000000031B985");
-    EXPECT_EQ(result.start_offset_samples, 5);
+    ASSERT_TRUE(Demodulate(kRetryWithFixWeighted, kCaptureWords, result, true));
+    EXPECT_EQ(BufferToHex(result), "8DAC48019914E0815844069B00D4");
+    EXPECT_EQ(result.start_offset_samples, 7);
     EXPECT_EQ(result.num_flipped_bits, 1);
     EXPECT_TRUE(result.retry_validated);
 }
@@ -480,7 +555,7 @@ TEST(ModeSSoftDemod, RetryTakesAddressParityOnlyForATrackedAircraft) {
     // Unknown address, or no address check: the first pick stays.
     for (KnownAddressFn known : {static_cast<KnownAddressFn>(nullptr), +[](uint32_t) { return false; }}) {
         ASSERT_TRUE(Demodulate(kRetryOneChipLate, kShortCaptureWords, result, true, known));
-        EXPECT_EQ(BufferToHex(result), "4FFFE00700000E");
+        EXPECT_EQ(BufferToHex(result), "5FFFE84F12889E");
         EXPECT_EQ(result.start_offset_samples, 2);
         EXPECT_FALSE(result.retry_validated);
         EXPECT_EQ(result.num_retries, kMaxRetries);
