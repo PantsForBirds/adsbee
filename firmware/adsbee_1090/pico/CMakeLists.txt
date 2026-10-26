@@ -59,6 +59,17 @@ if (ON_EMBEDDED_DEVICE)
     add_compile_definitions(ON_PICO)
     # The ESP32 keeps the default of 200: it has no room for 400 without PSRAM. host_test sets 400 too.
     add_compile_definitions(AIRCRAFT_DICTIONARY_MAX_NUM_AIRCRAFT=400)
+    # Lab options. ADSBEE_SYS_CLK_MHZ=192 runs clk_sys at 192 MHz from boot (VCO 1536 MHz / 4 / 2).
+    set(ADSBEE_SYS_CLK_MHZ 125 CACHE STRING "RP2040 clk_sys in MHz (125 or 192)")
+    if (ADSBEE_SYS_CLK_MHZ EQUAL 192)
+        add_compile_definitions(SYS_CLK_HZ=192000000 PLL_SYS_VCO_FREQ_HZ=1536000000 PLL_SYS_POSTDIV1=4 PLL_SYS_POSTDIV2=2)
+    elseif (NOT ADSBEE_SYS_CLK_MHZ EQUAL 125)
+        message(FATAL_ERROR "ADSBEE_SYS_CLK_MHZ must be 125 or 192")
+    endif()
+    option(ADSBEE_OVERLAP_STATS "Capture overlap statistics (AT+OVERLAP), lab builds only" OFF)
+    if (ADSBEE_OVERLAP_STATS)
+        add_compile_definitions(ADSBEE_OVERLAP_STATS)
+    endif()
     add_compile_definitions(
         # Can't pass in expression in parentheses or else it's a "functional" macro that isn't supported.
         PICO_FLASH_SIZE_BYTES=16777216 # 16MB = 16*1024*1024 Bytes of flash.

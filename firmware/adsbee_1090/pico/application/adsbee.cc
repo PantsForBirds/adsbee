@@ -35,8 +35,8 @@
 // #define WATCHDOG_REBOOT_WARNING
 
 #define ADC_COUNTS_TO_MV(adc_counts) ((adc_counts) * kVDDMV / 4095)
-#define MLAT_SYSTEM_CLOCK_RATIO      48 / 125
-// Scales 125MHz system clock into a 48MHz counter.
+#define MLAT_SYSTEM_CLOCK_RATIO      48 / ADSBee::kSysClkMHz
+// Scales the system clock (SysTick) into a 48MHz counter.
 static const uint32_t kMLATWrapCounterIncrement = (1 << 24) * MLAT_SYSTEM_CLOCK_RATIO;
 
 constexpr float kPreambleMatcherFreqHz = 48e6;  // Running at 48MHz (24 clock cycles per half bit).
@@ -256,6 +256,10 @@ bool ADSBee::Update() {
 
     UpdateNoiseFloor();
 
+#ifdef ADSBEE_OVERLAP_STATS
+    overlap_stats::stats.Update(get_time_since_boot_ms());
+#endif
+
     // Update sub-GHz radio.
     if (config_.has_subg && subg_radio.IsEnabled()) {
         bool subg_link_was_down = subg_radio.IsLinkDown();
@@ -470,17 +474,50 @@ void __time_critical_func(ADSBee::OnDemodBegin)(uint gpio) {
         return;
     }
     uint32_t now_us = last_demod_begin_timestamp_us_;
+#ifdef ADSBEE_OVERLAP_STATS
+    overlap_stats::CaptureTag tag;
+    bool ov_on = overlap_stats::stats.enabled;
+#endif
     for (uint16_t other = 0; other < bsp.r1090_num_demod_state_machines; other++) {
         if (other == sm_index || !capture_active_[other]) {
             continue;
         }
         uint32_t guard_us = capture_is_short_[other] ? kCaptureGuardShortUs : kCaptureGuardLongUs;
+#ifdef ADSBEE_OVERLAP_STATS
+        if (ov_on) {
+            uint32_t offset_us = now_us - capture_begin_us_[other];
+            uint8_t offset8 = offset_us < 254 ? offset_us : 254;
+            overlap_stats::CaptureTag& first = ov_tag_[other];
+            if (first.later_offset_us == overlap_stats::kNone) first.later_offset_us = offset8;
+            if (first.num_later < 255) first.num_later++;
+            if (tag.earlier_offset_us == overlap_stats::kNone) {
+                tag.earlier_offset_us = offset8;
+                tag.earlier_sm = other;
+            }
+            overlap_stats::stats.isr.overlap_begins = overlap_stats::stats.isr.overlap_begins + 1;
+            if (offset_us < guard_us && !overlap_stats::stats.shadow) {
+                uint8_t bin = overlap_stats::Stats::Bin(offset8);
+                overlap_stats::stats.abort_hist[bin][capture_is_short_[other]] =
+                    overlap_stats::stats.abort_hist[bin][capture_is_short_[other]] + 1;
+                overlap_stats::stats.isr.overlap_aborts = overlap_stats::stats.isr.overlap_aborts + 1;
+                AbortCapture(sm_index);
+                return;
+            }
+            continue;
+        }
+#endif
         if (now_us - capture_begin_us_[other] < guard_us) {
             // Matched on the data pulses of the message that capture is taking: drop it, keep the matcher hunting.
             AbortCapture(sm_index);
             return;
         }
     }
+#ifdef ADSBEE_OVERLAP_STATS
+    if (ov_on) {
+        ov_tag_[sm_index] = tag;
+        overlap_stats::stats.isr.begins = overlap_stats::stats.isr.begins + 1;
+    }
+#endif
     capture_begin_us_[sm_index] = now_us;
     capture_is_short_[sm_index] = false;
     capture_active_[sm_index] = true;
@@ -496,6 +533,11 @@ void __time_critical_func(ADSBee::OnDemodMid)() {
         if (!capture_active_[sm_index]) {
             // The begin interrupt for this capture was never handled: no timestamp. Drop it (the matcher is stalled
             // on its interrupt flag, so it is safe to send it back to hunting).
+#ifdef ADSBEE_OVERLAP_STATS
+            if (overlap_stats::stats.enabled) {
+                overlap_stats::stats.isr.no_begin_aborts = overlap_stats::stats.isr.no_begin_aborts + 1;
+            }
+#endif
             AbortCapture(sm_index);
             continue;
         }
@@ -516,6 +558,15 @@ void __time_critical_func(ADSBee::OnDemodMid)() {
             }
         }
         if (hi_samples < kMidCheckMinHiSamples) {
+#ifdef ADSBEE_OVERLAP_STATS
+            if (overlap_stats::stats.enabled) {
+                overlap_stats::stats.isr.mid_noise_aborts = overlap_stats::stats.isr.mid_noise_aborts + 1;
+                const overlap_stats::CaptureTag& t = ov_tag_[sm_index];
+                if (t.later_offset_us != overlap_stats::kNone || t.earlier_offset_us != overlap_stats::kNone) {
+                    overlap_stats::stats.isr.mid_noise_aborts_ov = overlap_stats::stats.isr.mid_noise_aborts_ov + 1;
+                }
+            }
+#endif
             hw_set_bits(&pio->inte0, source_mask);
             AbortCapture(sm_index);
             continue;
@@ -621,6 +672,12 @@ void __time_critical_func(ADSBee::FinishCapture)(uint16_t sm_index, uint16_t num
         capture.rssi_mv = static_cast<int16_t>(sample_rssi_mv_[sm_index]);
         capture.num_words = static_cast<uint8_t>(num_words);
         capture.source = static_cast<uint8_t>(sm_index);
+#ifdef ADSBEE_OVERLAP_STATS
+        overlap_stats::CaptureTag& tag = ov_tag_[sm_index];
+        uint32_t duration_us = time_us_32() - capture_begin_us_[sm_index];
+        tag.duration_us = duration_us < 255 ? duration_us : 255;
+        capture.tag = tag;
+#endif
     }
 
     // Release the preamble matcher (it drops the demod pin), then park the sampler for the next message.
@@ -634,6 +691,16 @@ void __time_critical_func(ADSBee::FinishCapture)(uint16_t sm_index, uint16_t num
     } else {
         r1090_capture_queue_overflowed_ = true;
     }
+#ifdef ADSBEE_OVERLAP_STATS
+    if (overlap_stats::stats.enabled) {
+        if (capture_slot == nullptr) {
+            overlap_stats::stats.isr.queue_drops = overlap_stats::stats.isr.queue_drops + 1;
+        }
+        uint32_t len = capture_queue_.Length();
+        if (len > overlap_stats::stats.isr.queue_hwm) overlap_stats::stats.isr.queue_hwm = len;
+    }
+    ov_tag_[sm_index] = overlap_stats::CaptureTag();
+#endif
 }
 
 bool __time_critical_func(ADSBee::DemodulateCaptures)() {
@@ -647,9 +714,20 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
         uint16_t demod_start_counts = GetMLATJitterPWMSliceCounts();
 #endif
         mode_s_soft_demod::Result result;
+#ifdef ADSBEE_OVERLAP_STATS
+        bool ov_on = overlap_stats::stats.enabled;
+        uint32_t ov_demod_start_us = timer_hw->timerawl;
+#endif
         bool retry = capture_queue_.Length() < kMaxBacklogForOffsetRetry;
         bool found = mode_s_soft_demod::Demodulate(capture.samples, capture.num_words, result, retry,
                                                    retry ? IsKnownAddress : nullptr);
+#ifdef ADSBEE_OVERLAP_STATS
+        uint32_t ov_packet_mlat_lo = 0;
+        if (ov_on) {
+            overlap_stats::stats.isr.demod_us = overlap_stats::stats.isr.demod_us + (timer_hw->timerawl - ov_demod_start_us);
+            overlap_stats::stats.isr.demods = overlap_stats::stats.isr.demods + 1;
+        }
+#endif
 #ifdef DEBUG_ISR_TIMING
         // 16-bit counter at 125MHz wraps every ~524us, longer than a demodulation.
         uint16_t demod_duration_counts = GetMLATJitterPWMSliceCounts() - demod_start_counts;
@@ -678,6 +756,11 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
                 capture.mlat_48mhz_64bit_counts - MLATJitterCountsTo48MHzCounts(capture.mlat_jitter_sys_clk_counts);
             packet.mlat_48mhz_64bit_counts = sampler_start_48mhz_counts + kFirstSampleDelay48MHzCounts +
                                              result.data_start_48mhz_counts + kTimestampAfterDataStart48MHzCounts;
+#ifdef ADSBEE_OVERLAP_STATS
+            ov_packet_mlat_lo = static_cast<uint32_t>(packet.mlat_48mhz_64bit_counts);
+            // The record goes in before the packet, so core 0 always finds it.
+            if (ov_on) OverlapRecord(capture, &result, ov_packet_mlat_lo);
+#endif
             if (result.len_bits == RawModeSPacket::kSquitterPacketLenBits) {
                 aircraft_dictionary.Record1090RawSquitterFrame(sm_index);
             } else {
@@ -687,6 +770,9 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
                 r1090_packet_queue_overflowed_ = true;
             }
         }
+#ifdef ADSBEE_OVERLAP_STATS
+        if (ov_on && !found) OverlapRecord(capture, nullptr, 0);
+#endif
         capture_queue_.Pop();
     }
     return demodulated;
@@ -695,6 +781,39 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
 bool __time_critical_func(ADSBee::IsKnownAddress)(uint32_t address) {
     return isr_access->known_address_filters_[isr_access->known_address_filter_index_].Contains(address);
 }
+
+#ifdef ADSBEE_OVERLAP_STATS
+void ADSBee::OverlapRecord(const Capture& capture, const mode_s_soft_demod::Result* result, uint32_t packet_mlat_lo) {
+    using namespace overlap_stats;
+    Record r;
+    r.packet_mlat_lo = packet_mlat_lo;
+    r.begin_48mhz_lo = static_cast<uint32_t>(capture.mlat_48mhz_64bit_counts);
+    r.t_ms = static_cast<uint16_t>(get_time_since_boot_ms());
+    r.sm = capture.source;
+    r.rssi_mv = capture.rssi_mv;
+    r.tag = capture.tag;
+    if (result != nullptr) {
+        r.df = result->buffer[0] >> 27;
+        r.len = result->len_bits == mode_s_soft_demod::kShortMessageBits ? 1 : 2;
+        if (r.df == 11 || r.df == 17 || r.df == 18) {
+            uint32_t remainder = mode_s_soft_demod::CRC24Remainder(result->buffer, result->len_bits);
+            bool ok = remainder == 0 || (r.df == 11 && remainder < 0x80);
+            r.demod_class = !ok ? kDemodCRCFail : (result->num_flipped_bits > 0 ? kDemodFixed : kDemodClean);
+        } else {
+            r.demod_class = kDemodAP;
+        }
+    }
+    stats.Push(r);
+    bool overlapped = capture.tag.later_offset_us != kNone || capture.tag.earlier_offset_us != kNone;
+    uint16_t every = stats.dump_isolated_every;
+    if ((overlapped && stats.dump_overlapped) || (!overlapped && every > 0 && ++ov_isolated_count_ % every == 0)) {
+        uint32_t sampler_start = static_cast<uint32_t>(capture.mlat_48mhz_64bit_counts -
+                                                       MLATJitterCountsTo48MHzCounts(capture.mlat_jitter_sys_clk_counts));
+        stats.PushDump(capture.samples, capture.num_words, sampler_start, packet_mlat_lo, capture.source, r.demod_class,
+                       capture.rssi_mv, capture.tag);
+    }
+}
+#endif
 
 void __time_critical_func(ADSBee::OnSysTickWrap)() { mlat_counter_wraps_ += kMLATWrapCounterIncrement; }
 
@@ -792,6 +911,11 @@ void ADSBee::IngestAndForwardPackets() {
             // CONSOLE_INFO("ADSBee::IngestAndForwardPackets", "\taircraft_dictionary: %d aircraft",
             //              aircraft_dictionary.GetNumAircraft());
         }
+#ifdef ADSBEE_OVERLAP_STATS
+        overlap_stats::stats.OnPacket(static_cast<uint32_t>(decoded_packet.raw.mlat_48mhz_64bit_counts),
+                                      decoded_packet.is_valid, decoded_packet.num_corrected_bits,
+                                      decoded_packet.downlink_format, get_time_since_boot_ms());
+#endif
         // Check for any new valid packets and push all decoded packets to the reporting queue, even if the aircraft
         // dictionary didn't know what to do with them. Raw packets are never filtered: Raw, Beast, MLAT and the ESP32's
         // feeds carry every packet. AT+FILTER_DISTANCE_NM and AT+FILTER_ALTITUDE_FT only gate aircraft reports.
@@ -1036,7 +1160,7 @@ void ADSBee::PruneAircraftDictionary() {
         isr_duration_sum_counts_ = 0;
         isr_duration_max_counts_ = 0;
         CONSOLE_WARNING("ADSBee::PruneAircraftDictionary", "Demodulate: %lu calls, avg %lu us, max %u us.", isr_count,
-                        isr_count > 0 ? isr_sum_counts / isr_count / 125 : 0, isr_max_counts / 125);
+                        isr_count > 0 ? isr_sum_counts / isr_count / kSysClkMHz : 0, isr_max_counts / kSysClkMHz);
 #endif
     }
 }
