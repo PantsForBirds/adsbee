@@ -2567,6 +2567,31 @@ CPP_AT_CALLBACK(ATLabTrigCallback) {
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
+// AT+LABDUTY=<ms>: core 0 polls the comparator output (pulses pin) for ms milliseconds with its interrupts off, and
+// prints #LDUTY,<reads>,<hi_reads>,<rising_edges>,<us>. About 25 reads per microsecond.
+CPP_AT_CALLBACK(ATLabDutyCallback) {
+    if (op != '=' || !CPP_AT_HAS_ARG(0)) CPP_AT_ERROR("AT+LABDUTY=<ms>");
+    uint32_t ms;
+    CPP_AT_TRY_ARG2NUM(0, ms);
+    if (ms < 1 || ms > 200) CPP_AT_ERROR("ms 1-200.");
+    const uint32_t shift = bsp.r1090_pulses_pin;
+    uint32_t reads = 0, hi = 0, rises = 0, prev = 1;
+    uint32_t irq = save_and_disable_interrupts();
+    uint32_t t0 = timer_hw->timerawl, us = ms * 1000, elapsed = 0;
+    while ((elapsed = timer_hw->timerawl - t0) < us) {
+        for (uint16_t k = 0; k < 32; k++) {
+            uint32_t v = (sio_hw->gpio_in >> shift) & 1;
+            hi += v;
+            rises += v & ~prev;
+            prev = v;
+        }
+        reads += 32;
+    }
+    restore_interrupts(irq);
+    CPP_AT_PRINTF("#LDUTY,%lu,%lu,%lu,%lu\r\n", (unsigned long)reads, (unsigned long)hi, (unsigned long)rises,
+                  (unsigned long)elapsed);
+    CPP_AT_SUCCESS();
+}
 #endif  // ADSBEE_LAB_RX
 
 const CppAT::ATCommandDef_t at_command_list[] = {
@@ -2795,6 +2820,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 4,
      .help_string = "Lab: AT+LABRX=<records>,<dump_mask_hex>,<interval_ms>,<record_mask_hex>",
      .callback = ATLabRxCallback},
+    {.command = "LABDUTY",
+     .min_args = 1,
+     .max_args = 1,
+     .help_string = "Lab: AT+LABDUTY=<ms> comparator HI fraction and edges",
+     .callback = ATLabDutyCallback},
     {.command = "LABTRIG",
      .min_args = 0,
      .max_args = 8,
