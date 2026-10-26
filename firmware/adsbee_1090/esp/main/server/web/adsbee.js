@@ -24,7 +24,6 @@ class ConsoleWebSocket {
         this.paused = false;
         this.captureCallback = null;
         this._reconnectTimer = null;
-        this.muteUntil = 0;  // The firmware update check keeps its AT+DEVICE_INFO? out of the terminal.
         this.init();
     }
 
@@ -42,7 +41,7 @@ class ConsoleWebSocket {
         // Listen for messages
         this.ws.addEventListener('message', (event) => {
             const dispatch = (text) => {
-                if (Date.now() >= this.muteUntil) appendToTerminal(text);
+                appendToTerminal(text);
                 if (this.captureCallback) this.captureCallback(text);
             };
             if (typeof event.data === 'string') {
@@ -2202,6 +2201,6 @@ class AircraftTable {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { isOtherTextEntry, whereplaneMapUrl, webSocketRefused, AircraftWebSocket, UplinkWebSocket, MapWeather,
-        receiverIdUuid, parseFeedReceiverIdLine, AircraftStore, receiverMetricCards };
+    module.exports = { isOtherTextEntry, whereplaneMapUrl, webSocketRefused, ConsoleWebSocket, AircraftWebSocket,
+        UplinkWebSocket, MapWeather, receiverIdUuid, parseFeedReceiverIdLine, AircraftStore, receiverMetricCards };
 }

@@ -5913,7 +5913,6 @@ class ConsoleWebSocket {
         this.paused = false;
         this.captureCallback = null;
         this._reconnectTimer = null;
-        this.muteUntil = 0;  // The firmware update check keeps its AT+DEVICE_INFO? out of the terminal.
         this.init();
     }
 
@@ -5931,7 +5930,7 @@ class ConsoleWebSocket {
         // Listen for messages
         this.ws.addEventListener('message', (event) => {
             const dispatch = (text) => {
-                if (Date.now() >= this.muteUntil) appendToTerminal(text);
+                appendToTerminal(text);
                 if (this.captureCallback) this.captureCallback(text);
             };
             if (typeof event.data === 'string') {
@@ -9428,19 +9427,13 @@ class Settings1090Transport {
                 product: '1090',
                 client: 'console',
                 // Over the serial AT queue (hidden from the terminal) or the network settings socket. The ESP32 sends
-                // console output to every socket, so the network terminal is muted meanwhile.
+                // console output to every socket, so over the network the reply also shows in the terminal.
                 readDeviceInfo: async () => {
                     if (connectionManager.state !== 'connected') throw new Error('Not connected.');
-                    const mute = (ms) => { if (connectionManager.mode === 'network' && consoleWebSocket) consoleWebSocket.muteUntil = Date.now() + ms; };
-                    mute(10000);
-                    try {
-                        return await atTransport.sendCommand('AT+DEVICE_INFO?', {
-                            expect: /^(Part Code:|RP2040 |OTA Key |1090MHz |ESP32 )/, terminator: 'quiet',
-                            quietMs: 1500, timeoutMs: 6000,
-                        });
-                    } finally {
-                        mute(1000);
-                    }
+                    return atTransport.sendCommand('AT+DEVICE_INFO?', {
+                        expect: /^(Part Code:|RP2040 |OTA Key |1090MHz |ESP32 )/, terminator: 'quiet',
+                        quietMs: 1500, timeoutMs: 6000,
+                    });
                 },
                 install: (bytes, name) => uploader.uploadFirmware(new File([bytes], name)),
             });
