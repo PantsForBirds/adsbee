@@ -91,13 +91,18 @@ when `AT+AUTO_UPDATE=1`, downloading from the adsbee.aero firmware API.
 | Status | `error` | Bee does |
 |---|---|---|
 | 400 | `bad_request` | Fix the report; `detail` says what |
-| 401 | `bad_token` | Unknown or rotated token, disabled account |
+| 401 | `bad_token` | Unknown or cut-off token, an old token from a bee that wasn't on the account when it was replaced, disabled account |
 | 403 | `bad_key` | Key check failed (adsbee.aero only) |
-| 410 | `removed` | Stop until the token changes |
+| 410 | `removed` | Stop until the owner restores it or gives it a newer token |
 | 429 | `rate_limited` | Wait `Retry-After` seconds |
 | 503 | `unavailable` | The server cannot check keys right now: back off `Retry-After` seconds (default 3600), retry |
 
-A removed bee is accepted again once its owner restores it or rotates the enroll token.
+An account has one current enroll token. A new token admits any bee; an old one keeps working for
+the bees the account had when it was replaced, until the owner cuts off all bees. A removed bee is
+accepted again once its owner restores it, or it reports with a token made after its removal.
+
+Without a `DEVICE_VERIFIER` (self-hosted servers), an old token lets whoever holds it report as a
+bee already on the account until "cut off all bees".
 
 ## User API
 
@@ -107,11 +112,12 @@ rollout is a 404.
 
 | Method | Path | Does |
 |---|---|---|
-| GET | `/account` | Username, privileges, enroll token prefix |
-| POST | `/account/enroll-token` | New enroll token, shown once, with the `AT+SWARM` line |
+| GET | `/account` | Username, privileges, enroll token prefix, `enroll_token_revealable` |
+| POST | `/account/enroll-token` | New enroll token with the `AT+SWARM` line; bees on the account keep theirs. `{"cut_off": true}`: every old token stops working |
+| POST | `/account/enroll-token/reveal` | The current token and `AT+SWARM` line again. Signed-in session only (API token: 403 `session_only`); 404 `unavailable` when it can't be read (made before tokens were kept, or the key changed): make a new one |
 | GET, POST | `/account/api-tokens` | List (prefixes) / create (shown once) |
 | DELETE | `/account/api-tokens/{id}` | Delete |
-| GET | `/devices` | Bees (`?removed=1` adds removed ones) |
+| GET | `/devices` | Bees (`?removed=1` adds removed ones); `old_token`: its last report used a replaced token |
 | GET, PATCH, DELETE | `/devices/{id}` | Read; set `label`, `note`, `location` (`null` = as reported); remove |
 | POST | `/devices/{id}/restore` | Accept a removed bee again |
 | GET | `/range?device=&since=&until=&protocol=` | Max per bin over the window: per bee `max_m` (12 bands × 36 sectors, meters or null) and `sector_max_m`; `swarm` = max over bees |

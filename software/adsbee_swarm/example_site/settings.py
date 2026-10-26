@@ -50,5 +50,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = not DEBUG and os.environ.get('DJANGO_INSECURE_COOKIES') != '1'
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 ADSBEE_SWARM_CLIENT_IP_HEADER = os.environ.get('ADSBEE_SWARM_CLIENT_IP_HEADER') or None
+ADSBEE_SWARM_TOKEN_KEY = os.environ.get('ADSBEE_SWARM_TOKEN_KEY') or None
 LOGGING = {'version': 1, 'handlers': {'console': {'class': 'logging.StreamHandler'}},
            'root': {'handlers': ['console'], 'level': 'INFO'}}

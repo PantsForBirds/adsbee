@@ -707,7 +707,8 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
         uint16_t demod_start_counts = GetMLATJitterPWMSliceCounts();
 #endif
         mode_s_soft_demod::Result result;
-        bool retry = capture_queue_.Length() < kMaxBacklogForOffsetRetry;
+        bool retry =
+            capture_queue_.Length() < kMaxBacklogForOffsetRetry && decoder.raw_mode_s_packet_in_queue.Length() == 0;
 #ifdef ADSBEE_LAB_RX
         // Lab: optional software preamble check, then the demodulator on the capture shifted to the usual data start.
         const lab_rx::Settings& ls = lab_rx::lab.settings;

@@ -96,7 +96,8 @@ class ADSBee {
     static constexpr uint16_t kCaptureQueueDepth = 64;
     // Decoded packets waiting for ingestion at which address parity searches are skipped.
     static constexpr uint16_t kMaxBacklogForAddressParityCorrection = 64;
-    // Captures waiting (the one being demodulated included) at which start offset retries are skipped.
+    // Captures waiting (the one being demodulated included) at which start offset retries are skipped. Retries are also
+    // skipped while a demodulated frame waits for the decoder, which runs on this core only once the captures are done.
     static constexpr uint16_t kMaxBacklogForOffsetRetry = 4;
 
     struct Capture {

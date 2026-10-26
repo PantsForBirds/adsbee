@@ -6,7 +6,7 @@ authors = [{ name = "John McNelly", email = "jkailimcnelly@gmail.com" }]
 license = "GPL-3.0-only"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["django>=4.2,<6"]
+dependencies = ["django>=4.2,<6", "cryptography>=42"]
 
 [project.optional-dependencies]
 server = ["gunicorn>=23.0", "psycopg[binary]>=3.2"]

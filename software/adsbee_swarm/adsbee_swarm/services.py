@@ -4,6 +4,7 @@ change things. Nothing here checks who is asking: callers do.
 """
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 
@@ -11,8 +12,10 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
-from . import conf
-from .models import Account, ApiToken, Device, Rollout, token_hash
+from . import conf, sealed
+from .models import Account, ApiToken, Device, EnrollToken, Rollout, token_hash
+
+log = logging.getLogger('adsbee_swarm.audit')
 
 
 class SwarmError(ValueError):
@@ -41,7 +44,7 @@ def create_account(username: str, *, email: str = '', password: str | None = Non
         user.save()
     account = Account.objects.create(
         user=user, privileges=_check_privileges(conf.get('DEFAULT_PRIVILEGES') if privileges is None else privileges))
-    return account, rotate_enroll_token(account)
+    return account, _new_enroll_token(account)
 
 
 def account_for(user) -> Account | None:
@@ -78,21 +81,77 @@ def set_disabled(account: Account, disabled: bool = True) -> Account:
 
 # ─── Tokens ──────────────────────────────────────────────────────────────────
 
-def rotate_enroll_token(account: Account) -> str:
-    """A new enroll token; the old one stops working. 32 hex digits: safe inside AT+SWARM."""
+def audit(account: Account, event: str, request=None, **data) -> None:
+    """Logs `event` (never a token) and calls the AUDIT hook, if set."""
+    log.info('%s account=%s %s', event, account.pk, ' '.join(f'{k}={v}' for k, v in data.items()))
+    hook = conf.hook('AUDIT')
+    if hook:
+        hook(account, event, request, **data)
+
+
+def _new_enroll_token(account: Account, cut_off: bool = False) -> str:
+    """Retires the current token (and, with `cut_off`, stops every older one) and makes a new one."""
     token = secrets.token_hex(16)
-    account.enroll_token_hash = token_hash(token)
-    account.enroll_token_prefix = token[:6]
-    account.enroll_token_rotated_at = timezone.now()
-    account.save(update_fields=['enroll_token_hash', 'enroll_token_prefix', 'enroll_token_rotated_at'])
+    now = timezone.now()
+    with transaction.atomic():
+        Account.objects.select_for_update().filter(pk=account.pk).first()
+        account.enroll_tokens.filter(retired_at__isnull=True).update(retired_at=now, sealed='')
+        if cut_off:
+            account.enroll_tokens.update(cut_off=True)
+        EnrollToken.objects.create(account=account, token_hash=token_hash(token), prefix=token[:6],
+                                   sealed=sealed.seal(token), created_at=now)
     return token
 
 
-def account_by_enroll_token(token: str) -> Account | None:
+def rotate_enroll_token(account: Account, *, cut_off: bool = False, request=None) -> str:
+    """
+    A new enroll token, for new bees. 32 hex digits: safe inside AT+SWARM.
+    The old ones keep working for the bees already on the account, unless `cut_off`: then every
+    old token stops working and each bee needs the new line.
+    """
+    token = _new_enroll_token(account, cut_off)
+    audit(account, 'enroll_token_cut_off' if cut_off else 'enroll_token_new', request)
+    return token
+
+
+def reveal_enroll_token(account: Account, *, request=None) -> str | None:
+    """
+    The current enroll token, for its signed-in owner only (never through an API token). None
+    when it can't be read: made before tokens were kept, or the key changed. Make a new one.
+    """
+    current = account.enroll_token
+    token = sealed.unseal(current.sealed) if current else None
+    if token is not None and token_hash(token) != current.token_hash:
+        token = None
+    if token is not None:
+        audit(account, 'enroll_token_revealed', request)
+    return token
+
+
+def enroll_token_by(token: str) -> EnrollToken | None:
+    """The enroll token row, if it works at all: not cut off, the account not disabled."""
     if not token or len(token) > 128:
         return None
-    account = Account.objects.select_related('user').filter(enroll_token_hash=token_hash(token)).first()
-    return account if account is not None and not account.disabled else None
+    row = EnrollToken.objects.select_related('account__user').filter(token_hash=token_hash(token)).first()
+    if row is None or row.cut_off or row.account.disabled:
+        return None
+    return row
+
+
+def account_by_enroll_token(token: str) -> Account | None:
+    """The account of a working enroll token (current or old: see `admits`)."""
+    row = enroll_token_by(token)
+    return row.account if row else None
+
+
+def admits(row: EnrollToken, device: Device | None) -> bool:
+    """
+    The current token admits any bee; an old one only a bee the account had before it was
+    retired.
+    """
+    if row.retired_at is None:
+        return True
+    return device is not None and device.first_seen < row.retired_at
 
 
 def create_api_token(account: Account, name: str = '') -> tuple[ApiToken, str]:
@@ -148,7 +207,8 @@ def _location(value) -> tuple[float, float, float | None]:
 
 
 def remove_device(device: Device) -> Device:
-    """Off the account: its reports answer 410 until the enroll token is rotated or it is restored."""
+    """Off the account: its reports answer 410 until it is restored, or it reports with an enroll
+    token made after its removal."""
     device.removed_at = timezone.now()
     device.save(update_fields=['removed_at'])
     return device
@@ -160,12 +220,13 @@ def restore_device(device: Device) -> Device:
     return device
 
 
-def is_turned_away(device: Device) -> bool:
-    """Removed, and the enroll token has not changed since."""
+def is_turned_away(device: Device, row: EnrollToken | None = None) -> bool:
+    """Removed, and reporting with a token (default: the current one) made before its removal.
+    A newer token restores it."""
     if device.removed_at is None:
         return False
-    rotated = device.account.enroll_token_rotated_at
-    if rotated is not None and rotated > device.removed_at:
+    row = row or device.account.enroll_token
+    if row is not None and row.created_at > device.removed_at:
         restore_device(device)
         return False
     return True
