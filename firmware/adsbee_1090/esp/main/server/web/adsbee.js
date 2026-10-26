@@ -24,8 +24,20 @@ class ConsoleWebSocket {
         this.paused = false;
         this.captureCallback = null;
         this._reconnectTimer = null;
-        this.muteUntil = 0;  // The firmware update check keeps its AT+DEVICE_INFO? out of the terminal.
+        // The firmware update check keeps its AT+DEVICE_INFO? reply out of the terminal.
+        this.replyFilter = AdsbeeFirmwareRelease.deviceInfoFilter();
+        this._flushTimer = null;
         this.init();
+    }
+
+    // Hides the AT+DEVICE_INFO? reply for ms; other console text still shows.
+    hideDeviceInfoReply(ms) {
+        this.replyFilter.hide(ms);
+        clearTimeout(this._flushTimer);
+        this._flushTimer = setTimeout(() => {
+            const held = this.replyFilter.flush();
+            if (held) appendToTerminal(held);
+        }, ms + 50);
     }
 
     init() {
@@ -42,7 +54,8 @@ class ConsoleWebSocket {
         // Listen for messages
         this.ws.addEventListener('message', (event) => {
             const dispatch = (text) => {
-                if (Date.now() >= this.muteUntil) appendToTerminal(text);
+                const shown = this.replyFilter.filter(text);
+                if (shown) appendToTerminal(shown);
                 if (this.captureCallback) this.captureCallback(text);
             };
             if (typeof event.data === 'string') {
@@ -2202,6 +2215,6 @@ class AircraftTable {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { isOtherTextEntry, whereplaneMapUrl, webSocketRefused, AircraftWebSocket, UplinkWebSocket, MapWeather,
-        receiverIdUuid, parseFeedReceiverIdLine, AircraftStore, receiverMetricCards };
+    module.exports = { isOtherTextEntry, whereplaneMapUrl, webSocketRefused, ConsoleWebSocket, AircraftWebSocket,
+        UplinkWebSocket, MapWeather, receiverIdUuid, parseFeedReceiverIdLine, AircraftStore, receiverMetricCards };
 }
