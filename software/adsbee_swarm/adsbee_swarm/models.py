@@ -1,11 +1,13 @@
 """
     User ── Account ──< ApiToken             one login per account; privileges are flags
+               └──< EnrollToken          the current one and the ones it replaced
                └──< Device ──< Sample        hourly and daily stats
                                  └──< SampleRange   one range map per protocol
                └──< Rollout >──< Device      a firmware target for all, a label, or chosen bees
 
-An account's enroll token (what a bee is given with AT+SWARM) and its API tokens are stored as
-SHA-256 hashes; the plain token is shown once.
+Enroll tokens (what a bee is given with AT+SWARM) and API tokens are looked up by SHA-256 hash.
+API tokens are shown once; the current enroll token is also kept encrypted (`sealed`) so its owner
+can see it again.
 """
 from __future__ import annotations
 
@@ -27,14 +29,25 @@ class Account(models.Model):
     #: Privilege flags (conf PRIVILEGES): ["swarm", "wiggler", ...].
     privileges = models.JSONField(default=list, blank=True)
     disabled = models.BooleanField(default=False)
-    enroll_token_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
-    #: The first characters, so a person can tell which token a bee holds.
-    enroll_token_prefix = models.CharField(max_length=8, blank=True)
-    enroll_token_rotated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         return self.user.get_username()
+
+    @property
+    def enroll_token(self) -> EnrollToken | None:
+        """The current enroll token (what a new bee is given)."""
+        return self.enroll_tokens.filter(retired_at__isnull=True).order_by('-created_at', '-pk').first()
+
+    @property
+    def enroll_token_prefix(self) -> str:
+        current = self.enroll_token
+        return current.prefix if current else ''
+
+    @property
+    def enroll_token_rotated_at(self):
+        current = self.enroll_token
+        return current.created_at if current else None
 
     def has(self, privilege: str) -> bool:
         return not self.disabled and privilege in (self.privileges or [])
@@ -50,6 +63,34 @@ class ApiToken(models.Model):
 
     def __str__(self):
         return f'{self.prefix}… {self.name}'
+
+
+class EnrollToken(models.Model):
+    """
+    One of an account's enroll tokens. The current one (not retired) admits any bee. A retired
+    one still admits the bees the account had when it was retired, until it is cut off.
+    """
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='enroll_tokens')
+    token_hash = models.CharField(max_length=64, unique=True)
+    #: The first characters, so a person can tell which token a bee holds.
+    prefix = models.CharField(max_length=8)
+    #: The current token, encrypted (`sealed.seal`); emptied when it is retired. Empty for tokens
+    #: made before tokens were kept.
+    sealed = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    retired_at = models.DateTimeField(null=True, blank=True)
+    #: Stops working for every bee.
+    cut_off = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-created_at', '-pk']
+
+    def __str__(self):
+        return f'{self.prefix}…'
+
+    @property
+    def current(self) -> bool:
+        return self.retired_at is None
 
 
 class Device(models.Model):
@@ -73,8 +114,12 @@ class Device(models.Model):
     uptime_s = models.BigIntegerField(null=True, blank=True)
     first_seen = models.DateTimeField(default=timezone.now)
     last_report_at = models.DateTimeField(null=True, blank=True)
-    #: Removed by the owner: reports answer 410 until the enroll token is rotated or it is restored.
+    #: Removed by the owner: reports answer 410 until it is restored or reports with an enroll
+    #: token made after its removal.
     removed_at = models.DateTimeField(null=True, blank=True)
+    #: The enroll token of its last accepted report.
+    enroll_token = models.ForeignKey(EnrollToken, null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name='+')
     #: The last report stored: [seq, start_uptime_s, len_s], its Sample's start and its stats, so a
     #: retry is recognized and a merged retry replaces what it widens.
     last_report = models.JSONField(default=dict, blank=True)
@@ -103,6 +148,11 @@ class Device(models.Model):
         if self.rx_lat is not None and self.rx_lon is not None:
             return {'lat': self.rx_lat, 'lon': self.rx_lon, 'alt_m': self.rx_alt_m, 'source': self.rx_source}
         return None
+
+    @property
+    def old_token(self) -> bool:
+        """Its last report used a token that has since been replaced: give it the new line."""
+        return self.enroll_token_id is not None and self.enroll_token.retired_at is not None
 
     @property
     def check_position(self) -> bool:

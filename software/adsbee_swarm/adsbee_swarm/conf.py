@@ -23,6 +23,14 @@ DEFAULTS = {
     'DEVICE_VERIFIER': None,
     #: Retry-After (seconds) when the verifier raises VerifierUnavailable without its own.
     'VERIFIER_RETRY_AFTER_S': 3600,
+    #: Fernet key (or a list: the first encrypts, any decrypts) that keeps the current enroll token
+    #: readable for its owner. None: derived from SECRET_KEY (changing that hides tokens until the
+    #: next new one; they keep working).
+    'TOKEN_KEY': None,
+    #: Dotted path to `audit(account, event, request | None, **data)`, called on enroll_token_new,
+    #: enroll_token_cut_off, enroll_token_revealed. Never given a token. Events are also logged
+    #: to `adsbee_swarm.audit`.
+    'AUDIT': None,
     #: Dotted path to `validate_tag(product, tag) -> str | None` (an error), for rollout targets.
     'TAG_VALIDATOR': None,
     #: Seconds between reports, told to every device.

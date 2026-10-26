@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import CommandError, call_command
 
 from adsbee_swarm import protocol, services
-from adsbee_swarm.models import Account, token_hash
+from adsbee_swarm.models import Account, EnrollToken, token_hash
 from adsbee_swarm.simulator import Bee
 
 pytestmark = pytest.mark.django_db
@@ -15,7 +15,8 @@ def test_create_account_without_a_password_is_invite_only():
     account, token = services.create_account('dana', email='d@example.com', privileges=['swarm', 'wiggler'])
     assert not account.user.has_usable_password()
     assert account.privileges == ['swarm', 'wiggler'] and account.has('wiggler')
-    assert account.enroll_token_hash == token_hash(token) and token not in str(Account.objects.values())
+    assert account.enroll_token.token_hash == token_hash(token)
+    assert token not in str(Account.objects.values()) + str(EnrollToken.objects.values())
 
 
 def test_privileges_are_checked_and_extensible(settings):
