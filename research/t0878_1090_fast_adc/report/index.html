@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1090 Fast ADC Study</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #fcfcfb; --card: #f4f3f0; --text: #0b0b0b; --text2: #52514e; --muted: #7a7974; --line: #dddcd7;
+  --grid: #e9e8e4; --accent: #2a78d6; --warn: #b35a00;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #c98a00; --s5: #e87ba4; --s6: #6250d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #1a1a19; --card: #232321; --text: #f0efec; --text2: #c3c2b7; --muted: #9a998f; --line: #3a3936;
+    --grid: #2c2c2a; --accent: #3987e5; --warn: #f0a050;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1a1a19; --card: #232321; --text: #f0efec; --text2: #c3c2b7; --muted: #9a998f; --line: #3a3936;
+  --grid: #2c2c2a; --accent: #3987e5; --warn: #f0a050;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+h2 { font-size: 19px; margin: 36px 0 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+h3 { font-size: 15px; margin: 20px 0 6px; }
+p, li { color: var(--text); }
+.sub { color: var(--text2); margin: 0 0 16px; }
+.small { font-size: 13px; color: var(--text2); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 16px 0; }
+.tile { background: var(--card); border-radius: 8px; padding: 12px 14px; }
+.tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .l { font-size: 13px; color: var(--text2); }
+.rec { background: var(--card); border-left: 4px solid var(--accent); border-radius: 6px; padding: 12px 16px; margin: 16px 0; }
+.rec p { margin: 6px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--text2); font-weight: 600; }
+.tw { overflow-x: auto; }
+.warn { color: var(--warn); }
+svg.chart { width: 100%; height: auto; display: block; margin: 8px 0; }
+svg .grid { stroke: var(--grid); stroke-width: 1; }
+svg .axis { stroke: var(--muted); stroke-width: 1; }
+svg .ref { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+svg .tick { fill: var(--text2); font-size: 11px; }
+svg .axl { fill: var(--text2); font-size: 12px; }
+svg .reft { fill: var(--muted); font-size: 11px; }
+svg .dl { fill: var(--text); font-size: 11.5px; }
+svg .val { fill: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+svg .hit { fill: transparent; }
+svg .hit:hover { fill: var(--text); fill-opacity: .15; }
+svg .ring { stroke: var(--bg); stroke-width: 2; }
+code { font-size: 13px; }
+details { margin: 6px 0; }
+summary { cursor: pointer; color: var(--text2); font-size: 13px; }
+.est { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>1090 next rev: fast ADC + RP2350</h1>
+<p class="sub">t-0878 · desk study and simulation, no bench · 26 Oct 2026 · baseline: main + #398 offset retry · model and data in <code>/workspace/agents/worker-6/t0878/</code></p>
+
+<div class="tiles">
+  <div class="tile"><div class="v">+9.8 dB</div><div class="l">8-bit ADC + soft preamble, 90 % point (model). Today −84 → -93.8 dBm</div></div>
+  <div class="tile"><div class="v">+6.1 dB</div><div class="l">Same idea on today's board: comparator stream + software preamble (model, firmware only)</div></div>
+  <div class="tile"><div class="v">+1.8 dB</div><div class="l">PIO mismatch budget 4 → 8, one constant (model)</div></div>
+  <div class="tile"><div class="v">+0.49 %</div><div class="l">frames from overlaps resolved by level (1,629/h at t-0870 traffic)</div></div>
+</div>
+
+<div class="rec">
+<p><b>Recommendation: maybe. Don't start a rev yet.</b> The model says amplitude sampling is worth about 9.8 dB at the 90 % point. Most of that comes from detecting the preamble softly instead of with the PIO's 40-sample hard match, and about 6.1 dB of it is reachable in firmware on the current 1090U.</p>
+<p>Order of work:</p>
+<ol>
+<li><b>Bench test of the PIO mismatch budget at 8</b> (hours). Expected +1.8 dB at 90 %.</li>
+<li><b>Software soft preamble on a continuous 12 Msps comparator stream, TL lowered to 300 mV</b> (1–2 weeks). Expected +6.1 dB. The estimated cost is ~35–50 % of core 1 at 12k bursts/s.</li>
+<li><b>In parallel, a Pico 2 + 8-bit ADC tap on TP2 (RF_DET_OUT) of a 1090U</b> (~2 weeks, ~$30). It records live sky and Pluto sweeps for an offline demod and measures what the ADC adds over step 2.</li>
+<li><b>Rev only if step 3 shows ≥2–3 dB over step 2</b>, or if the MLAT, RSSI and overlap gains are wanted. The rev would be an RP2350 with an 8-bit parallel ADC (6 MSBs wired is enough) plus a buffer, about $1.5–4.5 BOM.</li>
+</ol>
+<p><b>Confidence.</b> The ranking is medium confidence. The absolute dB figures are low-to-medium confidence: the model is calibrated on one bench point (±2.5 dB), the detector floor is inferred, and there is no interference model. Across the sensitivity runs (detector floor 0 to +6 dB, video 5 MHz), the ADC gain at 90 % stays at 8–11 dB and the firmware soft-preamble gain at 6 dB (<a href="#sens">sensitivity</a>).</p>
+</div>
+
+<h2>1. Frame success vs input level</h2>
+<p>DF17 frames, 600 per point. The same noisy detector output feeds every chain (paired comparison). The dBm axis is shifted so that today's chain (TL 600, the live default) has its 90 % point at −84 dBm, the spec point. This implies an in-band noise of -96.1 dBm in 24 MHz, i.e. NF ≈ 4.1 dB. The release notes put the 50 % point at −84.1 dBm; with that calibration, add 1.8 dB to every dBm figure here. The gains don't change.</p>
+<svg viewBox="0 0 680 340" role="img" class="chart" xmlns="http://www.w3.org/2000/svg">
+<line x1="56" x2="490" y1="296.0" y2="296.0" class="grid"/>
+<text x="48" y="300.0" class="tick" text-anchor="end">0%</text>
+<line x1="56" x2="490" y1="226.0" y2="226.0" class="grid"/>
+<text x="48" y="230.0" class="tick" text-anchor="end">25%</text>
+<line x1="56" x2="490" y1="156.0" y2="156.0" class="grid"/>
+<text x="48" y="160.0" class="tick" text-anchor="end">50%</text>
+<line x1="56" x2="490" y1="86.0" y2="86.0" class="grid"/>
+<text x="48" y="90.0" class="tick" text-anchor="end">75%</text>
+<line x1="56" x2="490" y1="44.0" y2="44.0" class="grid"/>
+<text x="48" y="48.0" class="tick" text-anchor="end">90%</text>
+<line x1="56" x2="490" y1="16.0" y2="16.0" class="grid"/>
+<text x="48" y="20.0" class="tick" text-anchor="end">100%</text>
+<text x="56.0" y="314" class="tick" text-anchor="middle">-98</text>
+<text x="99.4" y="314" class="tick" text-anchor="middle">-96</text>
+<text x="142.8" y="314" class="tick" text-anchor="middle">-94</text>
+<text x="186.2" y="314" class="tick" text-anchor="middle">-92</text>
+<text x="229.6" y="314" class="tick" text-anchor="middle">-90</text>
+<text x="273.0" y="314" class="tick" text-anchor="middle">-88</text>
+<text x="316.4" y="314" class="tick" text-anchor="middle">-86</text>
+<text x="359.8" y="314" class="tick" text-anchor="middle">-84</text>
+<text x="403.2" y="314" class="tick" text-anchor="middle">-82</text>
+<text x="446.6" y="314" class="tick" text-anchor="middle">-80</text>
+<text x="490.0" y="314" class="tick" text-anchor="middle">-78</text>
+<line x1="56" x2="490" y1="296" y2="296" class="axis"/>
+<text x="273.0" y="334" class="axl" text-anchor="middle">Input power (dBm, calibrated: today 90 % at −84)</text>
+<text x="14" y="156.0" class="axl" text-anchor="middle" transform="rotate(-90 14 156.0)">DF17 frames decoded</text>
+<line x1="56" x2="490" y1="44.0" y2="44.0" class="ref"/>
+<text x="60" y="40.0" class="reft">90 %</text>
+<line x1="56" x2="490" y1="156.0" y2="156.0" class="ref"/>
+<text x="60" y="152.0" class="reft">50 %</text>
+<path d="M76.1,296.0 L97.8,296.0 L119.5,296.0 L141.2,296.0 L162.9,296.0 L184.6,296.0 L206.3,296.0 L228.0,296.0 L249.7,296.0 L271.4,296.0 L293.1,277.3 L314.8,186.8 L336.5,86.5 L358.2,45.4 L379.9,26.7 L401.6,17.9 L423.3,16.0 L445.0,16.0 L466.7,16.0 L488.4,16.0" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="76.1" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -97.075 → 0.0%</title></circle>
+<circle cx="97.8" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -96.075 → 0.0%</title></circle>
+<circle cx="119.5" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -95.075 → 0.0%</title></circle>
+<circle cx="141.2" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -94.075 → 0.0%</title></circle>
+<circle cx="162.9" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -93.075 → 0.0%</title></circle>
+<circle cx="184.6" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -92.075 → 0.0%</title></circle>
+<circle cx="206.3" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -91.075 → 0.0%</title></circle>
+<circle cx="228.0" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -90.075 → 0.0%</title></circle>
+<circle cx="249.7" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -89.075 → 0.0%</title></circle>
+<circle cx="271.4" cy="296.0" r="7" class="hit"><title>Today (TL 600): Input power -88.075 → 0.0%</title></circle>
+<circle cx="293.1" cy="277.3" r="7" class="hit"><title>Today (TL 600): Input power -87.075 → 6.7%</title></circle>
+<circle cx="314.8" cy="186.8" r="7" class="hit"><title>Today (TL 600): Input power -86.075 → 39.0%</title></circle>
+<circle cx="336.5" cy="86.5" r="7" class="hit"><title>Today (TL 600): Input power -85.075 → 74.8%</title></circle>
+<circle cx="358.2" cy="45.4" r="7" class="hit"><title>Today (TL 600): Input power -84.075 → 89.5%</title></circle>
+<circle cx="379.9" cy="26.7" r="7" class="hit"><title>Today (TL 600): Input power -83.075 → 96.2%</title></circle>
+<circle cx="401.6" cy="17.9" r="7" class="hit"><title>Today (TL 600): Input power -82.075 → 99.3%</title></circle>
+<circle cx="423.3" cy="16.0" r="7" class="hit"><title>Today (TL 600): Input power -81.075 → 100.0%</title></circle>
+<circle cx="445.0" cy="16.0" r="7" class="hit"><title>Today (TL 600): Input power -80.075 → 100.0%</title></circle>
+<circle cx="466.7" cy="16.0" r="7" class="hit"><title>Today (TL 600): Input power -79.075 → 100.0%</title></circle>
+<circle cx="488.4" cy="16.0" r="7" class="hit"><title>Today (TL 600): Input power -78.075 → 100.0%</title></circle>
+<circle cx="488.4" cy="16.0" r="4" fill="var(--s1)" class="ring"/>
+<text x="498.0" y="20.0" class="dl"><tspan fill="var(--s1)">■</tspan> Today (TL 600)</text>
+<path d="M97.8,296.0 L119.5,296.0 L141.2,296.0 L162.9,296.0 L184.6,296.0 L206.3,296.0 L228.0,296.0 L249.7,296.0 L271.4,292.5 L293.1,219.0 L314.8,55.9 L336.5,18.8 L358.2,16.0 L379.9,16.0 L401.6,16.0 L423.3,16.0 L445.0,16.0 L466.7,16.0 L488.4,16.0" fill="none" stroke="var(--s4)" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="97.8" cy="296.0" r="7" class="hit"><title>FW: budget 8: Input power -96.075 → 0.0%</title></circle>
+<circle cx="119.5" cy="296.0" r="7" class="hit"><title>FW: budget 8: Input power -95.075 → 0.0%</title></circle>
+<circle cx="141.2" cy="296.0" r="7" class="hit"><title>FW: budget 8: Input power -94.075 → 0.0%</title></circle>
+<circle cx="162.9" cy="296.0" r="7" class="hit"><title>FW: budget 8: Input power -93.075 → 0.0%</title></circle>
+<circle cx="184.6" cy="296.0" r="7" class="hit"><title>FW: budget 8: Input power -92.075 → 0.0%</title></circle>
+<circle cx="206.3" cy="296.0" r="7" class="hit"><title>FW: budget 8: Input power -91.075 → 0.0%</title></circle>
+<circle cx="228.0" cy="296.0" r="7" class="hit"><title>FW: budget 8: Input power -90.075 → 0.0%</title></circle>
+<circle cx="249.7" cy="296.0" r="7" class="hit"><title>FW: budget 8: Input power -89.075 → 0.0%</title></circle>
+<circle cx="271.4" cy="292.5" r="7" class="hit"><title>FW: budget 8: Input power -88.075 → 1.2%</title></circle>
+<circle cx="293.1" cy="219.0" r="7" class="hit"><title>FW: budget 8: Input power -87.075 → 27.5%</title></circle>
+<circle cx="314.8" cy="55.9" r="7" class="hit"><title>FW: budget 8: Input power -86.075 → 85.8%</title></circle>
+<circle cx="336.5" cy="18.8" r="7" class="hit"><title>FW: budget 8: Input power -85.075 → 99.0%</title></circle>
+<circle cx="358.2" cy="16.0" r="7" class="hit"><title>FW: budget 8: Input power -84.075 → 100.0%</title></circle>
+<circle cx="379.9" cy="16.0" r="7" class="hit"><title>FW: budget 8: Input power -83.075 → 100.0%</title></circle>
+<circle cx="401.6" cy="16.0" r="7" class="hit"><title>FW: budget 8: Input power -82.075 → 100.0%</title></circle>
+<circle cx="423.3" cy="16.0" r="7" class="hit"><title>FW: budget 8: Input power -81.075 → 100.0%</title></circle>
+<circle cx="445.0" cy="16.0" r="7" class="hit"><title>FW: budget 8: Input power -80.075 → 100.0%</title></circle>
+<circle cx="466.7" cy="16.0" r="7" class="hit"><title>FW: budget 8: Input power -79.075 → 100.0%</title></circle>
+<circle cx="488.4" cy="16.0" r="7" class="hit"><title>FW: budget 8: Input power -78.075 → 100.0%</title></circle>
+<circle cx="488.4" cy="16.0" r="4" fill="var(--s4)" class="ring"/>
+<text x="498.0" y="33.0" class="dl"><tspan fill="var(--s4)">■</tspan> FW: budget 8</text>
+<path d="M76.1,296.0 L97.8,296.0 L119.5,296.0 L141.2,296.0 L162.9,293.2 L184.6,247.0 L206.3,132.9 L228.0,37.0 L249.7,16.0 L271.4,16.7 L293.1,16.0 L314.8,16.0 L336.5,16.0 L358.2,16.0 L379.9,16.0 L401.6,16.0 L423.3,16.0 L445.0,16.0 L466.7,16.0 L488.4,16.0" fill="none" stroke="var(--s3)" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="76.1" cy="296.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -97.075 → 0.0%</title></circle>
+<circle cx="97.8" cy="296.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -96.075 → 0.0%</title></circle>
+<circle cx="119.5" cy="296.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -95.075 → 0.0%</title></circle>
+<circle cx="141.2" cy="296.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -94.075 → 0.0%</title></circle>
+<circle cx="162.9" cy="293.2" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -93.075 → 1.0%</title></circle>
+<circle cx="184.6" cy="247.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -92.075 → 17.5%</title></circle>
+<circle cx="206.3" cy="132.9" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -91.075 → 58.2%</title></circle>
+<circle cx="228.0" cy="37.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -90.075 → 92.5%</title></circle>
+<circle cx="249.7" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -89.075 → 100.0%</title></circle>
+<circle cx="271.4" cy="16.7" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -88.075 → 99.8%</title></circle>
+<circle cx="293.1" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -87.075 → 100.0%</title></circle>
+<circle cx="314.8" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -86.075 → 100.0%</title></circle>
+<circle cx="336.5" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -85.075 → 100.0%</title></circle>
+<circle cx="358.2" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -84.075 → 100.0%</title></circle>
+<circle cx="379.9" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -83.075 → 100.0%</title></circle>
+<circle cx="401.6" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -82.075 → 100.0%</title></circle>
+<circle cx="423.3" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -81.075 → 100.0%</title></circle>
+<circle cx="445.0" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -80.075 → 100.0%</title></circle>
+<circle cx="466.7" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -79.075 → 100.0%</title></circle>
+<circle cx="488.4" cy="16.0" r="7" class="hit"><title>FW: soft preamble, TL 300: Input power -78.075 → 100.0%</title></circle>
+<circle cx="488.4" cy="16.0" r="4" fill="var(--s3)" class="ring"/>
+<text x="498.0" y="46.0" class="dl"><tspan fill="var(--s3)">■</tspan> FW: soft preamble, TL 300</text>
+<path d="M76.1,296.0 L97.8,287.1 L119.5,196.6 L141.2,54.7 L162.9,20.2 L184.6,16.9 L206.3,16.0 L228.0,16.0 L249.7,16.0 L271.4,16.0 L293.1,16.0 L314.8,16.0 L336.5,16.0 L358.2,16.0 L379.9,16.0 L401.6,16.0 L423.3,16.0 L445.0,16.0 L466.7,16.0 L488.4,16.0" fill="none" stroke="var(--s2)" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="76.1" cy="296.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -97.075 → 0.0%</title></circle>
+<circle cx="97.8" cy="287.1" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -96.075 → 3.2%</title></circle>
+<circle cx="119.5" cy="196.6" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -95.075 → 35.5%</title></circle>
+<circle cx="141.2" cy="54.7" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -94.075 → 86.2%</title></circle>
+<circle cx="162.9" cy="20.2" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -93.075 → 98.5%</title></circle>
+<circle cx="184.6" cy="16.9" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -92.075 → 99.7%</title></circle>
+<circle cx="206.3" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -91.075 → 100.0%</title></circle>
+<circle cx="228.0" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -90.075 → 100.0%</title></circle>
+<circle cx="249.7" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -89.075 → 100.0%</title></circle>
+<circle cx="271.4" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -88.075 → 100.0%</title></circle>
+<circle cx="293.1" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -87.075 → 100.0%</title></circle>
+<circle cx="314.8" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -86.075 → 100.0%</title></circle>
+<circle cx="336.5" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -85.075 → 100.0%</title></circle>
+<circle cx="358.2" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -84.075 → 100.0%</title></circle>
+<circle cx="379.9" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -83.075 → 100.0%</title></circle>
+<circle cx="401.6" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -82.075 → 100.0%</title></circle>
+<circle cx="423.3" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -81.075 → 100.0%</title></circle>
+<circle cx="445.0" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -80.075 → 100.0%</title></circle>
+<circle cx="466.7" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -79.075 → 100.0%</title></circle>
+<circle cx="488.4" cy="16.0" r="7" class="hit"><title>8-bit ADC 10 Msps: Input power -78.075 → 100.0%</title></circle>
+<circle cx="488.4" cy="16.0" r="4" fill="var(--s2)" class="ring"/>
+<text x="498.0" y="59.0" class="dl"><tspan fill="var(--s2)">■</tspan> 8-bit ADC 10 Msps</text>
+</svg>
+<div class="tw"><table>
+<tr><th>Group</th><th>Chain</th><th>50 % (dBm)</th><th>90 % (dBm)</th><th>Gain 50 %</th><th>Gain 90 %</th></tr>
+<tr><td>Today</td><td>Comparator, TL 600, PIO matcher (budget 4), #398 demod</td><td>-85.8</td><td>-84.0</td><td>0</td><td>0</td></tr>
+<tr><td>Firmware only</td><td>PIO mismatch budget 4 → 8</td><td>-86.7</td><td>-85.8</td><td>+0.9</td><td>+1.8</td></tr><tr><td>Firmware only</td><td>Comparator stream + software preamble, TL 600</td><td>-86.9</td><td>-86.2</td><td>+1.2</td><td>+2.2</td></tr><tr><td>Firmware only</td><td>Comparator stream + software preamble, TL 300</td><td>-91.3</td><td>-90.1</td><td>+5.5</td><td>+6.1</td></tr><tr><td>New hardware</td><td>ADC demod, PIO trigger (TL 600, budget 8)</td><td>-87.5</td><td>-86.2</td><td>+1.8</td><td>+2.2</td></tr><tr><td>New hardware</td><td>3 comparators (2-bit flash), 12 Msps, soft</td><td>-92.1</td><td>-91.2</td><td>+6.4</td><td>+7.2</td></tr><tr><td>New hardware</td><td>8-bit ADC, 10 Msps, soft preamble</td><td>-94.8</td><td>-93.8</td><td>+9.0</td><td>+9.8</td></tr><tr><td>New hardware</td><td>8-bit ADC, 20 Msps, soft preamble</td><td>-95.0</td><td>-94.1</td><td>+9.2</td><td>+10.1</td></tr><tr><td>New hardware</td><td>I/Q 10 Msps, ±3 MHz filter, no log detector</td><td>-96.5</td><td>-94.7</td><td>+10.7</td><td>+10.7</td></tr>
+</table></div>
+<svg viewBox="0 0 680 270" role="img" class="chart" xmlns="http://www.w3.org/2000/svg">
+<line x1="330" x2="330" y1="4" y2="246" class="axis"/>
+<text x="322" y="22" class="tick" text-anchor="end">PIO mismatch budget 4 → 8</text>
+<rect x="330" y="10" width="40.9" height="18" rx="4" fill="var(--s3)"><title>PIO mismatch budget 4 → 8: +1.8 dB gain at the 90 % point vs today</title></rect>
+<text x="376.9" y="22" class="val">+1.8 dB</text>
+<text x="322" y="52" class="tick" text-anchor="end">Comparator stream + software preamble, TL 600</text>
+<rect x="330" y="40" width="50.5" height="18" rx="4" fill="var(--s3)"><title>Comparator stream + software preamble, TL 600: +2.2 dB gain at the 90 % point vs today</title></rect>
+<text x="386.5" y="52" class="val">+2.2 dB</text>
+<text x="322" y="82" class="tick" text-anchor="end">Comparator stream + software preamble, TL 300</text>
+<rect x="330" y="70" width="143.5" height="18" rx="4" fill="var(--s3)"><title>Comparator stream + software preamble, TL 300: +6.1 dB gain at the 90 % point vs today</title></rect>
+<text x="479.5" y="82" class="val">+6.1 dB</text>
+<text x="322" y="112" class="tick" text-anchor="end">ADC demod, PIO trigger (TL 600, budget 8)</text>
+<rect x="330" y="100" width="50.7" height="18" rx="4" fill="var(--s2)"><title>ADC demod, PIO trigger (TL 600, budget 8): +2.2 dB gain at the 90 % point vs today</title></rect>
+<text x="386.7" y="112" class="val">+2.2 dB</text>
+<text x="322" y="142" class="tick" text-anchor="end">3 comparators (2-bit flash), 12 Msps, soft</text>
+<rect x="330" y="130" width="166.8" height="18" rx="4" fill="var(--s2)"><title>3 comparators (2-bit flash), 12 Msps, soft: +7.2 dB gain at the 90 % point vs today</title></rect>
+<text x="502.8" y="142" class="val">+7.2 dB</text>
+<text x="322" y="172" class="tick" text-anchor="end">8-bit ADC, 10 Msps, soft preamble</text>
+<rect x="330" y="160" width="227.8" height="18" rx="4" fill="var(--s2)"><title>8-bit ADC, 10 Msps, soft preamble: +9.8 dB gain at the 90 % point vs today</title></rect>
+<text x="563.8" y="172" class="val">+9.8 dB</text>
+<text x="322" y="202" class="tick" text-anchor="end">8-bit ADC, 20 Msps, soft preamble</text>
+<rect x="330" y="190" width="235.1" height="18" rx="4" fill="var(--s2)"><title>8-bit ADC, 20 Msps, soft preamble: +10.1 dB gain at the 90 % point vs today</title></rect>
+<text x="571.1" y="202" class="val">+10.1 dB</text>
+<text x="322" y="232" class="tick" text-anchor="end">I/Q 10 Msps, ±3 MHz filter, no log detector</text>
+<rect x="330" y="220" width="250.4" height="18" rx="4" fill="var(--s2)"><title>I/Q 10 Msps, ±3 MHz filter, no log detector: +10.7 dB gain at the 90 % point vs today</title></rect>
+<text x="586.4" y="232" class="val">+10.7 dB</text>
+<text x="470.0" y="264" class="axl" text-anchor="middle">dB gain at the 90 % point vs today</text>
+</svg>
+<p class="small">"Soft preamble" means a software detector that compares chip averages: min(pulse chips 0, 2, 7, 9) − mean(quiet chips 4, 5, 11–14) > threshold. The threshold is set for ≤1,000 false triggers/s on noise; a 100/s threshold costs ~0.5 dB. Bits are decided by chip-sum comparison, with the same 1–2 bit CRC fix and 3 offset retries as #398.</p>
+
+<h3>Why the PIO matcher is the limit</h3>
+<ul>
+<li><b>The hard match is strict.</b> The matcher must see ≥36 of 40 samples right. Near the threshold, single samples flip on noise, and one miss in four preambles is enough to lose the frame.</li>
+<li><b>Bit decisions are not the limit.</b> Feeding ADC samples into the demod but keeping the PIO trigger gains almost nothing at TL 600. The <i>trigger</i> sets today's limit.</li>
+<li><b>A lower TL makes things worse.</b> At TL 300 the matchers are tied up by noise edges (1.4 M/s): weak frames improve, but ~10 % of strong frames are lost. This is why the TL can't simply be lowered today.</li>
+<li><b>A soft detector averages the noise out.</b> It averages ~12 independent noise samples per chip (24 MHz RF bandwidth × 0.5 µs) and doesn't care about chatter.</li>
+</ul>
+
+<h3>TL offset × mismatch budget (today's chain, firmware only)</h3>
+<div class="tw"><table>
+<tr><th>TL offset</th><th>budget 4</th><th>6</th><th>8</th><th>10</th><th>12</th></tr>
+<tr><td>300 mV</td><td>-2.6 <span class=warn>(87 % max)</span></td><td>– <span class=warn>(85 % max)</span></td><td>– <span class=warn>(66 % max)</span></td><td>– <span class=warn>(69 % max)</span></td><td>– <span class=warn>(68 % max)</span></td></tr><tr><td>600 mV</td><td>-0.2</td><td>+1.2</td><td>+1.8</td><td>+2.1</td><td>+2.2</td></tr><tr><td>900 mV</td><td>-2.7</td><td>-1.9</td><td>-1.8</td><td>-1.8</td><td>-1.8</td></tr>
+</table></div>
+<p class="small">dB gain at 90 % vs TL 600 / budget 4. – = never reaches 90 %. Orange figures in brackets are the strong-signal plateau when it is below 97 % (matchers tied up by noise). With budget 4 only: 300: -2.6 · 450: +1.3 · 600: -0.2 · 750: -1.3 · 900: -2.7 · 1200: -5.8 dB. On noise, the matchers fire 0 times/s up to budget 10 at TL ≥ 600; at TL 300 they fire 64/s at budget 10 and 2,600/s at budget 12. A relaxed matcher also fires more often inside frames: t-0870 measured 2.7–6.1 relaxed hits per frame with no quiet-chip checks, which the guard absorbs but which cost demod time.</p>
+
+<h3>ADC bits and rate</h3>
+<div class="tw"><table>
+<tr><th>dB gain at 90 %</th><th>6-bit</th><th>8-bit</th><th>10-bit</th></tr>
+<tr><td>8 Msps</td><td>+9.2</td><td>+9.6</td><td>+9.6</td></tr><tr><td>10 Msps</td><td>+9.4</td><td>+9.8</td><td>+9.7</td></tr><tr><td>12 Msps</td><td>+9.5</td><td>+9.8</td><td>+9.9</td></tr><tr><td>20 Msps</td><td>+9.9</td><td>+10.1</td><td>+10.1</td></tr>
+</table></div>
+<p class="small">The ADC spans the detector's whole range (noise −15 dB to saturation, ~1.3 V). 6 bits (1.1 dB steps) lose ≤0.4 dB. At 10 Msps over the full range: 3-bit -0.7 dB, 4-bit +5.2 dB, unquantized +9.8 dB. Rate barely matters: 8 → 20 Msps is worth ~0.4 dB. A 3-comparator "flash" with thresholds near the floor (+2, +5, +10 dB) gets +7.2 dB; the thresholds must sit near the noise, not across the full range. An I/Q front end with a ±3 MHz channel filter (no log detector) gets +10.7 dB, about 1 dB more than the log-detector ADC, at the cost of a downconverter and two ADCs.</p>
+
+<h2>2. Overlapping frames</h2>
+<p>Two DF17 frames, both 30 dB above noise; the second starts 8–120 µs into the first, with random carrier phase and frequency (±200 kHz), so the two beat. 240 pairs per point.</p>
+<svg viewBox="0 0 680 340" role="img" class="chart" xmlns="http://www.w3.org/2000/svg">
+<line x1="56" x2="490" y1="296.0" y2="296.0" class="grid"/>
+<text x="48" y="300.0" class="tick" text-anchor="end">0%</text>
+<line x1="56" x2="490" y1="226.0" y2="226.0" class="grid"/>
+<text x="48" y="230.0" class="tick" text-anchor="end">25%</text>
+<line x1="56" x2="490" y1="156.0" y2="156.0" class="grid"/>
+<text x="48" y="160.0" class="tick" text-anchor="end">50%</text>
+<line x1="56" x2="490" y1="86.0" y2="86.0" class="grid"/>
+<text x="48" y="90.0" class="tick" text-anchor="end">75%</text>
+<line x1="56" x2="490" y1="16.0" y2="16.0" class="grid"/>
+<text x="48" y="20.0" class="tick" text-anchor="end">100%</text>
+<text x="56.0" y="314" class="tick" text-anchor="middle">-20</text>
+<text x="99.4" y="314" class="tick" text-anchor="middle">-16</text>
+<text x="142.8" y="314" class="tick" text-anchor="middle">-12</text>
+<text x="186.2" y="314" class="tick" text-anchor="middle">-8</text>
+<text x="229.6" y="314" class="tick" text-anchor="middle">-4</text>
+<text x="273.0" y="314" class="tick" text-anchor="middle">0</text>
+<text x="316.4" y="314" class="tick" text-anchor="middle">4</text>
+<text x="359.8" y="314" class="tick" text-anchor="middle">8</text>
+<text x="403.2" y="314" class="tick" text-anchor="middle">12</text>
+<text x="446.6" y="314" class="tick" text-anchor="middle">16</text>
+<text x="490.0" y="314" class="tick" text-anchor="middle">20</text>
+<line x1="56" x2="490" y1="296" y2="296" class="axis"/>
+<text x="273.0" y="334" class="axl" text-anchor="middle">Second frame level minus first (dB)</text>
+<text x="14" y="156.0" class="axl" text-anchor="middle" transform="rotate(-90 14 156.0)">Frames decoded</text>
+<path d="M56.0,16.0 L77.7,16.0 L99.4,16.0 L121.1,16.0 L142.8,16.0 L164.5,17.2 L186.2,19.5 L207.9,68.5 L229.6,151.3 L251.3,222.5 L273.0,258.7 L294.7,250.5 L316.4,256.3 L338.1,256.3 L359.8,265.7 L381.5,265.7 L403.2,273.8 L424.9,270.3 L446.6,282.0 L468.3,283.2 L490.0,280.8" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="56.0" cy="16.0" r="7" class="hit"><title>Today: first frame: Second frame level minus first -20 → 100.0%</title></circle>
+<circle cx="77.7" cy="16.0" r="7" class="hit"><title>Today: first frame: Second frame level minus first -18 → 100.0%</title></circle>
+<circle cx="99.4" cy="16.0" r="7" class="hit"><title>Today: first frame: Second frame level minus first -16 → 100.0%</title></circle>
+<circle cx="121.1" cy="16.0" r="7" class="hit"><title>Today: first frame: Second frame level minus first -14 → 100.0%</title></circle>
+<circle cx="142.8" cy="16.0" r="7" class="hit"><title>Today: first frame: Second frame level minus first -12 → 100.0%</title></circle>
+<circle cx="164.5" cy="17.2" r="7" class="hit"><title>Today: first frame: Second frame level minus first -10 → 99.6%</title></circle>
+<circle cx="186.2" cy="19.5" r="7" class="hit"><title>Today: first frame: Second frame level minus first -8 → 98.8%</title></circle>
+<circle cx="207.9" cy="68.5" r="7" class="hit"><title>Today: first frame: Second frame level minus first -6 → 81.2%</title></circle>
+<circle cx="229.6" cy="151.3" r="7" class="hit"><title>Today: first frame: Second frame level minus first -4 → 51.7%</title></circle>
+<circle cx="251.3" cy="222.5" r="7" class="hit"><title>Today: first frame: Second frame level minus first -2 → 26.2%</title></circle>
+<circle cx="273.0" cy="258.7" r="7" class="hit"><title>Today: first frame: Second frame level minus first 0 → 13.3%</title></circle>
+<circle cx="294.7" cy="250.5" r="7" class="hit"><title>Today: first frame: Second frame level minus first 2 → 16.2%</title></circle>
+<circle cx="316.4" cy="256.3" r="7" class="hit"><title>Today: first frame: Second frame level minus first 4 → 14.2%</title></circle>
+<circle cx="338.1" cy="256.3" r="7" class="hit"><title>Today: first frame: Second frame level minus first 6 → 14.2%</title></circle>
+<circle cx="359.8" cy="265.7" r="7" class="hit"><title>Today: first frame: Second frame level minus first 8 → 10.8%</title></circle>
+<circle cx="381.5" cy="265.7" r="7" class="hit"><title>Today: first frame: Second frame level minus first 10 → 10.8%</title></circle>
+<circle cx="403.2" cy="273.8" r="7" class="hit"><title>Today: first frame: Second frame level minus first 12 → 7.9%</title></circle>
+<circle cx="424.9" cy="270.3" r="7" class="hit"><title>Today: first frame: Second frame level minus first 14 → 9.2%</title></circle>
+<circle cx="446.6" cy="282.0" r="7" class="hit"><title>Today: first frame: Second frame level minus first 16 → 5.0%</title></circle>
+<circle cx="468.3" cy="283.2" r="7" class="hit"><title>Today: first frame: Second frame level minus first 18 → 4.6%</title></circle>
+<circle cx="490.0" cy="280.8" r="7" class="hit"><title>Today: first frame: Second frame level minus first 20 → 5.4%</title></circle>
+<circle cx="490.0" cy="280.8" r="4" fill="var(--s1)" class="ring"/>
+<text x="498.0" y="284.8" class="dl"><tspan fill="var(--s1)">■</tspan> Today: first frame</text>
+<path d="M56.0,296.0 L77.7,296.0 L99.4,296.0 L121.1,296.0 L142.8,296.0 L164.5,294.8 L186.2,296.0 L207.9,293.7 L229.6,291.3 L251.3,293.7 L273.0,292.5 L294.7,293.7 L316.4,291.3 L338.1,286.7 L359.8,292.5 L381.5,291.3 L403.2,290.2 L424.9,293.7 L446.6,293.7 L468.3,292.5 L490.0,292.5" fill="none" stroke="var(--s1)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+<circle cx="56.0" cy="296.0" r="7" class="hit"><title>Today: second frame: Second frame level minus first -20 → 0.0%</title></circle>
+<circle cx="77.7" cy="296.0" r="7" class="hit"><title>Today: second frame: Second frame level minus first -18 → 0.0%</title></circle>
+<circle cx="99.4" cy="296.0" r="7" class="hit"><title>Today: second frame: Second frame level minus first -16 → 0.0%</title></circle>
+<circle cx="121.1" cy="296.0" r="7" class="hit"><title>Today: second frame: Second frame level minus first -14 → 0.0%</title></circle>
+<circle cx="142.8" cy="296.0" r="7" class="hit"><title>Today: second frame: Second frame level minus first -12 → 0.0%</title></circle>
+<circle cx="164.5" cy="294.8" r="7" class="hit"><title>Today: second frame: Second frame level minus first -10 → 0.4%</title></circle>
+<circle cx="186.2" cy="296.0" r="7" class="hit"><title>Today: second frame: Second frame level minus first -8 → 0.0%</title></circle>
+<circle cx="207.9" cy="293.7" r="7" class="hit"><title>Today: second frame: Second frame level minus first -6 → 0.8%</title></circle>
+<circle cx="229.6" cy="291.3" r="7" class="hit"><title>Today: second frame: Second frame level minus first -4 → 1.7%</title></circle>
+<circle cx="251.3" cy="293.7" r="7" class="hit"><title>Today: second frame: Second frame level minus first -2 → 0.8%</title></circle>
+<circle cx="273.0" cy="292.5" r="7" class="hit"><title>Today: second frame: Second frame level minus first 0 → 1.2%</title></circle>
+<circle cx="294.7" cy="293.7" r="7" class="hit"><title>Today: second frame: Second frame level minus first 2 → 0.8%</title></circle>
+<circle cx="316.4" cy="291.3" r="7" class="hit"><title>Today: second frame: Second frame level minus first 4 → 1.7%</title></circle>
+<circle cx="338.1" cy="286.7" r="7" class="hit"><title>Today: second frame: Second frame level minus first 6 → 3.3%</title></circle>
+<circle cx="359.8" cy="292.5" r="7" class="hit"><title>Today: second frame: Second frame level minus first 8 → 1.2%</title></circle>
+<circle cx="381.5" cy="291.3" r="7" class="hit"><title>Today: second frame: Second frame level minus first 10 → 1.7%</title></circle>
+<circle cx="403.2" cy="290.2" r="7" class="hit"><title>Today: second frame: Second frame level minus first 12 → 2.1%</title></circle>
+<circle cx="424.9" cy="293.7" r="7" class="hit"><title>Today: second frame: Second frame level minus first 14 → 0.8%</title></circle>
+<circle cx="446.6" cy="293.7" r="7" class="hit"><title>Today: second frame: Second frame level minus first 16 → 0.8%</title></circle>
+<circle cx="468.3" cy="292.5" r="7" class="hit"><title>Today: second frame: Second frame level minus first 18 → 1.2%</title></circle>
+<circle cx="490.0" cy="292.5" r="7" class="hit"><title>Today: second frame: Second frame level minus first 20 → 1.2%</title></circle>
+<circle cx="490.0" cy="292.5" r="4" fill="var(--s1)" class="ring"/>
+<text x="498.0" y="309.5" class="dl"><tspan fill="var(--s1)">■</tspan> Today: second frame</text>
+<path d="M56.0,16.0 L77.7,16.0 L99.4,16.0 L121.1,16.0 L142.8,16.0 L164.5,16.0 L186.2,16.0 L207.9,16.0 L229.6,41.7 L251.3,97.7 L273.0,217.8 L294.7,216.7 L316.4,238.8 L338.1,240.0 L359.8,255.2 L381.5,249.3 L403.2,249.3 L424.9,255.2 L446.6,270.3 L468.3,263.3 L490.0,266.8" fill="none" stroke="var(--s2)" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="56.0" cy="16.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -20 → 100.0%</title></circle>
+<circle cx="77.7" cy="16.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -18 → 100.0%</title></circle>
+<circle cx="99.4" cy="16.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -16 → 100.0%</title></circle>
+<circle cx="121.1" cy="16.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -14 → 100.0%</title></circle>
+<circle cx="142.8" cy="16.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -12 → 100.0%</title></circle>
+<circle cx="164.5" cy="16.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -10 → 100.0%</title></circle>
+<circle cx="186.2" cy="16.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -8 → 100.0%</title></circle>
+<circle cx="207.9" cy="16.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -6 → 100.0%</title></circle>
+<circle cx="229.6" cy="41.7" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -4 → 90.8%</title></circle>
+<circle cx="251.3" cy="97.7" r="7" class="hit"><title>ADC: first frame: Second frame level minus first -2 → 70.8%</title></circle>
+<circle cx="273.0" cy="217.8" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 0 → 27.9%</title></circle>
+<circle cx="294.7" cy="216.7" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 2 → 28.3%</title></circle>
+<circle cx="316.4" cy="238.8" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 4 → 20.4%</title></circle>
+<circle cx="338.1" cy="240.0" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 6 → 20.0%</title></circle>
+<circle cx="359.8" cy="255.2" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 8 → 14.6%</title></circle>
+<circle cx="381.5" cy="249.3" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 10 → 16.7%</title></circle>
+<circle cx="403.2" cy="249.3" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 12 → 16.7%</title></circle>
+<circle cx="424.9" cy="255.2" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 14 → 14.6%</title></circle>
+<circle cx="446.6" cy="270.3" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 16 → 9.2%</title></circle>
+<circle cx="468.3" cy="263.3" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 18 → 11.7%</title></circle>
+<circle cx="490.0" cy="266.8" r="7" class="hit"><title>ADC: first frame: Second frame level minus first 20 → 10.4%</title></circle>
+<circle cx="490.0" cy="266.8" r="4" fill="var(--s2)" class="ring"/>
+<text x="498.0" y="270.8" class="dl"><tspan fill="var(--s2)">■</tspan> ADC: first frame</text>
+<path d="M56.0,296.0 L77.7,294.8 L99.4,296.0 L121.1,296.0 L142.8,294.8 L164.5,296.0 L186.2,294.8 L207.9,296.0 L229.6,296.0 L251.3,294.8 L273.0,277.3 L294.7,175.8 L316.4,72.0 L338.1,38.2 L359.8,18.3 L381.5,18.3 L403.2,17.2 L424.9,17.2 L446.6,16.0 L468.3,16.0 L490.0,16.0" fill="none" stroke="var(--s2)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+<circle cx="56.0" cy="296.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -20 → 0.0%</title></circle>
+<circle cx="77.7" cy="294.8" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -18 → 0.4%</title></circle>
+<circle cx="99.4" cy="296.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -16 → 0.0%</title></circle>
+<circle cx="121.1" cy="296.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -14 → 0.0%</title></circle>
+<circle cx="142.8" cy="294.8" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -12 → 0.4%</title></circle>
+<circle cx="164.5" cy="296.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -10 → 0.0%</title></circle>
+<circle cx="186.2" cy="294.8" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -8 → 0.4%</title></circle>
+<circle cx="207.9" cy="296.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -6 → 0.0%</title></circle>
+<circle cx="229.6" cy="296.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -4 → 0.0%</title></circle>
+<circle cx="251.3" cy="294.8" r="7" class="hit"><title>ADC: second frame: Second frame level minus first -2 → 0.4%</title></circle>
+<circle cx="273.0" cy="277.3" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 0 → 6.7%</title></circle>
+<circle cx="294.7" cy="175.8" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 2 → 42.9%</title></circle>
+<circle cx="316.4" cy="72.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 4 → 80.0%</title></circle>
+<circle cx="338.1" cy="38.2" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 6 → 92.1%</title></circle>
+<circle cx="359.8" cy="18.3" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 8 → 99.2%</title></circle>
+<circle cx="381.5" cy="18.3" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 10 → 99.2%</title></circle>
+<circle cx="403.2" cy="17.2" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 12 → 99.6%</title></circle>
+<circle cx="424.9" cy="17.2" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 14 → 99.6%</title></circle>
+<circle cx="446.6" cy="16.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 16 → 100.0%</title></circle>
+<circle cx="468.3" cy="16.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 18 → 100.0%</title></circle>
+<circle cx="490.0" cy="16.0" r="7" class="hit"><title>ADC: second frame: Second frame level minus first 20 → 100.0%</title></circle>
+<circle cx="490.0" cy="16.0" r="4" fill="var(--s2)" class="ring"/>
+<text x="498.0" y="20.0" class="dl"><tspan fill="var(--s2)">■</tspan> ADC: second frame</text>
+</svg>
+<ul>
+<li><b>Today:</b> the first frame survives when it is ≥6 dB stronger. The second frame is never captured: the 118 µs guard drops it, as t-0870 measured on air.</li>
+<li><b>ADC + soft detector:</b> the first frame survives at ≥4 dB, and a later frame that is ≥4 dB stronger is found inside the first and decoded. Within a decoded frame, only a preamble ≥3 dB stronger may retrigger (readsb style). This cuts self-triggers from ~31 to ~5 per frame; mean 15 soft triggers per 260 µs window.</li>
+<li><b>Expected value:</b> per overlap, today recovers 0.39 frames and the ADC 0.89, weighted by the live-sky level-difference distribution (t-0870 RSSI of 97k captures; 59 % of random pairs differ by ≥4 dB). At t-0870's 3,257 expected two-aircraft overlaps/h, the ADC adds about <b>1,629 frames/h (0.49 %)</b>. The hybrid (PIO trigger + ADC demod) adds 467/h. This is small next to the sensitivity gain and grows in proportion to traffic.</li>
+</ul>
+
+<h2>3. Per-frame RSSI and MLAT timing</h2>
+<div class="tw"><table>
+<tr><th>Level</th><th>Timing RMS today (ns)</th><th>ADC 8 Msps (ns)</th><th>ADC 20 Msps (ns)</th><th>RSSI σ today (dB)</th><th>RSSI σ ADC (dB)</th></tr>
+<tr><td>-81 dBm</td><td>12.7</td><td>5.4</td><td>1.4</td><td>0.39</td><td>0.07</td></tr><tr><td>-76 dBm</td><td>11.7</td><td>5.2</td><td>3.3</td><td>0.63</td><td>0.08</td></tr><tr><td>-66 dBm</td><td>5.1</td><td>6.2</td><td>7.3</td><td>1.10</td><td>0.12</td></tr><tr><td>-56 dBm</td><td>9.1</td><td>8.4</td><td>9.3</td><td>1.62</td><td>0.13</td></tr>
+</table></div>
+<ul>
+<li><b>Today's timing</b> is a port of <code>DataStart48MHzCounts</code> (mid-bit HI counts over 24 bits). It gives 5–13 ns RMS in the model; release notes for #308 measured 15 ns RMS.</li>
+<li><b>ADC timing</b> uses mid-level crossings of the ADC samples at chip edges, averaging rise and fall. It gives 1–8 ns, and the rest is mostly transponder rise/fall spread (random 50–100 / 50–200 ns per frame).</li>
+<li><b>Level-dependent shift</b> over 25 dB: today 42 ns, ADC 9–10 ns. Receivers that see an aircraft at different levels disagree less, which helps MLAT more than the RMS figure does.</li>
+<li><b>RSSI</b> comes from the median ADC level of the frame's pulse chips (0.1 dB σ). Today's method samples the 10 µs RSSI low pass 43 µs into the frame and scales it by 53 %, giving 0.4–1.6 dB σ, worse at high level. An ADC also gives RSSI per frame when frames overlap and frees the shared RP2040 ADC.</li>
+</ul>
+
+<h2>4. Hardware options</h2>
+<h3>ADC parts (8–20 Msps, PIO-readable)</h3>
+<div class="tw"><table>
+<tr><th>Part</th><th>Bits / max fs</th><th>Interface, pins</th><th>Supply, power</th><th>Price @1k (LCSC, 26 Oct)</th><th>Status</th></tr>
+<tr><td>TI ADC08100CIMTCX</td><td>8 / 100 Msps (min 20)</td><td>parallel, 9</td><td>3 V, 3.3 V I/O, ~26 mW @20 Msps</td><td>$3.95, 1,308 stock</td><td>active; best stocked 8-bit; clock ≥20 Msps and decimate</td></tr>
+<tr><td>Ruimeng MS9280</td><td>10 / 35 Msps</td><td>parallel, 11</td><td>2.7–5.5 V, est. 60–90 mW</td><td>$0.80, 842 stock</td><td>AD9200-like, datasheet not found: prototype first</td></tr>
+<tr><td>ADI AD9280</td><td>8 / 32 Msps</td><td>parallel, 9</td><td>3 V, est. 50–60 mW @10</td><td>$5.15 list, 0 LCSC</td><td>production; reference for clones</td></tr>
+<tr><td>TI ADC1173</td><td>8 / 15 Msps</td><td>parallel, 9</td><td>3 V, 33 mW</td><td>$0.93 listing, 0 stock</td><td>ideal fit, no stock</td></tr>
+<tr><td>ADI AD9200 / AD9203</td><td>10 / 20, 40 Msps</td><td>parallel, 11</td><td>3 V, 25–80 mW</td><td>$5.99 / $8.98 list</td><td>western 10-bit fallback</td></tr>
+<tr><td>Serial SAR (LTC2315, AD7276…)</td><td>12 / ≤5 Msps</td><td>SPI</td><td>–</td><td>$1–16</td><td><b>no</b>: PIO SCLK ≤75 MHz caps one ADC at ~4 Msps</td></tr>
+<tr><td>2–3 comparators (LMV7219, TLV3502, MCP6567)</td><td>2-bit flash</td><td>2–3 GPIO</td><td>–</td><td>$0.36–1.29 each</td><td>cheapest amplitude option (+7.2 dB model)</td></tr>
+</table></div>
+<p class="small">Full survey with sources: <code>/workspace/agents/worker-6/t0878/parts/adc_parts.md</code>. DigiKey and Mouser blocked automated access, so the prices are LCSC/JLC or ADI list prices. 5 V parts (TLC5510/5540, ADS830) need level shifting and were ruled out.</p>
+
+<h3>RP2040 vs RP2350</h3>
+<div class="tw"><table>
+<tr><th></th><th>RP2040 (today)</th><th>RP2350A (QFN-60)</th><th>RP2350B (QFN-80)</th></tr>
+<tr><td>Core</td><td>2× M0+ @125 MHz (192 MHz tested in t-0870)</td><td colspan="2">2× M33 @150 MHz, DSP/SIMD (UADD8, USADA8…)</td></tr>
+<tr><td>PIO</td><td>2 × 4 SM, 32 instr each. Today: PIO0 = 4 matchers (31/32 instr), PIO1 = 4 samplers</td><td colspan="2">3 × 4 SM. An ADC reader is 1 SM, 2 instructions (<code>in pins, N side 1</code> / <code>nop side 0</code>), autopush to DMA.</td></tr>
+<tr><td>GPIO</td><td>30; the 1090U uses all 30</td><td>30</td><td>48</td></tr>
+<tr><td>Price (RPi, big reel / LCSC 1k)</td><td>$0.70 / $0.73</td><td>$0.80 / $1.10</td><td>$0.90 / $1.09</td></tr>
+<tr><td>Clock for ADC</td><td>125/12 = 10.42 Msps, or 120 MHz sys for exactly 10</td><td colspan="2">150/15 = 10 Msps exactly; 150/8 = 18.75 Msps for ADC08100 (min 20: run 160 MHz → 20 Msps)</td></tr>
+</table></div>
+<p><b>Pins.</b> An 8-bit ADC needs 8 data pins and a clock; PIO <code>in pins</code> needs the data pins consecutive. Since 6 bits lose ≤0.4 dB, wiring only D7..D2 is enough. On the current pin map, dropping the comparator path frees GPIO 19–24 (PULSES, 4 DEMOD, RECOVERED_CLK: 6 consecutive) plus 26 and 27 (TL PWM, TL ADC). That fits 6 data bits on 19–24 with the clock on 26.</p>
+<p>So a 30-GPIO part works for the full-software design. A hybrid that keeps the comparator and PIO matchers needs the RP2350B.</p>
+
+<h3>CPU budget at 12k bursts/s <span class="est">(estimates from compiled kernels, <code>arm-none-eabi-gcc 14.2 -O2</code>, cycle counts by instruction inspection; not measured on silicon)</span></h3>
+<div class="tw"><table>
+<tr><th>Work</th><th>Per unit</th><th>RP2040 M0+ @125</th><th>RP2350 M33 @150</th></tr>
+<tr><td>Today's 1-bit demod (#287/#398)</td><td>45–47 µs/capture (t-0870, measured)</td><td>~55 % of a core at 12k/s</td><td>est. ~30 %</td></tr>
+<tr><td>ADC demod per candidate (timing over 11 offsets × 12 bits, 112 decisions, CRC, fix)</td><td>~4.5k cycles M0+ (17 cycles/bit), ~2.7k M33</td><td>~45–55 %</td><td>~20–25 %</td></tr>
+<tr><td>Cheap reject of false/self triggers (DF + first byte confidence)</td><td>~0.5k cycles, ~1.5 per burst</td><td>~7 %</td><td>~4 %</td></tr>
+<tr><td>Software preamble scan on ADC, 8 Msps, half-chip bins</td><td>bins ~8 cycles (M0+) / ~3 (M33 SIMD); scan ~8 / ~6 per bin</td><td>~51 %</td><td>~24 %</td></tr>
+<tr><td>Software preamble on 12 Msps 1-bit comparator stream (firmware option)</td><td>bit-sliced, ~100 instr per 32-sample word</td><td>~36 %</td><td>~20 %</td></tr>
+<tr><td><b>Total, full-software ADC receiver</b></td><td></td><td><b>~105–115 %</b> of one core: needs both cores or 200 MHz</td><td><b>~50 %</b> of one core</td></tr>
+</table></div>
+<p class="small">The half-chip scan shows no measurable loss in the model (8 Msps, step 2 samples vs every sample). Core 1 is 0–2 % busy today (t-0870). DMA load is 8–20 MB/s, trivial. A 4 KB ring holds 0.5 ms at 8 Msps.</p>
+
+<h3>Analog front end changes</h3>
+<ul>
+<li><b>Buffer the AD8313 output.</b> It sources ~400 µA through the 1 k pullup, and the schematic warns to keep VOUT capacitance low. A rail-to-rail op-amp with ≥50 MHz GBW, followed by a 2-pole anti-alias filter at ~0.4 fs, costs ~$0.3.</li>
+<li><b>Set the ADC reference to the detector span.</b> Use about 0.6–1.9 V: noise floor ~0.85 V, saturation ~1.77 V (r1090_rssi.hh).</li>
+<li><b>More RF gain before the detector: not worth it on its own.</b> BLB01 S21 at 1.1 GHz is 18–20 dB, so the in-band noise reaches the AD8313 at about −67 dBm, near its −64 dBm lower range limit. In the model, +10 dB of gain helps today's chain by only ~1.3 dB (TL retuned to 900) and doesn't help the ADC, because a soft detector isn't hurt by a steady detector floor. It also saturates 10 dB earlier.</li>
+<li><b>Narrower SAW.</b> t-0061 estimated ~1.4 dB for TA3003 as X2, but the part is unavailable. It is less important for a soft detector, which averages the wide band.</li>
+</ul>
+
+<h2 id="sens">5. Sensitivity of the conclusions</h2>
+<div class="tw"><table>
+<tr><th>Model variant</th><th></th><th>Today</th><th>FW: budget 8</th><th>FW: soft, TL 300</th><th>3-comp flash</th><th>8-bit ADC</th></tr>
+<tr><td>Nominal</td><td>floor +3 dB, video 8 MHz</td><td>0 (ref)</td><td>+1.8</td><td>+6.1</td><td>+7.2</td><td>+9.8</td></tr><tr><td>Floor 0 dB</td><td>detector floor = in-band noise</td><td>0 (ref)</td><td>+2.0</td><td>+5.7</td><td>+6.6</td><td>+8.0</td></tr><tr><td>Floor +6 dB</td><td>less RF gain / weaker LNAs</td><td>0 (ref)</td><td>+1.4</td><td>+6.3</td><td>+8.0</td><td>+11.4</td></tr><tr><td>Video 5 MHz</td><td>slower detector / loading</td><td>0 (ref)</td><td>+1.4</td><td>+6.0</td><td>+7.4</td><td>+9.6</td></tr><tr><td>+10 dB LNA gain</td><td>floor −7 dB; vs nominal today</td><td>+1.3</td><td>–</td><td>+7.2</td><td>+8.2</td><td>+9.4</td></tr>
+</table></div>
+<p class="small">dB gain at the 90 % point. Each variant is recalibrated so that its own TL 600 chain is at −84 dBm, except "+10 dB LNA gain", which is compared with the nominal today (same antenna-referred noise). Its "Today" column is the best TL with budget 4. 200–300 frames per point; ±0.3 dB. – = never reaches 90 % (matchers tied up by noise at that TL).</p>
+
+<h2>6. Model</h2>
+<div class="tw"><table>
+<tr><th>Stage</th><th>Model</th><th>Source</th></tr>
+<tr><td>Signal</td><td>DF17, 112 bits, valid CRC; trapezoid pulses, rise 50–100 ns, decay 50–200 ns (10–90 %), width ±50 ns, carrier ±200 kHz, random phase</td><td>DO-260B / Annex 10 pulse limits</td></tr>
+<tr><td>RF</td><td>Complex baseband at 240 Msps, AWGN; 2 × TFS1090F as 3rd-order Butterworth ±13.7 MHz → cascade −3 dB 23.7 MHz, noise BW 23.9 MHz</td><td>t-0061 SAW review (the schematic's "6 MHz" note is wrong)</td></tr>
+<tr><td>Detector</td><td>AD8313: 17.6 mV/dB of 10log(|x|² + floor), floor +3 dB over in-band noise, saturation at +56 dB, 8 MHz video pole</td><td>r1090_rssi.hh slope; datasheet 40 ns response; floor from BLB01 gain and real units' quiet comparator (below)</td></tr>
+<tr><td>Comparator</td><td>FAST = R11/C17 (53 MHz); LEVEL = 1.82 µs RC of (10/11·det + 1/11·bias), bias = noise floor + TL offset; 3.5 mV hysteresis</td><td>1090U rev D schematic (R13 10k, R9 100k, C16 200 pF)</td></tr>
+<tr><td>PIO</td><td>Exact model of <code>preamble_matcher</code>: rising-edge start, 15 chips (4 HI, 6 LO checked), 4 samples per chip at 48 MHz, budget 4, each mismatch delays by 1 cycle, 4 SMs round robin; sampler at 12 Msps from the match</td><td>capture.pio</td></tr>
+<tr><td>Demod</td><td>t-0870 Python port of the soft demod plus the #398 retry (offsets 2–9, 3 retries, ≤2 flips of 6 weakest)</td><td>branch t0872</td></tr>
+<tr><td>ADC</td><td>2-pole anti-alias at 0.4 fs, random sample phase, N-bit over noise −15 dB to saturation</td><td></td></tr>
+</table></div>
+<h3>Validation against real units</h3>
+<ul>
+<li><b>TL offset.</b> The t-0870 unit ran TL 600 (its log). In the model, a detector floor of −20 dB makes the comparator chatter on noise (1.7 M edges/s at TL 600), which ties up the matchers and loses 15–20 % of strong frames. Real units don't do that. A floor of +3 dB gives a 100 % plateau at TL 600. This matches the gain chain: 2 × BLB01 (S21 ≈ 18–20 dB at 1.1 GHz) minus 2 × 1.9 dB SAW loss puts the noise at ≈ −67 dBm at the AD8313, against its ≈ −64 dBm lower range limit.</li>
+<li><b>Sample errors.</b> In real 1-bit captures (40,000 clean frames from t-0870), the off-chip HI rate is a median 0.2–0.7 % even in weak frames. The model gives 0–1.6 %.</li>
+<li><b>Timing.</b> The model's comparator timing jitter is 5–13 ns RMS, against 15 ns measured for #308.</li>
+<li><b>Implied NF.</b> NF = 4.1 dB. The gain chain suggests ~1.5–2 dB. Today's chain may therefore be ~2 dB worse than modeled, or the bench offset may be within its ±2.5 dB.</li>
+</ul>
+<p><b>Not modeled:</b> Mode A/C fruit, DME and other interference (they raise trigger rates and CPU load more than they change sensitivity); transponder frequency error beyond ±200 kHz; temperature drift of the detector slope and intercept; ADC aperture jitter.</p>
+
+<h2>7. Prototype plan</h2>
+<ol>
+<li><b>Firmware, today's hardware.</b>
+  <ul>
+  <li>Set <code>mismatch_budget</code> to 8 in capture.pio and sweep on the pi-1 Pluto bench against main.</li>
+  <li>Then build a soft-preamble build: one PIO SM streams the comparator continuously at 12 Msps into a DMA ring, and core 1 runs a bit-sliced preamble prefilter, the chip-sum score and the existing demod. Sweep TL 300–600.</li>
+  </ul></li>
+<li><b>ADC tap</b> (~$30, no new PCB).
+  <ul>
+  <li>Use a Pico 2 (RP2350) and an AD9280/ADC08100 breakout behind an op-amp buffer on TP2 (RF_DET_OUT) of a 1090U, capturing 8-bit at 10–20 Msps to a ring. Dump raw streams over USB.</li>
+  <li>Run the offline demod in <code>t0878/sim/model.py</code> (<code>soft_search</code>, <code>adc_demod</code>) on Pluto level sweeps and live sky, next to the 1090U's own decodes of the same signal.</li>
+  </ul></li>
+<li><b>2-bit flash, if the tap shows that amplitude helps.</b> Three of the 12 MCP6566 bodge boards on <code>panel_proto_data_slicer_board</code> on the same detector node, with thresholds from PWMs at noise floor +2/+5/+10 dB, sampled by PIO as 3 bits at 12 Msps. Model: +7.2 dB, for about $1 of parts and 3 GPIOs.</li>
+<li><b>Rev</b>, only after 1–3. RP2350A (6 data bits on the freed GPIO 19–24) or RP2350B (keep the comparator for a hybrid), 8-bit ADC, buffer.</li>
+</ol>
+
+<h2>Files</h2>
+<ul class="small">
+<li>Simulation: <code>/workspace/agents/worker-6/t0878/sim/</code>. <code>model.py</code> (chain, PIO matcher, ADC demod), <code>fwdemod.py</code> (#398 port), <code>run.py</code> (main sweep), <code>a_sweep.py</code>, <code>flash.py</code>, <code>iq.py</code>, <code>overlap.py</code>, <code>timing.py</code>, <code>noise.py</code>, <code>noise_pio.py</code>; run order in <code>chain3.sh</code></li>
+<li>Results: <code>/workspace/agents/worker-6/t0878/data/</code> (JSON per run; sensitivity variants in subfolders; <code>old_floor-20/</code> is the superseded −20 dB-floor model)</li>
+<li>Validation: <code>/workspace/agents/worker-6/t0878/val/</code> (real vs model sample error rates, comparator chatter scan)</li>
+<li>CPU kernels: <code>/workspace/agents/worker-6/t0878/cpu/kern.c</code> and disassembly</li>
+<li>Parts survey: <code>/workspace/agents/worker-6/t0878/parts/adc_parts.md</code></li>
+<li>Report generator: <code>/workspace/agents/worker-6/t0878/report/analysis.py</code>, <code>gen_report.py</code></li>
+</ul>
+</main>
+</body>
+</html>
