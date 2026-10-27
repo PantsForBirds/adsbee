@@ -398,3 +398,151 @@ TEST(ModeSSoftDemod, DataStartOfBenchCaptures) {
         EXPECT_EQ(result.data_start_48mhz_counts, capture.data_start_48mhz_counts) << capture.sent;
     }
 }
+
+// Live sky captures (attic-bee, t-0870) whose first pick of start offset misreads the message.
+
+// Clean DF17 one sample after the first pick, which reads its last bit wrong with confidence.
+static const uint32_t kRetryOneSampleLate[kCaptureWords + 1] = {
+    0x0F8003E0, 0xAE03E600, 0xD8003708, 0x038003FF, 0x0003601E, 0x02A01FE0, 0x001603D7, 0x0001FB00, 0x03990098,
+    0x003FF013, 0x801A0037, 0x58078001, 0xB6400100, 0x37E40180, 0x02F01FB8, 0x00078380, 0x3EF0003F, 0xF8003A05,
+    0xCF80F803, 0x0003F01F, 0x01FF8078, 0x010001B0, 0x1900F3C0, 0x01F01E01, 0x77C001F7, 0x00380F80, 0x01E03F03,
+    0xB03F3400, 0x1FF00031, 0x03F00703, 0xF00F0030, 0x1701F600, 0x00D01FB0, 0x000DF000, 0x0601F01F, 0xF8000D01,
+    0xF3807E07, 0xC0FC0008, 0x81F01F01, 0xC78000F7, 0x80019F80, 0x01EDC00E, 0x00000600, 0x00000000,
+};
+
+// DF17 one sample after the first pick, with one weak bit fixed there.
+static const uint32_t kRetryWithFix[kCaptureWords + 1] = {
+    0x0F8113F8, 0x3F03FC40, 0x7E0DC07E, 0x070003DB, 0x00048740, 0x7C002E00, 0xFFE003B0, 0x2D03D840, 0x017000EC,
+    0x001D00FC, 0xC001F6C0, 0xFC07C001, 0xE180FC04, 0xC001FC1D, 0x80381FC0, 0x011F0070, 0x03E807C0, 0x01EF407C,
+    0x001F81B8, 0x0FBC07C0, 0x0603C000, 0x601B0070, 0x0D00A01F, 0x00F80C00, 0xF01B81B8, 0x1081F00F, 0x80400780,
+    0xA81F80D8, 0x0D01F807, 0x81F80FC0, 0xF81F80F8, 0x0F80F818, 0x80180D80, 0x181F80FF, 0x4030001E, 0x40D80FE8,
+    0x02A001F7, 0xC02203F0, 0x00F80FED, 0x07F000F0, 0x0F80F80F, 0xF6000FC6, 0x00000000, 0x00000000,
+};
+
+// DF4 from tracked aircraft 0xA1CE16. The first pick, a chip early on the last preamble pulse, reads a DF9.
+// Cut short after 56 bits.
+static const uint32_t kRetryOneChipLate[kCaptureWords + 1] = {
+    0x6007F03F, 0xFC003F03, 0xF03F03F0, 0x3F03F03F, 0x03F03F03, 0xF03F03F0, 0x3F03F03F, 0x03FFC003, 0xFFC0FC0F,
+    0xC0FC003F, 0xFC0FC003, 0xF03F03F0, 0x3FFC0FC0, 0xFC003FFC, 0x0FC003FF, 0xC003FFC0, 0xFC0FC003, 0xFFC0FC0F,
+    0xC003FFC0, 0xFC003F83, 0xF03F01FF, 0xC0000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+// Reads as a DF17 that fails its CRC at every offset.
+static const uint32_t kJunkExtendedSquitter[kCaptureWords + 1] = {
+    0x8F8203F8, 0x3B81FCC0, 0xFC001FFC, 0x07C001FF, 0xC001FFC0, 0x01F01E01, 0xF00F01F0, 0x1F01B01F, 0x01FFC07C,
+    0x181F81EE, 0xC01DFBE0, 0x01F00FD8, 0x0064FC00, 0xF83C03CC, 0x00F84081, 0x801FA203, 0xE07E07F0, 0x0803E07E,
+    0x1EC001EB, 0xE03C00F7, 0x01F81F81, 0xFFE019FE, 0x007E03E0, 0x00F8173E, 0x07003E0F, 0xC011FE00, 0x1E000F80,
+    0xF8BF80FD, 0xC040F81F, 0xB0009F89, 0xE40000C0, 0x1C0183A0, 0xC1841F8E, 0xF80F80FF, 0xE03C03E0, 0x01FB407E,
+    0x000F80FD, 0x6000F81F, 0x80FFC000, 0x7FE07F00, 0x1F80F80F, 0x80FFC03E, 0x00000000, 0x00000000,
+};
+
+// A second capture inside another message: a DF0 naming no tracked aircraft at any offset.
+static const uint32_t kJunkOverlap[kCaptureWords + 1] = {
+    0x005F81FC, 0x1F81781F, 0x81FFF001, 0xFF8001FF, 0xE001780F, 0x80F81FFE, 0x07E001F8, 0x0F81F81F, 0xFE001F81,
+    0xFFC001FF, 0xC03E000F, 0x81FFE03E, 0x000FFE07, 0xE000F81F, 0xFC001FFE, 0x03E000FC, 0x0FFE000F, 0xC0F80FFE,
+    0x03C01E00, 0x0FFE000F, 0x80FFE01F, 0x00000000, 0x00000100, 0x06030008, 0x10000012, 0x00010800, 0x48184084,
+    0x00200080, 0x06200046, 0x218C2000, 0x41028480, 0x00025800, 0x00A20802, 0x03010001, 0x07804600, 0x00200000,
+    0x00028063, 0x01C00301, 0x00000010, 0x00002000, 0xE000C005, 0x100443E0, 0x08060009, 0x00000000,
+};
+
+static bool KnownA1CE16(uint32_t address) { return address == 0xA1CE16; }
+static bool KnownAllButA1CE16(uint32_t address) { return address != 0xA1CE16; }
+
+TEST(ModeSSoftDemod, RetryReadsTheNextOffset) {
+    Result result;
+    ASSERT_TRUE(Demodulate(kRetryOneSampleLate, kCaptureWords, result));
+    EXPECT_EQ(BufferToHex(result), "8DA12B769914E388B8500944F0AA");
+    EXPECT_FALSE(result.retry_validated);
+
+    ASSERT_TRUE(Demodulate(kRetryOneSampleLate, kCaptureWords, result, true));
+    EXPECT_EQ(BufferToHex(result), "8DA12B769914E388B8500944F0AB");
+    EXPECT_EQ(result.start_offset_samples, 4);
+    EXPECT_EQ(result.num_retries, 1);
+    EXPECT_TRUE(result.retry_validated);
+    EXPECT_EQ(result.num_flipped_bits, 0);
+
+    ASSERT_TRUE(Demodulate(kRetryWithFix, kCaptureWords, result, true));
+    EXPECT_EQ(BufferToHex(result), "8FAC8B2EE11B1E0000000031B985");
+    EXPECT_EQ(result.start_offset_samples, 5);
+    EXPECT_EQ(result.num_flipped_bits, 1);
+    EXPECT_TRUE(result.retry_validated);
+}
+
+TEST(ModeSSoftDemod, RetryTakesAddressParityOnlyForATrackedAircraft) {
+    Result result;
+    ASSERT_TRUE(Demodulate(kRetryOneChipLate, kShortCaptureWords, result, true, KnownA1CE16));
+    EXPECT_EQ(BufferToHex(result), "200017B0ED7761");
+    EXPECT_EQ(result.start_offset_samples, 8);
+    EXPECT_TRUE(result.retry_validated);
+
+    // Unknown address, or no address check: the first pick stays.
+    for (KnownAddressFn known : {static_cast<KnownAddressFn>(nullptr), +[](uint32_t) { return false; }}) {
+        ASSERT_TRUE(Demodulate(kRetryOneChipLate, kShortCaptureWords, result, true, known));
+        EXPECT_EQ(BufferToHex(result), "4FFFE00700000E");
+        EXPECT_EQ(result.start_offset_samples, 2);
+        EXPECT_FALSE(result.retry_validated);
+        EXPECT_EQ(result.num_retries, kMaxRetries);
+    }
+}
+
+TEST(ModeSSoftDemod, RetryLeavesJunkAlone) {
+    Result plain, retried;
+    for (const uint32_t* capture : {kJunkExtendedSquitter, kJunkOverlap}) {
+        ASSERT_TRUE(Demodulate(capture, kCaptureWords, plain));
+        ASSERT_TRUE(Demodulate(capture, kCaptureWords, retried, true, KnownA1CE16));
+        EXPECT_EQ(BufferToHex(retried), BufferToHex(plain));
+        EXPECT_FALSE(retried.retry_validated);
+        EXPECT_EQ(retried.num_retries, kMaxRetries);
+    }
+
+    uint32_t quiet[kCaptureWords + 1] = {0};
+    EXPECT_FALSE(Demodulate(quiet, kCaptureWords, retried, true, KnownAllButA1CE16));
+}
+
+static uint32_t untracked_address = 0;
+static bool AllButUntracked(uint32_t address) { return address != untracked_address; }
+
+TEST(ModeSSoftDemod, RetryNeverReadsAValidFormatAChipLater) {
+    // A chip later, this DF5 from an untracked aircraft ties only 3 of its first 12 bits and reads as a DF16 naming
+    // another address. With every other address tracked it must still not be taken.
+    const char kDF5[] = "2FF919ACDB834D";
+    for (uint16_t offset : {kMinStartOffsetSamples, static_cast<uint16_t>(kMinStartOffsetSamples + 1)}) {
+        Capture capture(kDF5, offset);
+        Result result;
+        ASSERT_TRUE(Demodulate(capture.words, kCaptureWords, result));
+        untracked_address = CRC24Remainder(result.buffer, kShortMessageBits);
+        ASSERT_TRUE(Demodulate(capture.words, kCaptureWords, result, true, AllButUntracked));
+        EXPECT_EQ(BufferToHex(result), kDF5);
+        EXPECT_FALSE(result.retry_validated);
+    }
+}
+
+TEST(ModeSSoftDemod, RetryKeepsValidMessages) {
+    Result result;
+    ASSERT_TRUE(Demodulate(kStrong, kCaptureWords, result, true, KnownA1CE16));
+    EXPECT_EQ(BufferToHex(result), kStrongSent);
+    EXPECT_EQ(result.num_retries, 0);
+    ASSERT_TRUE(Demodulate(kWeakTwoFixes, kCaptureWords, result, true, KnownA1CE16));
+    EXPECT_EQ(BufferToHex(result), kWeakTwoFixesSent);
+    EXPECT_EQ(result.num_retries, 0);
+}
+
+TEST(ModeSSoftDemod, KnownAddressFilter) {
+    KnownAddressFilter filter;
+    uint32_t address = 0x123456;
+    for (uint16_t i = 0; i < 400; i++) {
+        address = (address * 1103515245u + 12345u) & 0xFFFFFF;
+        filter.Add(address);
+        EXPECT_TRUE(filter.Contains(address));
+    }
+    uint16_t false_positives = 0;
+    for (uint32_t i = 0; i < 10000; i++) {
+        address = (address * 1103515245u + 12345u) & 0xFFFFFF;
+        false_positives += filter.Contains(address);
+    }
+    EXPECT_LT(false_positives, 500);  // About 3 % expected.
+    filter.Clear();
+    EXPECT_FALSE(filter.Contains(address));
+}

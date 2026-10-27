@@ -647,7 +647,10 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
         uint16_t demod_start_counts = GetMLATJitterPWMSliceCounts();
 #endif
         mode_s_soft_demod::Result result;
-        bool found = mode_s_soft_demod::Demodulate(capture.samples, capture.num_words, result);
+        bool retry =
+            capture_queue_.Length() < kMaxBacklogForOffsetRetry && decoder.raw_mode_s_packet_in_queue.Length() == 0;
+        bool found = mode_s_soft_demod::Demodulate(capture.samples, capture.num_words, result, retry,
+                                                   retry ? IsKnownAddress : nullptr);
 #ifdef DEBUG_ISR_TIMING
         // 16-bit counter at 125MHz wraps every ~524us, longer than a demodulation.
         uint16_t demod_duration_counts = GetMLATJitterPWMSliceCounts() - demod_start_counts;
@@ -658,6 +661,11 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
         isr_count_++;
 #endif
         if (found) {
+            if (result.retry_validated) {
+                uint32_t downlink_format = result.buffer[0] >> 27;
+                bool crc_format = downlink_format == 11 || downlink_format == 17 || downlink_format == 18;
+                offset_retry_rescues_[crc_format ? 0 : 1]++;
+            }
             RawModeSPacket packet;
             for (uint16_t i = 0; i < RawModeSPacket::kMaxPacketLenWords32; i++) {
                 packet.buffer[i] = result.buffer[i];
@@ -683,6 +691,10 @@ bool __time_critical_func(ADSBee::DemodulateCaptures)() {
         capture_queue_.Pop();
     }
     return demodulated;
+}
+
+bool __time_critical_func(ADSBee::IsKnownAddress)(uint32_t address) {
+    return isr_access->known_address_filters_[isr_access->known_address_filter_index_].Contains(address);
 }
 
 void __time_critical_func(ADSBee::OnSysTickWrap)() { mlat_counter_wraps_ += kMLATWrapCounterIncrement; }
@@ -764,6 +776,11 @@ void ADSBee::IngestAndForwardPackets() {
     uint32_t two_bit_corrections_skipped = decoder.two_bit_corrections_skipped;
     aircraft_dictionary.RecordSkippedCorrections(two_bit_corrections_skipped - two_bit_corrections_skipped_seen_);
     two_bit_corrections_skipped_seen_ = two_bit_corrections_skipped;
+    uint32_t rescues[2] = {offset_retry_rescues_[0], offset_retry_rescues_[1]};
+    aircraft_dictionary.RecordOffsetRetries(rescues[0] - offset_retry_rescues_seen_[0],
+                                            rescues[1] - offset_retry_rescues_seen_[1]);
+    offset_retry_rescues_seen_[0] = rescues[0];
+    offset_retry_rescues_seen_[1] = rescues[1];
     for (uint16_t i = 0;
          i < num_decoded_mode_s_packets && decoder.decoded_mode_s_packet_out_queue.Dequeue(decoded_packet); i++) {
         // CONSOLE_INFO("ADSBee::IngestAndForwardPackets", "\tdf=%d icao_address=0x%06x",
@@ -992,6 +1009,16 @@ void ADSBee::PruneAircraftDictionary() {
     if (timestamp_ms - last_aircraft_dictionary_update_timestamp_ms_ > config_.aircraft_dictionary_update_interval_ms) {
         CPUMonitor::WorkScope work;
         aircraft_dictionary.Update(timestamp_ms);
+        // Rebuild the filter core 1 is not reading, then hand it over.
+        mode_s_soft_demod::KnownAddressFilter& filter = known_address_filters_[known_address_filter_index_ ^ 1];
+        filter.Clear();
+        for (const auto& [uid, entry] : aircraft_dictionary.dict) {
+            if (uid <= 0xFFFFFF) {
+                filter.Add(uid);  // Mode S aircraft with an ICAO address, as checked for address/parity replies.
+            }
+        }
+        __dmb();
+        known_address_filter_index_ ^= 1;
         if (esp32.IsEnabled()) {
             // Send fresh aircraft dictionary stats to ESPS32.
             esp32.Write(ObjectDictionary::kAddrAircraftDictionaryMetrics, aircraft_dictionary.metrics,
