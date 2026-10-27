@@ -419,12 +419,22 @@ static const uint32_t kRetryWithFix[kCaptureWords + 1] = {
     0x02A001F7, 0xC02203F0, 0x00F80FED, 0x07F000F0, 0x0F80F80F, 0xF6000FC6, 0x00000000, 0x00000000,
 };
 
-// DF4 from tracked aircraft 0xA1CE16. The first pick, a chip early on the last preamble pulse, reads a DF9.
-// Cut short after 56 bits.
+// DF4 from aircraft 0xA1CE16. The first pick, a chip early on the last preamble pulse, reads a DF9; one chip later
+// reads the DF4. Cut short after 56 bits.
 static const uint32_t kRetryOneChipLate[kCaptureWords + 1] = {
     0x6007F03F, 0xFC003F03, 0xF03F03F0, 0x3F03F03F, 0x03F03F03, 0xF03F03F0, 0x3F03F03F, 0x03FFC003, 0xFFC0FC0F,
     0xC0FC003F, 0xFC0FC003, 0xF03F03F0, 0x3FFC0FC0, 0xFC003FFC, 0x0FC003FF, 0xC003FFC0, 0xFC0FC003, 0xFFC0FC0F,
     0xC003FFC0, 0xFC003F83, 0xF03F01FF, 0xC0000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+// Clean DF4 from 0x782078, read right at the first pick. One sample earlier it reads with one bit changed, as a DF4
+// from 0x78C0A0: main d93a7c0b reported that frame when 0x78C0A0 was tracked and 0x782078 was not (issue #402).
+static const uint32_t kCleanDF4OneBitFromAnother[kCaptureWords + 1] = {
+    0x020FE07F, 0xF8007E07, 0xE07E07E0, 0x7E07E07E, 0x07E07E07, 0xE07E06E0, 0x7E07E07E, 0x07FFC007, 0xFF8007FF,
+    0xC1F8007F, 0xF803C1F8, 0x007E07E0, 0x7E03F03F, 0xF0007BFC, 0x007F07E0, 0x3FC80F81, 0xF81FC007, 0xF07FFC00,
+    0x3E07FF81, 0xFC003F07, 0xF07FF80D, 0xC0000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
     0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
     0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
@@ -447,9 +457,6 @@ static const uint32_t kJunkOverlap[kCaptureWords + 1] = {
     0x00028063, 0x01C00301, 0x00000010, 0x00002000, 0xE000C005, 0x100443E0, 0x08060009, 0x00000000,
 };
 
-static bool KnownA1CE16(uint32_t address) { return address == 0xA1CE16; }
-static bool KnownAllButA1CE16(uint32_t address) { return address != 0xA1CE16; }
-
 TEST(ModeSSoftDemod, RetryReadsTheNextOffset) {
     Result result;
     ASSERT_TRUE(Demodulate(kRetryOneSampleLate, kCaptureWords, result));
@@ -470,79 +477,85 @@ TEST(ModeSSoftDemod, RetryReadsTheNextOffset) {
     EXPECT_TRUE(result.retry_validated);
 }
 
-TEST(ModeSSoftDemod, RetryTakesAddressParityOnlyForATrackedAircraft) {
+TEST(ModeSSoftDemod, RetryNeverTakesAddressParity) {
+    // The first pick reads a DF9 and the next chip a DF4 (from a real aircraft), but address/parity formats have no
+    // CRC to tell a good read from a misread: the first pick stays.
     Result result;
-    ASSERT_TRUE(Demodulate(kRetryOneChipLate, kShortCaptureWords, result, true, KnownA1CE16));
-    EXPECT_EQ(BufferToHex(result), "200017B0ED7761");
-    EXPECT_EQ(result.start_offset_samples, 8);
-    EXPECT_TRUE(result.retry_validated);
+    ASSERT_TRUE(Demodulate(kRetryOneChipLate, kShortCaptureWords, result, true));
+    EXPECT_EQ(BufferToHex(result), "4FFFE00700000E");
+    EXPECT_EQ(result.start_offset_samples, 2);
+    EXPECT_FALSE(result.retry_validated);
+    EXPECT_EQ(result.num_retries, kMaxRetries);
+}
 
-    // Unknown address, or no address check: the first pick stays.
-    for (KnownAddressFn known : {static_cast<KnownAddressFn>(nullptr), +[](uint32_t) { return false; }}) {
-        ASSERT_TRUE(Demodulate(kRetryOneChipLate, kShortCaptureWords, result, true, known));
-        EXPECT_EQ(BufferToHex(result), "4FFFE00700000E");
-        EXPECT_EQ(result.start_offset_samples, 2);
-        EXPECT_FALSE(result.retry_validated);
-        EXPECT_EQ(result.num_retries, kMaxRetries);
+TEST(ModeSSoftDemod, CleanAddressParityReplyIsNeverReadAgain) {
+    // Issue #402: a clean reply from an untracked aircraft must come out as sent, never as another aircraft's frame.
+    Result result;
+    ASSERT_TRUE(Demodulate(kCleanDF4OneBitFromAnother, kShortCaptureWords, result, true));
+    EXPECT_EQ(BufferToHex(result), "200015B828F263");
+    EXPECT_EQ(CRC24Remainder(result.buffer, kShortMessageBits), 0x782078u);
+    EXPECT_EQ(result.start_offset_samples, 7);
+    EXPECT_EQ(result.num_retries, 0);
+    EXPECT_FALSE(result.retry_validated);
+}
+
+TEST(ModeSSoftDemod, AddressParityRepliesComeOutAsSent) {
+    // Clean replies in every address/parity format, at every start offset and with narrow and wide pulses: with
+    // retries on, each reads as sent or not at all, and never from a retry.
+    const char* kSent[] = {"02E18D9391319A", "200015B828F263", "2FF919ACDB834D", "28001A3A4BC7E1",
+                           "8000000000000000000000E13C0B", "A0001838CA3800000000004C9D8F",
+                           "A8001A3AD0A8000000000067C1A8"};
+    int found = 0;
+    for (const char* sent : kSent) {
+        uint16_t len_bits = strlen(sent) * 4;
+        for (uint16_t offset = kMinStartOffsetSamples; offset <= kMaxStartOffsetSamples; offset++) {
+            for (int16_t early = -2; early <= 2; early++) {
+                for (uint16_t pulse : {static_cast<uint16_t>(kSamplesPerChip - 1), kSamplesPerChip,
+                                       static_cast<uint16_t>(kSamplesPerChip + 1)}) {
+                    Capture capture(sent, offset, pulse, early);
+                    for (uint16_t num_words : {kCaptureWords, kShortCaptureWords}) {
+                        if (len_bits == kMaxMessageBits && num_words == kShortCaptureWords) {
+                            continue;
+                        }
+                        Result plain, retried;
+                        bool found_plain = Demodulate(capture.words, num_words, plain);
+                        bool found_retried = Demodulate(capture.words, num_words, retried, true);
+                        ASSERT_EQ(found_retried, found_plain);
+                        if (!found_plain) {
+                            continue;
+                        }
+                        EXPECT_EQ(BufferToHex(retried), BufferToHex(plain)) << sent << " " << offset;
+                        EXPECT_FALSE(retried.retry_validated) << sent << " " << offset;
+                        found += BufferToHex(retried) == sent;
+                    }
+                }
+            }
+        }
     }
+    EXPECT_GT(found, 300);  // Most of them read as sent.
 }
 
 TEST(ModeSSoftDemod, RetryLeavesJunkAlone) {
     Result plain, retried;
+    // The DF17 is read at every allowed offset; the DF0 has no CRC and is passed on as first read.
     for (const uint32_t* capture : {kJunkExtendedSquitter, kJunkOverlap}) {
         ASSERT_TRUE(Demodulate(capture, kCaptureWords, plain));
-        ASSERT_TRUE(Demodulate(capture, kCaptureWords, retried, true, KnownA1CE16));
+        ASSERT_TRUE(Demodulate(capture, kCaptureWords, retried, true));
         EXPECT_EQ(BufferToHex(retried), BufferToHex(plain));
         EXPECT_FALSE(retried.retry_validated);
-        EXPECT_EQ(retried.num_retries, kMaxRetries);
+        EXPECT_EQ(retried.num_retries, capture == kJunkOverlap ? 0 : kMaxRetries);
     }
 
     uint32_t quiet[kCaptureWords + 1] = {0};
-    EXPECT_FALSE(Demodulate(quiet, kCaptureWords, retried, true, KnownAllButA1CE16));
-}
-
-static uint32_t untracked_address = 0;
-static bool AllButUntracked(uint32_t address) { return address != untracked_address; }
-
-TEST(ModeSSoftDemod, RetryNeverReadsAValidFormatAChipLater) {
-    // A chip later, this DF5 from an untracked aircraft ties only 3 of its first 12 bits and reads as a DF16 naming
-    // another address. With every other address tracked it must still not be taken.
-    const char kDF5[] = "2FF919ACDB834D";
-    for (uint16_t offset : {kMinStartOffsetSamples, static_cast<uint16_t>(kMinStartOffsetSamples + 1)}) {
-        Capture capture(kDF5, offset);
-        Result result;
-        ASSERT_TRUE(Demodulate(capture.words, kCaptureWords, result));
-        untracked_address = CRC24Remainder(result.buffer, kShortMessageBits);
-        ASSERT_TRUE(Demodulate(capture.words, kCaptureWords, result, true, AllButUntracked));
-        EXPECT_EQ(BufferToHex(result), kDF5);
-        EXPECT_FALSE(result.retry_validated);
-    }
+    EXPECT_FALSE(Demodulate(quiet, kCaptureWords, retried, true));
 }
 
 TEST(ModeSSoftDemod, RetryKeepsValidMessages) {
     Result result;
-    ASSERT_TRUE(Demodulate(kStrong, kCaptureWords, result, true, KnownA1CE16));
+    ASSERT_TRUE(Demodulate(kStrong, kCaptureWords, result, true));
     EXPECT_EQ(BufferToHex(result), kStrongSent);
     EXPECT_EQ(result.num_retries, 0);
-    ASSERT_TRUE(Demodulate(kWeakTwoFixes, kCaptureWords, result, true, KnownA1CE16));
+    ASSERT_TRUE(Demodulate(kWeakTwoFixes, kCaptureWords, result, true));
     EXPECT_EQ(BufferToHex(result), kWeakTwoFixesSent);
     EXPECT_EQ(result.num_retries, 0);
-}
-
-TEST(ModeSSoftDemod, KnownAddressFilter) {
-    KnownAddressFilter filter;
-    uint32_t address = 0x123456;
-    for (uint16_t i = 0; i < 400; i++) {
-        address = (address * 1103515245u + 12345u) & 0xFFFFFF;
-        filter.Add(address);
-        EXPECT_TRUE(filter.Contains(address));
-    }
-    uint16_t false_positives = 0;
-    for (uint32_t i = 0; i < 10000; i++) {
-        address = (address * 1103515245u + 12345u) & 0xFFFFFF;
-        false_positives += filter.Contains(address);
-    }
-    EXPECT_LT(false_positives, 500);  // About 3 % expected.
-    filter.Clear();
-    EXPECT_FALSE(filter.Contains(address));
 }

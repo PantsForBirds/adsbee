@@ -202,23 +202,7 @@ static inline bool IsAddressParityFormat(uint32_t downlink_format) {
            downlink_format == 20 || downlink_format == 21;
 }
 
-// Whether a message checks out. Without known_address, an address/parity message counts only if unchecked_ok.
-static bool SOFT_DEMOD_FUNC(Validated)(const Result& result, Check check, KnownAddressFn known_address,
-                                       bool unchecked_ok) {
-    if (check != kNoCRC) {
-        return check == kCRCPassed;
-    }
-    if (!IsAddressParityFormat(result.buffer[0] >> 27)) {
-        return false;  // A format without parity: likely misread.
-    }
-    if (known_address == nullptr) {
-        return unchecked_ok;
-    }
-    return known_address(CRC24Remainder(result.buffer, result.len_bits));
-}
-
-static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t num_words, Result& result, bool retry,
-                                            KnownAddressFn known_address) {
+static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t num_words, Result& result, bool retry) {
     OffsetScores scores;
     ScoreOffsets(samples, kMinStartOffsetSamples, kMaxStartOffsetSamples, scores);
 
@@ -239,13 +223,15 @@ static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t nu
     }
 
     Check check = DecodeAt(samples, num_words, best_offset, result);
-    if (!retry || (check != kNoMessage && Validated(result, check, known_address, true))) {
+    // An address/parity read is passed on as it is: the aircraft dictionary checks its address.
+    bool parity_format = check == kNoCRC && IsAddressParityFormat(result.buffer[0] >> 27);
+    if (!retry || check == kCRCPassed || parity_format) {
         return check != kNoMessage;
     }
 
     // Retry at the next most confident offsets near the first pick. A first pick that reads a format without parity
     // may sit on the last preamble pulse: then one chip later too.
-    bool chip_later = check == kNoMessage || (check == kNoCRC && !IsAddressParityFormat(result.buffer[0] >> 27));
+    bool chip_later = check != kCRCFailed;
     ScoreOffsets(samples, kMaxStartOffsetSamples + 1, kMaxRetryOffsetSamples, scores);
     bool tried[kMaxRetryOffsetSamples + 1] = {false};
     tried[best_offset] = true;
@@ -270,7 +256,7 @@ static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t nu
         tried[offset] = true;
         num_retries++;
         Check trial_check = DecodeAt(samples, num_words, offset, trial);
-        if (trial_check != kNoMessage && Validated(trial, trial_check, known_address, false)) {
+        if (trial_check == kCRCPassed) {
             result = trial;
             result.num_retries = num_retries;
             result.retry_validated = true;
@@ -281,9 +267,8 @@ static bool SOFT_DEMOD_FUNC(DemodulateBits)(const uint32_t* samples, uint16_t nu
     return check != kNoMessage;
 }
 
-bool SOFT_DEMOD_FUNC(Demodulate)(const uint32_t* samples, uint16_t num_words, Result& result, bool retry,
-                                 KnownAddressFn known_address) {
-    if (!DemodulateBits(samples, num_words, result, retry, known_address)) {
+bool SOFT_DEMOD_FUNC(Demodulate)(const uint32_t* samples, uint16_t num_words, Result& result, bool retry) {
+    if (!DemodulateBits(samples, num_words, result, retry)) {
         return false;
     }
     result.data_start_48mhz_counts = DataStart48MHzCounts(samples, result);
