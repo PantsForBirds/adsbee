@@ -1,4 +1,5 @@
-#include <cstring>  // For memcpy.
+#include <algorithm>  // For std::max.
+#include <cstring>    // For memcpy.
 
 #include "comms.hh"
 #include "hal.hh"  // For timestamping.
@@ -116,6 +117,19 @@ static_assert(kRawBatchBufMaxBytes >= kRawModeSFrameMaxNumChars &&
                   kRawBatchBufMaxBytes >= kRawUATADSBFrameMaxNumChars &&
                   kRawBatchBufMaxBytes >= kRawUATUplinkFrameMaxNumChars,
               "Raw batch buffer must be able to hold at least one frame of each type.");
+
+// Scratch shared by the raw, Beast, ASTERIX and UAT uplink JSON reports. Each fills and sends it within one call, and
+// the calls never nest.
+static constexpr size_t kReportScratchMaxBytes = std::max(
+    {kRawBatchBufMaxBytes, kBeastBatchBufMaxBytes, static_cast<size_t>(CommsManager::kASTERIXDataBlockMaxLenBytes),
+     static_cast<size_t>(kUATUplinkJSONLineMaxNumChars)});
+alignas(4) static uint8_t report_scratch[kReportScratchMaxBytes];
+
+template <typename T, size_t N>
+static T (&ReportScratch()) [N] {
+    static_assert(N * sizeof(T) <= sizeof(report_scratch));
+    return *reinterpret_cast<T(*)[N]>(report_scratch);
+}
 
 bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManager::ReportingProtocol* sink_protocols,
                                    uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report,
@@ -393,7 +407,7 @@ bool CommsManager::ReportRaw(ReportSink* sinks, uint16_t num_sinks, const Compos
 #if COMMS_REPORTING_BATCH_SENDS
     // Batch frames into a buffer and send it whenever it can't take the next frame, to minimize lwIP IPC round-trips
     // without holding a worst-case-sized buffer.
-    static char raw_batch_buf[kRawBatchBufMaxBytes];
+    char (&raw_batch_buf)[kRawBatchBufMaxBytes] = ReportScratch<char, kRawBatchBufMaxBytes>();
     uint16_t batch_len = 0;
     uint16_t total_packets = 0;
     bool ret = true;
@@ -483,7 +497,7 @@ bool CommsManager::ReportBeast(ReportSink* sinks, uint16_t num_sinks, const Comp
 
 #if COMMS_REPORTING_BATCH_SENDS
     // Batch all frames into one buffer, then do a single send per sink to minimize lwIP IPC round-trips.
-    static uint8_t beast_batch_buf[kBeastBatchBufMaxBytes];
+    uint8_t (&beast_batch_buf)[kBeastBatchBufMaxBytes] = ReportScratch<uint8_t, kBeastBatchBufMaxBytes>();
     uint16_t batch_len = 0;
     uint16_t total_packets = 0;
 
@@ -933,7 +947,7 @@ static ASTERIXReporter::Clock GetASTERIXClock() {
 
 bool CommsManager::ReportASTERIX(ReportSink* sinks, uint16_t num_sinks) {
     bool ret = true;
-    static uint8_t block[kASTERIXDataBlockMaxLenBytes];
+    uint8_t (&block)[kASTERIXDataBlockMaxLenBytes] = ReportScratch<uint8_t, kASTERIXDataBlockMaxLenBytes>();
     static bool track_numbering_restarted = true;  // Only the first status report after boot says so.
 
     ASTERIXReporter::ReportContext ctx;
@@ -1111,7 +1125,7 @@ bool CommsManager::ReportUATUplinkJSON(ReportSink* sinks, uint16_t num_sinks,
         uint8_t payload[kUATUplinkPayloadNumBytes];
         UATReedSolomon::DeInterleaveUplinkMessage(payload, raw.encoded_message);
 
-        static char line[kUATUplinkJSONLineMaxNumChars];
+        char (&line)[kUATUplinkJSONLineMaxNumChars] = ReportScratch<char, kUATUplinkJSONLineMaxNumChars>();
         // The packet's own timestamp counts radio timer ticks, so report the time of this line.
         uint16_t line_len = WriteUATUplinkJSONLine(line, payload, raw.sigs_dbm, get_time_since_boot_ms());
         ret &= SendBufToSinks(sinks, num_sinks, line, line_len, uat_uplink_json_tally);

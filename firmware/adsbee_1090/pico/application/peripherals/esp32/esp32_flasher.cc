@@ -280,7 +280,8 @@ esp_loader_error_t flash_matches_binary(const uint8_t *bin, size_t size, size_t 
 #if (defined SERIAL_FLASHER_INTERFACE_UART) || (defined SERIAL_FLASHER_INTERFACE_USB)
 esp_loader_error_t flash_binary(const uint8_t *bin, size_t size, size_t address) {
     esp_loader_error_t err;
-    static uint8_t payload[1024];
+    // In scratch Y beside core 1's stack, which leaves it free: only used while flashing the ESP32.
+    static uint8_t __scratch_y("esp32_flash_payload") payload[1024];
     const uint8_t *bin_addr = bin;
 
     CONSOLE_PRINTF("Erasing flash (this may take a while)...\r\n");

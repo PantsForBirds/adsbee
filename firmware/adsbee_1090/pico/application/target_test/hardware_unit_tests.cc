@@ -3,6 +3,7 @@
 #include "adsbee.hh"
 #include "eeprom.hh"
 #include "main.hh"  // For ISRS_ON_CORE1.
+#include "mode_s_packet_decoder.hh"
 #include "pico/multicore.h"
 #include "spi_coprocessor.hh"
 
@@ -129,7 +130,20 @@ CPP_AT_CALLBACK(ATIngestModeSCallback) {
                          packet.buffer_len_bytes, RawModeSPacket::kSquitterPacketLenBytes,
                          RawModeSPacket::kExtendedSquitterPacketLenBytes);
         }
-        if (!adsbee.raw_mode_s_packet_queue.Enqueue(packet)) {
+        // Enqueued on core 1, the decoder input queue's only writer. Static: must outlive a RunOnISRCore() timeout.
+        static struct {
+            RawModeSPacket packet;
+            bool enqueued;
+        } ingest;
+        ingest.packet = packet;
+        ingest.enqueued = false;
+        bool ran = RunOnISRCore(
+            [](void* arg) {
+                auto* in = static_cast<decltype(ingest)*>(arg);
+                in->enqueued = decoder.raw_mode_s_packet_in_queue.Enqueue(in->packet);
+            },
+            &ingest);
+        if (!ran || !ingest.enqueued) {
             CPP_AT_ERROR("Failed to enqueue Mode S packet: queue full.");
         }
         CPP_AT_SUCCESS();
