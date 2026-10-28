@@ -1,0 +1,39 @@
+<div class="kpis">
+<div class="kpi"><b>500–600 mV</b><span>best on this unit; no arm beats 600 on total frames or aircraft</span></div>
+<div class="kpi"><b>−22%</b><span>position msgs from aircraft 15–30 nm out at TL 400 vs 600 (−33 to −10)</span></div>
+<div class="kpi"><b>+15%</b><span>99th-pct range at TL 450 vs 600 (+4 to +27)</span></div>
+<div class="kpi"><b>−52%</b><span>aircraft reaching 75+ nm at TL 800 vs 600 (−75 to −7)</span></div>
+<div class="kpi"><b>12.5% vs 0.87%</b><span>comparator HI between frames at TL 600: pi-0 vs the pi-1 bench unit</span></div>
+</div>
+<ul class="tldr">
+<li><b>Best offset.</b> There is no clear winner. The tradeoff is the same on both sides of 600.
+<ul>
+<li><b>Lower TL</b> reaches farther: at 450, range p99 is +15% and fixes at 50–75 nm are 2×. But it decodes fewer frames from near, strong aircraft. Position rate at 15–30 nm: −22% at 400, −11% at 450, −8% at 500. Frames per aircraft at 450: −25%.</li>
+<li><b>400</b> also brings ~3× more single-frame ICAOs (likely false decodes) and +21% CRC fails.</li>
+<li><b>800</b> drops half the aircraft beyond 75 nm, with no significant gain up close (+1% to +8%).</li>
+<li><b>Overall,</b> total good frames/s and unique aircraft do not differ from 600 by more than the noise for any arm.</li>
+</ul></li>
+<li><b>Default 600 → 450?</b> Not on this evidence. On pi-0, 450 trades ~10% of strong-aircraft updates for more far range, and total frames do not rise. The bench gain (+1.4 dB on pi-1) is real on a quiet floor. pi-0's floor is ~14× noisier, so the best offset depends on the site or unit, not one number.</li>
+<li><b>Does the learner find it?</b> It learned <b>678 mV</b> here, versus 353 on the pi-1 bench. It moves the right way for a noisy floor: noise duty fell from 12.5% to 9.7%. Its single night block was within noise of 600 on every metric. It does not pick 450–500 here, and one block can't show whether 678 beats 600.</li>
+<li><b>Matcher-ring mechanism?</b> Partly confirmed, much weaker than t-0877 modeled.
+<ul>
+<li>Lowering TL raises between-frame noise edges steadily, from 0.8 M/s at 600 to 1.3 M/s at 400.</li>
+<li>Near-aircraft decodes fall in step, which is the signature of matchers busy with noise.</li>
+<li>But at 600 the loss is small: going to 800 recovers only +1% to +8% (not significant).</li>
+</ul></li>
+</ul>
+<h2>t-0877, revisited</h2>
+<ul>
+<li><b>The 14% noise duty was pi-0, not the 1090U.</b> pi-0 runs 12.5% HI between frames at TL 600 (813k edges/s), against 0.87% (63k/s) on pi-1. On-signal duty is only slightly higher (13.9%), so the floor itself is high.</li>
+<li><b>The Pluto is not the cause.</b> Powering its TX down on pi-0 did not change the duty. t-0875 found no idle LO leak on pi-1. The CW-leak explanation for the bench gap is not supported. pi-0's floor has another, unknown cause: local RF or the unit. A 1-minute 50 Ω termination on pi-0's input would separate the two; that needs a person at the unit.</li>
+<li><b>"Raise the default to 800" was wrong.</b> On air, 800 loses distant aircraft and gains little up close. The model's matcher loss at 600 was overstated, even on this noisy unit.</li>
+<li><b>Still holds:</b> the direction of the tradeoff. Noise edges cost strong frames; a lower TL helps weak ones.</li>
+</ul>
+<p class="note">Caveats:
+<ul>
+<li>Rounds 4–5 ran in night traffic (rounds 1–3 in busy traffic). Traffic fell ~40× overnight, so effects come from a model that removes the time trend.</li>
+<li>The ~100 comparisons here include some false positives. Example: 450's −23% total frames is not monotone with 400 and 500.</li>
+<li>CPR jumps at 800 (×6.8) come from three day blocks with single-digit counts.</li>
+<li>Range is measured from an estimated center.</li>
+<li>Demod CPU is ≤1.4% of core 1 at every arm. Time per demod is 3% lower at ≤500 and 6% higher at 800, so it is negligible.</li>
+</ul></p>

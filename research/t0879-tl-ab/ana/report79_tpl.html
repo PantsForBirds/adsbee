@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TL Offset A/B</title>
+<style>
+:root{color-scheme:light;--surface:#fcfcfb;--bg:#fcfcfb;--text:#0b0b0b;--text-2:#52514e;--muted:#7a7974;--rule:#e4e3df;--grid:#ecebe7;
+--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#6250d6;--s5:#e87ba4;--s6:#a3741c;--accent:#2a78d6;--code:#f1f0ec}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--surface:#1a1a19;--bg:#1a1a19;--text:#f0efec;--text-2:#c3c2b7;--muted:#9a998f;--rule:#34332f;--grid:#2a2a28;
+--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#9085e9;--s5:#d55181;--s6:#c49239;--accent:#3987e5;--code:#262624}}
+:root[data-theme="dark"]{color-scheme:dark;--surface:#1a1a19;--bg:#1a1a19;--text:#f0efec;--text-2:#c3c2b7;--muted:#9a998f;--rule:#34332f;--grid:#2a2a28;
+--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#9085e9;--s5:#d55181;--s6:#c49239;--accent:#3987e5;--code:#262624}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-top:8px;border-top:1px solid var(--rule)}h3{font-size:16px;margin:20px 0 6px}
+.sub{color:var(--text-2);margin:0 0 18px}
+.tldr{border-left:3px solid var(--accent);padding:4px 0 4px 14px;margin:12px 0}
+.tldr li{margin:4px 0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:16px 0}
+.kpi{border:1px solid var(--rule);border-radius:8px;padding:10px 12px}.kpi b{display:block;font-size:22px}.kpi span{color:var(--text-2);font-size:13px}
+table{border-collapse:collapse;width:100%;font-size:13.5px;margin:8px 0}th,td{border-bottom:1px solid var(--rule);padding:5px 6px;text-align:left;vertical-align:top}
+th{color:var(--text-2);font-weight:600}td.src{color:var(--muted);font-size:12px}
+.wrap{overflow-x:auto}
+svg.chart{width:100%;height:auto;display:block;background:var(--surface)}
+svg .grid{stroke:var(--grid);stroke-width:1}svg .axis{stroke:var(--muted);stroke-width:1}svg .ref{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+svg .stem{stroke:var(--grid);stroke-width:2}
+svg text{fill:var(--text-2);font:12px system-ui,sans-serif}svg .lab{fill:var(--text-2);font-size:12px}svg .dl{fill:var(--text);font-size:12px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--text-2);margin:6px 0 4px}
+.legend i{display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.pair{grid-template-columns:1fr}}
+figure{margin:0}figcaption{font-size:13px;color:var(--text-2);margin:4px 0}
+.note{font-size:13px;color:var(--text-2)}
+code{background:var(--code);padding:1px 4px;border-radius:3px;font-size:12.5px}
+ol.steps li{margin:6px 0}
+.tag{font-size:11.5px;border:1px solid var(--rule);border-radius:10px;padding:0 6px;color:var(--text-2);white-space:nowrap}
+td.sig{font-weight:700}.ci{color:var(--muted);font-size:12px;font-weight:400}
+</style>
+</head>
+<body><main>
+<h1>TL offset A/B on air</h1>
+<p class="sub">t-0879 · pi-0 (attic-bee), live sky · Oct 27–28 2026 · worker-5 · {{NBLOCKS}} blocks of 30 min: {{NROUNDS}} full rounds of TL 400/450/500/600/800 plus one learner block (it learned {{LEARNTL}} mV)</p>
+{{CONCL}}
+<h2>Effects vs TL 600</h2>
+<p class="note">Ratio vs 600 after removing the traffic trend. Whiskers show the 95% CI.</p>
+{{RATIOS}}
+<h2>Strong vs weak aircraft</h2>
+<p class="note">Airborne position messages decoded per second for each aircraft tracked ≥60 s, grouped by its median distance. Each aircraft sends 2/s, so this is decode probability vs range, independent of how many aircraft are up.</p>
+{{PR}}
+<p class="note">Aircraft counted by the farthest position decoded from them.</p>
+{{BINS}}
+<h2>Comparator noise floor</h2>
+<p class="note">pi-0 is ~14× noisier than the pi-1 bench unit at the same TL, and the noise is there between frames, not just on signal.</p>
+<div class="pair"><figure><figcaption>Comparator HI %</figcaption>{{DUTY}}</figure><figure><figcaption>Rising edges/s</figcaption>{{EDGES}}</figure></div>
+<h2>All metrics</h2>
+<p class="note">Trend-adjusted ratio vs 600 (95% CI); bold = CI excludes 0. With ~100 tests here, expect ~5 bold by chance. Learner = one block.</p>
+<div class="wrap"><table><tr><th>metric</th><th>400</th><th>450</th><th>500</th><th>800</th><th>learner</th></tr>{{RTAB}}</table></div>
+<h3>Check: simple paired ratios</h3>
+<p class="note">Each arm ÷ the 600 block of the same round, no trend removal. Same direction, wider intervals, because traffic fell up to 2.5× within a night round.</p>
+<div class="wrap"><table><tr><th>metric</th><th>400</th><th>450</th><th>500</th><th>800</th></tr>{{PTAB}}</table></div>
+<h3>Per-arm means</h3>
+<div class="wrap"><table><tr><th>TL</th><th>blocks</th><th>good frames/s</th><th>aircraft</th><th>CRC fail %</th><th>captures/s</th><th>guard drops/s</th><th>HI % between / on</th><th>edges/s</th><th>seen once</th><th>CPR jumps</th><th>core 1 %</th></tr>{{ABS}}</table></div>
+<h2>Traffic over time</h2>
+{{TIME}}
+<h2>Method</h2>
+<ul>
+<li><b>Firmware.</b> Branch <code>t0879</code> a831d5ee: t0872 0a93bd43 (#398 + c91a63d9 + main) plus worker-3's ADSBEE_LAB_RX counters (t0875) and AT+LABRAW. Checked before each start: FIRMWARE 0xBB998689, CONFIG_HASH 0x02FEF0CF, SETTINGS_FULL 0x4DB591F5. Afterward the original rc9 was restored and verified (flash sha256, hashes, settings dump identical).</li>
+<li><b>Schedule.</b> 16:30–19:00 UTC (round 1), pause for worker-1, 22:30–09:26 UTC (rounds 2–5 and the learner). Each arm once per round, order rotated. The TL offset was set at runtime only. The first 60 s of each block are skipped. Rounds 4–5 fell in night traffic.</li>
+<li><b>Trend model.</b> Weighted least squares on log(metric): an arm effect plus a smooth time trend (linear in the first sitting; a linear spline with 2 h knots in the second), weighted by aircraft in the block. Distance bins are weighted by aircraft in that bin. A version on the first 16 blocks only (busy traffic) gives the same signs.</li>
+<li><b>Metrics.</b> Good frame = CRC-valid Mode S. Aircraft = ICAO with ≥2 good frames. Seen once = ICAO with one good frame (likely false decodes). CPR jumps = position fixes >2 nm + 0.2 nm/s off the track. Range is measured from the median of all decoded positions, since no receiver position is configured; it compares arms only. Demod CPU = core-1 demod time ÷ block time.</li>
+<li><b>Comparator.</b> AT+LABDUTY (HI fraction, rising edges; 136 ns/read, undercounts single-read spikes) and AT+LABRAW (96 raw 45 µs captures per block, 88 ns/read). On signal = 10 µs before to 125 µs after a pulse ≥0.35 µs.</li>
+<li><b>Scripts.</b> <code>ana/ab79.py</code>, <code>ana/trend79.py</code>, <code>ana/ratios79.py</code>, <code>ana/lraw.py</code>, <code>ana/make_report79.py</code>; on-Pi kit in <code>kit/</code>. Logs: <code>/workspace/agents/worker-5/t0879/data/final/runs/</code>.</li>
+</ul>
+</main></body></html>
