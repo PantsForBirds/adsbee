@@ -294,9 +294,6 @@ class ADSBee {
     // Captures waiting for demodulation.
     uint16_t CaptureQueueLength() { return capture_queue_.Length(); }
 
-    // Whether an address belongs to a tracked aircraft, for the demodulator's retries. Safe to call from core 1.
-    static bool IsKnownAddress(uint32_t address);
-
     /**
      * ISR for the timer alarm that ends the capture of a 56 bit message early, so its preamble matcher and sampler
      * are free again without waiting out the rest of a 112 bit capture.
@@ -600,12 +597,9 @@ class ADSBee {
     bool r1090_packet_queue_overflowed_ = false;
     bool r1090_capture_queue_overflowed_ = false;
     uint32_t two_bit_corrections_skipped_seen_ = 0;  // Decoder count already added to the dictionary's metrics.
-    // Tracked addresses for core 1, rebuilt by core 0 into the one core 1 is not reading.
-    mode_s_soft_demod::KnownAddressFilter known_address_filters_[2];
-    volatile uint8_t known_address_filter_index_ = 0;
-    // Offset retries that validated, by AircraftDictionary::CorrectionKind. Written on core 1, read on core 0.
-    volatile uint32_t offset_retry_rescues_[2] = {0};
-    uint32_t offset_retry_rescues_seen_[2] = {0};
+    // Offset retries that passed a CRC. Written on core 1, read on core 0.
+    volatile uint32_t offset_retry_rescues_ = 0;
+    uint32_t offset_retry_rescues_seen_ = 0;
     bool bias_tee_enabled_ = false;
     uint32_t watchdog_timeout_sec_ = SettingsManager::Settings::kDefaultWatchdogTimeoutSec;
 
