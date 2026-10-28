@@ -7,8 +7,7 @@
 
 class ModeSPacketDecoder {
    public:
-    // Holds a full 256-frame burst at DF4 12,000/s while core 1 is still demodulating.
-    static constexpr uint16_t kPacketQueueLen = 256;
+    static constexpr uint16_t kPacketQueueLen = 100;
     // The main loop on core 0 drains the output queue. Under heavy Mode S + UAT traffic one pass can take ~60 ms
     // (several ESP32 writes waiting for their acks plus CC1312 reads), which is 360 packets at 6,000 packets/s.
     static constexpr uint16_t kDecodedPacketQueueLen = 512;
