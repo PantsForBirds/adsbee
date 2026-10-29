@@ -1092,6 +1092,15 @@ const SETTINGS_SCHEMA_1090 = [
         help: 'Time server for ASTERIX output when GNSS has no time. Used only while an output uses ASTERIX.',
         fields: [{ id: 'host', label: 'Host', type: 'string', maxLen: 63 }],
     },
+    {
+        cmd: 'BLE_OUTPUT', label: 'Bluetooth Output', group: 'Reporting',
+        help: 'Stream to one Bluetooth LE client. GDL90: the WiFi GDL90 (traffic, ownship, FIS-B), e.g. for AvareX or XCSoar on Android.',
+        tip: 'Off by default. Advertised as "ADSBee 1090 XXXX" with the Nordic UART and HM-10 serial services. Without PSRAM it needs the WiFi access point, WiFi station and Remote ID over Bluetooth off.',
+        fields: [
+            { id: 'mode', label: 'Mode', type: 'enum', options: ['OFF', 'GDL90'] },
+            { id: 'status', label: 'Status', type: 'display' },
+        ],
+    },
     // ── Position ──
     makeRxPositionEntry(),
     {

@@ -3,13 +3,19 @@
 #include <cstring>  // memcpy
 #include <new>      // placement new
 
-// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v19 and extend the chain
+// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v20 and extend the chain
 // (see settings_migration.hh).
-static_assert(kSettingsVersion == 19, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
+static_assert(kSettingsVersion == 20, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
 static_assert(sizeof(settings_v12::Settings) == 1088 && sizeof(settings_v14::Settings) == 1140 &&
                   sizeof(settings_v15::Settings) == 1144 && sizeof(settings_v17::Settings) == 1340 &&
-                  sizeof(settings_v18::Settings) == 1340,
+                  sizeof(settings_v18::Settings) == 1340 && sizeof(settings_v19::Settings) == 1792,
               "A frozen settings snapshot changed size. Frozen snapshots must never be edited.");
+
+// v19 -> v20 copies the v19 bytes into the live struct (see settings_migration.hh).
+static_assert(sizeof(settings_v19::Settings) == sizeof(SettingsManager::Settings) &&
+                  offsetof(SettingsManager::Settings, ble_output_mode) >= offsetof(settings_v19::Settings, swarm_token) +
+                                                                              sizeof(settings_v19::Settings::swarm_token),
+              "v20 must keep v19's layout and add ble_output_mode in its tail padding.");
 
 // The frozen nested layouts must stay byte-identical to the live ones for the raw copies below to be valid. If a future
 // version changes CoreNetworkSettings or RxPosition, these fire and the migration steps must switch to field-by-field
@@ -203,7 +209,7 @@ void SettingsMigrator::MigrateV17ToV18(const settings_v17::Settings& in, setting
 
 void SettingsMigrator::MigrateV18ToV19(const settings_v18::Settings& in, SettingsManager::Settings& out) {
     // Start from a fresh, fully-defaulted current struct: the distance and altitude filters and swarm reporting (new in
-    // v19) stay off, feeds keep the TCP transport, no MQTT broker is set, and the ASTERIX SAC/SIC (0, 0), NTP server
+    // v19) and GDL90 over Bluetooth (v20) stay off, feeds keep the TCP transport, no MQTT broker is set, and the ASTERIX SAC/SIC (0, 0), NTP server
     // (pool.ntp.org) and swarm server (adsbee.aero) take their defaults.
     new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
 
@@ -259,10 +265,15 @@ void SettingsMigrator::MigrateV18ToV19(const settings_v18::Settings& in, Setting
     out.auto_update_enabled = in.auto_update_enabled;
 }
 
+void SettingsMigrator::MigrateV19ToV20(SettingsManager::Settings& settings) {
+    settings.settings_version = kSettingsVersion;
+    settings.ble_output_mode = SettingsManager::kBLEOutputOff;  // Was v19 tail padding.
+}
+
 bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t from_version,
                                SettingsManager::Settings& out) {
     // Each case enters the chain at its own version and runs the remaining steps to the current version. The chain only
-    // has shipped versions (12, 14, 15, 17, 18), so a step can span an unshipped one.
+    // has shipped versions (12, 14, 15, 17, 18, 19), so a step can span an unshipped one.
     settings_v14::Settings v14;
     settings_v15::Settings v15;
     settings_v17::Settings v17;
@@ -312,6 +323,14 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             MigrateV18ToV19(v18, out);
             return true;
         }
+        case 19: {
+            if (blob_len < sizeof(settings_v19::Settings)) {
+                return false;
+            }
+            memcpy(static_cast<void*>(&out), blob, sizeof(settings_v19::Settings));
+            MigrateV19ToV20(out);
+            return true;
+        }
         default:
             // Older than kOldestMigratableVersion, never shipped (13, 16), unknown, or already current.
             return false;
@@ -319,6 +338,6 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
 
     MigrateV15ToV17(v15, v17);
     MigrateV17ToV18(v17, v18);
-    MigrateV18ToV19(v18, out);  // Final step: v18 is the newest frozen version, so this lands on the live struct.
+    MigrateV18ToV19(v18, out);  // Lands on the live struct (see settings_migration.hh).
     return true;
 }

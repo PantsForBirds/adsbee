@@ -23,6 +23,7 @@
 #include "ram_monitor.hh"
 #include "feed_ram_budget.hh"
 #include "feed_receiver_id.hh"
+#include "ble_output_status.hh"
 #include "settings.hh"
 #include "settings_hash.hh"
 #include "spi_coprocessor.hh"  // For init / de-init before and after flashing ESP32.
@@ -115,6 +116,33 @@ CPP_AT_CALLBACK(CommsManager::ATAutoUpdateCallback) {
                 CPP_AT_SUCCESS();
             }
             break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATBLEOutputCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%s(MODE),%s(STATUS)",
+                              SettingsManager::BLEOutputModeToStr(settings_manager.settings.ble_output_mode),
+                              BLEOutputStatusStr(esp32_ll.ble_output_status));
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=': {
+            char mode_str[16] = {0};
+            if (!CPP_AT_HAS_ARG(0) || args[0].size() >= sizeof(mode_str)) {
+                CPP_AT_ERROR("Requires a mode. AT+BLE_OUTPUT=<OFF|GDL90>");
+            }
+            memcpy(mode_str, args[0].data(), args[0].size());
+            SettingsManager::BLEOutputMode mode;
+            if (!SettingsManager::BLEOutputModeFromStr(mode_str, mode)) {
+                CPP_AT_ERROR("Invalid Bluetooth output mode '%s'. AT+BLE_OUTPUT=<OFF|GDL90>", mode_str);
+            }
+            settings_manager.settings.ble_output_mode = mode;
+            settings_manager.SyncToCoprocessors();  // The ESP32 runs the Bluetooth server.
+            CPP_AT_SUCCESS();
+            break;
+        }
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
@@ -2075,6 +2103,8 @@ static void PrintSettingsJSON() {
                   (unsigned long)s.baud_rates[SettingsManager::SerialInterface::kCommsUART],
                   (unsigned long)s.baud_rates[SettingsManager::SerialInterface::kGNSSUART]);
     CPP_AT_PRINTF("\"BIAS_TEE_ENABLE\":[%d,%d],", adsbee.BiasTeeIsEnabled(), s.subg_bias_tee_enabled);
+    CPP_AT_PRINTF("\"BLE_OUTPUT\":[\"%s\",\"%s\"],", SettingsManager::BLEOutputModeToStr(s.ble_output_mode),
+                  BLEOutputStatusStr(esp32_ll.ble_output_status));
     CPP_AT_PRINTF("\"ETHERNET\":[%d],", cns.ethernet_enabled);
     CPP_AT_PRINTF("\"ESP32_ENABLE\":[%d],", esp32.IsEnabled());
     CPP_AT_PRINTF("\"FEED_ENABLE\":[%d],", s.feeds_enabled);
@@ -2515,6 +2545,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .help_string = "AT+BIAS_TEE_ENABLE=<1090_bt_enabled>,<subg_bt_enabled>\r\n\tEnable or disable the bias "
                     "tees.\r\n\tBIAS_TEE_ENABLE?\r\n\tQuery the status of the bias tees.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBiasTeeEnableCallback, comms_manager)},
+    {.command = "BLE_OUTPUT",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+BLE_OUTPUT=<OFF|GDL90>\r\n\tStream to one Bluetooth LE client (Nordic UART and HM-10 serial "
+                    "services). GDL90: the GDL90 sent to WiFi clients. Off by default. Without PSRAM it needs the WiFi "
+                    "access point, WiFi station and Remote ID over Bluetooth off.\r\n\tAT+BLE_OUTPUT?\r\n\tQuery the mode and its state.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBLEOutputCallback, comms_manager)},
     {.command = "BOOT_USB_UF2",
      .min_args = 0,
      .max_args = 1,

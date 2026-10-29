@@ -69,8 +69,8 @@ TEST(SettingsHash, SameSettingsSameHashWhateverThePadding) {
 TEST(SettingsHash, DefaultSettingsHashIsPinned) {
     // Host defaults (no device info, access point channel 1). Changes only with the Settings struct or its defaults.
     Settings settings;
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0xDBFFFE16u);
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x552279E1u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0x6ED01E80u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x1D6E4B4Bu);
 }
 
 TEST(SettingsHash, StoredCRCDoesNotCount) {
@@ -161,6 +161,7 @@ TEST(SettingsHash, EverySharedSettingChangesBothHashes) {
     EXPECT_CHANGES_BOTH(strcpy(s.mqtt_broker.websocket_path, "/ws"));
     EXPECT_CHANGES_BOTH(s.asterix_sac = 25);
     EXPECT_CHANGES_BOTH(strcpy(s.ntp_server, "time.example.com"));
+    EXPECT_CHANGES_BOTH(s.ble_output_mode = SettingsManager::kBLEOutputGDL90);
 }
 
 TEST(SettingsHash, FeedSlotsAreNotInterchangeable) {

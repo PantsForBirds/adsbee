@@ -17,7 +17,7 @@
 #include "pico/rand.h"
 #endif
 
-static constexpr uint32_t kSettingsVersion = 19;  // Change this when settings format changes!
+static constexpr uint32_t kSettingsVersion = 20;  // Change this when settings format changes!
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 class SettingsManager {
@@ -115,6 +115,13 @@ class SettingsManager {
         kNumIPModes
     };
     static constexpr uint16_t kIPModeStrMaxLen = 4;  // Longest AT string ("IPV4", "DUAL", "IPV6").
+
+    // What the ESP32 streams to one Bluetooth LE client (AT+BLE_OUTPUT). Append new modes; never renumber.
+    enum BLEOutputMode : uint8_t {
+        kBLEOutputOff = 0,
+        kBLEOutputGDL90 = 1,  // The GDL90 the WiFi access point sends on UDP port 4000.
+        kNumBLEOutputModes
+    };
 
     // Mode setting for the Sub-GHz radio.
     enum SubGHzRadioMode : uint8_t {
@@ -437,6 +444,10 @@ class SettingsManager {
         char swarm_server[kSwarmServerMaxLen + 1];  // Base URL, e.g. https://adsbee.aero.
         char swarm_token[kSwarmTokenMaxLen + 1];    // Enroll token from the swarm account.
 
+        // Bluetooth LE output (AT+BLE_OUTPUT), a BLEOutputMode. Off by default. Sits in what was swarm_token's tail
+        // padding.
+        BLEOutputMode ble_output_mode = kBLEOutputOff;
+
         /**
          * Default constructor.
          */
@@ -736,6 +747,30 @@ class SettingsManager {
         return false;
     }
 
+    static inline const char* BLEOutputModeToStr(uint8_t mode) {
+        switch (mode) {
+            case kBLEOutputGDL90:
+                return "GDL90";
+            case kBLEOutputOff:
+            default:
+                return "OFF";
+        }
+    }
+
+    /**
+     * Parses an AT command Bluetooth output mode string (OFF or GDL90, case-insensitive).
+     * @retval True if `str` named a mode and `mode` was written.
+     */
+    static inline bool BLEOutputModeFromStr(const char* str, BLEOutputMode& mode) {
+        for (uint8_t i = 0; i < kNumBLEOutputModes; i++) {
+            if (strcasecmp(str, BLEOutputModeToStr(i)) == 0) {
+                mode = static_cast<BLEOutputMode>(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Parses an AT command feed transport string (TCP, UDP or MQTT, case-insensitive).
      * @retval True if `str` named a transport and `transport` was written.
@@ -880,7 +915,7 @@ extern SettingsManager settings_manager;
 //      settings_migration.cpp (see the recipe at the top of settings_versions.hh).
 //   3. Update the version and the numbers below to the new layout.
 // Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
-static_assert(kSettingsVersion == 19,
+static_assert(kSettingsVersion == 20,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
 static_assert(sizeof(SettingsManager::Settings) == 1792,
               "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");
@@ -918,5 +953,6 @@ static_assert(offsetof(SettingsManager::Settings, filter_altitude_b_ft) == 1656,
 static_assert(offsetof(SettingsManager::Settings, swarm_enabled) == 1660, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, swarm_server) == 1661, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, swarm_token) == 1725, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, ble_output_mode) == 1789, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */

@@ -17,10 +17,10 @@
  *   - Only versions shipped in a tagged release or RC get a snapshot. Versions that never reached a tag (v13, v16)
  *     have none: no device holds them, and migrations step over them.
  *
- * RECIPE when bumping kSettingsVersion (only when the current version shipped in a tag, e.g. 19 -> 20):
- *   1. Copy the CURRENT live SettingsManager::Settings layout into a new `namespace settings_v19` snapshot here
+ * RECIPE when bumping kSettingsVersion (only when the current version shipped in a tag, e.g. 20 -> 21):
+ *   1. Copy the CURRENT live SettingsManager::Settings layout into a new `namespace settings_v20` snapshot here
  *      (translating enum members to their underlying types, hardcoding constants), and lock it with static_asserts.
- *   2. Add a `MigrateV19ToV20()` step and extend the dispatcher in settings_migration.cpp.
+ *   2. Add a `MigrateV20ToV21()` step and extend the dispatcher in settings_migration.cpp.
  */
 namespace settings_v12 {
 
@@ -519,3 +519,159 @@ static_assert(offsetof(Settings, wifi_sta_extra_networks) == 1142, "v18 wifi_sta
 static_assert(offsetof(Settings, auto_update_enabled) == 1338, "v18 auto_update_enabled offset drift.");
 
 }  // namespace settings_v18
+
+/**
+ * v19 layout: v18 plus the distance and altitude filters, feed transports, the MQTT broker, ASTERIX SAC/SIC, the NTP
+ * server and swarm reporting. v20 put `ble_output_mode` in its tail padding.
+ */
+namespace settings_v19 {
+
+static constexpr uint16_t kHostnameMaxLen = 32;
+static constexpr uint16_t kWiFiSSIDMaxLen = 31;
+static constexpr uint16_t kWiFiPasswordMaxLen = 63;
+static constexpr uint16_t kNumSerialInterfaces = 3;
+static constexpr uint16_t kMaxNumFeeds = 10;
+static constexpr uint16_t kFeedURIMaxNumChars = 63;
+static constexpr uint16_t kFeedReceiverIDNumBytes = 8;
+static constexpr uint16_t kRemoteIDIDMaxLen = 20;
+static constexpr uint16_t kWiFiSTANumExtraNetworks = 2;
+static constexpr uint16_t kMQTTUsernameMaxLen = 31;
+static constexpr uint16_t kMQTTPasswordMaxLen = 63;
+static constexpr uint16_t kMQTTTopicPrefixMaxLen = 31;
+static constexpr uint16_t kMQTTWebSocketPathMaxLen = 31;
+static constexpr uint16_t kNTPServerMaxLen = 63;
+static constexpr uint16_t kSwarmServerMaxLen = 63;
+static constexpr uint16_t kSwarmTokenMaxLen = 63;
+
+struct CoreNetworkSettings {
+    bool esp32_enabled;
+    char hostname[kHostnameMaxLen + 1];
+    bool wifi_ap_enabled;
+    uint8_t wifi_ap_channel;
+    char wifi_ap_ssid[kWiFiSSIDMaxLen + 2];
+    char wifi_ap_password[kWiFiPasswordMaxLen + 2];
+    bool wifi_sta_enabled;
+    char wifi_sta_ssid[kWiFiSSIDMaxLen + 2];
+    char wifi_sta_password[kWiFiPasswordMaxLen + 2];
+    bool ethernet_enabled;
+    uint32_t crc32;
+};
+
+struct WiFiNetwork {
+    char ssid[kWiFiSSIDMaxLen + 2];
+    char password[kWiFiPasswordMaxLen + 2];
+};
+
+struct __attribute__((packed)) RxPosition {
+    uint8_t source;
+    float latitude_deg;
+    float longitude_deg;
+    int32_t gnss_altitude_ft;
+    int32_t baro_altitude_ft;
+    float heading_deg;
+    int32_t speed_kts;
+    uint32_t icao_address;
+};
+
+struct MQTTBroker {
+    char host[kFeedURIMaxNumChars + 1];
+    uint16_t port;
+    bool tls;
+    uint8_t qos;
+    uint8_t transport;  // MQTTTransport underlying type.
+    char username[kMQTTUsernameMaxLen + 1];
+    char password[kMQTTPasswordMaxLen + 1];
+    char topic_prefix[kMQTTTopicPrefixMaxLen + 1];
+    char websocket_path[kMQTTWebSocketPathMaxLen + 1];
+};
+
+// Byte-identical copy of the v19 Settings layout. Enum members are stored as their underlying integer types.
+struct alignas(4) Settings {
+    uint32_t settings_version;
+    CoreNetworkSettings core_network_settings;
+    bool r1090_rx_enabled;
+    int32_t tl_offset_mv;
+    bool r1090_bias_tee_enabled;
+    uint32_t watchdog_timeout_sec;
+    bool led_enabled;
+    bool feeds_enabled;  // Added in v15.
+    bool gnss_enabled;
+    uint8_t gnss_receiver_type;
+    bool gnss_notify;
+    uint16_t log_level;
+    uint16_t reporting_protocols[kNumSerialInterfaces];
+    uint32_t baud_rates[kNumSerialInterfaces];
+    int8_t subg_enabled;
+    bool subg_rx_enabled;
+    bool subg_bias_tee_enabled;
+    uint8_t subg_mode;
+    bool remote_id_rx_enabled;
+    uint8_t remote_id_transports;
+    bool remote_id_tx_enabled;
+    uint8_t remote_id_tx_transports;
+    uint8_t remote_id_tx_uas_id_type;
+    uint8_t remote_id_tx_ua_type;
+    char remote_id_tx_uas_id[kRemoteIDIDMaxLen + 1];
+    char remote_id_tx_operator_id[kRemoteIDIDMaxLen + 1];
+    char feed_uris[kMaxNumFeeds][kFeedURIMaxNumChars + 1];
+    uint16_t feed_ports[kMaxNumFeeds];
+    bool feed_is_active[kMaxNumFeeds];
+    uint16_t feed_protocols[kMaxNumFeeds];
+    uint8_t feed_receiver_ids[kMaxNumFeeds][kFeedReceiverIDNumBytes];
+    uint8_t mavlink_system_id;
+    uint8_t mavlink_component_id;
+    RxPosition rx_position;
+    uint8_t ip_mode;
+    WiFiNetwork wifi_sta_extra_networks[kWiFiSTANumExtraNetworks];  // Added in v17.
+    bool auto_update_enabled;                                       // Added in v18 (tail padding of v17).
+    bool filter_distance_enabled;
+    uint32_t filter_distance_deci_nm;
+    uint8_t feed_transports[kMaxNumFeeds];  // FeedTransport underlying type.
+    MQTTBroker mqtt_broker;
+    uint8_t asterix_sac;
+    uint8_t asterix_sic;
+    char ntp_server[kNTPServerMaxLen + 1];
+    uint8_t filter_altitude_mode;
+    int32_t filter_altitude_a_ft;
+    int32_t filter_altitude_b_ft;
+    bool swarm_enabled;
+    char swarm_server[kSwarmServerMaxLen + 1];
+    char swarm_token[kSwarmTokenMaxLen + 1];
+};
+
+// Lock the v19 byte layout (the live layout lock in settings.hh at kSettingsVersion == 18).
+static_assert(sizeof(CoreNetworkSettings) == 240, "v19 CoreNetworkSettings must be 240 bytes.");
+static_assert(sizeof(RxPosition) == 29, "v19 RxPosition must be 29 bytes.");
+static_assert(sizeof(MQTTBroker) == 230, "v19 MQTTBroker must be 230 bytes.");
+static_assert(sizeof(Settings) == 1792, "v19 Settings must be 1792 bytes.");
+static_assert(offsetof(Settings, core_network_settings) == 4, "v19 CoreNetworkSettings offset drift.");
+static_assert(offsetof(Settings, led_enabled) == 260, "v19 led_enabled offset drift.");
+static_assert(offsetof(Settings, feeds_enabled) == 261, "v19 feeds_enabled offset drift.");
+static_assert(offsetof(Settings, gnss_notify) == 264, "v19 gnss_notify offset drift.");
+static_assert(offsetof(Settings, log_level) == 266, "v19 log_level offset drift.");
+static_assert(offsetof(Settings, baud_rates) == 276, "v19 baud_rates offset drift.");
+static_assert(offsetof(Settings, subg_mode) == 291, "v19 subg_mode offset drift.");
+static_assert(offsetof(Settings, remote_id_tx_enabled) == 294, "v19 remote_id_tx_enabled offset drift.");
+static_assert(offsetof(Settings, feed_uris) == 340, "v19 feed_uris offset drift.");
+static_assert(offsetof(Settings, feed_protocols) == 1010, "v19 feed_protocols offset drift.");
+static_assert(offsetof(Settings, feed_receiver_ids) == 1030, "v19 feed_receiver_ids offset drift.");
+static_assert(offsetof(Settings, mavlink_system_id) == 1110, "v19 mavlink_system_id offset drift.");
+static_assert(offsetof(Settings, rx_position) == 1112, "v19 rx_position offset drift.");
+static_assert(offsetof(Settings, ip_mode) == 1141, "v19 ip_mode offset drift.");
+static_assert(offsetof(Settings, wifi_sta_extra_networks) == 1142, "v19 wifi_sta_extra_networks offset drift.");
+static_assert(offsetof(Settings, auto_update_enabled) == 1338, "v19 auto_update_enabled offset drift.");
+static_assert(offsetof(Settings, filter_distance_enabled) == 1339, "v19 filter_distance_enabled offset drift.");
+static_assert(offsetof(Settings, filter_distance_deci_nm) == 1340, "v19 filter_distance_deci_nm offset drift.");
+static_assert(offsetof(Settings, feed_transports) == 1344, "v19 feed_transports offset drift.");
+static_assert(offsetof(Settings, mqtt_broker) == 1354, "v19 mqtt_broker offset drift.");
+static_assert(offsetof(Settings, asterix_sac) == 1584, "v19 asterix_sac offset drift.");
+static_assert(offsetof(Settings, asterix_sic) == 1585, "v19 asterix_sic offset drift.");
+static_assert(offsetof(Settings, ntp_server) == 1586, "v19 ntp_server offset drift.");
+static_assert(offsetof(Settings, filter_altitude_mode) == 1650, "v19 filter_altitude_mode offset drift.");
+static_assert(offsetof(Settings, filter_altitude_a_ft) == 1652, "v19 filter_altitude_a_ft offset drift.");
+static_assert(offsetof(Settings, filter_altitude_b_ft) == 1656, "v19 filter_altitude_b_ft offset drift.");
+static_assert(offsetof(Settings, swarm_enabled) == 1660, "v19 swarm_enabled offset drift.");
+static_assert(offsetof(Settings, swarm_server) == 1661, "v19 swarm_server offset drift.");
+static_assert(offsetof(Settings, swarm_token) == 1725, "v19 swarm_token offset drift.");
+
+}  // namespace settings_v19

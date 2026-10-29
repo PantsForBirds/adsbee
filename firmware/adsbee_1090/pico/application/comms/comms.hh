@@ -94,6 +94,7 @@ class CommsManager {
     CPP_AT_CALLBACK(ATFeedCallback);
     CPP_AT_CALLBACK(ATAutoUpdateCallback);
     CPP_AT_CALLBACK(ATFeedEnableCallback);
+    CPP_AT_CALLBACK(ATBLEOutputCallback);
     CPP_AT_CALLBACK(ATSwarmCallback);
     CPP_AT_CALLBACK(ATFeedReceiverIDCallback);
     CPP_AT_CALLBACK(ATMQTTCallback);
