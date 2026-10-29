@@ -12,6 +12,8 @@ class ModeSPacketDecoder {
     // (several ESP32 writes waiting for their acks plus CC1312 reads), which is 360 packets at 6,000 packets/s.
     static constexpr uint16_t kDecodedPacketQueueLen = 512;
     static constexpr uint16_t kDebugMessageQueueLen = 20;
+    // Bit flip locations only feed info log lines, which are dropped when the log queue is full anyway.
+    static constexpr uint16_t kBitFlipLocationQueueLen = kDebugMessageQueueLen;
     // Two demodulator state machines can occasionally catch the same transmission. Packets with identical contents
     // whose timestamps fall within this window are treated as duplicates. Distinct transmissions with identical
     // contents (e.g. bursts of interrogation replies) are spaced further apart than this.
@@ -67,7 +69,7 @@ class ModeSPacketDecoder {
     PFBQueue<DecodedModeSPacket> decoded_mode_s_packet_out_queue = PFBQueue<DecodedModeSPacket>(
         {.buf_len_num_elements = kDecodedPacketQueueLen, .buffer = decoded_mode_s_packet_out_queue_buffer_});
     PFBQueue<uint16_t> decoded_mode_s_packet_bit_flip_locations_out_queue =
-        PFBQueue<uint16_t>({.buf_len_num_elements = kDecodedPacketQueueLen,
+        PFBQueue<uint16_t>({.buf_len_num_elements = kBitFlipLocationQueueLen,
                             .buffer = decoded_mode_s_packet_bit_flip_locations_out_queue_buffer_});
     PFBQueue<DebugMessage> debug_message_out_queue = PFBQueue<DebugMessage>({
         .buf_len_num_elements = kDebugMessageQueueLen,
@@ -80,7 +82,7 @@ class ModeSPacketDecoder {
     PacketDecoderConfig config_;
     RawModeSPacket raw_mode_s_packet_in_queue_buffer_[kPacketQueueLen];
     DecodedModeSPacket decoded_mode_s_packet_out_queue_buffer_[kDecodedPacketQueueLen];
-    uint16_t decoded_mode_s_packet_bit_flip_locations_out_queue_buffer_[kDecodedPacketQueueLen];
+    uint16_t decoded_mode_s_packet_bit_flip_locations_out_queue_buffer_[kBitFlipLocationQueueLen];
     DebugMessage debug_message_out_queue_buffer_[kDebugMessageQueueLen];
 
     // Last packet pushed from each source, used to drop the same message if it's caught by multiple state machines.

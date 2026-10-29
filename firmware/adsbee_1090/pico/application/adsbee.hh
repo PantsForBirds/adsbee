@@ -22,7 +22,6 @@
 
 class ADSBee {
    public:
-    static constexpr uint16_t kModeSPacketQueueDepth = 200;
     static constexpr uint16_t kRawUATADSBPacketQueueDepth = 50;
     static constexpr uint16_t kRawUATUplinkPacketQueueDepth = 4;
     // Remote ID packets pulled from the ESP32 over SPI, waiting to be decoded into the aircraft dictionary. The ESP32
@@ -481,8 +480,6 @@ class ADSBee {
                          int tl_min_mv = kTLOffsetMinMV, int tl_max_mv = kTLOffsetMaxMV);
 
     // Raw packet intake queues.
-    PFBQueue<RawModeSPacket> raw_mode_s_packet_queue = PFBQueue<RawModeSPacket>(
-        {.buf_len_num_elements = kModeSPacketQueueDepth, .buffer = raw_mode_s_packet_queue_buffer_});
     PFBQueue<RawUATADSBPacket> raw_uat_adsb_packet_queue = PFBQueue<RawUATADSBPacket>(
         {.buf_len_num_elements = kRawUATADSBPacketQueueDepth, .buffer = raw_uat_adsb_packet_queue_buffer_});
     PFBQueue<RawUATUplinkPacket> raw_uat_uplink_packet_queue = PFBQueue<RawUATUplinkPacket>(
@@ -587,8 +584,6 @@ class ADSBee {
 
     // Buffer used to hold packets currently being received.
     RawModeSPacket rx_packet_[BSP::kMaxNumDemodStateMachines];
-    // Buffer where packets are stored before being sent to the decoder.
-    RawModeSPacket raw_mode_s_packet_queue_buffer_[kModeSPacketQueueDepth];
 
     // Buffer where packets are stored while incoming from the CC1312.
     RawUATADSBPacket raw_uat_adsb_packet_queue_buffer_[kRawUATADSBPacketQueueDepth];

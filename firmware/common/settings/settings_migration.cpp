@@ -1,6 +1,7 @@
 #include "settings_migration.hh"
 
 #include <cstring>  // memcpy
+#include <new>      // placement new
 
 // The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v19 and extend the chain
 // (see settings_migration.hh).
@@ -204,7 +205,7 @@ void SettingsMigrator::MigrateV18ToV19(const settings_v18::Settings& in, Setting
     // Start from a fresh, fully-defaulted current struct: the distance and altitude filters and swarm reporting (new in
     // v19) stay off, feeds keep the TCP transport, no MQTT broker is set, and the ASTERIX SAC/SIC (0, 0), NTP server
     // (pool.ntp.org) and swarm server (adsbee.aero) take their defaults.
-    out = SettingsManager::Settings();
+    new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
 
     out.settings_version = kSettingsVersion;
 
@@ -264,8 +265,8 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
     // has shipped versions (12, 14, 15, 17, 18), so a step can span an unshipped one.
     settings_v14::Settings v14;
     settings_v15::Settings v15;
-    static settings_v17::Settings v17;  // Static: the snapshots above already fill the RP2040's 4 kB stack.
-    static settings_v18::Settings v18;
+    settings_v17::Settings v17;
+    settings_v18::Settings v18;
 
     switch (from_version) {
         case 12: {
