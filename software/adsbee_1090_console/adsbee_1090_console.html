@@ -8712,6 +8712,19 @@ const SETTINGS_SCHEMA_1090 = [
         }],
     },
     {
+        cmd: 'SUBG_MODE', label: 'Sub-GHz Mode', group: 'Radio',
+        help: 'Protocol the sub-GHz radio receives. ADS-L senders alternate between 868.2 and 868.4 MHz, so one '
+            + 'channel hears about half of their messages.',
+        fields: [{
+            id: 'mode', label: 'Mode', type: 'enum',
+            options: [
+                { value: 'UAT_RX', label: 'UAT (978 MHz)' },
+                { value: 'ADSL_RX', label: 'ADS-L (868.2 MHz)' },
+                { value: 'ADSL_RX_868_4', label: 'ADS-L (868.4 MHz)' },
+            ],
+        }],
+    },
+    {
         cmd: 'TL_OFFSET', label: 'Trigger Level Offset', group: 'Radio',
         help: 'Offset above the noise floor for 1090 MHz demodulation, in millivolts.',
         fields: [

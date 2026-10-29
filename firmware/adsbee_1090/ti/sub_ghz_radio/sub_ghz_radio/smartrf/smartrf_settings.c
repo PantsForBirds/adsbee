@@ -230,3 +230,82 @@ rfc_CMD_PROP_RX_ADV_t RF_cmdPropRxAdv =
     .pOutput = 0 // INSERT APPLICABLE POINTER: (uint8_t*)&xxx
 };
 
+
+// ADS-L M-band (EASA ADS-L 4 SRD-860): 100 kchip/s 2-GFSK, 50 kHz deviation, 196 kHz RX bandwidth. From TI's
+// "2gfsk100kbps50dev868" preset (SmartRF test case 137) with no whitening and a 32-bit sync word.
+uint32_t pOverridesADSL[] =
+{
+    // override_prop_common.json
+    // DC/DC regulator: In Tx, use DCDCCTL5[3:0]=0x7 (DITHER_EN=0 and IPEAK=7).
+    (uint32_t)0x00F788D3,
+    // override_prop_common_sub1g.json
+    // Set RF_FSCA.ANADIV.DIV_SEL_BIAS = 1. Bits [0:16, 24, 30] are don't care..
+    (uint32_t)0x4001405D,
+    // Set RF_FSCA.ANADIV.DIV_SEL_BIAS = 1. Bits [0:16, 24, 30] are don't care..
+    (uint32_t)0x08141131,
+    // override_tc136_tc137.json
+    // Synth: Set loop bandwidth after lock to 20 kHz (K2)
+    (uint32_t)0x0A480583,
+    // Synth: Set loop bandwidth after lock to 20 kHz (K2)
+    (uint32_t)0x000005A3,
+    // Synth: Set loop bandwidth after lock to 20 kHz (K3, LSB)
+    (uint32_t)0x7AB80603,
+    // Synth: Set loop bandwidth after lock to 20 kHz (K3, MSB)
+    (uint32_t)0x00000623,
+    // Synth: Set FREF = 4 MHz
+    (uint32_t)0x000C84A3,
+    // Synth: Set FREF dither = 4.36 MHz
+    (uint32_t)0x000B84B3,
+    // Tx: Configure PA ramp time, PACTL2.RC=0x3 (in ADI0, set PACTL2[4:3]=0x3)
+    ADI_2HALFREG_OVERRIDE(0,16,0x8,0x8,17,0x1,0x1),
+    // Tx: Set wait time before turning off ramp to 0x1A (default: 0x1F)
+    HW_REG_OVERRIDE(0x6028,0x001A),
+    // Rx: Set AGC reference level to 0x1A (default: 0x2E)
+    HW_REG_OVERRIDE(0x609C,0x001A),
+    // Rx: Set RSSI offset to adjust reported RSSI by -1 dB (default: -2), trimmed for external bias and differential configuration
+    (uint32_t)0x000188A3,
+    // Rx: Set anti-aliasing filter bandwidth to 0xA (in ADI0, set IFAMPCTL3[7:4]=0xA)
+    ADI_HALFREG_OVERRIDE(0,61,0xF,0xA),
+    // override_patable_14dbm.json
+    // Tx: Set PA trim to max to maximize its output power (in ADI0, set PACTL0=0xF8)
+    ADI_REG_OVERRIDE(0,12,0xF8),
+    (uint32_t)0xFFFFFFFF
+};
+
+rfc_CMD_PROP_RADIO_DIV_SETUP_t RF_cmdPropRadioDivSetupADSL =
+{
+    .commandNo = 0x3807,
+    .status = 0x0000,
+    .pNextOp = 0,
+    .startTime = 0x00000000,
+    .startTrigger.triggerType = 0x0,
+    .startTrigger.bEnaCmd = 0x0,
+    .startTrigger.triggerNo = 0x0,
+    .startTrigger.pastTrig = 0x0,
+    .condition.rule = 0x1,
+    .condition.nSkip = 0x0,
+    .modulation.modType = 0x1,
+    .modulation.deviation = 0xC8,  // 200 * 250 Hz = 50 kHz.
+    .modulation.deviationStepSz = 0x0,
+    .symbolRate.preScale = 0xF,
+    .symbolRate.rateWord = 0x10000,  // 100 kBaud.
+    .symbolRate.decimMode = 0x0,
+    .rxBw = 0x56,  // 195.9 kHz.
+    .preamConf.nPreamBytes = 0x4,
+    .preamConf.preamMode = 0x0,
+    .formatConf.nSwBits = 0x20,
+    .formatConf.bBitReversal = 0x0,
+    .formatConf.bMsbFirst = 0x1,
+    .formatConf.fecMode = 0x0,
+    .formatConf.whitenMode = 0x0,
+    .config.frontEndMode = 0x0,
+    .config.biasMode = 0x1,
+    .config.analogCfgMode = 0x0,
+    .config.bNoFsPowerUp = 0x0,
+    .config.bSynthNarrowBand = 0x0,
+    .txPower = 0x9F3F,
+    .pRegOverride = pOverridesADSL,
+    .centerFreq = 0x0364,  // 868 MHz.
+    .intFreq = 0x08CC,
+    .loDivider = 0x05
+};

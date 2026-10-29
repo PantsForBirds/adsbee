@@ -246,7 +246,8 @@ void SettingsManager::Print() {
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len, "\t1090 Receiver: %s\r\n",
                               settings.r1090_rx_enabled ? "ENABLED" : "DISABLED");
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
-                              "\tSub-GHz Receiver: %s\r\n", settings.subg_rx_enabled ? "ENABLED" : "DISABLED");
+                              "\tSub-GHz Receiver: %s (%s)\r\n", settings.subg_rx_enabled ? "ENABLED" : "DISABLED",
+                              kSubGHzModeStrs[settings.subg_mode < kNumSubGHzRadioModes ? settings.subg_mode : 0]);
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
                               "\tRemote ID Receiver: %s (transports 0x%02X) [EXPERIMENTAL]\r\n",
                               settings.remote_id_rx_enabled ? "ENABLED" : "DISABLED", settings.remote_id_transports);
@@ -441,6 +442,10 @@ void SettingsManager::PrintAT() {
 
     // AT+SUBG_ENABLE
     CONSOLE_PRINTF("AT+SUBG_ENABLE=%s\r\n", SettingsManager::EnableStateToATValueStr(settings.subg_enabled));
+
+    // AT+SUBG_MODE
+    CONSOLE_PRINTF("AT+SUBG_MODE=%s\r\n",
+                   kSubGHzModeStrs[settings.subg_mode < kNumSubGHzRadioModes ? settings.subg_mode : 0]);
 
     // AT+TL_OFFSET
     CONSOLE_PRINTF("AT+TL_OFFSET=%u\r\n", settings.tl_offset_mv);

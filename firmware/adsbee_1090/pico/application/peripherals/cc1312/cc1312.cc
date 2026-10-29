@@ -143,7 +143,8 @@ bool CC1312::Update() {
             device_status.pending_raw_packets_len_bytes > sizeof(CompositeArray::RawPackets::Header);
         if (!CompositeArray::UnpackRawPacketsBufferToQueues(read_buf, sizeof(read_buf), nullptr,
                                                             &adsbee.raw_uat_adsb_packet_queue,
-                                                            &adsbee.raw_uat_uplink_packet_queue)) {
+                                                            &adsbee.raw_uat_uplink_packet_queue, nullptr,
+                                                            &adsbee.raw_adsl_packet_queue)) {
             CONSOLE_ERROR("CC1312::Update", "Failed to unpack raw packets from CC1312.");
             return false;
         }
