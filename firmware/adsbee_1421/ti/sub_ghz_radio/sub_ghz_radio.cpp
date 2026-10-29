@@ -121,6 +121,10 @@ void rf_cmd_callback(RF_Handle h, RF_CmdHandle ch, RF_EventMask e) {
         received_entry = current_read_entry;
     }
     if (e & (RF_EventLastCmdDone | RF_EventCmdCancelled | RF_EventCmdAborted | RF_EventCmdStopped)) {
+        if (adsl_rx) {
+            // The ADS-L PHY raises no RF_EventMdmSoft at sync, so arm the length lookup for the next packet here.
+            current_packet_len_bytes = INT16_MIN;
+        }
         rfc_dataEntryPartial_t* ended_entry = current_read_entry;
         current_read_entry = (rfc_dataEntryPartial_t*)(ended_entry->pNextEntry);
         rx_data_queue.pCurrEntry = (uint8_t*)current_read_entry;
