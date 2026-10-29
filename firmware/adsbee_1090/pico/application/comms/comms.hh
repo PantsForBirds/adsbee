@@ -24,6 +24,8 @@ class CommsManager {
     static constexpr uint16_t kUATUplinkPacketReportingQueueDepth =
         (CompositeArray::RawPackets::kMaxLenBytes - sizeof(CompositeArray::RawPackets::Header)) /
         sizeof(RawUATUplinkPacket);  // 7 packets = 3976 B payload
+    // ADS-L senders transmit about once per second; a full queue forces a flush.
+    static constexpr uint16_t kADSLPacketReportingQueueDepth = 8;
 
     static constexpr uint16_t kATCommandBufMaxLen = 1200;
     static constexpr uint16_t kNetworkConsoleBufMaxLen = 4000;  // Must match ObjectDictionary::kNetworkConsoleMessageMaxLenBytes.
@@ -122,6 +124,7 @@ class CommsManager {
     CPP_AT_CALLBACK(ATRxPositionCallback);
     CPP_AT_CALLBACK(ATSettingsCallback);
     CPP_AT_CALLBACK(ATSubGEnableCallback);
+    CPP_AT_CALLBACK(ATSubGModeCallback);
     CPP_AT_CALLBACK(ATSubGFlashCallback);
     CPP_AT_CALLBACK(ATTLReadCallback);
     CPP_AT_CALLBACK(ATTLSetCallback);
@@ -261,6 +264,8 @@ class CommsManager {
     PFBQueue<RawUATUplinkPacket> uat_uplink_packet_reporting_queue =
         PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = kUATUplinkPacketReportingQueueDepth,
                                       .buffer = uat_uplink_packet_reporting_queue_buffer_});
+    PFBQueue<RawADSLPacket> adsl_packet_reporting_queue = PFBQueue<RawADSLPacket>(
+        {.buf_len_num_elements = kADSLPacketReportingQueueDepth, .buffer = adsl_packet_reporting_queue_buffer_});
 
     // Queues for incoming / outgoing network characters.
     PFBQueue<char> esp32_console_rx_queue =
@@ -290,6 +295,7 @@ class CommsManager {
     RawModeSPacket mode_s_packet_reporting_queue_buffer_[kModeSPacketReportingQueueDepth];
     RawUATADSBPacket uat_adsb_packet_reporting_queue_buffer_[kUATADSBPacketReportingQueueDepth];
     RawUATUplinkPacket uat_uplink_packet_reporting_queue_buffer_[kUATUplinkPacketReportingQueueDepth];
+    RawADSLPacket adsl_packet_reporting_queue_buffer_[kADSLPacketReportingQueueDepth];
 
     // Reporting protocol timestamps
     // NOTE: Raw reporting interval used for RAW and BEAST protocols as well as internal functions.

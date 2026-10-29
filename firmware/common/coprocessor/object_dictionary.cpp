@@ -27,7 +27,7 @@ const uint8_t ObjectDictionary::kFirmwareVersionMajor = 0;
 const uint8_t ObjectDictionary::kFirmwareVersionMinor = 9;
 const uint8_t ObjectDictionary::kFirmwareVersionPatch = 1;
 // NOTE: Indicate a final release with RC = 0.
-const uint8_t ObjectDictionary::kFirmwareVersionReleaseCandidate = 10;
+const uint8_t ObjectDictionary::kFirmwareVersionReleaseCandidate = 11;
 
 const uint32_t ObjectDictionary::kFirmwareVersion = (kFirmwareVersionMajor << 24) | (kFirmwareVersionMinor << 16) |
                                                     (kFirmwareVersionPatch << 8) | kFirmwareVersionReleaseCandidate;
@@ -183,7 +183,8 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
             }
             CompositeArray::UnpackRawPacketsBufferToQueues(buf, buf_len, &(adsbee_server.raw_mode_s_packet_in_queue),
                                                            &(adsbee_server.raw_uat_adsb_packet_in_queue),
-                                                           &(adsbee_server.raw_uat_uplink_packet_in_queue));
+                                                           &(adsbee_server.raw_uat_uplink_packet_in_queue), nullptr,
+                                                           &(adsbee_server.raw_adsl_packet_in_queue));
             break;
         }
         case kAddrDeviceStatus: {
@@ -531,7 +532,8 @@ bool ObjectDictionary::GetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
             }
 
             CompositeArray::RawPackets raw_packets = CompositeArray::PackRawPacketsBuffer(
-                buf, buf_len, nullptr, &raw_uat_adsb_packet_queue, &raw_uat_uplink_packet_queue);
+                buf, buf_len, nullptr, &raw_uat_adsb_packet_queue, &raw_uat_uplink_packet_queue, nullptr,
+                CompositeArray::PackLimits(), &raw_adsl_packet_queue);
             if (raw_packets.IsValid() == false) {
                 CONSOLE_ERROR("ObjectDictionary::GetBytes",
                               "Failed to pack CompositeArray::RawPackets into buffer for reading.");
@@ -638,11 +640,14 @@ void ObjectDictionary::UpdateDeviceStatus() {
         .pending_raw_packets_len_bytes =
             static_cast<uint16_t>(raw_uat_adsb_packet_queue.Length() * sizeof(RawUATADSBPacket) +
                                   raw_uat_uplink_packet_queue.Length() * sizeof(RawUATUplinkPacket) +
+                                  raw_adsl_packet_queue.Length() * sizeof(RawADSLPacket) +
                                   sizeof(CompositeArray::RawPackets::Header)),
         .num_raw_uat_adsb_packets = metrics.num_raw_uat_adsb_packets,
         .num_valid_uat_adsb_packets = metrics.num_valid_uat_adsb_packets,
         .num_raw_uat_uplink_packets = metrics.num_raw_uat_uplink_packets,
-        .num_valid_uat_uplink_packets = metrics.num_valid_uat_uplink_packets};
+        .num_valid_uat_uplink_packets = metrics.num_valid_uat_uplink_packets,
+        .num_raw_adsl_packets = metrics.num_raw_adsl_packets,
+        .num_valid_adsl_packets = metrics.num_valid_adsl_packets};
     // Reset metrics after reading.
     metrics = {0};
 #endif

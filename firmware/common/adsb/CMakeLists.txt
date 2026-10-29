@@ -9,6 +9,7 @@ if (TARGET application)
     target_sources(application PRIVATE
         mode_s_packet.cpp
         uat_packet.cpp
+        adsl_packet.cpp
         aircraft_dictionary.cpp
         decode_utils.cpp
         mode_s_packet_decoder.cc
@@ -24,6 +25,7 @@ elseif (TARGET sub_ghz_radio)
     target_sources(sub_ghz_radio PRIVATE
         # adsb/mode_s_packet.cpp
         uat_packet.cpp
+        adsl_packet.cpp
         # adsb/aircraft_dictionary.cpp
         decode_utils.cpp
     )
@@ -37,6 +39,7 @@ elseif (TARGET host_test OR TARGET host_test_fpu)
             target_sources(${_test_tgt} PRIVATE
                 mode_s_packet.cpp
                 uat_packet.cpp
+                adsl_packet.cpp
                 aircraft_dictionary.cpp
                 decode_utils.cpp
                 mode_s_packet_decoder.cc

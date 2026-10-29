@@ -47,7 +47,7 @@ const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[1
     '"FEED_ENABLE":[1],"FILTER_ALTITUDE_FT":["OFF",0,10000],"FILTER_DISTANCE_NM":[0,100.0],"SWARM":[0,"https://adsbee.aero",""],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"IP_MODE":["DUAL"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
     '"MAVLINK_ID":[1,156],"NTP_SERVER":["pool.ntp.org"],"PROTOCOL_OUT":["NONE","NONE"],"REMOTE_ID":[0,7,"0x00"],' +
     '"REMOTE_ID_TX":[0,7,"",1,2,"","0x0000"],"RX_ENABLE":[1,1],' +
-    '"RX_POSITION":["LOWEST","OK",37.000000,-122.000000,-50,125,317.7,74,"000000"],"SUBG_ENABLE":["1"],' +
+    '"RX_POSITION":["LOWEST","OK",37.000000,-122.000000,-50,125,317.7,74,"000000"],"SUBG_ENABLE":["1"],"SUBG_MODE":["ADSL_RX"],' +
     '"TL_OFFSET":[600,"-104 dBm"],"WATCHDOG":[10],"WIFI_AP":[0,"test-bee","yummyflowers",1],"WIFI_STA":[0,""],' +
     '"WIFI_STA_NETWORK":["office",""]}';
 
@@ -100,6 +100,7 @@ test('every GUI setting is in the dump and loads from one command', async () => 
     assert.strictEqual(input('WIFI_STA_NETWORK', 'ssid2').value, 'office');
     assert.strictEqual(input('WIFI_STA_NETWORK', 'ssid3').value, '');
     assert.strictEqual(input('SUBG_ENABLE', 'state').value, '1');
+    assert.strictEqual(input('SUBG_MODE', 'mode').value, 'ADSL_RX');
     assert.strictEqual(input('LOG_LEVEL', 'level').value, 'WARNINGS');
     assert.strictEqual(input('RX_POSITION', 'source').value, 'LOWEST');
     assert.strictEqual(input('RX_POSITION', 'heading').value, '317.7');

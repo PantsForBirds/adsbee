@@ -129,6 +129,8 @@ bool CC1312::Update() {
         adsbee.aircraft_dictionary.RecordSubGHzMetrics(
             device_status.num_raw_uat_adsb_packets, device_status.num_valid_uat_adsb_packets,
             device_status.num_raw_uat_uplink_packets, device_status.num_valid_uat_uplink_packets);
+        adsbee.aircraft_dictionary.RecordADSLMetrics(device_status.num_raw_adsl_packets,
+                                                     device_status.num_valid_adsl_packets);
 
         // Read one array of packets from the queues. The CC1312 fills it with as many packets as fit.
         uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
@@ -143,7 +145,8 @@ bool CC1312::Update() {
             device_status.pending_raw_packets_len_bytes > sizeof(CompositeArray::RawPackets::Header);
         if (!CompositeArray::UnpackRawPacketsBufferToQueues(read_buf, sizeof(read_buf), nullptr,
                                                             &adsbee.raw_uat_adsb_packet_queue,
-                                                            &adsbee.raw_uat_uplink_packet_queue)) {
+                                                            &adsbee.raw_uat_uplink_packet_queue, nullptr,
+                                                            &adsbee.raw_adsl_packet_queue)) {
             CONSOLE_ERROR("CC1312::Update", "Failed to unpack raw packets from CC1312.");
             return false;
         }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "adsl_packet.hh"
 #include "data_structures.hh"
 #include "mode_s_packet.hh"
 #include "remote_id_packet.hh"
@@ -42,6 +43,8 @@ class CompositeArray {
             // packets, which the ESP32 forwards up to the RP2040. Firmwares are rebuilt in lockstep, and any firmware
             // that predates Remote ID simply wrote 0 here, so reusing the field is backwards compatible on the wire.
             uint16_t num_remote_id_packets = 0;
+            uint16_t num_adsl_packets = 0;
+            uint16_t reserved = 0;  // Keeps the header word-aligned.
         };
 
         /**
@@ -68,15 +71,16 @@ class CompositeArray {
             uint16_t expected_len_bytes = sizeof(Header) + header->num_mode_s_packets * sizeof(RawModeSPacket) +
                                           header->num_uat_adsb_packets * sizeof(RawUATADSBPacket) +
                                           header->num_uat_uplink_packets * sizeof(RawUATUplinkPacket) +
-                                          header->num_remote_id_packets * sizeof(RawRemoteIDPacket);
+                                          header->num_remote_id_packets * sizeof(RawRemoteIDPacket) +
+                                          header->num_adsl_packets * sizeof(RawADSLPacket);
             if (len_bytes < expected_len_bytes) {
                 if (error_msg) {
                     snprintf(error_msg, kErrorMessageMaxLen,
                              "Invalid CompositeArray::RawPackets: insufficient length for %u Mode S packet(s), %u UAT "
-                             "ADSB packet(s), %u UAT Uplink packet(s), %u Remote ID packet(s) (expected %u bytes, got "
-                             "%u bytes).",
+                             "ADSB packet(s), %u UAT Uplink packet(s), %u Remote ID packet(s), %u ADS-L packet(s) (expected "
+                             "%u bytes, got %u bytes).",
                              header->num_mode_s_packets, header->num_uat_adsb_packets, header->num_uat_uplink_packets,
-                             header->num_remote_id_packets, expected_len_bytes, len_bytes);
+                             header->num_remote_id_packets, header->num_adsl_packets, expected_len_bytes, len_bytes);
                 }
                 return false;
             }
@@ -90,6 +94,7 @@ class CompositeArray {
         RawUATADSBPacket* uat_adsb_packets = nullptr;      // Array of RawUATADSBPacket structs.
         RawUATUplinkPacket* uat_uplink_packets = nullptr;  // Array of RawUATUplinkPacket structs.
         RawRemoteIDPacket* remote_id_packets = nullptr;    // Array of RawRemoteIDPacket structs.
+        RawADSLPacket* adsl_packets = nullptr;              // Array of RawADSLPacket structs.
     };
 
     // Ensure that things are nicely word-aliged so that we can do direct array access without memcpy.
@@ -98,6 +103,7 @@ class CompositeArray {
     static_assert(sizeof(RawUATADSBPacket) % 4 == 0);
     static_assert(sizeof(RawUATUplinkPacket) % 4 == 0);
     static_assert(sizeof(RawRemoteIDPacket) % 4 == 0);
+    static_assert(sizeof(RawADSLPacket) % 4 == 0);
 
     /**
      * Per-type caps on how many packets one PackRawPacketsBuffer() call dequeues, to bound work per call. Unlimited by
@@ -108,13 +114,16 @@ class CompositeArray {
         uint16_t max_uat_adsb_packets;
         uint16_t max_uat_uplink_packets;
         uint16_t max_remote_id_packets;
+        uint16_t max_adsl_packets;
 
         constexpr PackLimits(uint16_t max_mode_s = UINT16_MAX, uint16_t max_uat_adsb = UINT16_MAX,
-                             uint16_t max_uat_uplink = UINT16_MAX, uint16_t max_remote_id = UINT16_MAX)
+                             uint16_t max_uat_uplink = UINT16_MAX, uint16_t max_remote_id = UINT16_MAX,
+                             uint16_t max_adsl = UINT16_MAX)
             : max_mode_s_packets(max_mode_s),
               max_uat_adsb_packets(max_uat_adsb),
               max_uat_uplink_packets(max_uat_uplink),
-              max_remote_id_packets(max_remote_id) {}
+              max_remote_id_packets(max_remote_id),
+              max_adsl_packets(max_adsl) {}
     };
 
     /**
@@ -128,13 +137,15 @@ class CompositeArray {
      * skip.
      * @param[in] remote_id_queue Pointer to a PFBQueue of RawRemoteIDPacket to dequeue packets from, or nullptr to skip.
      * @param[in] limits Per-type caps on the number of packets to dequeue. Unlimited by default.
+     * @param[in] adsl_queue Pointer to a PFBQueue of RawADSLPacket to dequeue packets from, or nullptr to skip.
      * @retval CompositeArray::RawPackets struct that describes the contents of the buffer.
      */
     static RawPackets PackRawPacketsBuffer(uint8_t* buf, uint16_t buf_len_bytes, PFBQueue<RawModeSPacket>* mode_s_queue,
                                            PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
                                            PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
                                            PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr,
-                                           const PackLimits& limits = PackLimits());
+                                           const PackLimits& limits = PackLimits(),
+                                           PFBQueue<RawADSLPacket>* adsl_queue = nullptr);
 
     /**
      * Unpacks a buffer containing a CompositeArray (RawPackets::Header) followed by arrays of raw packets of each kind,
@@ -152,8 +163,9 @@ class CompositeArray {
         uint32_t uat_adsb = 0;
         uint32_t uat_uplink = 0;
         uint32_t remote_id = 0;
+        uint32_t adsl = 0;
 
-        uint32_t Total() const { return mode_s + uat_adsb + uat_uplink + remote_id; }
+        uint32_t Total() const { return mode_s + uat_adsb + uat_uplink + remote_id + adsl; }
     };
     static QueueFullDrops queue_full_drops;  // Since boot.
     static constexpr uint32_t kQueueFullLogIntervalMs = 5000;
@@ -170,6 +182,7 @@ class CompositeArray {
      * skip.
      * @param[out] remote_id_queue Pointer to a PFBQueue of RawRemoteIDPacket to enqueue packets into, or nullptr to
      * skip.
+     * @param[out] adsl_queue Pointer to a PFBQueue of RawADSLPacket to enqueue packets into, or nullptr to skip.
      * @retval True if all packets were successfully enqueued, false otherwise.
      *
      * A full queue drops only the packets that don't fit. Drops are counted in queue_full_drops and logged at most once
@@ -179,7 +192,8 @@ class CompositeArray {
                                                PFBQueue<RawModeSPacket>* mode_s_queue,
                                                PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
                                                PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
-                                               PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr);
+                                               PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr,
+                                               PFBQueue<RawADSLPacket>* adsl_queue = nullptr);
 
     /**
      * Calculates the length in bytes of a raw packet buffer that would be formed by emptying the contents of the
@@ -189,16 +203,18 @@ class CompositeArray {
      * @param[in] uat_uplink_queue Pointer to a PFBQueue of RawUATUplinkPacket to count packets from, or nullptr to
      * skip.
      * @param[in] remote_id_queue Pointer to a PFBQueue of RawRemoteIDPacket to count packets from, or nullptr to skip.
+     * @param[in] adsl_queue Pointer to a PFBQueue of RawADSLPacket to count packets from, or nullptr to skip.
      * @retval The total length in bytes, including the header and all packets from the queues.
      */
     static uint16_t CalculateRawPacketsBufferLength(PFBQueue<RawModeSPacket>* mode_s_queue,
                                                     PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
                                                     PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
-                                                    PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr);
+                                                    PFBQueue<RawRemoteIDPacket>* remote_id_queue = nullptr,
+                                                    PFBQueue<RawADSLPacket>* adsl_queue = nullptr);
 
     /**
      * Merges packets from src_buf into dst_buf in-place. Packets of each type from src are appended after the
-     * corresponding type section in dst, preserving the [Header|ModeS|ADSB|Uplink] layout in dst_buf.
+     * corresponding type section in dst, preserving the [Header|ModeS|ADSB|Uplink|RemoteID|ADSL] layout in dst_buf.
      * @param[in,out] dst_buf Buffer to merge into. Modified in-place on success.
      * @param[in] src_buf Buffer to read packets from. Not modified.
      * @retval True if merge succeeded. False if the combined content would exceed kMaxLenBytes, in which case

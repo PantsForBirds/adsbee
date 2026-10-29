@@ -17,6 +17,7 @@
 #include "mlat/mlat_clear_dma.hh"
 #include "packet_decoder.hh"
 #include "sub_ghz_radio.hh"
+#include "adsl_packet_decoder.hh"
 #include "uat_packet_decoder.hh"
 
 ADSBee::ADSBee(ADSBeeConfig config) : lr2021(config.lr2021_config), config_(config) {
@@ -710,6 +711,15 @@ void ADSBee::IngestAndForwardPackets() {
         aircraft_dictionary.IngestDecodedUATADSBPacket(decoded_uat_adsb_packet);
         aircraft_dictionary.RecordSubGHzMetrics(0, 1, 0, 0);
         if (!comms_manager.uat_adsb_packet_reporting_queue.Enqueue(decoded_uat_adsb_packet.raw)) {
+            comms_manager.uat_report_queue_ovf_count++;  // Counted, not logged (see the Mode S queue above).
+        }
+    }
+
+    // Ingest ADS-L packets and report them.
+    RawADSLPacket adsl_packet;
+    while (adsl_packet_decoder.adsl_packet_out_queue.Dequeue(adsl_packet)) {
+        aircraft_dictionary.IngestADSLPacket(adsl_packet);
+        if (!comms_manager.adsl_packet_reporting_queue.Enqueue(adsl_packet)) {
             comms_manager.uat_report_queue_ovf_count++;  // Counted, not logged (see the Mode S queue above).
         }
     }

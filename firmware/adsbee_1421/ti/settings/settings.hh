@@ -70,10 +70,12 @@ class SettingsManager {
     };
 
     // Mode setting for the Sub-GHz radio (AT+SUBG_MODE). Values are flash-persisted: append new modes, don't
-    // renumber. Future sub-GHz protocols (e.g. ADS-L, FLARM) get added here.
+    // renumber.
     enum SubGHzRadioMode : uint8_t {
-        kSubGHzRadioModeUATRx = 0,      // UAT (978MHz): ADS-B + ground uplink reception.
-        kSubGHzRadioModeUATRxNoUplink,  // UAT (978MHz): ADS-B only, uplink sync word disabled at the RF core.
+        kSubGHzRadioModeUATRx = 0,       // UAT (978MHz): ADS-B + ground uplink reception.
+        kSubGHzRadioModeUATRxNoUplink,   // UAT (978MHz): ADS-B only, uplink sync word disabled at the RF core.
+        kSubGHzRadioModeADSLRx,          // ADS-L M-band receiver on 868.2 MHz.
+        kSubGHzRadioModeADSLRx868_4MHz,  // ADS-L M-band receiver on 868.4 MHz.
         kNumSubGHzRadioModes
     };
     static const char kSubGHzModeStrs[kNumSubGHzRadioModes][kSubGHzModeStrMaxLen];

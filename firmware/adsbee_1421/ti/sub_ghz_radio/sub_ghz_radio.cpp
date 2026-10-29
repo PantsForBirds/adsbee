@@ -3,6 +3,7 @@
 #include <posix/unistd.h>  // For usleep.
 
 #include "adsbee.hh"
+#include "adsl_packet_decoder.hh"
 #include "hal.hh"
 #include "macros.hh"
 #include "uat_packet_decoder.hh"
@@ -46,6 +47,17 @@ static const RF_EventMask kRxEventMask =
 
 static volatile int16_t current_packet_len_bytes = INT16_MIN;
 
+// Set while the radio runs an ADS-L mode. Read by the RF callback.
+static volatile bool adsl_rx = false;
+static volatile uint8_t adsl_channel = RawADSLPacket::kChannelUnknown;
+// ADS-L frequencies: 868 MHz + fractFreq / 65536 MHz.
+static const uint16_t kADSLFreqMHz = 868;
+static const uint16_t kADSLFractFreq868_2MHz = 0x3333;
+static const uint16_t kADSLFractFreq868_4MHz = 0x6666;
+static const uint16_t kUATFreqMHz = 978;
+// SET_LEN for a reception whose length byte is invalid: shorter than what has arrived, so the RF core ends it now.
+static const uint16_t kADSLRejectRxLenBytes = 1;
+
 // Packet RX Configuration
 //  ------------------------------------------------------------------------------------------------------------------------
 //  | Partial Data Entry Header | Payload Length (lenSz Bytes) | Payload Bytes | Optional Appended Bytes
@@ -73,7 +85,18 @@ void rf_cmd_callback(RF_Handle h, RF_CmdHandle ch, RF_EventMask e) {
     }
 
     if (e & RF_EventNDataWritten) {
-        if (current_packet_len_bytes < 0) {
+        if (adsl_rx && current_packet_len_bytes < 0) {
+            // ADS-L: the header byte is the first chip byte. The first two chip bytes carry the Manchester coded
+            // length byte. rxLen counts the bytes after the header.
+            const uint8_t* chips = &(current_read_entry->rxData) + kPartialDataEntryPayloadLenSzBytes;
+            uint16_t num_chip_bytes = RawADSLPacket::ChipBytesFromLengthChips(chips[0], chips[1]);
+            current_packet_len_bytes = num_chip_bytes > 0 ? num_chip_bytes - kPacketHeaderSizeBytes : kADSLRejectRxLenBytes;
+            rfc_CMD_PROP_SET_LEN_t RF_cmdPropSetLen = {.commandNo = CMD_PROP_SET_LEN,
+                                                       .rxLen = (uint16_t)(current_packet_len_bytes)};
+            if (RF_runImmediateCmd(h, (uint32_t*)&RF_cmdPropSetLen) != RF_StatCmdDoneSuccess) {
+                subg_radio.set_len_error_count = subg_radio.set_len_error_count + 1;
+            }
+        } else if (current_packet_len_bytes < 0) {
             // Only set the length once per packet (irqIntv=0 fires at 16 bytes; rxData[2] and [3] are ready).
             uint8_t sync_word_ls4 = (&(current_read_entry->rxData))[kPartialDataEntryPayloadLenSzBytes] &
                                     0x0F;  // Last 4 bits of sync word are the first 4 bits of the payload.
@@ -98,6 +121,10 @@ void rf_cmd_callback(RF_Handle h, RF_CmdHandle ch, RF_EventMask e) {
         received_entry = current_read_entry;
     }
     if (e & (RF_EventLastCmdDone | RF_EventCmdCancelled | RF_EventCmdAborted | RF_EventCmdStopped)) {
+        if (adsl_rx) {
+            // The ADS-L PHY raises no RF_EventMdmSoft at sync, so arm the length lookup for the next packet here.
+            current_packet_len_bytes = INT16_MIN;
+        }
         rfc_dataEntryPartial_t* ended_entry = current_read_entry;
         current_read_entry = (rfc_dataEntryPartial_t*)(ended_entry->pNextEntry);
         rx_data_queue.pCurrEntry = (uint8_t*)current_read_entry;
@@ -115,6 +142,7 @@ void rf_cmd_callback(RF_Handle h, RF_CmdHandle ch, RF_EventMask e) {
 bool SubGHzRadio::Init() {
     RF_Params rf_params;
     RF_Params_init(&rf_params);
+    bool adsl = ModeIsADSL(mode_);
 
     // Overriding settings from smartrf/smartrf_settings.c.
     /* RF_cmdPropRxAdv  - Advanced Rx command settings. */
@@ -140,6 +168,11 @@ bool SubGHzRadio::Init() {
     // no 552-byte receptions and no FEC decode work for uplinks.
     RF_cmdPropRxAdv.syncWord0 = RawUATADSBPacket::kSyncWordMS32;
     RF_cmdPropRxAdv.syncWord1 = UplinkRxEnabled() ? RawUATUplinkPacket::kSyncWordMS32 : 0;
+    if (adsl) {
+        // ADS-L syncs on the Manchester coded sync word. The radio stores raw chips; software decodes them.
+        RF_cmdPropRxAdv.syncWord0 = RawADSLPacket::kSyncWordChips;
+        RF_cmdPropRxAdv.syncWord1 = 0;
+    }
 
     // Must be 0 (unlimited) so that CMD_PROP_SET_LEN (called in RF_EventNDataWritten) can shorten reception for
     // ADSB packets instead of always receiving the full 552-byte uplink length. If the RF callback is preempted
@@ -150,6 +183,10 @@ bool SubGHzRadio::Init() {
 
     // The last 4 bits of the Sync word are interpreted as the header, so the rest of the packet stays byte-aligned.
     RF_cmdPropRxAdv.hdrConf = {.numHdrBits = 4, .lenPos = 0, .numLenBits = 0};
+    if (adsl) {
+        // ADS-L: the first chip byte is stored as the header byte, so the data entry layout matches UAT.
+        RF_cmdPropRxAdv.hdrConf = {.numHdrBits = 8, .lenPos = 0, .numLenBits = 0};
+    }
 
     // No address field.
     RF_cmdPropRxAdv.addrConf = {0};
@@ -185,7 +222,22 @@ bool SubGHzRadio::Init() {
 
     current_read_entry = (rfc_dataEntryPartial_t*)(rx_data_queue.pCurrEntry);
 
-    rf_handle_ = RF_open(&rf_object_, &RF_prop, (RF_RadioSetup*)&RF_cmdPropRadioDivSetup, &rf_params);
+    RF_cmdPropRadioDivSetupADSL.formatConf.nSwBits = 32;
+    if (adsl) {
+        RF_cmdFs.frequency = kADSLFreqMHz;
+        RF_cmdFs.fractFreq = mode_ == SettingsManager::kSubGHzRadioModeADSLRx868_4MHz ? kADSLFractFreq868_4MHz
+                                                                                     : kADSLFractFreq868_2MHz;
+        adsl_channel = mode_ == SettingsManager::kSubGHzRadioModeADSLRx868_4MHz ? RawADSLPacket::kChannel868_4MHz
+                                                                               : RawADSLPacket::kChannel868_2MHz;
+    } else {
+        RF_cmdFs.frequency = kUATFreqMHz;
+        RF_cmdFs.fractFreq = 0;
+    }
+    adsl_rx = adsl;
+
+    rf_handle_ = RF_open(&rf_object_, &RF_prop,
+                         adsl ? (RF_RadioSetup*)&RF_cmdPropRadioDivSetupADSL : (RF_RadioSetup*)&RF_cmdPropRadioDivSetup,
+                         &rf_params);
     if (!rf_handle_) {
         CONSOLE_ERROR("SubGHzRadio::Init", "Failed to open RF device.");
         return false;  // Failed to open RF handle.
@@ -280,10 +332,14 @@ bool SubGHzRadio::SetMode(SettingsManager::SubGHzRadioMode mode) {
     // syncWord1 is only read when CMD_PROP_RX_ADV starts, and re-posting the aborted RF_cmdPropRxAdv without an
     // RF_close/RF_open cycle is rejected with PROP_ERROR_PAR (see StartRssiScan()), so tear the client down and
     // rebuild it exactly like Suspend()/Resume(). Clear the stale DONE_ABORT status first so Update() can't
-    // misread it as "RX ended" and double-post before the RF core marks the new command PENDING.
+    // misread it as "RX ended" and double-post before the RF core marks the new command PENDING. The aborted command
+    // ends with PROP_DONE_ABORT, which HandleRxCommandEnd() re-posts while rx_enabled is set, and RF_close() then
+    // waits for that command forever: clear rx_enabled first, as Suspend() does.
+    rx_enabled = false;
     RF_cancelCmd(rf_handle_, rx_cmd_handle_, 0);
     DeInit();
     ((RF_Op*)&RF_cmdPropRxAdv)->status = IDLE;
+    rx_enabled = true;
     if (!Init()) {
         CONSOLE_ERROR("SubGHzRadio::SetMode", "Failed to restart RX in mode %s.",
                       SettingsManager::kSubGHzModeStrs[mode_]);
@@ -321,6 +377,17 @@ bool SubGHzRadio::HandlePacketRx(rfc_dataEntryPartial_t* filled_entry) {
                          (packet_data[packet_len_bytes + 3] << 16) | (packet_data[packet_len_bytes + 4] << 24);
     int8_t status = static_cast<int8_t>(packet_data[packet_len_bytes + kPartialDataEntryNumAppendedBytes - 1]);
     static_assert(kPartialDataEntryNumAppendedBytes == 6);  // This section is hardcoded to match the appended bytes.
+
+    if (adsl_rx) {
+        // The header byte is the first chip byte.
+        uint16_t num_chip_bytes = packet_len_bytes + kPacketHeaderSizeBytes;
+        if (num_chip_bytes > RawADSLPacket::kMaxChipBytes) {
+            return false;
+        }
+        adsl_packet_decoder.EnqueueChips(buf + kPartialDataEntryPayloadLenSzBytes, num_chip_bytes, rssi_dbm, timestamp,
+                                         adsl_channel);
+        return true;
+    }
 
     // Dispatch on the entry-derived, bounds-checked packet_len_bytes -- NOT the volatile
     // current_packet_len_bytes written by the RF_EventNDataWritten handler. RF events coalesce and

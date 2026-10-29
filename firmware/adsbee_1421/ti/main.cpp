@@ -21,6 +21,7 @@ extern "C" {
 #include "object_dictionary.hh"
 #include "packet_decoder.hh"
 #include "sub_ghz_radio.hh"
+#include "adsl_packet_decoder.hh"
 #include "uat_packet_decoder.hh"
 
 // #include "unistd.h" // For usleep.
@@ -50,6 +51,7 @@ ADSBee adsbee = ADSBee({});
 PacketDecoder packet_decoder;
 SubGHzRadio subg_radio({});
 UATPacketDecoder uat_packet_decoder;
+ADSLPacketDecoder adsl_packet_decoder;
 
 /**
  * A note on interrupt priorities (configured via SysConfig in syscfg/adsbee_1421.syscfg):
@@ -182,6 +184,7 @@ int main(void) {
         adsbee.rx1090_total_cycles += CycleCounter::Since(rx1090_start_cycles);
         subg_radio.Update();
         uat_packet_decoder.Update();
+        adsl_packet_decoder.Update();
         comms_manager.Update();
         // Track the longest loop iteration (AT+RX_STATS max_loop_us) as the receiver's stall gauge.
         uint32_t loop_us = static_cast<uint32_t>(get_time_since_boot_us() - loop_start_us);

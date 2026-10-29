@@ -608,7 +608,7 @@ TEST(CompositeArray, RawPacketsHeaderIsValid) {
     packets.header->num_mode_s_packets = 2;
     packets.header->num_uat_adsb_packets = 1;
     packets.header->num_uat_uplink_packets = 1;
-    packets.len_bytes = 8;  // Too small to hold the packets
+    packets.len_bytes = sizeof(CompositeArray::RawPackets::Header);  // Too small to hold the packets
     // uint16_t expected_len_bytes = sizeof(CompositeArray::RawPackets::Header) +
     //                               packets.header->num_mode_s_packets * sizeof(RawModeSPacket) +
     //                               packets.header->num_uat_adsb_packets * sizeof(RawUATADSBPacket) +
@@ -617,7 +617,7 @@ TEST(CompositeArray, RawPacketsHeaderIsValid) {
     EXPECT_STREQ(
         error_msg,
         "Invalid CompositeArray::RawPackets: insufficient length for 2 Mode S packet(s), 1 UAT ADSB packet(s), 1 "
-        "UAT Uplink packet(s), 0 Remote ID packet(s) (expected 704 bytes, got 8 bytes).");
+        "UAT Uplink packet(s), 0 Remote ID packet(s), 0 ADS-L packet(s) (expected 708 bytes, got 12 bytes).");
 
     // Valid case
     packets.len_bytes = sizeof(CompositeArray::RawPackets::Header) + 2 * sizeof(RawModeSPacket) +
@@ -851,4 +851,101 @@ static uint16_t RunFullGroundSegments(uint16_t num_frames, uint32_t poll_duratio
 TEST(CompositeArray, FullGroundSegmentsOfUATUplinksReachTheMaster) {
     EXPECT_EQ(RunFullGroundSegments(30, 3), 30 * 32);   // Fast main loop.
     EXPECT_EQ(RunFullGroundSegments(30, 30), 30 * 32);  // Main loop slowed by other work.
+}
+
+namespace {
+template <typename T>
+PFBQueue<T> MakeTaggedQueue(uint16_t count, uint8_t base, uint16_t depth = 64) {
+    PFBQueue<T> q({.buf_len_num_elements = depth, .buffer = nullptr, .overwrite_when_full = false});
+    T pkt;
+    for (uint16_t i = 0; i < count; i++) {
+        if constexpr (std::is_same_v<T, RawModeSPacket>) {
+            pkt.buffer[0] = base + i;
+        } else if constexpr (std::is_same_v<T, RawUATUplinkPacket>) {
+            pkt.encoded_message[0] = base + i;
+        } else if constexpr (std::is_same_v<T, RawRemoteIDPacket>) {
+            pkt.payload[0] = base + i;
+        } else {
+            pkt.buffer[0] = base + i;
+        }
+        q.Enqueue(pkt);
+    }
+    return q;
+}
+}  // namespace
+
+TEST(CompositeArray, PackUnpackRawPacketsBufferWithADSL) {
+    alignas(4) uint8_t buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    auto ms_q = MakeTaggedQueue<RawModeSPacket>(3, 0);
+    auto rid_q = MakeTaggedQueue<RawRemoteIDPacket>(1, 40);
+    auto adsl_q = MakeTaggedQueue<RawADSLPacket>(5, 60);
+    CompositeArray::RawPackets packed = CompositeArray::PackRawPacketsBuffer(
+        buf, sizeof(buf), &ms_q, nullptr, nullptr, &rid_q, CompositeArray::PackLimits(), &adsl_q);
+    EXPECT_EQ(packed.header->num_adsl_packets, 5);
+    EXPECT_EQ(packed.len_bytes, sizeof(CompositeArray::RawPackets::Header) + 3 * sizeof(RawModeSPacket) +
+                                    sizeof(RawRemoteIDPacket) + 5 * sizeof(RawADSLPacket));
+    EXPECT_EQ(CompositeArray::CalculateRawPacketsBufferLength(&ms_q, nullptr, nullptr, &rid_q, &adsl_q),
+              sizeof(CompositeArray::RawPackets::Header));
+
+    CompositeArray::RawPackets unpacked;
+    ASSERT_TRUE(CompositeArray::UnpackRawPacketsBuffer(unpacked, buf, packed.len_bytes));
+    EXPECT_TRUE(unpacked.IsValid());
+    for (uint16_t i = 0; i < 5; i++) EXPECT_EQ(unpacked.adsl_packets[i].buffer[0], 60 + i);
+    EXPECT_EQ(unpacked.remote_id_packets[0].payload[0], 40);
+
+    auto out_ms = MakeTaggedQueue<RawModeSPacket>(0, 0);
+    auto out_rid = MakeTaggedQueue<RawRemoteIDPacket>(0, 0);
+    auto out_adsl = MakeTaggedQueue<RawADSLPacket>(0, 0);
+    EXPECT_FALSE(CompositeArray::UnpackRawPacketsBufferToQueues(buf, packed.len_bytes, &out_ms, nullptr, nullptr,
+                                                                &out_rid));  // ADS-L packets need a queue.
+    out_ms.Clear();
+    out_rid.Clear();
+    EXPECT_TRUE(CompositeArray::UnpackRawPacketsBufferToQueues(buf, packed.len_bytes, &out_ms, nullptr, nullptr,
+                                                               &out_rid, &out_adsl));
+    EXPECT_EQ(out_adsl.Length(), 5);
+    RawADSLPacket first;
+    ASSERT_TRUE(out_adsl.Dequeue(first));
+    EXPECT_EQ(first.buffer[0], 60);
+}
+
+TEST(CompositeArray, ModeSFloodLeavesRoomForADSL) {
+    alignas(4) uint8_t buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    auto ms_q = MakeTaggedQueue<RawModeSPacket>(200, 0, 200);
+    auto adsl_q = MakeTaggedQueue<RawADSLPacket>(10, 60);
+    CompositeArray::RawPackets packed = CompositeArray::PackRawPacketsBuffer(
+        buf, sizeof(buf), &ms_q, nullptr, nullptr, nullptr, CompositeArray::PackLimits(), &adsl_q);
+    EXPECT_GE(packed.header->num_adsl_packets, 4);
+    EXPECT_GT(packed.header->num_mode_s_packets, 0);
+    EXPECT_LE(packed.len_bytes, sizeof(buf));
+}
+
+TEST(CompositeArray, MergeRawPacketsBuffersWithADSL) {
+    alignas(4) uint8_t dst_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    alignas(4) uint8_t src_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    auto dms = MakeTaggedQueue<RawModeSPacket>(2, 0);
+    auto dupl = MakeTaggedQueue<RawUATUplinkPacket>(1, 20);
+    auto drid = MakeTaggedQueue<RawRemoteIDPacket>(1, 40);
+    auto dadsl = MakeTaggedQueue<RawADSLPacket>(2, 60);
+    auto sms = MakeTaggedQueue<RawModeSPacket>(1, 100);
+    auto srid = MakeTaggedQueue<RawRemoteIDPacket>(1, 140);
+    auto sadsl = MakeTaggedQueue<RawADSLPacket>(3, 160);
+    CompositeArray::PackRawPacketsBuffer(dst_buf, sizeof(dst_buf), &dms, nullptr, &dupl, &drid,
+                                         CompositeArray::PackLimits(), &dadsl);
+    CompositeArray::PackRawPacketsBuffer(src_buf, sizeof(src_buf), &sms, nullptr, nullptr, &srid,
+                                         CompositeArray::PackLimits(), &sadsl);
+    ASSERT_TRUE(CompositeArray::MergeRawPacketsBuffers(dst_buf, src_buf));
+
+    CompositeArray::RawPackets result;
+    ASSERT_TRUE(CompositeArray::UnpackRawPacketsBuffer(result, dst_buf, sizeof(dst_buf)));
+    EXPECT_TRUE(result.IsValid());
+    EXPECT_EQ(result.header->num_mode_s_packets, 3);
+    EXPECT_EQ(result.header->num_uat_uplink_packets, 1);
+    EXPECT_EQ(result.header->num_remote_id_packets, 2);
+    ASSERT_EQ(result.header->num_adsl_packets, 5);
+    EXPECT_EQ(result.mode_s_packets[2].buffer[0], 100u);
+    EXPECT_EQ(result.uat_uplink_packets[0].encoded_message[0], 20);
+    EXPECT_EQ(result.remote_id_packets[0].payload[0], 40);
+    EXPECT_EQ(result.remote_id_packets[1].payload[0], 140);
+    const uint8_t expected_adsl[] = {60, 61, 160, 161, 162};
+    for (uint16_t i = 0; i < 5; i++) EXPECT_EQ(result.adsl_packets[i].buffer[0], expected_adsl[i]) << i;
 }
