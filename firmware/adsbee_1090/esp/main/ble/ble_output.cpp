@@ -53,7 +53,17 @@ uint16_t s_hm10_val_handle = 0;
 std::atomic<bool> s_want = false;  // Advertise and serve.
 std::atomic<bool> s_advertising = false;
 std::atomic<uint16_t> s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-std::atomic<uint16_t> s_notify_handle = 0;  // Characteristic the client subscribed to; 0 if none.
+// Notifications the client turned on. A bonded client gets its old subscriptions back on reconnecting, so it may be
+// subscribed to both characteristics; each gets the stream.
+std::atomic<bool> s_nus_subscribed = false;
+std::atomic<bool> s_hm10_subscribed = false;
+
+bool Subscribed() { return s_nus_subscribed || s_hm10_subscribed; }
+
+void ClearSubscriptions() {
+    s_nus_subscribed = false;
+    s_hm10_subscribed = false;
+}
 std::atomic<uint16_t> s_mtu = BLE_ATT_MTU_DFLT;
 std::atomic<bool> s_clear_pending = false;  // Drop queued data (the client left or unsubscribed).
 
@@ -116,18 +126,24 @@ void Pump() {
     if (s_stream == nullptr) return;
     if (s_clear_pending.exchange(false)) s_stream->Clear();
     const uint16_t conn_handle = s_conn_handle;
-    const uint16_t notify_handle = s_notify_handle;
-    if (notify_handle == 0 || conn_handle == BLE_HS_CONN_HANDLE_NONE) return;
+    uint16_t handles[2];
+    uint8_t num_handles = 0;
+    if (s_nus_subscribed) handles[num_handles++] = s_nus_tx_val_handle;
+    if (s_hm10_subscribed) handles[num_handles++] = s_hm10_val_handle;
+    if (num_handles == 0 || conn_handle == BLE_HS_CONN_HANDLE_NONE) return;
     uint16_t payload_len = s_mtu - kNotifyHeaderBytes;
     if (payload_len > kMaxNotifyPayloadBytes) payload_len = kMaxNotifyPayloadBytes;
     uint8_t chunk[kMaxNotifyPayloadBytes];
-    while (os_msys_num_free() > BLEOutput::kMinFreeNimBLEBuffers) {
+    while (os_msys_num_free() >= BLEOutput::kMinFreeNimBLEBuffers + num_handles) {
         const uint16_t len = s_stream->Peek(chunk, payload_len);
         if (len == 0) return;
-        struct os_mbuf* om = ble_hs_mbuf_from_flat(chunk, len);
-        if (om == nullptr) return;  // Retried on the next Update().
-        // Consumes the mbuf whether it succeeds or fails.
-        if (ble_gatts_notify_custom(conn_handle, notify_handle, om) != 0) return;
+        for (uint8_t i = 0; i < num_handles; i++) {
+            struct os_mbuf* om = ble_hs_mbuf_from_flat(chunk, len);
+            // Consumes the mbuf whether it succeeds or fails.
+            if (om == nullptr || ble_gatts_notify_custom(conn_handle, handles[i], om) != 0) {
+                if (i == 0) return;  // Nothing sent: retried on the next Update().
+            }
+        }
         s_stream->Consume(len);
     }
 }
@@ -235,7 +251,7 @@ int GapEventHandler(struct ble_gap_event* event, void* arg) {
         case BLE_GAP_EVENT_DISCONNECT:
             CONSOLE_INFO("ble_output", "Client disconnected, reason=0x%x.", event->disconnect.reason);
             s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-            s_notify_handle = 0;
+            ClearSubscriptions();
             s_clear_pending = true;
             if (s_want) StartAdvertising();  // Or Update() retries.
             return 0;
@@ -246,13 +262,9 @@ int GapEventHandler(struct ble_gap_event* event, void* arg) {
         case BLE_GAP_EVENT_SUBSCRIBE:
             if (event->subscribe.attr_handle == s_nus_tx_val_handle ||
                 event->subscribe.attr_handle == s_hm10_val_handle) {
-                // The last subscription wins; unsubscribing from the other characteristic changes nothing.
-                if (event->subscribe.cur_notify) {
-                    s_notify_handle = event->subscribe.attr_handle;
-                } else if (s_notify_handle == event->subscribe.attr_handle) {
-                    s_notify_handle = 0;
-                    s_clear_pending = true;
-                }
+                const bool on = event->subscribe.cur_notify;
+                (event->subscribe.attr_handle == s_nus_tx_val_handle ? s_nus_subscribed : s_hm10_subscribed) = on;
+                if (!Subscribed()) s_clear_pending = true;
             }
             return 0;
         case BLE_GAP_EVENT_REPEAT_PAIRING: {
@@ -279,7 +291,7 @@ void OnHostSync() {
 void OnHostReset() {
     s_advertising = false;
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-    s_notify_handle = 0;
+    ClearSubscriptions();
 }
 
 }  // namespace
@@ -299,7 +311,7 @@ bool BLEOutput::RegisterGATTServices() {
     return true;
 }
 
-bool BLEOutput::HasSubscriber() const { return running_ && s_notify_handle != 0; }
+bool BLEOutput::HasSubscriber() const { return running_ && Subscribed(); }
 
 void BLEOutput::BeginReport() {
     if (!HasSubscriber()) return;
@@ -346,7 +358,7 @@ void BLEOutput::Stop() {
     if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
     }
-    s_notify_handle = 0;
+    ClearSubscriptions();
     s_clear_pending = false;
     BLEHost::Release(BLEHost::kUserBLEOutput);
     if (!BLEHost::IsInitialized()) OnHostReset();
@@ -419,7 +431,7 @@ void BLEOutput::Update() {
 
     if (running_) {
         if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-            status_ = s_notify_handle != 0 ? kBLEOutputStatusStreaming : kBLEOutputStatusConnected;
+            status_ = Subscribed() ? kBLEOutputStatusStreaming : kBLEOutputStatusConnected;
         } else {
             status_ = kBLEOutputStatusAdvertising;
             // Restart advertising that a failed call or a host reset left off.

@@ -9,8 +9,8 @@
 
 /**
  * Bluetooth LE output (AT+BLE_OUTPUT): a GATT server with the two generic serial profiles EFB apps read, the Nordic
- * UART Service (NUS) and the HM-10 / TI CC254x service (FFE0/FFE1). The client subscribes to the NUS TX or the FFE1
- * characteristic; writes to either service are accepted and ignored.
+ * UART Service (NUS) and the HM-10 / TI CC254x service (FFE0/FFE1). Each characteristic the client subscribes to (NUS
+ * TX, FFE1) gets the stream; writes to either service are accepted and ignored.
  *
  * Mode GDL90 streams the GDL90 the WiFi access point broadcasts on UDP port 4000 (heartbeat, ownship, traffic at 1 Hz,
  * FIS-B uplinks as they arrive), framed as on UDP (0x7E flags, byte stuffing, CRC). Each notification carries whole
