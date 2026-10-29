@@ -54,7 +54,7 @@ unless one message is longer than the notification.
   (`BLOCKED_BY_WIFI`). Ethernet can stay on.
 * Without PSRAM, Remote ID over Bluetooth takes priority: the output waits (`BLOCKED_BY_REMOTE_ID`) while Remote ID
   receive or transmit uses Bluetooth. With PSRAM both run.
-* Throughput: notifications carry 244 Bytes. With PSRAM, all 200 aircraft the ESP32 tracks go out every second
-  (about 6 kB/s). Without PSRAM, about 95 aircraft go out per second; with more, the next report starts where the
+* Throughput: notifications carry 244 Bytes. With PSRAM, about 180 of the 200 aircraft the ESP32 tracks go out
+  every second (about 6 kB/s). Without PSRAM, about 95 aircraft go out per second; with more, the next report starts where the
   last one stopped, so each aircraft still goes out every few seconds. The heartbeat always goes out first, and FIS-B
   uplinks are dropped before traffic.
