@@ -34,7 +34,8 @@ static_assert(BeastReporter::kModeSBeastFrameMaxLenBytes <= kRawModeSFrameMaxNum
 static constexpr uint16_t kRawReportChunkMaxTxBytes =
     CommsManager::kRawReportMaxModeSPacketsPerUpdate * kRawModeSFrameMaxNumChars +
     CommsManager::kRawReportMaxUATADSBPacketsPerUpdate * kRawUATADSBFrameMaxNumChars +
-    CommsManager::kRawReportMaxUATUplinkPacketsPerUpdate * kRawUATUplinkFrameMaxNumChars;
+    CommsManager::kRawReportMaxUATUplinkPacketsPerUpdate * kRawUATUplinkFrameMaxNumChars +
+    CommsManager::kRawReportMaxADSLPacketsPerUpdate * kRawADSLFrameMaxNumChars;
 static_assert(kRawReportChunkMaxTxBytes < CommsManager::kUartTxRingBytes, "A report chunk must fit in the TX ring.");
 
 // Margin added to every baud-derived TX wait so tiny shortfalls don't get a zero-length budget.
@@ -322,7 +323,7 @@ void CommsManager::ReportQueuedRawPackets() {
 
 bool CommsManager::ReportQueuedRawPacketsChunk() {
     if (mode_s_packet_reporting_queue.Length() == 0 && uat_adsb_packet_reporting_queue.Length() == 0 &&
-        uat_uplink_packet_reporting_queue.Length() == 0) {
+        uat_uplink_packet_reporting_queue.Length() == 0 && adsl_packet_reporting_queue.Length() == 0) {
         return false;
     }
     if (ReportsRawPackets() && TxRingFreeBytes() < kRawReportChunkMaxTxBytes) {
@@ -337,7 +338,8 @@ bool CommsManager::ReportQueuedRawPacketsChunk() {
         !UplinkTxBudget::HasRoomForLine(TxRingFreeBytes(), kUartTxRingBytes)) {
         // Uplink lines yield to aircraft lines: uplinks stay queued and a full queue drops new ones (uat_report_q_ovf).
         max_uat_uplink_packets = 0;
-        if (mode_s_packet_reporting_queue.Length() == 0 && uat_adsb_packet_reporting_queue.Length() == 0) {
+        if (mode_s_packet_reporting_queue.Length() == 0 && uat_adsb_packet_reporting_queue.Length() == 0 &&
+            adsl_packet_reporting_queue.Length() == 0) {
             return false;
         }
     }
@@ -347,7 +349,8 @@ bool CommsManager::ReportQueuedRawPacketsChunk() {
         chunk_buf, sizeof(chunk_buf), &mode_s_packet_reporting_queue, &uat_adsb_packet_reporting_queue,
         &uat_uplink_packet_reporting_queue, nullptr,
         CompositeArray::PackLimits(kRawReportMaxModeSPacketsPerUpdate, kRawReportMaxUATADSBPacketsPerUpdate,
-                                   max_uat_uplink_packets));
+                                   max_uat_uplink_packets, UINT16_MAX, kRawReportMaxADSLPacketsPerUpdate),
+        &adsl_packet_reporting_queue);
     UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks, &chunk,
                     false);
     return true;

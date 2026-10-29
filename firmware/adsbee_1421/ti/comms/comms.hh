@@ -25,12 +25,15 @@ class CommsManager {
     // 16 ground stations deliver up to 16 uplinks/sec bunched into the ~176ms UAT ground segment;
     // depth 8 covers a full 50ms reporting check interval of back-to-back slots (~580B per entry).
     static constexpr uint16_t kUATUplinkPacketReportingQueueDepth = 8;
+    // ADS-L senders transmit about once per second each.
+    static constexpr uint16_t kADSLPacketReportingQueueDepth = 8;
 
     // Max raw packet reports (RAW, Beast, GDL90 uplink) formatted per main loop iteration, so a burst is spread over
     // several iterations. A chunk adds ~0.5 ms and still outpaces the 1 Mbaud UART.
     static constexpr uint16_t kRawReportMaxModeSPacketsPerUpdate = 3;
     static constexpr uint16_t kRawReportMaxUATADSBPacketsPerUpdate = 2;
     static constexpr uint16_t kRawReportMaxUATUplinkPacketsPerUpdate = 1;
+    static constexpr uint16_t kRawReportMaxADSLPacketsPerUpdate = 2;
     // A backlog gets more chunks in one main loop iteration, for up to this long: at a few thousand Mode S frames per
     // second plus UAT, one chunk per iteration falls behind and the reporting queues overflow.
     static constexpr uint32_t kRawReportBudgetUs = 1000;
@@ -232,6 +235,8 @@ class CommsManager {
     PFBQueue<RawUATUplinkPacket> uat_uplink_packet_reporting_queue =
         PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = kUATUplinkPacketReportingQueueDepth,
                                       .buffer = uat_uplink_packet_reporting_queue_buffer_});
+    PFBQueue<RawADSLPacket> adsl_packet_reporting_queue = PFBQueue<RawADSLPacket>(
+        {.buf_len_num_elements = kADSLPacketReportingQueueDepth, .buffer = adsl_packet_reporting_queue_buffer_});
 
    private:
     // AT Functions
@@ -241,7 +246,8 @@ class CommsManager {
     static constexpr uint16_t kRawReportChunkBufBytes =
         sizeof(CompositeArray::RawPackets::Header) + kRawReportMaxModeSPacketsPerUpdate * sizeof(RawModeSPacket) +
         kRawReportMaxUATADSBPacketsPerUpdate * sizeof(RawUATADSBPacket) +
-        kRawReportMaxUATUplinkPacketsPerUpdate * sizeof(RawUATUplinkPacket);
+        kRawReportMaxUATUplinkPacketsPerUpdate * sizeof(RawUATUplinkPacket) +
+        kRawReportMaxADSLPacketsPerUpdate * sizeof(RawADSLPacket);
 
     /**
      * Formats and queues chunks of raw packet reports (at most kRawReportMax*PacketsPerUpdate of each type per chunk)
@@ -311,6 +317,7 @@ class CommsManager {
     RawModeSPacket mode_s_packet_reporting_queue_buffer_[kModeSPacketReportingQueueDepth];
     RawUATADSBPacket uat_adsb_packet_reporting_queue_buffer_[kUATADSBPacketReportingQueueDepth];
     RawUATUplinkPacket uat_uplink_packet_reporting_queue_buffer_[kUATUplinkPacketReportingQueueDepth];
+    RawADSLPacket adsl_packet_reporting_queue_buffer_[kADSLPacketReportingQueueDepth];
 
     // Reporting protocol timestamps
     // Timestamp of the last tick that drove the aircraft dictionary protocols (CSBee, MAVLINK, GDL90, Aircraft JSON).

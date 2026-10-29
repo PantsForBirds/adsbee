@@ -576,3 +576,39 @@ TEST(GDL90Utils, RemoteIDVerticalRateUnavailableWhenNotReceived) {
     vertical_rate_encoded = ((msg[15] & 0x0F) << 8) | msg[16];
     EXPECT_EQ(vertical_rate_encoded, 640 / 64);
 }
+TEST(GDL90Utils, ADSLTrafficReport) {
+    ADSLAircraft ac(0xBEE001 | (DecodedADSLPacket::kAddressMappingICAO << Aircraft::kAddressQualifierBitShift));
+    ac.latitude_deg = 47.25f;
+    ac.longitude_deg = 8.5f;
+    ac.gnss_altitude_ft = 4921;
+    ac.speed_kts = 97;
+    ac.direction_deg = 90.0f;
+    ac.category = DecodedADSLPacket::kCategoryGlider;
+    ac.horizontal_accuracy = 5;    // 10-30 m -> NACp 9.
+    ac.navigation_integrity = 10;  // 25-75 m -> NIC 9.
+    ac.WriteBitFlag(ADSLAircraft::kBitFlagPositionValid, true);
+    ac.WriteBitFlag(ADSLAircraft::kBitFlagDirectionValid, true);
+    ac.WriteBitFlag(ADSLAircraft::kBitFlagHorizontalSpeedValid, true);
+    ac.WriteBitFlag(ADSLAircraft::kBitFlagGNSSAltitudeValid, true);
+
+    uint8_t frame[GDL90Reporter::kGDL90MessageMaxLenBytes];
+    uint8_t msg[40];
+    uint16_t frame_len = gdl90.WriteGDL90TargetReportMessage(frame, sizeof(frame), ac, /*ownship=*/false);
+    ASSERT_GE(DecodeGDL90Frame(frame, frame_len, msg, sizeof(msg)), 28u);
+    EXPECT_EQ(msg[0], 20);                                                                   // Traffic report.
+    EXPECT_EQ(msg[1] & 0x0F, GDL90Reporter::GDL90TargetReportData::kAddressTypeADSBWithICAOAddress);
+    EXPECT_EQ((msg[2] << 16) | (msg[3] << 8) | msg[4], 0xBEE001);
+    EXPECT_EQ(msg[13], (9 << 4) | 9);                                                        // NIC, NACp.
+    EXPECT_EQ(msg[12] & 0b11, GDL90Reporter::GDL90TargetReportData::kMiscIndicatorTTIsTrueTrackAngle);
+    EXPECT_EQ(msg[18], ADSBTypes::kEmitterCategoryGliderSailplane);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(msg + 19), 8), "BEE001  ");
+    uint16_t vertical_rate_encoded = ((msg[15] & 0x0F) << 8) | msg[16];
+    EXPECT_EQ(vertical_rate_encoded, 0x800);  // Not received.
+
+    // Non-ICAO addresses (FLARM, random, manufacturer pages) are self-assigned.
+    ADSLAircraft flarm(0x123456 | (DecodedADSLPacket::kAddressMappingFLARM << Aircraft::kAddressQualifierBitShift));
+    flarm.WriteBitFlag(ADSLAircraft::kBitFlagPositionValid, true);
+    frame_len = gdl90.WriteGDL90TargetReportMessage(frame, sizeof(frame), flarm, false);
+    ASSERT_GE(DecodeGDL90Frame(frame, frame_len, msg, sizeof(msg)), 28u);
+    EXPECT_EQ(msg[1] & 0x0F, GDL90Reporter::GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress);
+}

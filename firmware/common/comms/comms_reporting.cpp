@@ -445,6 +445,9 @@ bool CommsManager::ReportRaw(ReportSink* sinks, uint16_t num_sinks, const Compos
         BUILD_RAW_FRAME(BuildRawUATUplinkFrame(packets.uat_uplink_packets[i], raw_batch_buf + batch_len),
                         kRawUATUplinkFrameMaxNumChars);
     }
+    for (uint16_t i = 0; i < packets.header->num_adsl_packets; i++) {
+        BUILD_RAW_FRAME(BuildRawADSLFrame(packets.adsl_packets[i], raw_batch_buf + batch_len), kRawADSLFrameMaxNumChars);
+    }
 #undef BUILD_RAW_FRAME
 
     if (batch_len > 0) {
@@ -477,6 +480,10 @@ bool CommsManager::ReportRaw(ReportSink* sinks, uint16_t num_sinks, const Compos
         char raw_frame_buf[kRawUATUplinkFrameMaxNumChars];
         SEND_RAW_FRAME(BuildRawUATUplinkFrame(packets.uat_uplink_packets[i], raw_frame_buf),
                        kRawUATUplinkFrameMaxNumChars);
+    }
+    for (uint16_t i = 0; i < packets.header->num_adsl_packets; i++) {
+        char raw_frame_buf[kRawADSLFrameMaxNumChars];
+        SEND_RAW_FRAME(BuildRawADSLFrame(packets.adsl_packets[i], raw_frame_buf), kRawADSLFrameMaxNumChars);
     }
 #undef SEND_RAW_FRAME
     FLUSH_REPORT_TALLY_RATE_LIMITED("CommsManager::ReportRaw", raw_tally);
@@ -603,9 +610,9 @@ bool CommsManager::ReportCSBee(ReportSink* sinks, uint16_t num_sinks) {
             message_len_bytes = WriteCSBeeModeSAircraftMessageStr(message, *mode_s_aircraft);
         } else if (UATAircraft* uat_aircraft = get_if<UATAircraft>(&(itr->second)); uat_aircraft) {
             message_len_bytes = WriteCSBeeUATAircraftMessageStr(message, *uat_aircraft);
-        } else if (get_if<RemoteIDAircraft>(&(itr->second))) {
-            // TODO: emit a dedicated CSBee "#R" Remote ID sentence. For now drones are reported via GDL90 and the
-            // Aircraft JSON output; skip them here rather than forcing a drone into the fixed #A/#U CSV schema.
+        } else if (get_if<RemoteIDAircraft>(&(itr->second)) || get_if<ADSLAircraft>(&(itr->second))) {
+            // TODO: emit a dedicated CSBee "#R" Remote ID sentence. For now drones and ADS-L senders are reported via
+            // GDL90 and the Aircraft JSON output; skip them here rather than forcing them into the #A/#U CSV schema.
             continue;
         } else {
             CONSOLE_WARNING("CommsManager::ReportCSBee", "Unknown aircraft type in dictionary for UID 0x%lx.", uid);
@@ -714,9 +721,9 @@ bool CommsManager::ReportMAVLINK(ReportSink* sinks, uint16_t num_sinks, uint8_t 
             adsb_vehicle_msg = ModeSAircraftToMAVLINKADSBVehicleMessage(*mode_s_aircraft);
         } else if (UATAircraft* uat_aircraft = get_if<UATAircraft>(&(itr->second)); uat_aircraft) {
             adsb_vehicle_msg = UATAircraftToMAVLINKADSBVehicleMessage(*uat_aircraft);
-        } else if (get_if<RemoteIDAircraft>(&(itr->second))) {
+        } else if (get_if<RemoteIDAircraft>(&(itr->second)) || get_if<ADSLAircraft>(&(itr->second))) {
             // TODO: report drones as ADSB_VEHICLE (emitter type UAV) or native OPEN_DRONE_ID_* messages. For now drones
-            // are surfaced via GDL90 and the Aircraft JSON output; skip them here.
+            // and ADS-L senders are surfaced via GDL90 and the Aircraft JSON output; skip them here.
             continue;
         } else {
             CONSOLE_WARNING("CommsManager::ReportMAVLINK", "Unknown aircraft type in dictionary for UID 0x%lx.", uid);
@@ -840,6 +847,11 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
                 continue;
             }
             msg_len = gdl90.WriteGDL90TargetReportMessage(buf, sizeof(buf), *remote_id_aircraft, false);
+        } else if (ADSLAircraft* adsl_aircraft = get_if<ADSLAircraft>(&(itr->second)); adsl_aircraft) {
+            if (!adsl_aircraft->HasBitFlag(ADSLAircraft::kBitFlagPositionValid)) {
+                continue;  // No position: a target at 0,0 that NIC wouldn't flag.
+            }
+            msg_len = gdl90.WriteGDL90TargetReportMessage(buf, sizeof(buf), *adsl_aircraft, false);
         } else {
             CONSOLE_WARNING("CommsManager::ReportGDL90", "Unknown aircraft type in dictionary for UID 0x%lx.", uid);
             continue;
@@ -889,6 +901,8 @@ bool CommsManager::ReportAircraftJSON(ReportSink* sinks, uint16_t num_sinks) {
             message_len_bytes = WriteAircraftJSONUATAircraftStr(message, *uat_aircraft, get_time_since_boot_ms());
         } else if (RemoteIDAircraft* remote_id_aircraft = get_if<RemoteIDAircraft>(&(itr->second)); remote_id_aircraft) {
             message_len_bytes = WriteAircraftJSONRemoteIDAircraftStr(message, *remote_id_aircraft);
+        } else if (ADSLAircraft* adsl_aircraft = get_if<ADSLAircraft>(&(itr->second)); adsl_aircraft) {
+            message_len_bytes = WriteAircraftJSONADSLAircraftStr(message, *adsl_aircraft, get_time_since_boot_ms());
         } else {
             CONSOLE_WARNING("CommsManager::ReportAircraftJSON", "Unknown aircraft type in dictionary for UID 0x%lx.",
                             uid);

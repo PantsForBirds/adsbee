@@ -24,3 +24,11 @@ uint16_t BuildRawUATUplinkFrame(const RawUATUplinkPacket& packet, char* raw_fram
     return snprintf(raw_frame_buf, kRawUATUplinkFrameMaxNumChars, "#UAT*+%s;(%d,%d,%016llX)\r\n", data_buf,
                     packet.sigs_dbm, packet.sigq_bits, packet.mlat_48mhz_64bit_counts);
 }
+
+uint16_t BuildRawADSLFrame(const RawADSLPacket& packet, char* raw_frame_buf) {
+    char data_buf[RawADSLPacket::kMaxPacketLenBytes * kNibblesPerByte + 1] = {'\0'};
+    ByteBufferToHexString(data_buf, packet.buffer, packet.buffer_len_bytes, true);
+    return snprintf(raw_frame_buf, kRawADSLFrameMaxNumChars, "#ADL*%s;(%d,%d,%d,%016llX)\r\n", data_buf,
+                    packet.sigs_dbm, packet.sigq_bits, packet.channel == RawADSLPacket::kChannelUnknown ? -1 : packet.channel,
+                    packet.mlat_48mhz_64bit_counts);
+}

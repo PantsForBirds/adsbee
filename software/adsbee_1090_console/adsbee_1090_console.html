@@ -5891,6 +5891,7 @@ const METRIC_UNITS = {
     'num_mode_s_aircraft': 'aircraft',
     'num_uat_aircraft': 'aircraft',
     'num_remote_id_aircraft': 'drones',
+    'num_adsl_aircraft': 'aircraft',
 };
 
 // Input types that take no typed or pasted text.
@@ -7572,6 +7573,7 @@ const TRAFFIC_SOURCES = {
     adsr: { label: 'ADS-R', stroke: '#e07000', dash: '4,2' },
     tisb: { label: 'TIS-B', stroke: '#7b2fbe', dash: '2,2' },
     rid: { label: 'Remote ID', stroke: '#c026d3', dash: '' },
+    adsl: { label: 'ADS-L', stroke: '#15803d', dash: '' },
 };
 // Positions older than this (seconds, "seen_pos") are drawn faded.
 const kStalePositionS = 15;
@@ -7579,6 +7581,7 @@ const kStalePositionS = 15;
 function acSource(ac) {
     const type = ac.type ?? '';
     if (type === 'remote_id') return 'rid';
+    if (type === 'adsl') return 'adsl';
     if (type.startsWith('tisb')) return 'tisb';
     if (type.startsWith('adsr')) return 'adsr';
     return ac.link === 'uat' ? 'adsb_uat' : 'adsb_1090';  // Firmware without "link" only sent 1090 as direct ADS-B.
@@ -7597,7 +7600,8 @@ class AircraftStore {
     ingest(ac) {
         if (!ac.hex) return;
         const src = acSource(ac);
-        const key = ac.hex;
+        // An ADS-L sender can use the same ICAO address as the aircraft's own ADS-B: keep the two apart.
+        const key = src === 'adsl' ? `adsl-${ac.hex}` : ac.hex;
         let prev = this.aircraft.get(key) || {};
         if (prev.src && prev.src !== src) prev = {};  // Don't mix fields from two sources; the trail carries over.
         const merged = { ...prev, ...ac, key, src, srcLabel: TRAFFIC_SOURCES[src].label };

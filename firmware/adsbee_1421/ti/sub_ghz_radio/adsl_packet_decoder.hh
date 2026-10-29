@@ -35,10 +35,11 @@ class ADSLPacketDecoder {
                                                                             .buffer = adsl_packet_out_buffer_,
                                                                             .overwrite_when_full = true});
 
-    uint32_t num_raw_packets = 0;    // Receptions after an ADS-L sync word, since boot.
-    uint32_t num_valid_packets = 0;  // Receptions that passed the CRC, since boot.
+    volatile uint32_t num_raw_packets = 0;  // Receptions after an ADS-L sync word, since boot. Counted in the ISR.
+    uint32_t num_valid_packets = 0;         // Receptions that passed the CRC, since boot.
 
    private:
+    uint32_t num_raw_packets_recorded_ = 0;
     PFBQueue<Chips> chips_queue_ = PFBQueue<Chips>(
         {.buf_len_num_elements = kChipsQueueDepth, .buffer = chips_queue_buffer_, .overwrite_when_full = true});
     Chips chips_queue_buffer_[kChipsQueueDepth] = {};

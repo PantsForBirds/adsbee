@@ -4,6 +4,7 @@
 
 #include <ti/drivers/dpl/HwiP.h>
 
+#include "adsbee.hh"
 #include "buffer_utils.hh"
 #include "comms.hh"
 #include "led.hh"
@@ -18,10 +19,13 @@ void ADSLPacketDecoder::EnqueueChips(const uint8_t *chips, uint16_t num_chip_byt
     entry.timestamp = timestamp;
     // Called from the RF callback; Update() masks interrupts around its queue calls.
     chips_queue_.Enqueue(entry);
-    num_raw_packets++;
+    num_raw_packets = num_raw_packets + 1;
 }
 
 bool ADSLPacketDecoder::Update() {
+    uint32_t num_raw = num_raw_packets;
+    adsbee.aircraft_dictionary.RecordADSLMetrics(num_raw - num_raw_packets_recorded_, 0);
+    num_raw_packets_recorded_ = num_raw;
     while (true) {
         Chips entry;
         uintptr_t key = HwiP_disable();
@@ -36,6 +40,7 @@ bool ADSLPacketDecoder::Update() {
             packet.channel = entry.channel;
             packet.mlat_48mhz_64bit_counts = entry.timestamp;
             num_valid_packets++;
+            adsbee.aircraft_dictionary.RecordADSLMetrics(0, 1);
             leds.FlashLED(bsp.kSubGLEDPin, 50);
             if (!adsl_packet_out_queue.Enqueue(packet)) {
                 CONSOLE_ERROR("ADSLPacketDecoder::Update", "ADS-L output queue overflowed.");

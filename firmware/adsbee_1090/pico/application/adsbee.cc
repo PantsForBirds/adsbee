@@ -849,9 +849,16 @@ void ADSBee::IngestAndForwardPackets() {
         aircraft_dictionary.IngestRawRemoteIDPacket(remote_id_packet);
     }
 
-    // ADS-L packets from the CC1312. The CC1312 logs each one; the aircraft dictionary does not take them yet.
+    // Ingest ADS-L packets from the CC1312 and report them.
     RawADSLPacket adsl_packet;
     while (raw_adsl_packet_queue.Dequeue(adsl_packet)) {
+        aircraft_dictionary.IngestADSLPacket(adsl_packet);
+        if (comms_manager.adsl_packet_reporting_queue.IsFull()) {
+            comms_manager.ForceFlushRawPackets();
+        }
+        if (!comms_manager.adsl_packet_reporting_queue.Enqueue(adsl_packet)) {
+            CONSOLE_ERROR("ADSBee::IngestAndForwardPackets", "ADS-L packet reporting queue overflowed.");
+        }
     }
 }
 

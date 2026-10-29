@@ -35,6 +35,7 @@ class ADSBeeServer {
         sizeof(RawUATUplinkPacket);
     static const uint16_t kMaxNumUATUplinkPackets =
         2 * kMaxNumUATUplinkPacketsPerCompositeArray;  // Depth of queue for incoming UAT uplink packets from RP2040.
+    static const uint16_t kMaxNumADSLPackets = 16;  // ADS-L senders transmit about once per second each.
     // (The Remote ID -> RP2040 out-queue lives in RemoteIDManager, allocated lazily only when Remote ID runs, so this
     // build pays no internal SRAM for it when Remote ID is disabled. See RemoteIDManager::GetOutQueue().)
     // Interval of the aircraft dictionary update and metrics message while no RP2040 metrics arrive to trigger them.
@@ -146,6 +147,8 @@ class ADSBeeServer {
     PFBQueue<RawUATUplinkPacket> raw_uat_uplink_packet_in_queue =
         PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = kMaxNumUATUplinkPackets,
                                       .buffer = raw_uat_uplink_packet_in_queue_buffer_});
+    PFBQueue<RawADSLPacket> raw_adsl_packet_in_queue = PFBQueue<RawADSLPacket>(
+        {.buf_len_num_elements = kMaxNumADSLPackets, .buffer = raw_adsl_packet_in_queue_buffer_});
 
     AircraftDictionary aircraft_dictionary;
 
@@ -217,6 +220,7 @@ class ADSBeeServer {
     RawModeSPacket raw_mode_s_packet_in_queue_buffer_[kMaxNumModeSPackets];
     RawUATADSBPacket raw_uat_adsb_packet_in_queue_buffer_[kMaxNumUATADSBPackets];
     RawUATUplinkPacket raw_uat_uplink_packet_in_queue_buffer_[kMaxNumUATUplinkPackets];
+    RawADSLPacket raw_adsl_packet_in_queue_buffer_[kMaxNumADSLPackets];
 
     uint8_t* raw_packets_buf_ = nullptr;
     StreamBufferHandle_t network_console_tx_buf_ = nullptr;

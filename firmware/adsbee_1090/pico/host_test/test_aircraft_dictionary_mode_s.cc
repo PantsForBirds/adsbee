@@ -1148,7 +1148,8 @@ TEST(AircraftDictionary, MetricsToJSON) {
 \"raw_uat_adsb_frames\": 0, \"valid_uat_adsb_frames\": 0, \
 \"raw_uat_uplink_frames\": 0, \"valid_uat_uplink_frames\": 0, \
 \"raw_remote_id_frames\": 0, \"valid_remote_id_frames\": 0, \
-\"num_mode_s_aircraft\": 0, \"num_uat_aircraft\": 0, \"num_remote_id_aircraft\": 0, \
+\"raw_adsl_frames\": 0, \"valid_adsl_frames\": 0, \
+\"num_mode_s_aircraft\": 0, \"num_uat_aircraft\": 0, \"num_remote_id_aircraft\": 0, \"num_adsl_aircraft\": 0, \
 \"corrected_frames\": {\"extended_squitter_1_bit\": 0, \"extended_squitter_2_bit\": 0, \
 \"address_parity_1_bit\": 0, \"address_parity_2_bit\": 0, \"rejected\": 0, \"skipped\": 0, \
 \"offset_retry\": 0, \"offset_retry_address_parity\": 0}\

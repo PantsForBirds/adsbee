@@ -183,7 +183,8 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
             }
             CompositeArray::UnpackRawPacketsBufferToQueues(buf, buf_len, &(adsbee_server.raw_mode_s_packet_in_queue),
                                                            &(adsbee_server.raw_uat_adsb_packet_in_queue),
-                                                           &(adsbee_server.raw_uat_uplink_packet_in_queue));
+                                                           &(adsbee_server.raw_uat_uplink_packet_in_queue), nullptr,
+                                                           &(adsbee_server.raw_adsl_packet_in_queue));
             break;
         }
         case kAddrDeviceStatus: {

@@ -46,14 +46,15 @@ bool CommsManager::Update() {
 
         // Calculate how much buffer space the current packets would need.
         uint16_t required_buffer_len = CompositeArray::CalculateRawPacketsBufferLength(
-            &mode_s_packet_reporting_queue, &uat_adsb_packet_reporting_queue, &uat_uplink_packet_reporting_queue);
+            &mode_s_packet_reporting_queue, &uat_adsb_packet_reporting_queue, &uat_uplink_packet_reporting_queue,
+            nullptr, &adsl_packet_reporting_queue);
 
         // Flush when combined packets from all queues would fill a composite array (maximizes load factor per
         // SPI transaction), or when the max reporting interval has elapsed (guarantees ≤200ms latency).
         bool max_interval_elapsed = (timestamp_ms - last_raw_report_timestamp_ms_) >= kRawReportingMaxIntervalMs;
 
         if (mode_s_packet_reporting_queue.Length() == 0 && uat_adsb_packet_reporting_queue.Length() == 0 &&
-            uat_uplink_packet_reporting_queue.Length() == 0) {
+            uat_uplink_packet_reporting_queue.Length() == 0 && adsl_packet_reporting_queue.Length() == 0) {
             // No packets: still drive the locally decoded protocols, which send the heartbeats.
             uint8_t no_packets_buf[sizeof(CompositeArray::RawPackets::Header)];
             CompositeArray::RawPackets no_packets = CompositeArray::PackRawPacketsBuffer(
@@ -71,14 +72,15 @@ bool CommsManager::Update() {
 bool CommsManager::ForceFlushRawPackets() {
     for (uint16_t i = 0; i < kMaxForceFlushIterations; i++) {
         if (mode_s_packet_reporting_queue.Length() == 0 && uat_adsb_packet_reporting_queue.Length() == 0 &&
-            uat_uplink_packet_reporting_queue.Length() == 0) {
+            uat_uplink_packet_reporting_queue.Length() == 0 && adsl_packet_reporting_queue.Length() == 0) {
             break;
         }
         last_raw_report_timestamp_ms_ = get_time_since_boot_ms();
         uint8_t packets_to_report_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
         CompositeArray::RawPackets packets_to_report = CompositeArray::PackRawPacketsBuffer(
             packets_to_report_buf, sizeof(packets_to_report_buf), &mode_s_packet_reporting_queue,
-            &uat_adsb_packet_reporting_queue, &uat_uplink_packet_reporting_queue);
+            &uat_adsb_packet_reporting_queue, &uat_uplink_packet_reporting_queue, nullptr, CompositeArray::PackLimits(),
+            &adsl_packet_reporting_queue);
         if (esp32.IsEnabled() && packets_to_report.IsValid()) {
             esp32.Write(ObjectDictionary::kAddrCompositeArrayRawPackets, packets_to_report_buf, true,
                         packets_to_report.len_bytes);
@@ -87,7 +89,7 @@ bool CommsManager::ForceFlushRawPackets() {
                         &packets_to_report);
     }
     if (mode_s_packet_reporting_queue.Length() > 0 || uat_adsb_packet_reporting_queue.Length() > 0 ||
-        uat_uplink_packet_reporting_queue.Length() > 0) {
+        uat_uplink_packet_reporting_queue.Length() > 0 || adsl_packet_reporting_queue.Length() > 0) {
         CONSOLE_ERROR("CommsManager::ForceFlushRawPackets", "Reporting queues not fully drained after %d iterations.",
                       kMaxForceFlushIterations);
     }

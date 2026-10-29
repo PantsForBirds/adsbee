@@ -7,6 +7,7 @@
 #include <variant>
 
 #include "adsb_types.hh"
+#include "adsl_packet.hh"
 #include "aircraft_dictionary_config.hh"
 #include "altitude_filter.hh"
 #include "geo_utils.hh"
@@ -46,7 +47,7 @@ class Aircraft {
         kAircraftTypeModeS = 0,
         kAircraftTypeUAT = 1,
         kAircraftTypeRemoteID = 2,  // Broadcast Remote ID (ASTM F3411) drone, received over BLE / WiFi on the ESP32.
-        // TODO: Add FLARM, ADS-L, etc.
+        kAircraftTypeADSL = 3,      // ADS-L (EASA ADS-L 4 SRD-860) sender, received on the sub-GHz radio.
     };
 
     virtual ~Aircraft() = default;
@@ -64,6 +65,8 @@ class Aircraft {
                 return (icao_address & ~kAircraftTypeMask) | (kAircraftTypeUAT << kAircraftTypeShiftBits);
             case kAircraftTypeRemoteID:
                 return (icao_address & ~kAircraftTypeMask) | (kAircraftTypeRemoteID << kAircraftTypeShiftBits);
+            case kAircraftTypeADSL:
+                return (icao_address & ~kAircraftTypeMask) | (kAircraftTypeADSL << kAircraftTypeShiftBits);
             default:
                 // We can't print here or else we cause a circular dependency with comms.hh.
                 // CONSOLE_ERROR("Aircraft::ICAOToUID", "Invalid aircraft type %d for ICAO address 0x%lx.", type,
@@ -916,6 +919,108 @@ class RemoteIDAircraft : public Aircraft {
 };
 
 /**
+ * ADS-L (EASA ADS-L 4 SRD-860) sender, from Traffic and Status payloads.
+ *
+ * UID: the 24-bit sender address, with the address mapping table entry (AMT: random, ICAO, FLARM, OGN, ...) in the
+ * address qualifier bits. AMT values above 15 (manufacturer pages 7 and up) share qualifier 15.
+ */
+class ADSLAircraft : public Aircraft {
+   public:
+    static constexpr uint8_t kMaxAddressQualifier = 0xF;
+
+    enum BitFlag : uint32_t {
+        kBitFlagIsAirborne = 0,
+        kBitFlagPositionValid = 1,
+        kBitFlagDirectionValid = 2,
+        kBitFlagHorizontalSpeedValid = 3,
+        kBitFlagGNSSAltitudeValid = 4,
+        kBitFlagGNSSVerticalRateValid = 5,
+        kBitFlagBaroAltitudeValid = 6,  // ADS-L has no barometric altitude; never set.
+        kBitFlagRelayed = 7,            // Last Traffic payload was relayed on behalf of the sender.
+        kBitFlagStatusValid = 8,        // A Status payload has been received.
+        kBitFlagNumFlagBits
+    };
+
+    struct Metrics {
+        uint16_t valid_frames = 0;  // Valid ADS-L packets from this sender this reporting interval.
+    };
+
+    /**
+     * UID for a sender: 24-bit address, AMT in the qualifier bits.
+     */
+    static inline uint32_t AddressToUID(uint32_t address, uint8_t address_mapping) {
+        uint32_t qualifier = address_mapping < kMaxAddressQualifier ? address_mapping : kMaxAddressQualifier;
+        return ICAOToUID((address & 0xFFFFFF) | (qualifier << kAddressQualifierBitShift), kAircraftTypeADSL);
+    }
+
+    /**
+     * @param[in] address_in 24-bit address with the AMT (capped at 15) in the address qualifier bits, as in the UID.
+     */
+    ADSLAircraft(uint32_t address_in)
+        : address(address_in & 0xFFFFFF),
+          address_mapping((address_in & kAddressQualifierMask) >> kAddressQualifierBitShift) {}
+    ADSLAircraft() {}
+
+    inline uint32_t GetUID() const { return AddressToUID(address, address_mapping); }
+
+    inline void UpdateMetrics() {
+        metrics = metrics_counter_;
+        metrics_counter_ = Metrics();
+    }
+
+    inline bool HasBitFlag(BitFlag bit) const { return flags & (0b1 << bit) ? true : false; }
+    inline void WriteBitFlag(BitFlag bit, bool value) { value ? flags |= (0b1 << bit) : flags &= ~(0b1 << bit); }
+    inline void IncrementNumFramesReceived() {
+        metrics_counter_.valid_frames++;
+        num_frames_received++;
+    }
+
+    /**
+     * Updates the aircraft from a decoded Traffic payload.
+     */
+    void ApplyTraffic(const DecodedADSLPacket &packet);
+
+    /**
+     * ADS-B emitter category (DO-260B / GDL90 table) for the ADS-L aircraft category.
+     */
+    ADSBTypes::EmitterCategory GetEmitterCategory() const;
+
+    /**
+     * DO-260B NACp from the ADS-L horizontal accuracy code (spec G.1.14): 1 (< 0.5 NM) .. 7 (< 3 m) map to 5 .. 11.
+     */
+    inline uint8_t GetNACp() const { return horizontal_accuracy ? horizontal_accuracy + 4 : 0; }
+
+    /**
+     * DO-260B NIC from the ADS-L navigation integrity code (spec G.1.13): 2 (< 20 NM) .. 12 (< 7.5 m) map to 1 .. 11.
+     */
+    inline uint8_t GetNIC() const { return navigation_integrity >= 2 && navigation_integrity <= 12 ? navigation_integrity - 1 : 0; }
+
+    uint32_t flags = 0b0;
+    uint32_t address = 0;          // 24-bit sender address.
+    uint32_t num_frames_received = 0;  // Valid frames since the aircraft was added, never reset.
+    uint8_t address_mapping = 0;   // DecodedADSLPacket::AddressMapping.
+    uint8_t category = 0;          // DecodedADSLPacket::AircraftCategory.
+    uint8_t flight_state = 0;      // DecodedADSLPacket::FlightState.
+    uint8_t emergency = 0;         // DecodedADSLPacket::EmergencyStatus.
+    uint8_t protocol_version = 0;  // Network header version of the last packet.
+    uint8_t max_protocol_version = 0;  // From the Status payload.
+    uint8_t navigation_integrity = 0;  // NIC equivalent (spec G.1.13).
+    uint8_t horizontal_accuracy = 0;   // NACp equivalent.
+    uint8_t vertical_accuracy = 0;     // GVA equivalent.
+    uint8_t velocity_accuracy = 0;     // NACv equivalent.
+    uint8_t source_integrity_level = 0;
+    uint8_t design_assurance = 0;
+    uint8_t channel = RawADSLPacket::kChannelUnknown;  // RawADSLPacket::Channel of the last packet.
+    int8_t last_message_signal_strength_dbm = 0;
+    int8_t last_message_signal_quality_bits = 0;  // Manchester erasures repaired in the last packet.
+
+    Metrics metrics;
+
+   private:
+    Metrics metrics_counter_;
+};
+
+/**
  * Which aircraft go into aircraft reports, resolved once per reporting round by AircraftDictionary::GetReportFilter():
  * the distance filter (AT+FILTER_DISTANCE_NM) and the altitude filter (AT+FILTER_ALTITUDE_FT). An aircraft is reported
  * only if it passes both. Raw packets are never filtered.
@@ -982,7 +1087,7 @@ class AircraftDictionary {
     static constexpr uint32_t kPositionFilterDeadbandMeters = 20e3;
 #endif
 
-    typedef std::variant<ModeSAircraft, UATAircraft, RemoteIDAircraft> AircraftEntry;
+    typedef std::variant<ModeSAircraft, UATAircraft, RemoteIDAircraft, ADSLAircraft> AircraftEntry;
 
     // Ensure that valid variant indices matche the AircraftType enum value so that we can use them interchangeably.
     static_assert(
@@ -997,6 +1102,10 @@ class AircraftDictionary {
     // which costs kMaxNumAircraft * delta bytes on each). If this fails, trim RemoteIDAircraft's fields.
     static_assert(sizeof(RemoteIDAircraft) <= sizeof(ModeSAircraft),
                   "RemoteIDAircraft must not exceed ModeSAircraft or it grows the AircraftEntry pool on both MCUs.");
+    static_assert(std::is_same_v<std::variant_alternative_t<Aircraft::kAircraftTypeADSL, AircraftEntry>, ADSLAircraft>,
+                  "ADSLAircraft variant index must match Aircraft::kAircraftTypeADSL");
+    static_assert(sizeof(ADSLAircraft) <= sizeof(ModeSAircraft),
+                  "ADSLAircraft must not exceed ModeSAircraft or it grows the AircraftEntry pool on both MCUs.");
 
     struct AircraftDictionaryConfig {
         uint32_t aircraft_prune_interval_ms = 60e3;
@@ -1055,9 +1164,13 @@ class AircraftDictionary {
         uint16_t num_mode_s_aircraft = 0;
         uint16_t num_uat_aircraft = 0;
         uint16_t num_remote_id_aircraft = 0;
+        uint16_t num_adsl_aircraft = 0;
 
         uint16_t raw_remote_id_frames = 0;    // Remote ID advertisements received (pre-decode).
         uint16_t valid_remote_id_frames = 0;  // Remote ID advertisements that decoded successfully.
+
+        uint16_t raw_adsl_frames = 0;    // ADS-L receptions after a sync word.
+        uint16_t valid_adsl_frames = 0;  // ADS-L packets that passed the CRC.
 
         uint16_t corrected_frames[kNumCorrectionKinds] = {0};  // By CorrectionKind.
 
@@ -1113,11 +1226,17 @@ class AircraftDictionary {
                                       ", \"raw_remote_id_frames\": %u, \"valid_remote_id_frames\": %u",
                                       raw_remote_id_frames, valid_remote_id_frames);
 
+            // Add ADS-L stats.
+            chars_written += snprintf(buf + chars_written, buf_len - chars_written,
+                                      ", \"raw_adsl_frames\": %u, \"valid_adsl_frames\": %u", raw_adsl_frames,
+                                      valid_adsl_frames);
+
             // Add dictionary stats.
             chars_written +=
                 snprintf(buf + chars_written, buf_len - chars_written,
-                         ", \"num_mode_s_aircraft\": %u, \"num_uat_aircraft\": %u, \"num_remote_id_aircraft\": %u",
-                         num_mode_s_aircraft, num_uat_aircraft, num_remote_id_aircraft);
+                         ", \"num_mode_s_aircraft\": %u, \"num_uat_aircraft\": %u, \"num_remote_id_aircraft\": %u"
+                         ", \"num_adsl_aircraft\": %u",
+                         num_mode_s_aircraft, num_uat_aircraft, num_remote_id_aircraft, num_adsl_aircraft);
             chars_written += snprintf(buf + chars_written, buf_len - chars_written, ", \"corrected_frames\": {");
             for (uint16_t i = 0; i < kNumCorrectionKinds; i++) {
                 chars_written += snprintf(buf + chars_written, buf_len - chars_written, "%s\"%s\": %u", i ? ", " : "",
@@ -1218,6 +1337,21 @@ class AircraftDictionary {
         metrics_counter_.raw_uat_uplink_frames += raw_uat_uplink_frames;
         metrics_counter_.valid_uat_uplink_frames += valid_uat_uplink_frames;
     }
+
+    /**
+     * Records ADS-L receive counts from the sub-GHz radio (raw = after a sync word, valid = CRC passed).
+     */
+    inline void RecordADSLMetrics(uint16_t raw_adsl_frames, uint16_t valid_adsl_frames) {
+        metrics_counter_.raw_adsl_frames += raw_adsl_frames;
+        metrics_counter_.valid_adsl_frames += valid_adsl_frames;
+    }
+
+    /**
+     * Ingests a CRC-checked ADS-L packet: Traffic payloads create or update an ADSLAircraft, Status payloads update an
+     * existing one. Doesn't count metrics (see RecordADSLMetrics).
+     * @retval True if the packet updated an aircraft.
+     */
+    bool IngestADSLPacket(const RawADSLPacket &packet);
 
     /**
      * Mode S Packet Decoding

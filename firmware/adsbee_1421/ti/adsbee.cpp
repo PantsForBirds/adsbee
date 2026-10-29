@@ -715,9 +715,13 @@ void ADSBee::IngestAndForwardPackets() {
         }
     }
 
-    // ADS-L packets. The decoder logs each one; the aircraft dictionary does not take them yet.
+    // Ingest ADS-L packets and report them.
     RawADSLPacket adsl_packet;
     while (adsl_packet_decoder.adsl_packet_out_queue.Dequeue(adsl_packet)) {
+        aircraft_dictionary.IngestADSLPacket(adsl_packet);
+        if (!comms_manager.adsl_packet_reporting_queue.Enqueue(adsl_packet)) {
+            comms_manager.uat_report_queue_ovf_count++;  // Counted, not logged (see the Mode S queue above).
+        }
     }
 
     // Ingest decoded UAT uplink packets. The raw packet has already been FEC-corrected in place by the
