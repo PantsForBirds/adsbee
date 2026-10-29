@@ -777,6 +777,7 @@ TEST(Settings, BLEOutputDefaultsOffAndRoundTripsItsModeNames) {
     // Stored values are append-only: they must never move.
     EXPECT_EQ(SettingsManager::kBLEOutputOff, 0);
     EXPECT_EQ(SettingsManager::kBLEOutputGDL90, 1);
+    EXPECT_EQ(SettingsManager::kBLEOutputFLARMNMEA, 2);
     for (uint8_t i = 0; i < SettingsManager::kNumBLEOutputModes; i++) {
         SettingsManager::BLEOutputMode mode;
         ASSERT_TRUE(SettingsManager::BLEOutputModeFromStr(SettingsManager::BLEOutputModeToStr(i), mode));

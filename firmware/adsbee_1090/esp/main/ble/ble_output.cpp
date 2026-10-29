@@ -319,11 +319,13 @@ void BLEOutput::SendTraffic(const uint8_t* buf, uint16_t len, uint16_t index) {
 
 void BLEOutput::EndTraffic(uint16_t num_aircraft) { rotation_.End(num_aircraft); }
 
-bool BLEOutput::Start() {
+bool BLEOutput::Start(SettingsManager::BLEOutputMode mode) {
     if (running_) return true;
     if (s_stream == nullptr) {
-        s_stream = new (std::nothrow) GDL90BLEStream(HardwareCapabilities::HasPSRAM() ? kStreamCapacityBytes
-                                                                                     : kStreamCapacityBytesNoPSRAM);
+        s_stream = new (std::nothrow) GDL90BLEStream(
+            HardwareCapabilities::HasPSRAM() ? kStreamCapacityBytes : kStreamCapacityBytesNoPSRAM,
+            mode == SettingsManager::kBLEOutputFLARMNMEA ? GDL90BLEStream::kFramingLines
+                                                        : GDL90BLEStream::kFramingGDL90);
         if (s_stream == nullptr || !s_stream->Valid()) {
             delete s_stream;
             s_stream = nullptr;
@@ -334,6 +336,7 @@ bool BLEOutput::Start() {
     if (!BLEHost::Acquire(BLEHost::kUserBLEOutput)) return false;
     s_want = true;
     running_ = true;
+    running_mode_ = mode;
     StartAdvertising();  // Or OnHostSync() does, once the host syncs.
     return true;
 }
@@ -353,14 +356,18 @@ void BLEOutput::Stop() {
     delete s_stream;
     s_stream = nullptr;
     running_ = false;
+    running_mode_ = SettingsManager::kBLEOutputOff;
 }
 
 void BLEOutput::Reconcile() {
-    if (settings_manager.settings.ble_output_mode != SettingsManager::kBLEOutputGDL90) {
+    const SettingsManager::BLEOutputMode mode = settings_manager.settings.ble_output_mode;
+    if (mode != SettingsManager::kBLEOutputGDL90 && mode != SettingsManager::kBLEOutputFLARMNMEA) {
         Stop();
         status_ = kBLEOutputStatusOff;
         return;
     }
+    // A new mode drops the client: its app reads the other format.
+    if (running_ && running_mode_ != mode) Stop();
     const SettingsManager::Settings& settings = settings_manager.settings;
     const bool remote_id_uses_bluetooth =
         (settings.remote_id_rx_enabled && (settings.remote_id_transports & RemoteIDGuard::kTransportsBLE)) ||
@@ -383,7 +390,7 @@ void BLEOutput::Reconcile() {
                 ? RemoteIDGuard::kReserveFreeBytes
                 : (HardwareCapabilities::HasPSRAM() ? kMinHeapFreeBytesToStart
                                                     : RemoteIDGuard::kReserveFreeBytes + kBLEHeapCostBytes);
-        if (HardwareCapabilities::GetInternalFreeBytes() < start_bytes || !Start()) {
+        if (HardwareCapabilities::GetInternalFreeBytes() < start_bytes || !Start(mode)) {
             status_ = kBLEOutputStatusBlockedByRAM;
             return;
         }
@@ -441,7 +448,7 @@ void BLEOutput::BeginReport() {}
 void BLEOutput::SendTraffic(const uint8_t*, uint16_t, uint16_t) {}
 void BLEOutput::EndTraffic(uint16_t) {}
 bool BLEOutput::Send(const uint8_t*, uint16_t, bool) { return false; }
-bool BLEOutput::Start() { return false; }
+bool BLEOutput::Start(SettingsManager::BLEOutputMode) { return false; }
 void BLEOutput::Stop() {}
 void BLEOutput::Reconcile() {
     status_ = settings_manager.settings.ble_output_mode != SettingsManager::kBLEOutputOff ? kBLEOutputStatusNotInBuild

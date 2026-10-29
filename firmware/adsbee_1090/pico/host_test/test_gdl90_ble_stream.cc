@@ -1,3 +1,4 @@
+#include <cstring>
 #include <vector>
 
 #include "gdl90_ble_stream.hh"
@@ -202,4 +203,48 @@ TEST(GDL90BLEStream, AllocatesItsBuffer) {
     auto m = Frame(0x00, 100);
     for (int i = 0; i < 30; i++) ASSERT_TRUE(stream.Push(m.data(), m.size()));  // 30 x 102 B = 3060 B.
     EXPECT_FALSE(stream.Push(m.data(), m.size()));
+}
+
+namespace {
+std::vector<uint8_t> Line(const char* s) { return std::vector<uint8_t>(s, s + strlen(s)); }
+}  // namespace
+
+TEST(GDL90BLEStream, LineFramingPacksWholeSentences) {
+    GDL90BLEStream stream(1024, GDL90BLEStream::kFramingLines);
+    auto rmc = Line("$GPRMC,120304.00,A,3724.0000,N,12206.0000,W,95.0,272.0,291026,,,A*78\r\n");  // 70 B
+    auto pflau = Line("$PFLAU,2,0,2,1,0,,0,,,*4F\r\n");                                       // 27 B
+    auto pflaa = Line("$PFLAA,0,5560,8831,792,1,A1B2C3,0,,129,-3.3,9,0,1,-71*09\r\n");         // 58 B
+    auto all = Cat({rmc, pflau, pflaa});
+    ASSERT_TRUE(stream.Push(all.data(), all.size()));
+
+    // 100 B payloads: RMC + PFLAU (97 B), then PFLAA alone.
+    auto chunks = Drain(stream, 100);
+    ASSERT_EQ(chunks.size(), 2u);
+    EXPECT_EQ(chunks[0], Cat({rmc, pflau}));
+    EXPECT_EQ(chunks[1], pflaa);
+}
+
+TEST(GDL90BLEStream, LineFramingSplitsLongSentencesAndDropsOnlyUnsent) {
+    GDL90BLEStream stream(1024, GDL90BLEStream::kFramingLines);
+    auto pflau = Line("$PFLAU,2,0,2,1,0,,0,,,*4F\r\n");                                // 27 B
+    auto pflaa = Line("$PFLAA,0,5560,8831,792,1,A1B2C3,0,,129,-3.3,9,0,1,-71*09\r\n");  // 58 B
+    auto all = Cat({pflaa, pflau});
+    ASSERT_TRUE(stream.Push(all.data(), all.size()));
+
+    // Default ATT MTU: 20 B payloads split the PFLAA.
+    uint8_t buf[64];
+    ASSERT_EQ(stream.Peek(buf, 20), 20);
+    stream.Consume(20);
+    // A new report drops the PFLAU but finishes the PFLAA already started.
+    stream.DropUnsent();
+    EXPECT_EQ(stream.Size(), pflaa.size() - 20);
+    auto chunks = Drain(stream, 20);
+    std::vector<uint8_t> rest;
+    for (const auto& c : chunks) rest.insert(rest.end(), c.begin(), c.end());
+    EXPECT_EQ(rest, std::vector<uint8_t>(pflaa.begin() + 20, pflaa.end()));
+
+    // Once a line is fully sent, DropUnsent() drops everything queued.
+    ASSERT_TRUE(stream.Push(pflau.data(), pflau.size()));
+    stream.DropUnsent();
+    EXPECT_TRUE(stream.Empty());
 }

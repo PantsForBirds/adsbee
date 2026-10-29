@@ -131,12 +131,12 @@ CPP_AT_CALLBACK(CommsManager::ATBLEOutputCallback) {
         case '=': {
             char mode_str[16] = {0};
             if (!CPP_AT_HAS_ARG(0) || args[0].size() >= sizeof(mode_str)) {
-                CPP_AT_ERROR("Requires a mode. AT+BLE_OUTPUT=<OFF|GDL90>");
+                CPP_AT_ERROR("Requires a mode. AT+BLE_OUTPUT=<OFF|GDL90|FLARM_NMEA>");
             }
             memcpy(mode_str, args[0].data(), args[0].size());
             SettingsManager::BLEOutputMode mode;
             if (!SettingsManager::BLEOutputModeFromStr(mode_str, mode)) {
-                CPP_AT_ERROR("Invalid Bluetooth output mode '%s'. AT+BLE_OUTPUT=<OFF|GDL90>", mode_str);
+                CPP_AT_ERROR("Invalid Bluetooth output mode '%s'. AT+BLE_OUTPUT=<OFF|GDL90|FLARM_NMEA>", mode_str);
             }
             settings_manager.settings.ble_output_mode = mode;
             settings_manager.SyncToCoprocessors();  // The ESP32 runs the Bluetooth server.
@@ -2548,8 +2548,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "BLE_OUTPUT",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+BLE_OUTPUT=<OFF|GDL90>\r\n\tStream to one Bluetooth LE client (Nordic UART and HM-10 serial "
-                    "services). GDL90: the GDL90 sent to WiFi clients. Off by default. Without PSRAM it needs the WiFi "
+     .help_string = "AT+BLE_OUTPUT=<OFF|GDL90|FLARM_NMEA>\r\n\tStream to one Bluetooth LE client (Nordic UART and HM-10 "
+                    "serial services). GDL90: the GDL90 sent to WiFi clients. FLARM_NMEA: FLARM data port sentences "
+                    "(PFLAU, PFLAA, GPRMC, GPGGA); traffic needs ownship (AT+RX_POSITION GNSS or ICAO). Off by default. Without PSRAM it needs the WiFi "
                     "access point, WiFi station and Remote ID over Bluetooth off.\r\n\tAT+BLE_OUTPUT?\r\n\tQuery the mode and its state.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBLEOutputCallback, comms_manager)},
     {.command = "BOOT_USB_UF2",

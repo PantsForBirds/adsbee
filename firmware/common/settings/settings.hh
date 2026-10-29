@@ -119,7 +119,8 @@ class SettingsManager {
     // What the ESP32 streams to one Bluetooth LE client (AT+BLE_OUTPUT). Append new modes; never renumber.
     enum BLEOutputMode : uint8_t {
         kBLEOutputOff = 0,
-        kBLEOutputGDL90 = 1,  // The GDL90 the WiFi access point sends on UDP port 4000.
+        kBLEOutputGDL90 = 1,      // The GDL90 the WiFi access point sends on UDP port 4000.
+        kBLEOutputFLARMNMEA = 2,  // FLARM data port sentences (PFLAU, PFLAA, GPRMC, GPGGA) for gliding apps.
         kNumBLEOutputModes
     };
 
@@ -751,6 +752,8 @@ class SettingsManager {
         switch (mode) {
             case kBLEOutputGDL90:
                 return "GDL90";
+            case kBLEOutputFLARMNMEA:
+                return "FLARM_NMEA";
             case kBLEOutputOff:
             default:
                 return "OFF";
@@ -758,7 +761,7 @@ class SettingsManager {
     }
 
     /**
-     * Parses an AT command Bluetooth output mode string (OFF or GDL90, case-insensitive).
+     * Parses an AT command Bluetooth output mode string (OFF, GDL90 or FLARM_NMEA, case-insensitive).
      * @retval True if `str` named a mode and `mode` was written.
      */
     static inline bool BLEOutputModeFromStr(const char* str, BLEOutputMode& mode) {

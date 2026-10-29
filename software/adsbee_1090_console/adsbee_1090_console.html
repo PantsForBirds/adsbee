@@ -8753,10 +8753,10 @@ const SETTINGS_SCHEMA_1090 = [
     },
     {
         cmd: 'BLE_OUTPUT', label: 'Bluetooth Output', group: 'Reporting',
-        help: 'Stream to one Bluetooth LE client. GDL90: the WiFi GDL90 (traffic, ownship, FIS-B), e.g. for AvareX or XCSoar on Android.',
+        help: 'Stream to one Bluetooth LE client. GDL90: the WiFi GDL90 (traffic, ownship, FIS-B), e.g. for AvareX or XCSoar on Android. FLARM_NMEA: FLARM sentences for gliding apps (XCSoar, LK8000, SeeYou Navigator, Enroute); traffic needs Position Source GNSS or ICAO.',
         tip: 'Off by default. Advertised as "ADSBee 1090 XXXX" with the Nordic UART and HM-10 serial services. Without PSRAM it needs the WiFi access point, WiFi station and Remote ID over Bluetooth off.',
         fields: [
-            { id: 'mode', label: 'Mode', type: 'enum', options: ['OFF', 'GDL90'] },
+            { id: 'mode', label: 'Mode', type: 'enum', options: ['OFF', 'GDL90', 'FLARM_NMEA'] },
             { id: 'status', label: 'Status', type: 'display' },
         ],
     },
