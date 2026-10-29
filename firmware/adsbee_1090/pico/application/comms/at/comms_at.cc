@@ -2116,6 +2116,7 @@ static void PrintSettingsJSON() {
                   (int)adsbee.rx_position.speed_kts, (unsigned)adsbee.rx_position.icao_address);
     CPP_AT_PRINTF("\"SUBG_ENABLE\":[\"%s\"],",
                   SettingsManager::EnableStateToATValueStr(adsbee.subg_radio_ll.IsEnabledState()));
+    CPP_AT_PRINTF("\"SUBG_MODE\":[\"%s\"],", SettingsManager::kSubGHzModeStrs[s.subg_mode]);
     int tl_offset_mv = adsbee.GetTLOffsetMilliVolts();
     CPP_AT_PRINTF("\"TL_OFFSET\":[%d,\"%d dBm\"],", tl_offset_mv, adsbee.AD8313MilliVoltsTodBm(tl_offset_mv));
     CPP_AT_PRINTF("\"WATCHDOG\":[%lu],", (unsigned long)adsbee.GetWatchdogTimeoutSec());
@@ -2195,6 +2196,29 @@ CPP_AT_CALLBACK(CommsManager::ATSubGEnableCallback) {
             CPP_AT_CMD_PRINTF("=%s\r\n",
                               SettingsManager::EnableStateToATValueStr(adsbee.subg_radio_ll.IsEnabledState()));
             CPP_AT_SILENT_SUCCESS();
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATSubGModeCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%s\r\n", SettingsManager::kSubGHzModeStrs[settings_manager.settings.subg_mode]);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (!CPP_AT_HAS_ARG(0)) {
+                CPP_AT_ERROR("Need to specify a Sub-GHz RX mode.");
+            }
+            for (uint16_t i = 0; i < SettingsManager::kNumSubGHzRadioModes; i++) {
+                if (args[0].compare(SettingsManager::kSubGHzModeStrs[i]) == 0) {
+                    settings_manager.settings.subg_mode = static_cast<SettingsManager::SubGHzRadioMode>(i);
+                    settings_manager.SyncToCoprocessors();  // The CC1312 switches modes from its main loop.
+                    CPP_AT_SUCCESS();
+                }
+            }
+            CPP_AT_ERROR("Sub-GHz RX mode %s not recognized.", args[0].data());
             break;
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
@@ -2770,6 +2794,15 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "pulldown) for control via an external device.\r\n\tAT+SUBG_ENABLE?\r\n\t"
                     "Query the status of the sub-GHz receiver.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATSubGEnableCallback, comms_manager)},
+    {.command = "SUBG_MODE",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+SUBG_MODE=<mode [UAT_RX ADSL_RX ADSL_RX_868_4]>\r\n\tSet the Sub-GHz receiver protocol mode. "
+                    "UAT_RX receives 978MHz UAT ADS-B and ground uplink messages. ADSL_RX and ADSL_RX_868_4 receive "
+                    "ADS-L on 868.2 or 868.4 MHz (senders alternate between the two, so one channel hears about half "
+                    "of their messages). Takes effect immediately; persist with AT+SETTINGS=SAVE.\r\n\t"
+                    "AT+SUBG_MODE?\r\n\tQuery the current mode.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATSubGModeCallback, comms_manager)},
     {.command = "SUBG_FLASH",
      .min_args = 0,
      .max_args = 0,

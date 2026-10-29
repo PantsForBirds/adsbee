@@ -15,7 +15,9 @@ extern "C" {
 
 #include "bsp.hh"
 // #include "buffer_utils.hh"
+#include "adsl_packet.hh"
 #include "comms.hh"
+#include "settings.hh"
 #include "unit_conversions.hh"
 #include "uat_packet.hh"
 
@@ -77,6 +79,16 @@ public:
      */
     bool HandlePacketRx(rfc_dataEntryPartial_t *filled_entry);
 
+    /**
+     * Requests a Sub-GHz protocol mode (AT+SUBG_MODE). Safe from the SPI callback: Update() re-opens the RF client in
+     * the new mode from the main loop. Out-of-range values fall back to UAT_RX.
+     */
+    void SetMode(SettingsManager::SubGHzRadioMode mode);
+    SettingsManager::SubGHzRadioMode GetMode() const { return mode_; }
+    static bool ModeIsADSL(SettingsManager::SubGHzRadioMode mode) {
+        return mode == SettingsManager::kSubGHzRadioModeADSLRx || mode == SettingsManager::kSubGHzRadioModeADSLRx868_4MHz;
+    }
+
     bool rx_enabled = true;
 
     // Failed CMD_PROP_SET_LEN immediate commands (RF_runImmediateCmd status != success), counted from
@@ -91,8 +103,16 @@ public:
 private:
     SubGHzRadioConfig config_;
 
-    RF_Handle rf_handle_;
+    /**
+     * Applies a mode requested with SetMode(): aborts reception and re-opens the RF client with the mode's PHY.
+     */
+    bool ApplyRequestedMode();
+
+    RF_Handle rf_handle_ = nullptr;  // nullptr while the RF client is closed.
     RF_Object rf_object_;
+
+    SettingsManager::SubGHzRadioMode mode_ = SettingsManager::kSubGHzRadioModeUATRx;
+    volatile SettingsManager::SubGHzRadioMode requested_mode_ = SettingsManager::kSubGHzRadioModeUATRx;
 
     rfc_dataEntryPartial_t *current_data_entry_; // Pointer to the data entry being processed (not held by the RF core).
     rfc_propRxOutput_t rx_statistics_;

@@ -52,6 +52,8 @@ class ObjectDictionary {
     // composite array reads, so a burst survives until the RP2040's next poll.
     static constexpr uint16_t kDecodedUATADSBPacketQueueDepth = 64;
     static constexpr uint16_t kDecodedUATUplinkPacketQueueDepth = 32;
+    // ADS-L senders transmit about once per second each.
+    static constexpr uint16_t kDecodedADSLPacketQueueDepth = 16;
 
     enum Address : uint8_t {
         kAddrInvalid = 0,             // Default value.
@@ -274,6 +276,8 @@ class ObjectDictionary {
         uint16_t num_valid_uat_adsb_packets = 0;
         uint16_t num_raw_uat_uplink_packets = 0;
         uint16_t num_valid_uat_uplink_packets = 0;
+        uint16_t num_raw_adsl_packets = 0;
+        uint16_t num_valid_adsl_packets = 0;
     };
 
     /**
@@ -441,12 +445,18 @@ class ObjectDictionary {
         PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = kDecodedUATUplinkPacketQueueDepth,
                                       .buffer = raw_uat_uplink_packet_buffer_,
                                       .overwrite_when_full = false});  // The decoder logs packets that don't fit.
+    PFBQueue<RawADSLPacket> raw_adsl_packet_queue =
+        PFBQueue<RawADSLPacket>({.buf_len_num_elements = kDecodedADSLPacketQueueDepth,
+                                 .buffer = raw_adsl_packet_buffer_,
+                                 .overwrite_when_full = true});
 
     struct SubGHzRadioMetrics {
         uint16_t num_raw_uat_adsb_packets = 0;
         uint16_t num_valid_uat_adsb_packets = 0;
         uint16_t num_raw_uat_uplink_packets = 0;
         uint16_t num_valid_uat_uplink_packets = 0;
+        uint16_t num_raw_adsl_packets = 0;
+        uint16_t num_valid_adsl_packets = 0;
     };
     SubGHzRadioMetrics metrics = {0};
     SubGHzDeviceStatus device_status = {};
@@ -473,6 +483,7 @@ class ObjectDictionary {
     // CC1312
     RawUATADSBPacket raw_uat_adsb_packet_buffer_[kDecodedUATADSBPacketQueueDepth] = {};
     RawUATUplinkPacket raw_uat_uplink_packet_buffer_[kDecodedUATUplinkPacketQueueDepth] = {};
+    RawADSLPacket raw_adsl_packet_buffer_[kDecodedADSLPacketQueueDepth] = {};
 #endif
 };
 

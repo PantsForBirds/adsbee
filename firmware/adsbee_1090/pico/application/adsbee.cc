@@ -760,7 +760,8 @@ void ADSBee::IngestAndForwardPackets() {
     // keeps outputting packets.
     uint16_t num_decoded_mode_s_packets = decoder.decoded_mode_s_packet_out_queue.Length();
     if (num_decoded_mode_s_packets == 0 && raw_uat_adsb_packet_queue.Length() == 0 &&
-        raw_uat_uplink_packet_queue.Length() == 0 && raw_remote_id_packet_queue.Length() == 0) {
+        raw_uat_uplink_packet_queue.Length() == 0 && raw_remote_id_packet_queue.Length() == 0 &&
+        raw_adsl_packet_queue.Length() == 0) {
         return;
     }
     CPUMonitor::WorkScope work;
@@ -846,6 +847,11 @@ void ADSBee::IngestAndForwardPackets() {
     RawRemoteIDPacket remote_id_packet;
     while (raw_remote_id_packet_queue.Dequeue(remote_id_packet)) {
         aircraft_dictionary.IngestRawRemoteIDPacket(remote_id_packet);
+    }
+
+    // ADS-L packets from the CC1312. The CC1312 logs each one; the aircraft dictionary does not take them yet.
+    RawADSLPacket adsl_packet;
+    while (raw_adsl_packet_queue.Dequeue(adsl_packet)) {
     }
 }
 

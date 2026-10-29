@@ -18,6 +18,8 @@ const char SettingsManager::kSubGHzModeStrs[SettingsManager::kNumSubGHzRadioMode
                                            [SettingsManager::kSubGHzModeStrMaxLen] = {
                                                "UAT_RX",            // UAT ADS-B + ground uplink.
                                                "UAT_RX_NO_UPLINK",  // UAT ADS-B only.
+                                               "ADSL_RX",           // ADS-L on 868.2 MHz.
+                                               "ADSL_RX_868_4",     // ADS-L on 868.4 MHz.
 };
 
 const char SettingsManager::kR1090PreambleModeStrs[SettingsManager::kNumR1090PreambleModes]

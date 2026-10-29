@@ -1610,9 +1610,10 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "SUBG_MODE",
      .min_args = 0,
      .max_args = 1,
-     .help_string = "AT+SUBG_MODE=<mode [UAT_RX UAT_RX_NO_UPLINK]>\r\n\tSet the Sub-GHz receiver protocol mode. "
-                    "UAT_RX receives 978MHz UAT ADS-B and ground uplink messages; UAT_RX_NO_UPLINK receives ADS-B "
-                    "only (uplink sync word disabled at the RF core). Takes effect immediately; persist with "
+     .help_string = "AT+SUBG_MODE=<mode [UAT_RX UAT_RX_NO_UPLINK ADSL_RX ADSL_RX_868_4]>\r\n\tSet the Sub-GHz "
+                    "receiver protocol mode. UAT_RX receives 978MHz UAT ADS-B and ground uplink messages; "
+                    "UAT_RX_NO_UPLINK receives ADS-B only (uplink sync word disabled at the RF core). ADSL_RX and "
+                    "ADSL_RX_868_4 receive ADS-L on 868.2 or 868.4 MHz. Takes effect immediately; persist with "
                     "AT+SETTINGS=SAVE.\r\n\tAT+SUBG_MODE?\r\n\tQuery the current mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATSubGRxModeCallback, comms_manager)},
 #ifdef HARDWARE_UNIT_TESTS

@@ -27,6 +27,8 @@ class ADSBee {
     // Remote ID packets pulled from the ESP32 over SPI, waiting to be decoded into the aircraft dictionary. The ESP32
     // already rate-limits these to ~1 Hz per drone, so a shallow queue suffices.
     static constexpr uint16_t kRawRemoteIDPacketQueueDepth = 16;
+    // ADS-L packets from the CC1312: about one per second per sender, read every few milliseconds.
+    static constexpr uint16_t kRawADSLPacketQueueDepth = 16;
 
     static constexpr uint16_t kTLMaxPWMCount = 5000;  // Clock is 125MHz, shoot for 25kHz PWM.
     static constexpr int kVDDMV = 3300;               // [mV] Voltage of positive supply rail.
@@ -486,6 +488,8 @@ class ADSBee {
         {.buf_len_num_elements = kRawUATUplinkPacketQueueDepth, .buffer = raw_uat_uplink_packet_queue_buffer_});
     PFBQueue<RawRemoteIDPacket> raw_remote_id_packet_queue = PFBQueue<RawRemoteIDPacket>(
         {.buf_len_num_elements = kRawRemoteIDPacketQueueDepth, .buffer = raw_remote_id_packet_queue_buffer_});
+    PFBQueue<RawADSLPacket> raw_adsl_packet_queue = PFBQueue<RawADSLPacket>(
+        {.buf_len_num_elements = kRawADSLPacketQueueDepth, .buffer = raw_adsl_packet_queue_buffer_});
 
     AircraftDictionary aircraft_dictionary;
     CC1312 subg_radio_ll = CC1312({});
@@ -589,6 +593,7 @@ class ADSBee {
     RawUATADSBPacket raw_uat_adsb_packet_queue_buffer_[kRawUATADSBPacketQueueDepth];
     RawUATUplinkPacket raw_uat_uplink_packet_queue_buffer_[kRawUATUplinkPacketQueueDepth];
     RawRemoteIDPacket raw_remote_id_packet_queue_buffer_[kRawRemoteIDPacketQueueDepth];
+    RawADSLPacket raw_adsl_packet_queue_buffer_[kRawADSLPacketQueueDepth];
 
     uint32_t last_aircraft_dictionary_update_timestamp_ms_ = 0;
     uint32_t last_rx_position_update_timestamp_ms_ = 0;
