@@ -328,10 +328,14 @@ bool SubGHzRadio::SetMode(SettingsManager::SubGHzRadioMode mode) {
     // syncWord1 is only read when CMD_PROP_RX_ADV starts, and re-posting the aborted RF_cmdPropRxAdv without an
     // RF_close/RF_open cycle is rejected with PROP_ERROR_PAR (see StartRssiScan()), so tear the client down and
     // rebuild it exactly like Suspend()/Resume(). Clear the stale DONE_ABORT status first so Update() can't
-    // misread it as "RX ended" and double-post before the RF core marks the new command PENDING.
+    // misread it as "RX ended" and double-post before the RF core marks the new command PENDING. The aborted command
+    // ends with PROP_DONE_ABORT, which HandleRxCommandEnd() re-posts while rx_enabled is set, and RF_close() then
+    // waits for that command forever: clear rx_enabled first, as Suspend() does.
+    rx_enabled = false;
     RF_cancelCmd(rf_handle_, rx_cmd_handle_, 0);
     DeInit();
     ((RF_Op*)&RF_cmdPropRxAdv)->status = IDLE;
+    rx_enabled = true;
     if (!Init()) {
         CONSOLE_ERROR("SubGHzRadio::SetMode", "Failed to restart RX in mode %s.",
                       SettingsManager::kSubGHzModeStrs[mode_]);

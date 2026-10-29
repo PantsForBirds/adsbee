@@ -262,11 +262,16 @@ bool SubGHzRadio::ApplyRequestedMode() {
         return true;  // Init() picks up requested_mode_.
     }
     // Sync words, PHY and frequency are latched when the RF client opens and the RX command starts, so close the client
-    // and open it again. Clear the stale abort status so a late callback can't read it as "RX ended".
+    // and open it again. The aborted command ends with PROP_DONE_ABORT, which HandleRxCommandEnd() re-posts while
+    // rx_enabled is set, and RF_close() would wait for that command forever. Clear the stale abort status so a late
+    // callback can't read it as "RX ended".
+    bool rx_was_enabled = rx_enabled;
+    rx_enabled = false;
     RF_cancelCmd(rf_handle_, rx_cmd_handle_, 0);
     DeInit();
     ((RF_Op*)&RF_cmdPropRxAdv)->status = IDLE;
     rx_restart_status_ = 0;
+    rx_enabled = rx_was_enabled;
     if (!Init()) {
         CONSOLE_ERROR("SubGHzRadio::ApplyRequestedMode", "Failed to restart RX in mode %s.",
                       SettingsManager::kSubGHzModeStrs[requested_mode_]);
