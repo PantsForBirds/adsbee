@@ -42,8 +42,8 @@ global.document = new FakeDocument();
 global.confirm = () => true;
 const { SettingsEngine, SETTINGS_SCHEMA_1090 } = require('../settings.js');
 
-// The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc9.
-const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHERNET":[1],"ESP32_ENABLE":[1],' +
+// The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc11.
+const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"BLE_OUTPUT":["OFF","OFF"],"ETHERNET":[1],"ESP32_ENABLE":[1],' +
     '"FEED_ENABLE":[1],"FILTER_ALTITUDE_FT":["OFF",0,10000],"FILTER_DISTANCE_NM":[0,100.0],"SWARM":[0,"https://adsbee.aero",""],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"IP_MODE":["DUAL"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
     '"MAVLINK_ID":[1,156],"NTP_SERVER":["pool.ntp.org"],"PROTOCOL_OUT":["NONE","NONE"],"REMOTE_ID":[0,7,"0x00"],' +
     '"REMOTE_ID_TX":[0,7,"",1,2,"","0x0000"],"RX_ENABLE":[1,1],' +
@@ -234,6 +234,23 @@ test('the altitude filter loads from the dump and saves mode and altitudes in ft
     input('FILTER_ALTITUDE_FT', 'b').value = '18000';
     await engine.save();
     assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+FILTER_ALTITUDE_FT=BETWEEN,1000,18000', 'AT+SETTINGS=SAVE']);
+});
+
+test('Bluetooth output loads its mode and state from the dump and saves the mode alone', async () => {
+    let dump = DUMP;
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [dump];
+        if (cmd === 'AT+BLE_OUTPUT=GDL90') { dump = dump.replace('"BLE_OUTPUT":["OFF","OFF"]', '"BLE_OUTPUT":["GDL90","ADVERTISING"]'); return []; }
+        if (cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.strictEqual(input('BLE_OUTPUT', 'mode').value, 'OFF');
+    input('BLE_OUTPUT', 'mode').value = 'GDL90';
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+BLE_OUTPUT=GDL90', 'AT+SETTINGS=SAVE']);
+    assert.strictEqual(input('BLE_OUTPUT', 'mode').value, 'GDL90');
 });
 
 test('swarm reports load from the dump and save without resending the token', async () => {

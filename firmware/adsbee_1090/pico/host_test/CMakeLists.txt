@@ -54,6 +54,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         # test_adsbee.cc
         test_composite_array.cc
         test_esp32_firmware_check.cc
+        test_gdl90_ble_stream.cc
         test_cpu_utils.cc
         test_crc.cc
         test_data_structures.cc
@@ -110,6 +111,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         ${ADSBEE_MODULES_DIR}/cppAT/src
         ${CMAKE_SOURCE_DIR}/application/peripherals/gnss
         ${CMAKE_SOURCE_DIR}/../esp/main/remote_id # ble_adv_watchdog.hh, ble_scan_watchdog.hh
+        ${CMAKE_SOURCE_DIR}/../esp/main/ble # gdl90_ble_stream.hh
         .
         mocks
     )

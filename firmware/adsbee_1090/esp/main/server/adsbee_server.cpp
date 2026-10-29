@@ -16,6 +16,7 @@
 #include "heap_diagnostics.hh"
 #include "json_utils.hh"
 #include "pico.hh"
+#include "ble/ble_output.hh"
 #include "remote_id/remote_id_manager.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
@@ -25,6 +26,23 @@
 // #define VERBOSE_DEBUG
 
 static const uint16_t kGDL90Port = 4000;
+
+// True if GDL90 goes to WiFi access point clients.
+static bool GDL90ToWiFi() {
+    return comms_manager.WiFiAccessPointIsRunning() && comms_manager.WiFiAccessPointHasClients();
+}
+
+/**
+ * Sends framed GDL90 messages to WiFi access point clients and the Bluetooth client.
+ * @param[in] droppable True for FIS-B uplinks, which Bluetooth refuses first when its queue fills.
+ * @retval False if the WiFi send failed. A full Bluetooth queue shows in its drop count.
+ */
+static bool SendGDL90(CommsManager::NetworkMessage& message, bool droppable = false) {
+    bool ret = true;
+    if (GDL90ToWiFi()) ret = comms_manager.WiFiAccessPointSendMessageToAllStations(message);
+    if (ble_output.HasSubscriber()) ble_output.Send(message.data, message.len, droppable);
+    return ret;
+}
 
 static const uint16_t kNetworkConsoleWelcomeMessageMaxLen = 1000;
 static const uint16_t kNetworkMetricsMessageMaxLen = 2048;
@@ -247,6 +265,7 @@ bool ADSBeeServer::Update() {
     // aircraft-dictionary mutation stays single-threaded.
     remote_id_manager.ServiceIngestQueue();
     remote_id_manager.Update();
+    ble_output.Update();
 
     // Prune aircraft dictionary. Need to do this up front so that we don't end up with a negative timestamp delta
     // caused by packets being ingested more recently than the timestamp we take at the beginning of this function.
@@ -402,10 +421,10 @@ bool ADSBeeServer::Update() {
         }
     }
 
-    // Broadcast aircraft locations to connected WiFi clients over GDL90.
+    // Broadcast aircraft locations over GDL90 to WiFi access point clients and the Bluetooth client.
     if (timestamp_ms - last_gdl90_report_timestamp_ms_ > kGDL90ReportingIntervalMs) {
         last_gdl90_report_timestamp_ms_ = timestamp_ms;
-        if (comms_manager.WiFiAccessPointHasClients() && !ReportGDL90()) {
+        if ((GDL90ToWiFi() || ble_output.HasSubscriber()) && !ReportGDL90()) {
             CONSOLE_ERROR("ADSBeeServer::Update", "Encountered error while reporting GDL90.");
             ret = false;
         }
@@ -467,10 +486,7 @@ void ADSBeeServer::SPIReceiveTask() {
 }
 
 bool ADSBeeServer::ReportGDL90() {
-    if (!comms_manager.WiFiAccessPointIsRunning()) {
-        return true;  // Nothing to do.
-    }
-
+    ble_output.BeginReport();
     CommsManager::NetworkMessage message;
     message.port = kGDL90Port;
 
@@ -492,13 +508,13 @@ bool ADSBeeServer::ReportGDL90() {
         aircraft_dictionary.metrics.valid_squitter_frames + aircraft_dictionary.metrics.valid_extended_squitter_frames +
             aircraft_dictionary.metrics.valid_uat_adsb_frames,  // ADS-B message count includes UAT ADS-B messages.
         aircraft_dictionary.metrics.valid_uat_uplink_frames);
-    comms_manager.WiFiAccessPointSendMessageToAllStations(message);
+    SendGDL90(message);
     message.len = 0;
 
     // Ownship Report
     message.len = gdl90.WriteGDL90TargetReportMessage(message.data, CommsManager::NetworkMessage::kMaxLenBytes,
                                                       ownship_data, true);
-    comms_manager.WiFiAccessPointSendMessageToAllStations(message);
+    SendGDL90(message);
     message.len = 0;
 
     // Traffic Reports
@@ -557,7 +573,7 @@ bool ADSBeeServer::ReportGDL90() {
             message.len += aircraft_msg_buf_len;
         } else {
             // Send the existing message and start a new one.
-            if (!comms_manager.WiFiAccessPointSendMessageToAllStations(message)) {
+            if (!SendGDL90(message)) {
                 CONSOLE_ERROR("ADSBeeServer::ReportGDL90", "Failed to send info about aircraft %d to all clients.",
                               aircraft_index);
             }
@@ -568,7 +584,7 @@ bool ADSBeeServer::ReportGDL90() {
 
     // Send any remaining message data.
     if (message.len > 0) {
-        if (!comms_manager.WiFiAccessPointSendMessageToAllStations(message)) {
+        if (!SendGDL90(message)) {
             CONSOLE_ERROR("ADSBeeServer::ReportGDL90", "Failed to send final aircraft message to all clients.");
         }
     }
@@ -577,7 +593,7 @@ bool ADSBeeServer::ReportGDL90() {
 }
 
 bool ADSBeeServer::ReportGDL90UplinkDataMessage(const DecodedUATUplinkPacket& uplink_packet) {
-    if (!comms_manager.WiFiAccessPointIsRunning()) {
+    if (!comms_manager.WiFiAccessPointIsRunning() && !ble_output.HasSubscriber()) {
         return true;  // Nothing to do.
     }
 
@@ -593,7 +609,7 @@ bool ADSBeeServer::ReportGDL90UplinkDataMessage(const DecodedUATUplinkPacket& up
         return false;
     }
 
-    if (!comms_manager.WiFiAccessPointSendMessageToAllStations(message)) {
+    if (!SendGDL90(message, /*droppable=*/true)) {
         CONSOLE_ERROR("ADSBeeServer::ReportGDL90UplinkPacket", "Failed to send UAT uplink packet to all clients.");
         return false;
     }

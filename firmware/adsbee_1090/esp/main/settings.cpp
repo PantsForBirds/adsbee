@@ -2,6 +2,7 @@
 
 #include "comms.hh"
 #include "heap_diagnostics.hh"
+#include "ble/ble_output.hh"
 #include "remote_id/remote_id_manager.hh"
 
 bool SettingsManager::Apply() {
@@ -99,6 +100,7 @@ bool SettingsManager::Apply() {
 
     // Reconfigure Remote ID now that the WiFi/Ethernet state is settled.
     remote_id_manager.Apply();
+    ble_output.Apply();
 
     return true;
 }

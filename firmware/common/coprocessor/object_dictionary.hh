@@ -188,6 +188,8 @@ class ObjectDictionary {
         // UTC from SNTP, valid while an output uses ASTERIX and the ESP32 has synced. Holds UTC at timestamp_ms.
         bool network_utc_time_valid = false;
         uint32_t network_utc_ms_of_day = 0;
+
+        uint8_t ble_output_status = 0;  // BLEOutputStatus.
     };
 
     enum ESP32HardwareCapability : uint8_t {

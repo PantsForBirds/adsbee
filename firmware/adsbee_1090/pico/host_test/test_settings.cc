@@ -51,6 +51,7 @@ TEST(SettingsMigration, LayoutLockedSizes) {
 
     EXPECT_EQ(sizeof(settings_v17::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v18::Settings), 1340u);
+    EXPECT_EQ(sizeof(settings_v19::Settings), 1792u);
     EXPECT_EQ(sizeof(SettingsManager::Settings), 1792u);
 
     EXPECT_EQ(sizeof(settings_v14::Settings), 1140u);
@@ -707,16 +708,93 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ntp = dump.find("AT+NTP_SERVER=pool.ntp.org");
     ASSERT_NE(ntp, std::string::npos);
     EXPECT_LT(asterix, ntp);
-    // Then the altitude filter, then swarm reports last.
+    // Then the altitude filter, swarm reports and GDL90 over Bluetooth last.
     EXPECT_LT(ntp, filter_altitude);
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
     EXPECT_EQ(dump.find("AT+", filter_altitude + 1), swarm);
-    EXPECT_EQ(dump.find("AT+", swarm + 1), std::string::npos);
+    size_t ble_output = dump.find("AT+BLE_OUTPUT=OFF\r\n");
+    ASSERT_NE(ble_output, std::string::npos);
+    EXPECT_EQ(dump.find("AT+", swarm + 1), ble_output);
+    EXPECT_EQ(dump.find("AT+", ble_output + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
     memcpy(&manager.settings.auto_update_enabled, &raw, 1);
     EXPECT_TRUE(manager.Sanitize());
+}
+
+TEST(SettingsMigration, V19ToV20KeepsEverythingAndLeavesBLEOutputOff) {
+    // A v19 blob as rc10 wrote it, 0xFF in the tail padding where v20 put ble_output_mode.
+    static SettingsManager::Settings v19;
+    v19 = SettingsManager::Settings();
+    v19.settings_version = 19;
+    strcpy(v19.core_network_settings.hostname, "hangar-bee");
+    v19.core_network_settings.UpdateCRC32();
+    v19.filter_distance_enabled = true;
+    v19.filter_distance_deci_nm = 1234;
+    v19.feed_transports[2] = SettingsManager::kFeedTransportMQTT;
+    strcpy(v19.mqtt_broker.host, "broker.example.com");
+    v19.asterix_sic = 7;
+    v19.filter_altitude_mode = kAltitudeFilterBetween;
+    v19.swarm_enabled = true;
+    strcpy(v19.swarm_token, "tok-1234");
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memset(blob, 0xFF, sizeof(blob));
+    memcpy(blob, &v19, offsetof(settings_v19::Settings, swarm_token) + sizeof(settings_v19::Settings::swarm_token));
+
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
+    EXPECT_TRUE(out.core_network_settings.IsValid());
+    EXPECT_STREQ(out.core_network_settings.hostname, "hangar-bee");
+    EXPECT_TRUE(out.filter_distance_enabled);
+    EXPECT_EQ(out.filter_distance_deci_nm, 1234u);
+    EXPECT_EQ(out.feed_transports[2], SettingsManager::kFeedTransportMQTT);
+    EXPECT_STREQ(out.mqtt_broker.host, "broker.example.com");
+    EXPECT_EQ(out.asterix_sic, 7);
+    EXPECT_EQ(out.filter_altitude_mode, kAltitudeFilterBetween);
+    EXPECT_TRUE(out.swarm_enabled);
+    EXPECT_STREQ(out.swarm_token, "tok-1234");
+    settings_manager.settings = out;
+    EXPECT_FALSE(settings_manager.Sanitize());
+}
+
+TEST(SettingsMigration, V18ToCurrentLeavesBLEOutputOff) {
+    settings_v18::Settings v18;
+    memset(&v18, 0, sizeof(v18));
+    v18.settings_version = 18;
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
+    ASSERT_TRUE(SettingsMigrator::Migrate(reinterpret_cast<const uint8_t*>(&v18), sizeof(v18), 18, out));
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
+}
+
+TEST(Settings, BLEOutputDefaultsOffAndRoundTripsItsModeNames) {
+    SettingsManager::Settings s;
+    EXPECT_EQ(s.ble_output_mode, SettingsManager::kBLEOutputOff);
+    // Stored values are append-only: they must never move.
+    EXPECT_EQ(SettingsManager::kBLEOutputOff, 0);
+    EXPECT_EQ(SettingsManager::kBLEOutputGDL90, 1);
+    for (uint8_t i = 0; i < SettingsManager::kNumBLEOutputModes; i++) {
+        SettingsManager::BLEOutputMode mode;
+        ASSERT_TRUE(SettingsManager::BLEOutputModeFromStr(SettingsManager::BLEOutputModeToStr(i), mode));
+        EXPECT_EQ(mode, i);
+    }
+    SettingsManager::BLEOutputMode mode = SettingsManager::kBLEOutputGDL90;
+    EXPECT_TRUE(SettingsManager::BLEOutputModeFromStr("gdl90", mode));
+    EXPECT_FALSE(SettingsManager::BLEOutputModeFromStr("NMEA", mode));
+    EXPECT_EQ(mode, SettingsManager::kBLEOutputGDL90);
+}
+
+TEST(SettingsManager, SanitizeTurnsAnUnknownBLEOutputModeOff) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+    s.core_network_settings.UpdateCRC32();
+    s.ble_output_mode = static_cast<SettingsManager::BLEOutputMode>(SettingsManager::kNumBLEOutputModes);
+    EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_EQ(s.ble_output_mode, SettingsManager::kBLEOutputOff);
 }
 
 TEST(SettingsMigration, V15ToCurrentPreservesAllFieldsAndDefaultsIPMode) {
