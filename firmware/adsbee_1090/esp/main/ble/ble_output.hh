@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "ble_output_status.hh"
+#include "gdl90_ble_stream.hh"
 #include "remote_id_guard.hh"
 
 /**
@@ -15,13 +16,15 @@
  * FIS-B uplinks as they arrive), framed as on UDP (0x7E flags, byte stuffing, CRC). Each notification carries whole
  * messages unless one message alone exceeds the payload size.
  *
- * One client at a time. The server shares the NimBLE host with Remote ID (BLEHost) and runs under the same network
- * and RAM rules as Remote ID over Bluetooth (RemoteIDGuard::AllowedTransports and the heap reserve).
+ * One client at a time. The server shares the NimBLE host with Remote ID (BLEHost). Without PSRAM it runs only with
+ * WiFi access point, station and Remote ID over Bluetooth off (BLEOutputAllowed), and under the Remote ID heap reserve.
  */
 class BLEOutput {
    public:
-    // Bytes queued for notifications. A 1 Hz report of 100 aircraft is about 3 kB.
+    // Bytes queued for notifications. A 1 Hz report of 100 aircraft is about 3 kB; 200 is the ESP32 dictionary size.
+    // Without PSRAM the RAM is too tight for that, and a larger report goes out in turns (ReportRotation).
     static constexpr uint16_t kStreamCapacityBytes = 6 * 1024;
+    static constexpr uint16_t kStreamCapacityBytesNoPSRAM = 3 * 1024;
     // Notifications are sent only while this many NimBLE buffers stay free. The host queues notifications the
     // controller can't take yet in the same buffers that HCI commands and Remote ID advertising data need.
     static constexpr int kMinFreeNimBLEBuffers = 4;
@@ -63,6 +66,14 @@ class BLEOutput {
      */
     bool Send(const uint8_t* buf, uint16_t len, bool droppable = false);
 
+    /**
+     * Traffic of a 1 Hz report, one framed message per aircraft. Send indices TrafficStart()..n-1, then
+     * 0..TrafficStart()-1, then call EndTraffic(n).
+     */
+    uint16_t TrafficStart() const { return rotation_.Start(); }
+    void SendTraffic(const uint8_t* buf, uint16_t len, uint16_t index);
+    void EndTraffic(uint16_t num_aircraft);
+
     BLEOutputStatus GetStatus() const { return status_; }
 
    private:
@@ -74,6 +85,7 @@ class BLEOutput {
     bool running_ = false;
     BLEOutputStatus status_ = kBLEOutputStatusOff;
     RemoteIDGuard::HeapWatch heap_watch_;
+    ReportRotation rotation_;
     uint32_t last_heap_watch_ms_ = 0;
     uint32_t last_blocked_retry_ms_ = 0;
     uint32_t last_adv_retry_ms_ = 0;

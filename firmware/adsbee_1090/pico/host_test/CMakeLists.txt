@@ -48,6 +48,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_aircraft_dictionary_air_ground.cc
         test_aircraft_dictionary_allocator.cc
         test_ble_adv_watchdog.cc
+        test_ble_output_status.cc
         test_ble_scan_watchdog.cc
         test_broadcast_ring.cc
         test_buffer_utils.cc

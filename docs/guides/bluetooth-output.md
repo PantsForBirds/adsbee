@@ -18,7 +18,7 @@ Or use **Settings → Reporting → Bluetooth Output** on the device's webpage.
 | Command | Does |
 |---|---|
 | `AT+BLE_OUTPUT=<mode>` | `OFF` or `GDL90` |
-| `AT+BLE_OUTPUT?` | Shows the mode and its state: `OFF`, `ADVERTISING` (waiting for an app), `CONNECTED`, `STREAMING`, `BLOCKED_BY_WIFI`, `BLOCKED_BY_RAM` or `NOT_IN_BUILD` |
+| `AT+BLE_OUTPUT?` | Shows the mode and its state: `OFF`, `ADVERTISING` (waiting for an app), `CONNECTED`, `STREAMING`, `BLOCKED_BY_WIFI`, `BLOCKED_BY_REMOTE_ID`, `BLOCKED_BY_RAM` or `NOT_IN_BUILD` |
 
 The ADSBee advertises as `ADSBee 1090 XXXX` (the end of its Bluetooth MAC address). In the app, pick it from the
 Bluetooth or external device list. Apps that pair first (AvareX) pair with no PIN.
@@ -52,8 +52,8 @@ unless one message is longer than the notification.
 * One app at a time.
 * ADSBees without PSRAM (`AT+DEVICE_INFO?` shows `ESP32 PSRAM: NONE`) need the WiFi access point and station off
   (`BLOCKED_BY_WIFI`). Ethernet can stay on.
-* Bluetooth output and Remote ID share the Bluetooth radio and memory. Without PSRAM there is room for only one of
-  them (`BLOCKED_RAM` on the other).
+* Without PSRAM, Remote ID over Bluetooth takes priority: the output waits (`BLOCKED_BY_REMOTE_ID`) while Remote ID
+  receive or transmit uses Bluetooth. With PSRAM both run.
 * Throughput: a 247-Byte link (244-Byte notifications) carried 200 aircraft at 1 Hz (about 6 kB/s). With more data
   than the link takes, the next second's report replaces what is still queued, so the heartbeat always goes out first.
   FIS-B uplinks are dropped before traffic. A link at the default 23 Bytes (20-Byte notifications) carries less.

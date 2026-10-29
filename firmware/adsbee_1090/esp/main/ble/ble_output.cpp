@@ -58,7 +58,7 @@ std::atomic<uint16_t> s_mtu = BLE_ATT_MTU_DFLT;
 std::atomic<bool> s_clear_pending = false;  // Drop queued data (the client left or unsubscribed).
 
 // Used on the main task only. Allocated while the server runs.
-GDL90BLEStream<BLEOutput::kStreamCapacityBytes>* s_stream = nullptr;
+GDL90BLEStream* s_stream = nullptr;
 
 int AccessCallback(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt* ctxt, void* arg) {
     // Writes are accepted and dropped. Nothing is readable.
@@ -313,11 +313,22 @@ bool BLEOutput::Send(const uint8_t* buf, uint16_t len, bool droppable) {
     return s_stream->Push(buf, len, droppable);
 }
 
+void BLEOutput::SendTraffic(const uint8_t* buf, uint16_t len, uint16_t index) {
+    if (!Send(buf, len)) rotation_.Refused(index);
+}
+
+void BLEOutput::EndTraffic(uint16_t num_aircraft) { rotation_.End(num_aircraft); }
+
 bool BLEOutput::Start() {
     if (running_) return true;
     if (s_stream == nullptr) {
-        s_stream = new (std::nothrow) GDL90BLEStream<kStreamCapacityBytes>();
-        if (s_stream == nullptr) return false;
+        s_stream = new (std::nothrow) GDL90BLEStream(HardwareCapabilities::HasPSRAM() ? kStreamCapacityBytes
+                                                                                     : kStreamCapacityBytesNoPSRAM);
+        if (s_stream == nullptr || !s_stream->Valid()) {
+            delete s_stream;
+            s_stream = nullptr;
+            return false;
+        }
     }
     BLEHost::SetListener(BLEHost::kUserBLEOutput, {.on_sync = OnHostSync, .on_reset = OnHostReset});
     if (!BLEHost::Acquire(BLEHost::kUserBLEOutput)) return false;
@@ -350,13 +361,15 @@ void BLEOutput::Reconcile() {
         status_ = kBLEOutputStatusOff;
         return;
     }
-    const uint8_t allowed = RemoteIDGuard::AllowedTransports(HardwareCapabilities::HasPSRAM(),
-                                                             comms_manager.wifi_ap_enabled,
-                                                             comms_manager.wifi_sta_enabled,
-                                                             comms_manager.ethernet_enabled);
-    if (!(allowed & RemoteIDGuard::kTransportsBLE)) {
+    const SettingsManager::Settings& settings = settings_manager.settings;
+    const bool remote_id_uses_bluetooth =
+        (settings.remote_id_rx_enabled && (settings.remote_id_transports & RemoteIDGuard::kTransportsBLE)) ||
+        (settings.remote_id_tx_enabled && (settings.remote_id_tx_transports & RemoteIDGuard::kTransportsBLE));
+    const BLEOutputStatus allowed = BLEOutputAllowed(HardwareCapabilities::HasPSRAM(), comms_manager.wifi_ap_enabled,
+                                                     comms_manager.wifi_sta_enabled, remote_id_uses_bluetooth);
+    if (allowed != kBLEOutputStatusAdvertising) {
         Stop();
-        status_ = kBLEOutputStatusBlockedByWiFi;
+        status_ = allowed;
         return;
     }
     if (heap_watch_.IsPaused()) {
@@ -425,6 +438,8 @@ void BLEOutput::Update() {
 bool BLEOutput::RegisterGATTServices() { return true; }
 bool BLEOutput::HasSubscriber() const { return false; }
 void BLEOutput::BeginReport() {}
+void BLEOutput::SendTraffic(const uint8_t*, uint16_t, uint16_t) {}
+void BLEOutput::EndTraffic(uint16_t) {}
 bool BLEOutput::Send(const uint8_t*, uint16_t, bool) { return false; }
 bool BLEOutput::Start() { return false; }
 void BLEOutput::Stop() {}

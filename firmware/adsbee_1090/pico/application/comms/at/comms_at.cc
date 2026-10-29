@@ -2550,7 +2550,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .max_args = 1,
      .help_string = "AT+BLE_OUTPUT=<OFF|GDL90>\r\n\tStream to one Bluetooth LE client (Nordic UART and HM-10 serial "
                     "services). GDL90: the GDL90 sent to WiFi clients. Off by default. Without PSRAM it needs the WiFi "
-                    "access point and station off.\r\n\tAT+BLE_OUTPUT?\r\n\tQuery the mode and its state.",
+                    "access point, WiFi station and Remote ID over Bluetooth off.\r\n\tAT+BLE_OUTPUT?\r\n\tQuery the mode and its state.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBLEOutputCallback, comms_manager)},
     {.command = "BOOT_USB_UF2",
      .min_args = 0,

@@ -20,8 +20,7 @@ std::vector<uint8_t> Cat(std::initializer_list<std::vector<uint8_t>> parts) {
 }
 
 // Sends the whole queue in payloads of max_len and returns each payload.
-template <uint16_t kCapacity>
-std::vector<std::vector<uint8_t>> Drain(GDL90BLEStream<kCapacity>& stream, uint16_t max_len) {
+std::vector<std::vector<uint8_t>> Drain(GDL90BLEStream& stream, uint16_t max_len) {
     std::vector<std::vector<uint8_t>> chunks;
     uint8_t buf[512];
     while (!stream.Empty()) {
@@ -37,7 +36,7 @@ std::vector<std::vector<uint8_t>> Drain(GDL90BLEStream<kCapacity>& stream, uint1
 }  // namespace
 
 TEST(GDL90BLEStream, PacksWholeMessagesIntoEachPayload) {
-    GDL90BLEStream<1024> stream;
+    GDL90BLEStream stream(1024);
     auto heartbeat = Frame(0x00, 9);   // 11 B
     auto ownship = Frame(0x10, 30);    // 32 B
     auto traffic = Frame(0x20, 30);    // 32 B
@@ -52,7 +51,7 @@ TEST(GDL90BLEStream, PacksWholeMessagesIntoEachPayload) {
 }
 
 TEST(GDL90BLEStream, SplitsOnlyMessagesLongerThanAPayload) {
-    GDL90BLEStream<2048> stream;
+    GDL90BLEStream stream(2048);
     auto uplink = Frame(0x01, 440);  // A FIS-B uplink, 442 B.
     auto traffic = Frame(0x20, 30);
     auto all = Cat({uplink, traffic});
@@ -72,7 +71,7 @@ TEST(GDL90BLEStream, SplitsOnlyMessagesLongerThanAPayload) {
 }
 
 TEST(GDL90BLEStream, KeepsMessageBoundariesAfterASplit) {
-    GDL90BLEStream<1024> stream;
+    GDL90BLEStream stream(1024);
     auto a = Frame(0x01, 50);  // 52 B
     auto b = Frame(0x40, 5);   // 7 B
     auto c = Frame(0x50, 5);   // 7 B
@@ -87,7 +86,7 @@ TEST(GDL90BLEStream, KeepsMessageBoundariesAfterASplit) {
 }
 
 TEST(GDL90BLEStream, RefusesWhatDoesNotFitAndCountsIt) {
-    GDL90BLEStream<100> stream;
+    GDL90BLEStream stream(100);
     auto m = Frame(0x00, 58);  // 60 B
     EXPECT_TRUE(stream.Push(m.data(), m.size()));
     EXPECT_FALSE(stream.Push(m.data(), m.size()));
@@ -96,7 +95,7 @@ TEST(GDL90BLEStream, RefusesWhatDoesNotFitAndCountsIt) {
 }
 
 TEST(GDL90BLEStream, DroppableDataKeepsHalfTheQueueForTraffic) {
-    GDL90BLEStream<100> stream;
+    GDL90BLEStream stream(100);
     auto small = Frame(0x00, 18);  // 20 B
     auto uplink = Frame(0x00, 38);  // 40 B
     EXPECT_TRUE(stream.Push(small.data(), small.size()));
@@ -105,7 +104,7 @@ TEST(GDL90BLEStream, DroppableDataKeepsHalfTheQueueForTraffic) {
 }
 
 TEST(GDL90BLEStream, WrapsAroundTheBuffer) {
-    GDL90BLEStream<64> stream;
+    GDL90BLEStream stream(64);
     auto m = Frame(0x00, 22);  // 24 B
     for (int round = 0; round < 10; round++) {
         ASSERT_TRUE(stream.Push(m.data(), m.size()));
@@ -118,7 +117,7 @@ TEST(GDL90BLEStream, WrapsAroundTheBuffer) {
 }
 
 TEST(GDL90BLEStream, ClearForgetsAPartlySentMessage) {
-    GDL90BLEStream<256> stream;
+    GDL90BLEStream stream(256);
     auto a = Frame(0x01, 50);
     auto b = Frame(0x40, 5);
     ASSERT_TRUE(stream.Push(a.data(), a.size()));
@@ -132,7 +131,7 @@ TEST(GDL90BLEStream, ClearForgetsAPartlySentMessage) {
 }
 
 TEST(GDL90BLEStream, DropUnsentKeepsOnlyThePartlySentMessage) {
-    GDL90BLEStream<256> stream;
+    GDL90BLEStream stream(256);
     auto a = Frame(0x01, 50);
     auto b = Frame(0x40, 5);
     auto c = Frame(0x50, 5);
@@ -152,4 +151,55 @@ TEST(GDL90BLEStream, DropUnsentKeepsOnlyThePartlySentMessage) {
     ASSERT_TRUE(stream.Push(b.data(), b.size()));
     stream.DropUnsent();
     EXPECT_TRUE(stream.Empty());
+}
+
+TEST(ReportRotation, StartsWhereTheQueueFilledAndWraps) {
+    ReportRotation rotation;
+    EXPECT_EQ(rotation.Start(), 0);
+    rotation.End(10);  // Everything fit.
+    EXPECT_EQ(rotation.Start(), 0);
+
+    rotation.Refused(6);
+    rotation.Refused(7);  // Only the first refusal counts.
+    rotation.End(10);
+    EXPECT_EQ(rotation.Start(), 6);
+
+    // Sent 6..9 then 0..5; 2 didn't fit.
+    rotation.Refused(2);
+    rotation.End(10);
+    EXPECT_EQ(rotation.Start(), 2);
+
+    // Fewer aircraft than the start: back to 0.
+    rotation.Refused(8);
+    rotation.End(5);
+    EXPECT_EQ(rotation.Start(), 0);
+}
+
+TEST(ReportRotation, EveryAircraftGoesOutWhenOnlyHalfFit) {
+    // 10 aircraft, room for 5 per report: each aircraft is sent at least every other report.
+    ReportRotation rotation;
+    int sent[10] = {};
+    for (int report = 0; report < 10; report++) {
+        int room = 5;
+        const uint16_t start = rotation.Start();
+        for (int k = 0; k < 10; k++) {
+            const uint16_t index = (start + k) % 10;
+            if (room > 0) {
+                room--;
+                sent[index]++;
+            } else {
+                rotation.Refused(index);
+            }
+        }
+        rotation.End(10);
+    }
+    for (int i = 0; i < 10; i++) EXPECT_EQ(sent[i], 5) << i;
+}
+
+TEST(GDL90BLEStream, AllocatesItsBuffer) {
+    GDL90BLEStream stream(3 * 1024);
+    EXPECT_TRUE(stream.Valid());
+    auto m = Frame(0x00, 100);
+    for (int i = 0; i < 30; i++) ASSERT_TRUE(stream.Push(m.data(), m.size()));  // 30 x 102 B = 3060 B.
+    EXPECT_FALSE(stream.Push(m.data(), m.size()));
 }

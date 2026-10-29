@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <new>
 
 /**
  * Byte queue between the GDL90 report builder and Bluetooth notifications. Holds framed GDL90 messages (each starts
@@ -11,10 +12,17 @@
  *
  * Not thread safe: use from one task, or under a lock.
  */
-template <uint16_t kCapacity>
 class GDL90BLEStream {
    public:
     static constexpr uint8_t kFlagByte = 0x7E;
+
+    // The buffer is allocated here; check Valid().
+    explicit GDL90BLEStream(uint16_t capacity) : capacity_(capacity), buf_(new (std::nothrow) uint8_t[capacity]) {}
+    ~GDL90BLEStream() { delete[] buf_; }
+    GDL90BLEStream(const GDL90BLEStream&) = delete;
+    GDL90BLEStream& operator=(const GDL90BLEStream&) = delete;
+
+    bool Valid() const { return buf_ != nullptr; }
 
     /**
      * Queues framed GDL90 messages.
@@ -23,14 +31,14 @@ class GDL90BLEStream {
      * @retval True if queued; false if it didn't fit (nothing is queued then).
      */
     bool Push(const uint8_t* buf, uint16_t len, bool droppable = false) {
-        const uint16_t limit = droppable ? kCapacity / 2 : kCapacity;
+        const uint16_t limit = droppable ? capacity_ / 2 : capacity_;
         if (len == 0) return true;
         if (len > limit || count_ > limit - len) {
             num_dropped_bytes_ += len;
             return false;
         }
         for (uint16_t i = 0; i < len; i++) {
-            buf_[(head_ + count_ + i) % kCapacity] = buf[i];
+            buf_[(head_ + count_ + i) % capacity_] = buf[i];
         }
         count_ += len;
         return true;
@@ -66,7 +74,7 @@ class GDL90BLEStream {
         for (uint16_t i = 0; i < len; i++) {
             if (At(i) == kFlagByte) head_in_message_ = !head_in_message_;
         }
-        head_ = (head_ + len) % kCapacity;
+        head_ = (head_ + len) % capacity_;
         count_ -= len;
     }
 
@@ -95,11 +103,41 @@ class GDL90BLEStream {
     uint32_t NumDroppedBytes() const { return num_dropped_bytes_; }
 
    private:
-    uint8_t At(uint16_t i) const { return buf_[(head_ + i) % kCapacity]; }
+    uint8_t At(uint16_t i) const { return buf_[(head_ + i) % capacity_]; }
 
-    uint8_t buf_[kCapacity] = {};
+    const uint16_t capacity_;
+    uint8_t* const buf_;
     uint16_t head_ = 0;
     uint16_t count_ = 0;
     bool head_in_message_ = false;  // A split message's start flag was consumed already.
     uint32_t num_dropped_bytes_ = 0;
+};
+
+/**
+ * Where a 1 Hz report starts its traffic list on Bluetooth. When the queue fills, the next report starts at the first
+ * aircraft that didn't fit and wraps around, so a slow link leaves out different aircraft each second instead of the
+ * same ones.
+ */
+class ReportRotation {
+   public:
+    // Index of the aircraft to send first; send Start()..n-1, then 0..Start()-1.
+    uint16_t Start() const { return start_; }
+
+    // The aircraft at index didn't fit.
+    void Refused(uint16_t index) {
+        if (refused_) return;
+        refused_ = true;
+        next_start_ = index;
+    }
+
+    // Ends a report of num_aircraft aircraft.
+    void End(uint16_t num_aircraft) {
+        start_ = refused_ && next_start_ < num_aircraft ? next_start_ : 0;
+        refused_ = false;
+    }
+
+   private:
+    uint16_t start_ = 0;
+    uint16_t next_start_ = 0;
+    bool refused_ = false;
 };
