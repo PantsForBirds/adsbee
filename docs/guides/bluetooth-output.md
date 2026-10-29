@@ -58,11 +58,17 @@ drones with an `ICAO` ownship, are counted but not sent.
 ADSBee receives only: it doesn't transmit FLARM and computes no collision alarms. Every alarm level is 0 and `PFLAU`
 reports `TX` 0, which some apps show as "No FLARM transmission".
 
+The stream uses the same Bluetooth LE profile as FLARM's own devices (service `FFE0`, characteristic `FFE1`), so apps set
+up the way FLARM's [EFB guide (FTD-115)](https://www.flarm.com/wp-content/uploads/2026/03/FTD-115-FLARM-Hub-EFB-Guide-v1.02.pdf)
+describes should read it. Pick `ADSBee 1090 XXXX` where the guide names the FLARM device.
+
 | App | Setup | Checked |
 |---|---|---|
-| XCSoar (Android) | Device with the FLARM driver on a Bluetooth LE port | XCSoar's NMEA parser reads the stream; not tried in the app |
-| Enroute (Android, iOS) | Bluetooth LE traffic receiver | Enroute's FLARM parser reads the stream; not tried in the app |
-| SkyDemon, SeeYou Navigator, LK8000, XCTrack | | Not tested |
+| XCSoar | Device port: `ADSBee 1090 XXXX` (BLE sensor), driver FLARM | XCSoar's NMEA parser reads the stream; not tried in the app |
+| Enroute | New connection → Bluetooth → `ADSBee 1090 XXXX` | Enroute's FLARM parser reads the stream; not tried in the app |
+| SkyDemon | Connectivity → Add Bluetooth Device → `ADSBee 1090 XXXX` → NMEA (FLARM or GPS) | Not tested |
+| SeeYou Navigator | Devices → add `ADSBee 1090 XXXX`; enable the FLARM layer | Not tested |
+| LK8000, XCTrack | | Not tested |
 
 ## Profiles
 
