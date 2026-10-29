@@ -88,6 +88,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_auto_update.cc
         test_wifi_network_selector.cc
         test_feed_datagram.cc
+        test_flarm_nmea.cc
         test_swarm.cc
         test_feed_send_buffer.cc
         test_feed_receiver_id.cc

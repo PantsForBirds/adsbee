@@ -253,6 +253,23 @@ test('Bluetooth output loads its mode and state from the dump and saves the mode
     assert.strictEqual(input('BLE_OUTPUT', 'mode').value, 'GDL90');
 });
 
+test('Bluetooth output offers FLARM NMEA and saves it', async () => {
+    let dump = DUMP;
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [dump];
+        if (cmd === 'AT+BLE_OUTPUT=FLARM_NMEA') { dump = dump.replace('"BLE_OUTPUT":["OFF","OFF"]', '"BLE_OUTPUT":["FLARM_NMEA","STREAMING"]'); return []; }
+        if (cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.deepStrictEqual(input('BLE_OUTPUT', 'mode').children.map((o) => o.value), ['OFF', 'GDL90', 'FLARM_NMEA']);
+    input('BLE_OUTPUT', 'mode').value = 'FLARM_NMEA';
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+BLE_OUTPUT=FLARM_NMEA', 'AT+SETTINGS=SAVE']);
+    assert.strictEqual(input('BLE_OUTPUT', 'mode').value, 'FLARM_NMEA');
+});
+
 test('swarm reports load from the dump and save without resending the token', async () => {
     const t = makeTransport((cmd) => {
         if (cmd === 'AT+SETTINGS?JSON') return [DUMP];

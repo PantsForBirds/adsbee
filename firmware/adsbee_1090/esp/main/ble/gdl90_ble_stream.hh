@@ -5,19 +5,26 @@
 #include <new>
 
 /**
- * Byte queue between the GDL90 report builder and Bluetooth notifications. Holds framed GDL90 messages (each starts
- * and ends with the 0x7E flag byte) and hands out notification payloads made of whole messages, splitting a message
- * only when it alone is longer than a payload. Clients that parse one notification at a time see whole messages
- * whenever the negotiated payload size allows.
+ * Byte queue between the report builder and Bluetooth notifications. Holds framed GDL90 messages (each starts and ends
+ * with the 0x7E flag byte) or NMEA sentences (each ends with LF) and hands out notification payloads made of whole
+ * messages, splitting a message only when it alone is longer than a payload. Clients that parse one notification at a
+ * time see whole messages whenever the negotiated payload size allows.
  *
  * Not thread safe: use from one task, or under a lock.
  */
 class GDL90BLEStream {
    public:
     static constexpr uint8_t kFlagByte = 0x7E;
+    static constexpr uint8_t kLineEndByte = '\n';
+
+    enum Framing : uint8_t {
+        kFramingGDL90,  // Messages start and end with kFlagByte.
+        kFramingLines,  // Messages end with kLineEndByte.
+    };
 
     // The buffer is allocated here; check Valid().
-    explicit GDL90BLEStream(uint16_t capacity) : capacity_(capacity), buf_(new (std::nothrow) uint8_t[capacity]) {}
+    explicit GDL90BLEStream(uint16_t capacity, Framing framing = kFramingGDL90)
+        : capacity_(capacity), framing_(framing), buf_(new (std::nothrow) uint8_t[capacity]) {}
     ~GDL90BLEStream() { delete[] buf_; }
     GDL90BLEStream(const GDL90BLEStream&) = delete;
     GDL90BLEStream& operator=(const GDL90BLEStream&) = delete;
@@ -55,14 +62,7 @@ class GDL90BLEStream {
         uint16_t cut = 0;
         bool in_message = head_in_message_;
         for (uint16_t i = 0; i < n; i++) {
-            if (At(i) == kFlagByte) {
-                if (in_message) {
-                    cut = i + 1;
-                    in_message = false;
-                } else {
-                    in_message = true;
-                }
-            }
+            if (EndsMessage(At(i), in_message)) cut = i + 1;
         }
         if (cut > 0) n = cut;
         for (uint16_t i = 0; i < n; i++) out[i] = At(i);
@@ -72,7 +72,7 @@ class GDL90BLEStream {
     void Consume(uint16_t len) {
         if (len > count_) len = count_;
         for (uint16_t i = 0; i < len; i++) {
-            if (At(i) == kFlagByte) head_in_message_ = !head_in_message_;
+            EndsMessage(At(i), head_in_message_);
         }
         head_ = (head_ + len) % capacity_;
         count_ -= len;
@@ -85,8 +85,9 @@ class GDL90BLEStream {
     void DropUnsent() {
         uint16_t keep = 0;
         if (head_in_message_) {
-            while (keep < count_ && At(keep) != kFlagByte) keep++;
-            if (keep < count_) keep++;  // Its end flag.
+            bool in_message = true;
+            while (keep < count_ && !EndsMessage(At(keep), in_message)) keep++;
+            if (keep < count_) keep++;  // Its end byte.
         }
         num_dropped_bytes_ += count_ - keep;
         count_ = keep;
@@ -105,11 +106,23 @@ class GDL90BLEStream {
    private:
     uint8_t At(uint16_t i) const { return buf_[(head_ + i) % capacity_]; }
 
+    // Steps the in-message state over one byte. True if the byte ends a message.
+    bool EndsMessage(uint8_t byte, bool& in_message) const {
+        if (framing_ == kFramingLines) {
+            in_message = byte != kLineEndByte;
+            return !in_message;
+        }
+        if (byte != kFlagByte) return false;
+        in_message = !in_message;
+        return !in_message;
+    }
+
     const uint16_t capacity_;
+    const Framing framing_;
     uint8_t* const buf_;
     uint16_t head_ = 0;
     uint16_t count_ = 0;
-    bool head_in_message_ = false;  // A split message's start flag was consumed already.
+    bool head_in_message_ = false;  // Part of the first queued message was consumed already.
     uint32_t num_dropped_bytes_ = 0;
 };
 
