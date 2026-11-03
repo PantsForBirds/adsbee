@@ -144,21 +144,24 @@ def test_wiggler_commands_v2_bee_waggler():
     w = wiggler(mode_s_atten_db=60, subg_atten_db=50.3)
     v2 = lambda p: w.commands_for_v2(p, ports=2)  # noqa: E731
     # Same level as 1.x: reference +5 dBm (or power_dbm) minus the Bee-quantized attenuation.
-    assert v2(TestPattern(band="1090", count=100, rate=20)) == ["AT+TX=1,MODE_S,TABLE,100,20,-55"]
+    assert v2(TestPattern(band="1090", count=100, rate=20)) == ["AT+TX=BOTH,MODE_S,TABLE,100,20,-55"]
     assert v2(TestPattern(band="1090", count=-1, rate=5, power_dbm=-10, atten_db=30)) == [
-        "AT+TX=1,MODE_S,TABLE,-1,5,-40"]
-    assert v2(TestPattern(band="1090", count=10, rate=2, messages=["8D00"])) == ["AT+TX=1,MODE_S,8D00,10,2,-55"]
-    assert v2(TestPattern(band="978", count=50, rate=10)) == ["AT+TX=2,UAT,TABLE,50,10,-45.5"]
+        "AT+TX=BOTH,MODE_S,TABLE,-1,5,-40"]
+    assert v2(TestPattern(band="1090", count=10, rate=2, messages=["8D00"])) == ["AT+TX=BOTH,MODE_S,8D00,10,2,-55"]
+    assert v2(TestPattern(band="978", count=50, rate=10)) == ["AT+TX=BOTH,UAT,TABLE,50,10,-45.5"]
+    # two ports: every job on both (1.x mirrored TX1 to TX2)
     # dual at a finite rate: time-shared, started on the same sample
     assert v2(TestPattern(band="dual", count=25, rate=10)) == [
-        "AT+HOLD=1", "AT+TX=1,MODE_S,TABLE,25,10,-55", "AT+TX=2,UAT,TABLE,25,10,-45.5", "AT+HOLD=0"]
+        "AT+HOLD=1", "AT+TX=BOTH,MODE_S,TABLE,25,10,-55", "AT+TX=BOTH,UAT,TABLE,25,10,-45.5", "AT+HOLD=0"]
     # dual as fast as possible: the overlap needs the fixed-LO plan, opted in for this run
-    assert v2(TestPattern(band="dual", count=-1, rate=0))[0] == "AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS"
+    assert v2(TestPattern(band="dual", count=-1, rate=0)) == [
+        "AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS", "AT+HOLD=1", "AT+TX=1,MODE_S,TABLE,-1,0,-55",
+        "AT+TX=2,UAT,TABLE,-1,0,-45.5", "AT+HOLD=0"]  # the fixed-LO plan: Mode S on 1, UAT on 2
     # several explicit messages: an AT+SCHED file, looped
     msgs = ["8D00", "8D01", "8D02"]
     assert v2(TestPattern(band="1090", count=7, rate=100, messages=msgs)) == [
-        "AT+SCHED=CLEAR", "AT+SCHED=ADD,1,MODE_S,0,-55,8D00", "AT+SCHED=ADD,1,MODE_S,10000,-55,8D01",
-        "AT+SCHED=ADD,1,MODE_S,20000,-55,8D02", "AT+TX=1,FILE,sched,3"]
+        "AT+SCHED=CLEAR", "AT+SCHED=ADD,BOTH,MODE_S,0,-55,8D00", "AT+SCHED=ADD,BOTH,MODE_S,10000,-55,8D01",
+        "AT+SCHED=ADD,BOTH,MODE_S,20000,-55,8D02", "AT+TX=BOTH,FILE,sched,3"]
     with pytest.raises(TransmitterError):
         v2(TestPattern(band="1090", count=7, rate=0, messages=msgs))
     with pytest.raises(TransmitterError):
@@ -206,10 +209,10 @@ def _pwiggd_unit(fake_sysfs, fake_at, replies, info=PWIGGD2_INFO):
 def test_wiggler_v2_plays_and_waits_for_done(fake_sysfs, fake_at):
     jobs = _Jobs()
     dev = _pwiggd_unit(fake_sysfs, fake_at, {"AT+CONTROL=TAKE": "+CONTROL=USB,1", "AT+STOP=ALL": "",
-                                             "AT+TX=1,MODE_S,TABLE,3,100,-55": jobs.tx})
+                                             "AT+TX=BOTH,MODE_S,TABLE,3,100,-55": jobs.tx})
     w = wiggler(mode_s_atten_db=60)
     w.transmit(TestPattern(band="1090", count=3, rate=100))
-    assert dev.received == ["AT+DEVICE_INFO?", "AT+CONTROL=TAKE", "AT+STOP=ALL", "AT+TX=1,MODE_S,TABLE,3,100,-55"]
+    assert dev.received == ["AT+DEVICE_INFO?", "AT+CONTROL=TAKE", "AT+STOP=ALL", "AT+TX=BOTH,MODE_S,TABLE,3,100,-55"]
     assert "reason=done" in w._out
 
 
@@ -230,14 +233,14 @@ def test_wiggler_v2_dual_unbounded_stops_and_leaves_simultaneous(fake_sysfs, fak
 def test_wiggler_v2_job_error_raises(fake_sysfs, fake_at):
     _pwiggd_unit(fake_sysfs, fake_at, {
         "AT+CONTROL=TAKE": "+CONTROL=USB,1", "AT+STOP=ALL": "",
-        "AT+TX=2,UAT,TABLE,3,10": lambda c: "+TX:job=4\r\nOK\r\n+DONE:4,sent=1,late=0,dropped=0,reason=conflict\r\n"})
+        "AT+TX=BOTH,UAT,TABLE,3,10": lambda c: "+TX:job=4\r\nOK\r\n+DONE:4,sent=1,late=0,dropped=0,reason=conflict\r\n"})
     with pytest.raises(TransmitterError, match="reason=conflict"):
         wiggler().transmit(TestPattern(band="978", count=3, rate=10))
 
 
 def test_wiggler_v2_refused_command_raises(fake_sysfs, fake_at):
     _pwiggd_unit(fake_sysfs, fake_at, {"AT+CONTROL=TAKE": "+CONTROL=USB,1", "AT+STOP=ALL": "",
-                                       "AT+TX=1,MODE_S,TABLE,3,10": lambda c: "ERROR unlicensed\r\n"})
+                                       "AT+TX=BOTH,MODE_S,TABLE,3,10": lambda c: "ERROR unlicensed\r\n"})
     with pytest.raises(TransmitterError, match="unlicensed"):
         wiggler().transmit(TestPattern(band="1090", count=3, rate=10))
 

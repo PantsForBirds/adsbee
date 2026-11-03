@@ -185,10 +185,11 @@ override them.
   | Pluto Wiggler / Bee Waggler 2.x | `AT+TX=<port>,MODE_S\|UAT,…` jobs with the level in dBm, `AT+HOLD` (dual), `AT+SCHED` + `AT+TX=…,FILE,sched` (several explicit messages) | `+DONE:<id>,…` per job; `AT+STOP` ends unbounded ones |
 
   On 2.x, `atten_db` keeps its meaning: the level is `power_dbm` (default +5 dBm, the 1.x reference) minus
-  the Bee-quantized attenuation, so a bench file gives the same level on every firmware. Mode S (1090 MHz)
-  goes out on port 1, UAT (978 MHz) on port 2 of a Bee Waggler (port 1 of a Pluto Wiggler); `mode_s_port`
-  and `uat_port` change that. `dual` is time-shared unless the rate is 0 or `simultaneous = true`; then a
-  Bee Waggler opts in to the fixed-LO plan for that run (about 25 dB less maximum level, AT.md).
+  the Bee-quantized attenuation, so a bench file gives the same level on every firmware. On a Bee Waggler
+  every job goes out on both ports (`AT+TX=BOTH`, each at its own calibration), as 1.x mirrored TX1 to TX2,
+  so the cabling stays as it was; a Pluto Wiggler has port 1. `mode_s_port` and `uat_port` (1, 2 or BOTH)
+  change that. `dual` is time-shared unless the rate is 0 or `simultaneous = true`; then a Bee Waggler opts
+  in to the fixed-LO plan for that run (about 25 dB less maximum level, Mode S on port 1, UAT on port 2).
 - **`pluto`**: ADALM-Pluto (or compatible) SDR at `uri`, not a Pluto Wiggler, playing a 1090 MHz
   waveform of distinct DF17 messages (`packets.unique_df17_set()`). **Not yet tested on hardware;**
   see the TODO in `transmitters.py`.

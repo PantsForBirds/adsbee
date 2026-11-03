@@ -179,13 +179,15 @@ class BeeWiggler(Transmitter):
     pwiggd 2.x (command set 2, AT.md): every transmission is a job, ``AT+TX=<port>,<proto>,…`` answers
     ``+TX:job=<id>`` at once and ends with ``+DONE:<id>,…``; ``AT+STOP`` ends unbounded ones. Levels are absolute
     dBm at the SMA: ``power_dbm`` (default PWIGGD_REF_DBM) minus the Bee-quantized attenuation, so a bench file
-    gives the same level as on 1.x. Several explicit Mode S messages play as an ``AT+SCHED`` file. ``dual`` runs
-    Mode S on port 1 and UAT on port 2 (port 1 on a Pluto Wiggler), started together with ``AT+HOLD``, time-shared
-    unless the pattern needs overlap (rate 0) or ``simultaneous = true``: then a Bee Waggler opts in to the fixed-LO
-    plan (``AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS``, about 25 dB less maximum level) for that run only.
+    gives the same level as on 1.x. Several explicit Mode S messages play as an ``AT+SCHED`` file. On a two-port
+    Bee Waggler every job goes out on both ports (``AT+TX=BOTH``, each port at its own calibration), as 1.x
+    mirrored TX1 to TX2; a Pluto Wiggler has port 1. ``dual`` starts both tables together with ``AT+HOLD``,
+    time-shared unless the pattern needs overlap (rate 0) or ``simultaneous = true``: then a Bee Waggler opts in to
+    the fixed-LO plan (``AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS``, about 25 dB less maximum level, Mode S on
+    port 1 and UAT on port 2) for that run only.
 
     Bench file keys: usb_serial (required), mode_s_atten_db / subg_atten_db (applied when the pattern doesn't set
-    atten_db); 2.x only: mode_s_port (default 1), uat_port (default 2 on a two-port unit), simultaneous (default
+    atten_db); 2.x only: mode_s_port / uat_port (1, 2 or "BOTH"; default BOTH on a two-port unit), simultaneous (default
     false), command_set ("auto", "1" or "2"; default auto).
     """
 
@@ -309,11 +311,11 @@ class BeeWiggler(Transmitter):
     def _count_v2(self, n: int) -> str:
         return "-1" if n < 0 else str(n)
 
-    def v2_ports(self) -> Tuple[int, int]:
-        """(Mode S port, UAT port) on a 2.x unit."""
-        ms = int(self.cfg.options.get("mode_s_port", 1))
-        uat = int(self.cfg.options.get("uat_port", 2 if self._ports >= 2 else 1))
-        return ms, uat
+    def v2_ports(self) -> Tuple[str, str]:
+        """(Mode S port, UAT port) on a 2.x unit: "1", "2" or "BOTH" (a two-port unit's default, 1.x's mirror)."""
+        default = "BOTH" if self._ports >= 2 else "1"
+        return (str(self.cfg.options.get("mode_s_port", default)).upper(),
+                str(self.cfg.options.get("uat_port", default)).upper())
 
     def commands_for_v2(self, p: TestPattern, ports: Optional[int] = None) -> List[str]:
         """Command set 2 (pwiggd 2.x): AT commands that play pattern p. Each AT+TX line starts a job."""
@@ -351,6 +353,7 @@ class BeeWiggler(Transmitter):
             want_simul = bool(self.cfg.options.get("simultaneous", False)) or p.rate <= 0
             if want_simul and self._ports >= 2:
                 cmds.append("AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS")
+                ms_port, uat_port = "1", "2"  # the fixed-LO plan: Mode S on port 1, UAT on port 2
             cmds.append("AT+HOLD=1")
             cmds.append(",".join([f"AT+TX={ms_port}", "MODE_S", "TABLE", self._count_v2(p.count), rate]
                                  + self._level_v2(p, "mode_s_atten_db")))
