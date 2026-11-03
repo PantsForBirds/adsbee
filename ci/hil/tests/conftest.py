@@ -69,7 +69,7 @@ class FakeAtDevice:
     """Answers AT commands on a pty, like an ADSBee console."""
 
     def __init__(self, replies):
-        self.replies = replies  # command -> reply text (without trailing OK)
+        self.replies = replies  # command -> reply text (without trailing OK), or a function of it
         self.received = []
         self.master, slave = pty.openpty()
         tty.setraw(slave)
@@ -94,6 +94,9 @@ class FakeAtDevice:
                     continue
                 self.received.append(cmd)
                 reply = self.replies.get(cmd)
+                if callable(reply):  # full reply text, OK/ERROR included (e.g. a wiggler job's +DONE after OK)
+                    os.write(self.master, reply(cmd).encode())
+                    continue
                 if reply is None:
                     text = "ERROR: unknown command\r\n"
                 else:

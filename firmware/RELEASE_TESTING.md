@@ -34,7 +34,10 @@ measured; the release notes' Testing section comes from this report.
 ## ADSBee 1090
 
 `adsbee-hil` is the [bench toolkit](../ci/hil/README.md). Bench = 1090U cabled to a Bee Waggler
-(`AT+PW_SCHED` FPGA-timed frames); live = a 1090 on a roof antenna with its usual feeds.
+(FPGA-timed frames: `AT+SCHED=ADD,…` lines played with `AT+TX=1,FILE,sched`, levels in dBm; a Bee Waggler
+still on firmware 1.x uses `AT+PW_SCHED`); live = a 1090 on a roof antenna with its usual feeds. Mode S
+(1090 MHz) on port 1, UAT (978 MHz) on port 2; items that need both at once overlapping opt in with
+`AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS` (max level about -18 dBm) and `AT+SIMULTANEOUS=OFF` after.
 
 | # | Item | How | Pass |
 |---|---|---|---|

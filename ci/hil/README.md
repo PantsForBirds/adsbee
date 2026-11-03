@@ -175,10 +175,20 @@ and optionally output power, attenuation and explicit hex messages. Named patter
 `transmitters.PATTERNS`; `--band`, `--count`, `--rate`, `--power-dbm`, `--atten-db` and `--message`
 override them.
 
-- **`bee_wiggler`**: Bee Wiggler (Mode S / UAT packet generator), driven over its USB AT console
-  (`usb_serial`) with `AT+MODE_S_ATTEN`, `AT+SUBG_ATTEN`, `AT+MODE_S_TABLE_TX`, `AT+MODE_S_TX`,
-  `AT+UAT_ADSB_TABLE_TX` and `AT+DUAL_TABLE_TX`. A finite pattern ends with `OK`; any character
-  stops an unbounded one.
+- **`bee_wiggler`**: the wiggler family over its USB AT console (`usb_serial`): Bee Wiggler (RP2040),
+  Pluto Wiggler (ADALM-Pluto) and Bee Waggler (ZynqSDR 7020). The driver picks the command set from
+  `AT+DEVICE_INFO?`:
+
+  | Firmware | Commands | End of a transmission |
+  |---|---|---|
+  | Bee Wiggler; Pluto Wiggler / Bee Waggler 1.x | `AT+MODE_S_ATTEN`, `AT+SUBG_ATTEN`, `AT+MODE_S_TABLE_TX`, `AT+MODE_S_TX`, `AT+UAT_ADSB_TABLE_TX`, `AT+DUAL_TABLE_TX` | `OK`; any character stops an unbounded one |
+  | Pluto Wiggler / Bee Waggler 2.x | `AT+TX=<port>,MODE_S\|UAT,…` jobs with the level in dBm, `AT+HOLD` (dual), `AT+SCHED` + `AT+TX=…,FILE,sched` (several explicit messages) | `+DONE:<id>,…` per job; `AT+STOP` ends unbounded ones |
+
+  On 2.x, `atten_db` keeps its meaning: the level is `power_dbm` (default +5 dBm, the 1.x reference) minus
+  the Bee-quantized attenuation, so a bench file gives the same level on every firmware. Mode S (1090 MHz)
+  goes out on port 1, UAT (978 MHz) on port 2 of a Bee Waggler (port 1 of a Pluto Wiggler); `mode_s_port`
+  and `uat_port` change that. `dual` is time-shared unless the rate is 0 or `simultaneous = true`; then a
+  Bee Waggler opts in to the fixed-LO plan for that run (about 25 dB less maximum level, AT.md).
 - **`pluto`**: ADALM-Pluto (or compatible) SDR at `uri`, not a Pluto Wiggler, playing a 1090 MHz
   waveform of distinct DF17 messages (`packets.unique_df17_set()`). **Not yet tested on hardware;**
   see the TODO in `transmitters.py`.
