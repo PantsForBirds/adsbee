@@ -88,6 +88,11 @@ class FakePlatform : public AutoUpdatePlatform {
     uint32_t partition = 1;
     std::string flash = std::string(64 * 1024, '\xEE');
     int fail_writes = 0;       // Number of AT+OTA=WRITE payloads to answer with ERROR.
+    int fail_erase = -1;       // Index of the AT+OTA=ERASE to answer with ERROR.
+    int num_erases = 0;
+    uint32_t erase_ms_per_sector = 0;
+    // Like the RP2040 without a /console client: output later than this after the command is not sent. 0: no limit.
+    uint32_t reply_window_ms = 0;
     int num_writes = 0;
     bool verified = false;
     bool booted = false;
@@ -246,9 +251,15 @@ class FakePlatform : public AutoUpdatePlatform {
             payload_.clear();
             out_.push_back("READY");
         } else if (sscanf(line.c_str(), "AT+OTA=ERASE,%lx,%lu", &offset, &len) == 2) {
-            flash.replace(offset, len, std::string(len, '\xFF'));
             out_.push_back("Erasing...");
-            out_.push_back("OK");
+            if (num_erases++ == fail_erase) {
+                out_.push_back("ERROR Failed partial erase of complementary flash partition.");
+                return;
+            }
+            flash.replace(offset, len, std::string(len, '\xFF'));
+            uint32_t erase_ms = (len + 4095) / 4096 * erase_ms_per_sector;
+            now_ms += erase_ms;
+            if (reply_window_ms == 0 || erase_ms < reply_window_ms) out_.push_back("OK");
         } else if (line == "AT+OTA=VERIFY") {
             verified = true;
             out_.push_back("OK");
@@ -596,6 +607,66 @@ TEST(AutoUpdater, RetriesAFailedFlashWrite) {
     failing.RunOnce();
     EXPECT_STREQ(failing.detail(), "flash write failed");
     EXPECT_EQ(f.p.num_writes, 5);
+    EXPECT_FALSE(f.p.booted);
+}
+
+std::vector<std::string> EraseCommands(const std::vector<std::string>& commands) {
+    std::vector<std::string> erases;
+    for (const std::string& c : commands) {
+        if (c.rfind("AT+OTA=ERASE", 0) == 0) erases.push_back(c);
+    }
+    return erases;
+}
+
+TEST(AutoUpdater, ErasesInStepsThatAnswerWithinTheReplyWindow) {
+    // The image (4096 + 10000 + 4096 Bytes, 5 sectors) takes 10 s to erase at once, the length of the window.
+    Fixture f;
+    f.p.recommended = "0.9.1-rc9";
+    f.p.reboot_on_boot = true;
+    f.p.erase_ms_per_sector = 2000;
+    f.p.reply_window_ms = 10000;
+    AutoUpdater::Config config;
+    config.erase_step_bytes = 10000;  // Rounded down to whole sectors.
+    AutoUpdater updater(f.p, "0.9.1-rc8", config);
+    EXPECT_THROW(updater.RunOnce(), FakePlatform::Reboot);
+    EXPECT_EQ(EraseCommands(f.p.commands), (std::vector<std::string>{"AT+OTA=ERASE,0,8192", "AT+OTA=ERASE,2000,8192",
+                                                                     "AT+OTA=ERASE,4000,1808"}));
+    f.ExpectFlashed();
+    EXPECT_TRUE(f.p.verified);
+
+    // A whole image per command, as before: the reply is never sent.
+    Fixture g;
+    g.p.recommended = "0.9.1-rc9";
+    g.p.erase_ms_per_sector = 2000;
+    g.p.reply_window_ms = 10000;
+    config.erase_step_bytes = 1u << 30;
+    AutoUpdater whole(g.p, "0.9.1-rc8", config);
+    whole.RunOnce();
+    EXPECT_STREQ(whole.detail(), "flash erase failed");
+    EXPECT_EQ(EraseCommands(g.p.commands), (std::vector<std::string>{"AT+OTA=ERASE,0,18192"}));
+    EXPECT_EQ(g.p.num_writes, 0);
+    EXPECT_EQ(g.p.checkins.back(), "{\"state\":\"failed\",\"version\":\"0.9.1-rc9\",\"detail\":\"flash erase failed\"}");
+}
+
+TEST(AutoUpdater, DefaultEraseStepsAreWholeSectors) {
+    AutoUpdater::Config config;
+    EXPECT_EQ(config.erase_step_bytes % AutoUpdater::kFlashChunkLenBytes, 0u);
+    EXPECT_GE(config.erase_step_bytes, AutoUpdater::kFlashChunkLenBytes);
+    EXPECT_LE(config.erase_step_bytes, 256u * 1024);  // About 1.3 s on a bench unit, 8 s at the flash's slowest.
+}
+
+TEST(AutoUpdater, StopsAtAFailedEraseStep) {
+    Fixture f;
+    f.p.recommended = "0.9.1-rc9";
+    f.p.fail_erase = 1;
+    AutoUpdater::Config config;
+    config.erase_step_bytes = 8192;
+    AutoUpdater updater(f.p, "0.9.1-rc8", config);
+    updater.RunOnce();
+    EXPECT_STREQ(updater.detail(), "flash erase failed");
+    EXPECT_EQ(EraseCommands(f.p.commands), (std::vector<std::string>{"AT+OTA=ERASE,0,8192", "AT+OTA=ERASE,2000,8192"}));
+    EXPECT_EQ(f.p.num_writes, 0);
+    EXPECT_FALSE(f.p.verified);
     EXPECT_FALSE(f.p.booted);
 }
 

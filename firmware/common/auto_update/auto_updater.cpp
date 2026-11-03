@@ -551,9 +551,15 @@ void AutoUpdater::DrainConsole() {
 }
 
 bool AutoUpdater::FlashErase(uint32_t offset, uint32_t len) {
-    char command[48];
-    snprintf(command, sizeof(command), "AT+OTA=ERASE,%lx,%lu", (unsigned long)offset, (unsigned long)len);
-    return ConsoleCommand(command, "OK", config_.erase_timeout_ms);
+    uint32_t step = config_.erase_step_bytes / kFlashChunkLenBytes * kFlashChunkLenBytes;
+    if (step == 0) step = kFlashChunkLenBytes;
+    for (uint32_t done = 0; done < len; done += step) {
+        uint32_t n = len - done < step ? len - done : step;
+        char command[48];
+        snprintf(command, sizeof(command), "AT+OTA=ERASE,%lx,%lu", (unsigned long)(offset + done), (unsigned long)n);
+        if (!ConsoleCommand(command, "OK", config_.erase_timeout_ms)) return false;
+    }
+    return true;
 }
 
 bool AutoUpdater::FlashWrite(uint32_t offset, const uint8_t* data, uint32_t len) {

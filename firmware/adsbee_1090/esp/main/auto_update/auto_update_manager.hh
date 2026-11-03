@@ -65,6 +65,13 @@ class AutoUpdateManager : public AutoUpdatePlatform {
     // A check or install is running.
     bool Busy() const { return task_ != nullptr; }
 
+    /**
+     * The updater is talking to the RP2040 console. Counted as a /console client in the status the RP2040 reads, so
+     * the RP2040 keeps sending console output to the network: without a client it does so only for 10 s after the
+     * last network input, and an erase takes longer than that.
+     */
+    bool ReadsConsole() const { return reads_console_; }
+
     void Task();
 
     // AutoUpdatePlatform
@@ -97,6 +104,7 @@ class AutoUpdateManager : public AutoUpdatePlatform {
 
     StreamBufferHandle_t console_rx_buf_ = nullptr;
     volatile bool capturing_ = false;  // The updater is reading the console.
+    volatile bool reads_console_ = false;
     char tap_line_[96] = {0};          // Console line being assembled on the SPI receive task.
     size_t tap_line_len_ = 0;
     volatile uint32_t last_user_ota_timestamp_ms_ = 0;

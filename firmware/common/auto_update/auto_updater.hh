@@ -112,7 +112,10 @@ class AutoUpdater {
         uint32_t cmd_timeout_ms = 6000;
         uint32_t ready_timeout_ms = 6000;
         uint32_t write_timeout_ms = 8000;  // Longer than the RP2040's 5 s payload timeout, so its ERROR comes first.
-        uint32_t erase_timeout_ms = 30000;
+        // Bytes per AT+OTA=ERASE, a multiple of 4096. Without a /console client the RP2040 sends console output to
+        // the network only for 10 s after the last network input, and a whole image takes longer than that to erase.
+        uint32_t erase_step_bytes = 256 * 1024;
+        uint32_t erase_timeout_ms = 30000;  // Per step.
         uint32_t verify_timeout_ms = 30000;
         uint32_t drain_quiet_ms = 2000;
         uint32_t drain_max_ms = 20000;
