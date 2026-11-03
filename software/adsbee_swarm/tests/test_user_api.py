@@ -103,7 +103,11 @@ def test_range_and_stats(client, owner, mine, bee):
     since = (timezone.now() - timedelta(hours=3)).isoformat()
     stats = api(client, 'get', '/stats', owner, since=since, step='hour').json()
     assert stats['series'][0]['es_valid'] == Sample.objects.get(span_s=Sample.HOUR).es_valid
+    assert stats['series'][0]['bees'] == 1
     assert api(client, 'get', '/stats', owner, step='week').status_code == 400
+    years = {'since': '2020-01-01T00:00:00Z', 'until': '2026-01-01T00:00:00Z'}
+    assert api(client, 'get', '/stats', owner, step='day', **years).status_code == 200, "daily stats: any window"
+    assert api(client, 'get', '/stats', owner, step='hour', **years).status_code == 400
     assert api(client, 'get', '/range', owner, since='yesterday').status_code == 400
     assert api(client, 'get', '/range', owner, since='2020-01-01T00:00:00Z', until='2026-01-01T00:00:00Z').status_code == 400
 

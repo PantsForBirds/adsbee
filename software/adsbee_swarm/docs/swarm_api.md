@@ -121,7 +121,7 @@ rollout is a 404.
 | GET, PATCH, DELETE | `/devices/{id}` | Read; set `label`, `note`, `location` (`null` = as reported); remove |
 | POST | `/devices/{id}/restore` | Accept a removed bee again |
 | GET | `/range?device=&since=&until=&protocol=` | Max per bin over the window: per bee `max_m` (12 bands × 36 sectors, meters or null) and `sector_max_m`; `swarm` = max over bees |
-| GET | `/stats?device=&since=&until=&step=hour\|day` | Counts summed; `aircraft_*` maxed per bee, then summed |
+| GET | `/stats?device=&since=&until=&step=hour\|day` | Counts summed; `aircraft_*` maxed per bee, then summed; `bees` = bees that reported in the step. Steps without a report are left out |
 | GET, POST | `/rollouts` | List / start |
 | GET, POST | `/rollouts/{id}` | Read; `{"action": "promote" \| "pause" \| "resume" \| "cancel"}` |
 
@@ -144,7 +144,7 @@ GET /api/swarm/v1/range?protocol=remote_id&device=4
  "swarm": {"max_m": [[...]], "sector_max_m": [...]}}
 ```
 
-Windows default to the last 7 days and span at most 400 days. Every report lands in its bee's
+Windows default to the last 7 days and span at most 400 days (`/stats?step=day`: any span). Every report lands in its bee's
 hourly row and its daily row, with one range map per protocol; windows over 3 days, and `step=day`,
 read daily rows. Hourly rows are kept 90 days, daily rows indefinitely (`manage.py swarm_retention`
 rebuilds each day per protocol before its hours go).
