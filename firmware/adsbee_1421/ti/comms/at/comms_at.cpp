@@ -507,12 +507,12 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 ",two_bit_found=%lu,fixed_es_1bit=%lu,fixed_es_2bit=%lu,fixed_ap_1bit=%lu,fixed_ap_2bit=%lu,"
                 "fixes_rejected=%lu,fixes_skipped=%lu\r\n",
                 (unsigned long)packet_decoder.two_bit_fixed_count,
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionExtendedSquitter1Bit],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionExtendedSquitter2Bit],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionAddressParity1Bit],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionAddressParity2Bit],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionRejected],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionSkipped]);
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionExtendedSquitter1Bit),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionExtendedSquitter2Bit),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionAddressParity1Bit),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionAddressParity2Bit),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionRejected),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionSkipped));
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -528,9 +528,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             packet_decoder.raw_queue_overflow_count = 0;
             packet_decoder.bitflips_fixed_count = 0;
             packet_decoder.two_bit_fixed_count = 0;
-            for (uint32_t& count : adsbee.corrected_frames) {
-                count = 0;
-            }
+            adsbee.ResetCorrectedFrames();
             subg_radio.rx_error_restart_count = 0;
             subg_radio.set_len_error_count = 0;
             adsbee.max_loop_us = 0;
@@ -1030,6 +1028,12 @@ CPP_AT_CALLBACK(CommsManager::ATSettingsCallback) {
                     if (!settings_manager.Load()) {
                         CPP_AT_ERROR("Error while reading from EEPROM.");
                     }
+                    // Applied as at boot. OK first: Apply() may switch the console to the saved baud rate.
+                    CPP_AT_PRINTF("OK\r\n");
+                    if (!settings_manager.Apply()) {
+                        CONSOLE_ERROR("CommsManager::ATSettingsCallback", "Loaded settings could not all be applied.");
+                    }
+                    CPP_AT_SILENT_SUCCESS();
                 } else if (args[0].compare("RESET") == 0) {
                     settings_manager.ResetToDefaults();
                     // Acknowledge at the old baud rate first: Apply() may switch the console to the
@@ -1600,8 +1604,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "SETTINGS",
      .min_args = 0,
      .max_args = 3,
-     .help_string = "Load, save, or reset nonvolatile settings. RESET restores defaults and writes them to "
-                    "flash.\r\n\tAT+SETTINGS=<op [LOAD SAVE RESET]>\r\n\t"
+     .help_string = "Load, save, or reset nonvolatile settings. LOAD reads the saved settings from flash and applies "
+                    "them as at boot (none need a reboot); the OK comes before a saved console baud rate takes "
+                    "effect. RESET restores defaults and writes them to flash.\r\n\tAT+SETTINGS=<op [LOAD SAVE RESET]>\r\n\t"
                     "Display nonvolatile settings.\r\n\tAT+SETTINGS?\r\n\t+SETTINGS=...\r\n\tDump settings in AT "
                     "command format.\r\n\tAT+SETTINGS?DUMP\r\n\t+SETTINGS=...\r\n\tDump settings as a "
                     "single-line JSON object keyed by AT command, plus the read-only live BOOTLOADER_PIN "
