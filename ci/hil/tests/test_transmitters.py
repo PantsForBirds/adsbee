@@ -160,8 +160,8 @@ def test_wiggler_commands_v2_bee_waggler():
     # several explicit messages: an AT+SCHED file, looped
     msgs = ["8D00", "8D01", "8D02"]
     assert v2(TestPattern(band="1090", count=7, rate=100, messages=msgs)) == [
-        "AT+SCHED=CLEAR", "AT+SCHED=ADD,1,MODE_S,0,-55,8D00", "AT+SCHED=ADD,1,MODE_S,10000,-55,8D01",
-        "AT+SCHED=ADD,1,MODE_S,20000,-55,8D02", "AT+TX=1,FILE,sched,3"]  # a file: one port per packet
+        "AT+SCHED=CLEAR", "AT+SCHED=ADD,BOTH,MODE_S,0,-55,8D00", "AT+SCHED=ADD,BOTH,MODE_S,10000,-55,8D01",
+        "AT+SCHED=ADD,BOTH,MODE_S,20000,-55,8D02", "AT+TX=BOTH,FILE,sched,3"]  # mirrored like 1.x
     with pytest.raises(TransmitterError):
         v2(TestPattern(band="1090", count=7, rate=0, messages=msgs))
     with pytest.raises(TransmitterError):
