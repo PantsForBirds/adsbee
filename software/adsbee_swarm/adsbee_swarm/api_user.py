@@ -25,6 +25,8 @@ from .models import ApiToken, Device, Rollout
 SAFE = ('GET', 'HEAD', 'OPTIONS')
 MAX_BODY = 64 * 1024
 MAX_WINDOW_DAYS = 400
+#: `/stats?step=day` reads one row per bee per day: any window, so "since the first report" is one call.
+MAX_DAILY_STATS_DAYS = 100 * 366
 
 
 def _csrf_refused(request):
@@ -94,13 +96,13 @@ def _when(request, name: str) -> datetime | None:
     return moment if timezone.is_aware(moment) else timezone.make_aware(moment, timezone.utc)
 
 
-def _window(request) -> tuple[datetime, datetime]:
+def _window(request, max_days: int = MAX_WINDOW_DAYS) -> tuple[datetime, datetime]:
     until = _when(request, 'until') or timezone.now()
     since = _when(request, 'since') or until - timezone.timedelta(days=7)
     if since >= until:
         raise services.SwarmError('since must be before until')
-    if (until - since).days > MAX_WINDOW_DAYS:
-        raise services.SwarmError(f'at most {MAX_WINDOW_DAYS} days at a time')
+    if (until - since).days > max_days:
+        raise services.SwarmError(f'at most {max_days} days at a time')
     return since, until
 
 
@@ -245,11 +247,11 @@ def range_map(request):
 
 @user_api('GET')
 def stats(request):
-    """?device=<id> (repeatable), since, until, step=hour|day."""
-    since, until = _window(request)
+    """?device=<id> (repeatable), since, until, step=hour|day (day: no window limit)."""
     step = request.GET.get('step', 'hour')
     if step not in ('hour', 'day'):
         raise services.SwarmError('step is hour or day')
+    since, until = _window(request, MAX_DAILY_STATS_DAYS if step == 'day' else MAX_WINDOW_DAYS)
     chosen = _devices(request)
     ids = request.GET.getlist('device')
     if ids:
