@@ -6,6 +6,9 @@
 // read-modify-write init in UbloxMAXM10::SendInitCommands() never rewrites them. Writing those
 // keys can bounce the navigation engine and discard the live fix / stored assistance data,
 // defeating the ~1 s hot start. They are left to the module's own stored values instead.
+// Keys that SendInitCommands() sets to non-default values right after the sync are commented out
+// too (search "APP OVERRIDE"): syncing them first wrote each one twice per boot, and toggled
+// AssistNow Autonomous off and on.
 // If this file is ever regenerated, re-apply those comment-outs.
 #pragma once
 
@@ -20,7 +23,8 @@ struct UbloxCfgDefault {
 // Configuration default items (originally 390; some intentionally commented out below, see banner).
 // kNumUbloxConfigDefaults is sizeof-derived, so the count tracks the active entries automatically.
 static constexpr UbloxCfgDefault kUbloxConfigDefaults[] = {
-    {0x10230001, 0x0ULL, 1},  // CFG-ANA-USE_ANA (L) = 0 (false)
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x10230001, 0x0ULL, 1},  // CFG-ANA-USE_ANA (L) = 0 (false)
     {0x30230002, 0x64ULL, 2},  // CFG-ANA-ORBMAXERR (U2) = 100
     {0x10260013, 0x0ULL, 1},  // CFG-BATCH-ENABLE (L) = 0 (false)
     {0x10260014, 0x0ULL, 1},  // CFG-BATCH-PIOENABLE (L) = 0 (false)
@@ -75,10 +79,12 @@ static constexpr UbloxCfgDefault kUbloxConfigDefaults[] = {
     {0x209100de, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GBS_UART1 (U1) = 0
     {0x209100ba, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GGA_I2C (U1) = 1
     {0x209100be, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GGA_SPI (U1) = 1
-    {0x209100bb, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GGA_UART1 (U1) = 1
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x209100bb, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GGA_UART1 (U1) = 1
     {0x209100c9, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GLL_I2C (U1) = 1
     {0x209100cd, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GLL_SPI (U1) = 1
-    {0x209100ca, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GLL_UART1 (U1) = 1
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x209100ca, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GLL_UART1 (U1) = 1
     {0x209100b5, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GNS_I2C (U1) = 0
     {0x209100b9, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GNS_SPI (U1) = 0
     {0x209100b6, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GNS_UART1 (U1) = 0
@@ -87,25 +93,29 @@ static constexpr UbloxCfgDefault kUbloxConfigDefaults[] = {
     {0x209100cf, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GRS_UART1 (U1) = 0
     {0x209100bf, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSA_I2C (U1) = 1
     {0x209100c3, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSA_SPI (U1) = 1
-    {0x209100c0, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSA_UART1 (U1) = 1
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x209100c0, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSA_UART1 (U1) = 1
     {0x209100d3, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GST_I2C (U1) = 0
     {0x209100d7, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GST_SPI (U1) = 0
     {0x209100d4, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GST_UART1 (U1) = 0
     {0x209100c4, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSV_I2C (U1) = 1
     {0x209100c8, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSV_SPI (U1) = 1
-    {0x209100c5, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSV_UART1 (U1) = 1
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x209100c5, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSV_UART1 (U1) = 1
     {0x20910400, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_RLM_I2C (U1) = 0
     {0x20910404, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_RLM_SPI (U1) = 0
     {0x20910401, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_RLM_UART1 (U1) = 0
     {0x209100ab, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_RMC_I2C (U1) = 1
     {0x209100af, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_RMC_SPI (U1) = 1
-    {0x209100ac, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_RMC_UART1 (U1) = 1
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x209100ac, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_RMC_UART1 (U1) = 1
     {0x209100e7, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_VLW_I2C (U1) = 0
     {0x209100eb, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_VLW_SPI (U1) = 0
     {0x209100e8, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_VLW_UART1 (U1) = 0
     {0x209100b0, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_VTG_I2C (U1) = 1
     {0x209100b4, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_VTG_SPI (U1) = 1
-    {0x209100b1, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_VTG_UART1 (U1) = 1
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x209100b1, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_VTG_UART1 (U1) = 1
     {0x209100d8, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_ZDA_I2C (U1) = 0
     {0x209100dc, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_ZDA_SPI (U1) = 0
     {0x209100d9, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_ZDA_UART1 (U1) = 0
@@ -138,7 +148,8 @@ static constexpr UbloxCfgDefault kUbloxConfigDefaults[] = {
     {0x20910197, 0x0ULL, 1},  // CFG-MSGOUT-UBX_MON_MSGPP_UART1 (U1) = 0
     {0x20910359, 0x0ULL, 1},  // CFG-MSGOUT-UBX_MON_RF_I2C (U1) = 0
     {0x2091035d, 0x0ULL, 1},  // CFG-MSGOUT-UBX_MON_RF_SPI (U1) = 0
-    {0x2091035a, 0x0ULL, 1},  // CFG-MSGOUT-UBX_MON_RF_UART1 (U1) = 0
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x2091035a, 0x0ULL, 1},  // CFG-MSGOUT-UBX_MON_RF_UART1 (U1) = 0
     {0x209101a0, 0x0ULL, 1},  // CFG-MSGOUT-UBX_MON_RXBUF_I2C (U1) = 0
     {0x209101a4, 0x0ULL, 1},  // CFG-MSGOUT-UBX_MON_RXBUF_SPI (U1) = 0
     {0x209101a1, 0x0ULL, 1},  // CFG-MSGOUT-UBX_MON_RXBUF_UART1 (U1) = 0
@@ -186,7 +197,8 @@ static constexpr UbloxCfgDefault kUbloxConfigDefaults[] = {
     {0x20910007, 0x0ULL, 1},  // CFG-MSGOUT-UBX_NAV_PVT_UART1 (U1) = 0
     {0x20910015, 0x0ULL, 1},  // CFG-MSGOUT-UBX_NAV_SAT_I2C (U1) = 0
     {0x20910019, 0x0ULL, 1},  // CFG-MSGOUT-UBX_NAV_SAT_SPI (U1) = 0
-    {0x20910016, 0x0ULL, 1},  // CFG-MSGOUT-UBX_NAV_SAT_UART1 (U1) = 0
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x20910016, 0x0ULL, 1},  // CFG-MSGOUT-UBX_NAV_SAT_UART1 (U1) = 0
     {0x2091006a, 0x0ULL, 1},  // CFG-MSGOUT-UBX_NAV_SBAS_I2C (U1) = 0
     {0x2091006e, 0x0ULL, 1},  // CFG-MSGOUT-UBX_NAV_SBAS_SPI (U1) = 0
     {0x2091006b, 0x0ULL, 1},  // CFG-MSGOUT-UBX_NAV_SBAS_UART1 (U1) = 0
