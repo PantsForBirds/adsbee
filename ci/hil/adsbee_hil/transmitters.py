@@ -334,11 +334,13 @@ class BeeWiggler(Transmitter):
                 if len(msgs) > 256:
                     raise TransmitterError("AT+SCHED holds at most 256 messages")
                 dbm = level[0] if level else _num(PWIGGD_REF_DBM)
+                # A file names one port per packet (pwiggd 2.0 refuses BOTH there): port 1 when the jobs mirror.
+                sched_port = "1" if ms_port == "BOTH" else ms_port
                 cmds.append("AT+SCHED=CLEAR")
                 for i, m in enumerate(msgs):
-                    cmds.append(f"AT+SCHED=ADD,{ms_port},MODE_S,{round(i * 1e6 / p.rate)},{dbm},{m}")
+                    cmds.append(f"AT+SCHED=ADD,{sched_port},MODE_S,{round(i * 1e6 / p.rate)},{dbm},{m}")
                 loops = -1 if p.count < 0 else max(1, math.ceil(p.count / len(msgs)))
-                cmds.append(f"AT+TX={ms_port},FILE,sched,{loops}")
+                cmds.append(f"AT+TX={sched_port},FILE,sched,{loops}")
             else:
                 payload = msgs[0] if msgs else "TABLE"
                 cmds.append(",".join([f"AT+TX={ms_port}", "MODE_S", payload, self._count_v2(p.count), rate] + level))
