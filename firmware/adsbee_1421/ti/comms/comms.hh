@@ -156,9 +156,7 @@ class CommsManager {
     CPP_AT_CALLBACK(ATUptimeCallback);
     CPP_AT_CALLBACK(ATWatchdogCallback);
 #ifdef HARDWARE_UNIT_TESTS
-#ifdef ADSBEE_DEBUG_BUILD
-    CPP_AT_CALLBACK(ATTxCWCallback);  // Transmits RF: Debug builds only.
-#endif
+    CPP_AT_CALLBACK(ATTxCWCallback);  // Transmits RF: all bands in Debug builds, LRHF only in Release.
     CPP_AT_CALLBACK(ATRxCWCallback);
 #endif
 

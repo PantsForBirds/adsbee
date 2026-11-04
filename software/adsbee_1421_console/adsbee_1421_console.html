@@ -4276,7 +4276,7 @@
                 }
             } else if (serial.connected) {
                 // Bare Enter: forward a newline as a raw keystroke (bypassing the AT queue) so blocking
-                // commands that wait for "any key" (AT+RX_CW; AT+TX_CW on Debug builds) can be stopped from the console.
+                // commands that wait for "any key" (AT+RX_CW, AT+TX_CW) can be stopped from the console.
                 // The firmware ignores blank lines otherwise, so this is silent when idle. Not added to
                 // history.
                 appendToTerminal('> \n');

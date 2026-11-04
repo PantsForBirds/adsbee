@@ -1112,11 +1112,10 @@ class LR2021 {
     bool SelPa(PaSel pa_sel);
 
 #ifdef HARDWARE_UNIT_TESTS
-#ifdef ADSBEE_DEBUG_BUILD
     /**
      * Starts an unmodulated continuous-wave (CW) tone for bench testing. Configures the PA for the
      * requested front end, tunes the synthesizer, and keys up a continuous carrier that stays on until
-     * StopCwTone() is called. Debug builds only.
+     * StopCwTone() is called. Release builds refuse the LF path (returns false).
      * @param use_hf_path True to use the HF (2.4 GHz) path/PA, false to use the LF (sub-GHz) path/PA.
      * @param freq_hz Carrier frequency in Hz.
      * @param tx_power_dbm Requested TX power in dBm (interpreted relative to the PA configuration).
@@ -1124,9 +1123,8 @@ class LR2021 {
      */
     bool StartCwTone(bool use_hf_path, uint32_t freq_hz, int8_t tx_power_dbm);
 
-    /** Stops a CW tone started with StartCwTone() by returning the chip to standby. Debug builds only. */
+    /** Stops a CW tone started with StartCwTone() by returning the chip to standby. */
     bool StopCwTone();
-#endif  // ADSBEE_DEBUG_BUILD
 
     /**
      * Puts the chip into continuous RX at an arbitrary frequency so instantaneous RSSI can be polled

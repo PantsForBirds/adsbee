@@ -18,9 +18,8 @@ This tool keys up an unmodulated carrier of up to +22 dBm (LRLF) or +12 dBm (LRH
 
 ## Requirements
 
-- An ADSBee 1421 / m1421 running a **Debug build** of firmware 0.3.11-rc2 or later. `AT+TX_CW` is compiled into
-  Debug builds only; Release firmware (including CI builds and published releases) rejects it. Build and flash one
-  with:
+- An ADSBee 1421 / m1421 running firmware 0.3.11-rc2 or later. LRHF works on Release builds from 0.3.11-rc10;
+  SUBG and LRLF need a **Debug build**. Build and flash one with:
 
   ```sh
   cd firmware/adsbee_1421

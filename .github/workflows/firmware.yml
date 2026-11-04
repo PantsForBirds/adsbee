@@ -353,14 +353,16 @@ jobs:
     - name: Build
       working-directory: firmware/adsbee_1421/ti/build/Release
       run: cmake --build . --config Release --target all -j 22
-    - name: Check that RF test commands are not in the Release image
+    - name: Check that the Release image has AT+TX_CW on LRHF only
       working-directory: firmware/adsbee_1421/ti/build/Release
-      # AT+TX_CW transmits on demand and is compiled into Debug builds only (ADSBEE_DEBUG_BUILD).
+      # SUBG and LRLF CW are compiled into Debug builds only (ADSBEE_DEBUG_BUILD).
       run: |
-        if grep -a -q 'TX_CW' adsbee_1421.elf; then
-          echo "::error::AT+TX_CW found in the Release image; it must only be built into Debug images."
+        if arm-none-eabi-nm -C adsbee_1421.elf | grep -q 'SubGHzRadio::StartCWTest' ||
+           grep -a -q -e 'Failed to start CW on SUBG' -e 'Failed to start CW on LRLF' adsbee_1421.elf; then
+          echo "::error::SUBG or LRLF CW found in the Release image; only LRHF is allowed in Release."
           exit 1
         fi
+        grep -a -q 'LRHF only in Release builds' adsbee_1421.elf
     - name: Check the built image's CCFG
       working-directory: firmware/adsbee_1421/ti
       # Checks the built image's CCFG (customer configuration) against the AT+BOOTLOADER_PIN erase path.
