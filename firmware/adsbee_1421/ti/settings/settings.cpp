@@ -119,8 +119,9 @@ bool SettingsManager::Apply() {
 }
 
 bool SettingsManager::GetDeviceInfo(DeviceInfo& device_info) {
-    // Device Info is stored in flash.
-    device_info = *(DeviceInfo*)(kFlashDeviceInfoStartAddr);
+    // Device Info is stored in flash. Copy every byte (struct padding too), so writing back unchanged device info
+    // programs the same bytes.
+    memcpy(&device_info, (const void*)kFlashDeviceInfoStartAddr, sizeof(device_info));
     return true;
 }
 
