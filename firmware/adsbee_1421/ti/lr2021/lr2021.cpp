@@ -377,8 +377,13 @@ bool LR2021::SetOokADSB(SettingsManager::R1090PreambleMode preamble_mode, uint8_
 }
 
 #ifdef HARDWARE_UNIT_TESTS
-#ifdef ADSBEE_DEBUG_BUILD
 bool LR2021::StartCwTone(bool use_hf_path, uint32_t freq_hz, int8_t tx_power_dbm) {
+#ifndef ADSBEE_DEBUG_BUILD
+    // Release builds transmit CW on the HF (2.4 GHz) path only; the LF path folds out below.
+    if (!use_hf_path) {
+        return false;
+    }
+#endif
     // Begin from a clean standby state.
     if (!SetStandby(SysStandbyMode::kSysStandbyXosc)) {
         return SequenceStepFailed("LR2021::StartCwTone", "SetStandby");
@@ -454,7 +459,6 @@ bool LR2021::StopCwTone() {
     }
     return true;
 }
-#endif  // ADSBEE_DEBUG_BUILD
 
 bool LR2021::StartRssiScan(bool use_hf_path, uint32_t freq_hz) {
     // Reconfigure from a clean hardware reset (-> kStdbyRC), mirroring ADSBee::ApplyReceiverConfig():

@@ -119,7 +119,7 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
                               object_dictionary.kFirmwareVersionMinor, object_dictionary.kFirmwareVersionPatch,
                               object_dictionary.kFirmwareVersionReleaseCandidate);
             }
-            // Debug builds include RF test commands (AT+TX_CW); tools key off this line to find them.
+            // Debug builds have AT+TX_CW on all bands, Release on LRHF only; tools key off this line.
 #ifdef ADSBEE_DEBUG_BUILD
             CPP_AT_PRINTF("CC1314R10 Firmware Build: Debug\r\n");
 #else
@@ -1171,12 +1171,13 @@ static constexpr uint16_t kLrLfMaxMHz = 1100;
 static constexpr uint16_t kLrHfMinMHz = 1900;
 static constexpr uint16_t kLrHfMaxMHz = 2700;
 
-#ifdef ADSBEE_DEBUG_BUILD
-// Transmits RF on demand, so it is compiled into Debug builds only (see ADSBEE_DEBUG_BUILD in CMakeLists.txt).
+// Transmits RF on demand: all bands in Debug builds, LRHF (2.4 GHz) only in Release (ADSBEE_DEBUG_BUILD).
 CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     // LR2021 TX power bounds, in whole dBm (DS.LR2021: LF -9.5..22 dBm, HF -19.5..12 dBm).
+#ifdef ADSBEE_DEBUG_BUILD
     static constexpr int32_t kLrLfMinPowerDbm = -9;
     static constexpr int32_t kLrLfMaxPowerDbm = 22;
+#endif
     static constexpr int32_t kLrHfMinPowerDbm = -19;
     static constexpr int32_t kLrHfMaxPowerDbm = 12;
     static constexpr int8_t kDefaultPowerDbm = 0;
@@ -1185,10 +1186,19 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
         CPP_AT_ERROR("Operator '%c' not supported.", op);
     }
     if (!(CPP_AT_HAS_ARG(0) && CPP_AT_HAS_ARG(1))) {
+#ifdef ADSBEE_DEBUG_BUILD
         CPP_AT_ERROR(
             "Requires at least two arguments: AT+TX_CW=<band [SUBG LRLF LRHF]>,<freq_MHz>[,<power_dBm> (LRLF/LRHF "
             "only)].");
+#else
+        CPP_AT_ERROR("Requires at least two arguments: AT+TX_CW=LRHF,<freq_MHz>[,<power_dBm>].");
+#endif
     }
+#ifndef ADSBEE_DEBUG_BUILD
+    if (args[0].compare("LRHF") != 0) {
+        CPP_AT_ERROR("Band '%s' unavailable: AT+TX_CW is LRHF only in Release builds.", args[0].data());
+    }
+#endif
     // Frequency accepts fractional MHz (e.g. 2400.1) so the LR2021 bands can be swept at sub-MHz steps for
     // filter characterization. It is rounded to the nearest kHz to keep float error out of the Hz value.
     float freq_mhz_f = 0.0f;
@@ -1201,7 +1211,6 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     uint32_t freq_hz = freq_khz * 1000u;
     uint16_t freq_mhz = (uint16_t)(freq_khz / 1000u);  // Truncated whole-MHz value for range checks and SUBG.
     uint16_t freq_frac_khz = (uint16_t)(freq_khz % 1000u);
-    bool freq_is_whole_mhz = (freq_frac_khz == 0);
 
     // Optional third argument: TX power in dBm (LR2021 bands only). Range is band-specific and validated
     // in the per-band branches below. Defaults to 0 dBm.
@@ -1218,9 +1227,11 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     }
 
     // Dispatch on band, validating the frequency before keying up the radio.
-    enum CwBand { kBandSubG, kBandLrLf, kBandLrHf } band;
+    enum CwBand { kBandSubG, kBandLrLf, kBandLrHf };
+    [[maybe_unused]] CwBand band;  // Always kBandLrHf in Release builds.
+#ifdef ADSBEE_DEBUG_BUILD
     if (args[0].compare("SUBG") == 0) {
-        if (!freq_is_whole_mhz) {
+        if (freq_frac_khz != 0) {
             CPP_AT_ERROR("SUBG CW frequency must be a whole number of MHz.");
         }
         if (freq_mhz < kSubGMinMHz || freq_mhz > kSubGMaxMHz) {
@@ -1247,7 +1258,9 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
         if (!adsbee.lr2021.StartCwTone(/*use_hf_path=*/false, freq_hz, power_dbm)) {
             CPP_AT_ERROR("Failed to start CW on LRLF.");
         }
-    } else if (args[0].compare("LRHF") == 0) {
+    } else
+#endif
+    if (args[0].compare("LRHF") == 0) {
         if (freq_khz < (uint32_t)kLrHfMinMHz * 1000u || freq_khz > (uint32_t)kLrHfMaxMHz * 1000u) {
             CPP_AT_ERROR("Frequency %u.%03u MHz out of range for LRHF (%u-%u MHz).", freq_mhz, freq_frac_khz,
                          kLrHfMinMHz, kLrHfMaxMHz);
@@ -1264,9 +1277,12 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
         CPP_AT_ERROR("Unknown band '%s' (SUBG, LRLF, LRHF).", args[0].data());
     }
 
+#ifdef ADSBEE_DEBUG_BUILD
     if (band == kBandSubG) {
         CPP_AT_PRINTF("Transmitting CW on %s at %u MHz. Press any key to stop.\r\n", args[0].data(), freq_mhz);
-    } else {
+    } else
+#endif
+    {
         CPP_AT_PRINTF("Transmitting CW on %s at %u.%03u MHz, %d dBm. Press any key to stop.\r\n", args[0].data(),
                       freq_mhz, freq_frac_khz, power_dbm);
     }
@@ -1279,9 +1295,12 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
 
     // Stop the carrier and restore normal reception.
     bool restore_ok;
+#ifdef ADSBEE_DEBUG_BUILD
     if (band == kBandSubG) {
         restore_ok = subg_radio.StopCWTest();
-    } else {
+    } else
+#endif
+    {
         restore_ok = adsbee.lr2021.StopCwTone();
         restore_ok &= adsbee.Init();  // Re-apply the 1090 MHz receiver configuration.
     }
@@ -1302,7 +1321,6 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     CPP_AT_SUCCESS();
 }
 
-#endif  // ADSBEE_DEBUG_BUILD
 
 // Formats an RSSI value in half-dB units (dBm * 2) as e.g. "-93.5" into buf. Both radios report in
 // half-dB resolution or better, so this avoids float printf.
@@ -1627,17 +1645,21 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .help_string = "Run hardware self-tests. Reception resumes as configured afterwards. "
                     "Unavailable while AT+LR_ENABLE=0.",
      .callback = ATTestCallback},
-#ifdef ADSBEE_DEBUG_BUILD
     {.command = "TX_CW",
      .min_args = 2,
      .max_args = 3,
+#ifdef ADSBEE_DEBUG_BUILD
      .help_string = "AT+TX_CW=<band [SUBG LRLF LRHF]>,<freq_MHz>[,<power_dBm>]\r\n\tTransmit an unmodulated CW "
                     "carrier until a key is pressed.\r\n\tSUBG=CC1314 (whole MHz only), LRLF/LRHF=LR2021 low/high band "
                     "(fractional MHz accepted, 1 kHz resolution, e.g. 2400.1). Power "
                     "(default 0 dBm) applies to LR2021 bands only: LRLF -9..22 dBm, LRHF -19..12 dBm.\r\n\tSUBG "
                     "power is fixed at +12 dBm by the SmartRF TX power table; a power argument is an error.",
-     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTxCWCallback, comms_manager)},
+#else
+     .help_string = "AT+TX_CW=LRHF,<freq_MHz>[,<power_dBm>]\r\n\tTransmit an unmodulated CW carrier on the LR2021 "
+                    "high band (1900-2700 MHz, fractional MHz accepted, e.g. 2400.1) until a key is pressed. Power "
+                    "-19..12 dBm, default 0 dBm.\r\n\tRelease builds: LRHF only (SUBG and LRLF need a Debug build).",
 #endif
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTxCWCallback, comms_manager)},
     {.command = "RX_CW",
      .min_args = 2,
      .max_args = 2,
