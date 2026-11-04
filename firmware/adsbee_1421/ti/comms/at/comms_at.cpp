@@ -153,13 +153,13 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
                     uint16_t device_info_version;
                     CPP_AT_TRY_ARG2NUM(1, device_info_version);
                     if (device_info_version != kDeviceInfoVersion) {
-                        CPP_AT_ERROR("Device info version must be %d, got %d.", device_info_version,
-                                     kDeviceInfoVersion);
+                        CPP_AT_ERROR("Device info version must be %d, got %d.", kDeviceInfoVersion,
+                                     device_info_version);
                     }
-                    if (device_info_version == device_info.device_info_version) {
-                        // Existing device info is compatible, use existing DeviceInfo struct as a starter.
-                        settings_manager.GetDeviceInfo(device_info);
-                    }
+                    // Start from the stored device info so fields left out keep their values, then store the
+                    // current version: on a blank module the stored version word is 0xFFFFFFFF.
+                    settings_manager.GetDeviceInfo(device_info);
+                    device_info.device_info_version = kDeviceInfoVersion;
                 }
                 // Else (no argument provided for device info), use default values for everything.
                 if (CPP_AT_HAS_ARG(2)) {
