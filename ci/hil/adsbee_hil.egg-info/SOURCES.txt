@@ -10,6 +10,7 @@ adsbee_hil/loopback.py
 adsbee_hil/packets.py
 adsbee_hil/receivers.py
 adsbee_hil/registry.py
+adsbee_hil/remote_id.py
 adsbee_hil/transmitters.py
 adsbee_hil/usb.py
 adsbee_hil.egg-info/PKG-INFO
@@ -24,5 +25,6 @@ tests/test_hardware.py
 tests/test_jig_flash.py
 tests/test_lock.py
 tests/test_packets.py
+tests/test_remote_id.py
 tests/test_transmitters.py
 tests/test_usb.py

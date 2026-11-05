@@ -44,6 +44,16 @@ def unique_df17_set(count: int, base_icao: int = 0xBEE000, prefix: str = "HIL") 
     return [df17_identification(base_icao + i, f"{prefix}{i:0{8 - len(prefix)}d}"[:8]) for i in range(count)]
 
 
+def uat_adsb_basic(icao: int) -> str:
+    """A UAT basic ADS-B payload (18 bytes, no FEC): payload type 0, ICAO address qualifier, no position."""
+    return f"00{icao:06X}" + "00" * 14
+
+
+def unique_uat_set(count: int, base_icao: int = 0xBEE000) -> List[str]:
+    """``count`` UAT basic ADS-B payloads with consecutive ICAO addresses from the bench block."""
+    return [uat_adsb_basic(base_icao + i) for i in range(count)]
+
+
 def icao_of(hex_msg: str) -> Optional[int]:
     """ICAO address of a DF11/17/18 Mode S or a UAT ADS-B message (bytes 1..3 in both)."""
     if len(hex_msg) < 8:

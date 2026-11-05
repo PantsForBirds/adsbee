@@ -34,11 +34,15 @@ usb_port = "1-1.4"
 # Transmitters. `receivers` lists which receivers each one reaches (default: all).
 # [[transmitters]]
 # id = "wiggler-a"
-# type = "bee_wiggler"           # Bee Wiggler
+# type = "bee_wiggler"           # Bee Wiggler, Pluto Wiggler or Bee Waggler (command set from AT+DEVICE_INFO?)
 # usb_serial = "E000000000000003"
+# usb_port = "1-1.2.3.4"           # instead of usb_serial: Pluto-type units can share one serial
 # receivers = ["1090u-a", "1421-a"]
-# mode_s_atten_db = 60             # default step-attenuator settings when a pattern sets none
-# subg_atten_db = 60
+# mode_s_atten_db = 60             # default Mode S (1090 MHz) / UAT (978 MHz) attenuation when a pattern sets none;
+# subg_atten_db = 60               # on firmware 2.x: level = +5 dBm (or power_dbm) - attenuation
+# mode_s_port = "BOTH"             # firmware 2.x: Mode S port, 1, 2 or BOTH (default BOTH on a Bee Waggler, 1 on a Pluto Wiggler)
+# uat_port = "BOTH"                # firmware 2.x: UAT port, same choices and default
+# simultaneous = false             # firmware 2.x, Bee Waggler: overlap Mode S and UAT in "dual" (fixed-LO plan)
 #
 # [[transmitters]]
 # id = "pluto-a"
