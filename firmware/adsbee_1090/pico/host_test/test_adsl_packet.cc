@@ -7,6 +7,7 @@
 #include "adsl/adsl_vectors.hh"
 #include "adsl_packet.hh"
 #include "crc.hh"
+#include "data_structures.hh"
 #include "gtest/gtest.h"
 
 namespace {
@@ -286,4 +287,48 @@ TEST(ADSLPacket, NoiseRarelyPasses) {
         passed += raw.FromChips(chips, sizeof(chips));
     }
     EXPECT_EQ(passed, 0);
+}
+
+TEST(ADSLPacket, SplitDecodeMatchesFromChipsAndFitsTheSharedSlot) {
+    // The RF callback runs ManchesterDecode(); the decoder's main loop pass runs RepairErasures() on the copy that came
+    // through the shared sub-GHz queue.
+    const ADSLGoldenVector &v = kADSLGoldenVectors[0];
+    std::vector<uint8_t> chips = ChipsAfterSync(v);
+    std::vector<uint8_t> bytes = HexToBytes(v.packet_hex);
+    for (uint16_t bit : {20, 77, 150}) {  // Three erasures: pairs forced to 11.
+        chips[(2 * bit) / 8] |= 0b11 << (6 - (2 * bit) % 8);
+    }
+    RawADSLPacket in_callback;
+    ASSERT_TRUE(in_callback.ManchesterDecode(chips.data(), chips.size()));
+    EXPECT_EQ(in_callback.protocol, RawUATADSBPacket::kProtocolADSL);
+    EXPECT_EQ(in_callback.sigq_bits, 3);
+    in_callback.channel = RawADSLPacket::kChannel868_4MHz;
+
+    PFBQueue<RawUATADSBPacket> queue({.buf_len_num_elements = 4, .buffer = nullptr});
+    ASSERT_TRUE(queue.Enqueue(in_callback));
+    RawUATADSBPacket slot;
+    ASSERT_TRUE(queue.Dequeue(slot));
+    ASSERT_EQ(slot.protocol, RawUATADSBPacket::kProtocolADSL);
+
+    RawADSLPacket repaired(slot);
+    ASSERT_TRUE(repaired.RepairErasures());
+    EXPECT_EQ(repaired.sigq_bits, 3);
+    EXPECT_EQ(repaired.channel, RawADSLPacket::kChannel868_4MHz);
+    ASSERT_EQ(repaired.buffer_len_bytes, bytes.size());
+    EXPECT_EQ(memcmp(repaired.buffer, bytes.data(), bytes.size()), 0);
+    // The erasure positions are cleared once used, so the packet reads like one from FromChips().
+    for (uint16_t i = RawADSLPacket::kErasuresOffsetBytes; i < RawUATADSBPacket::kADSBMessageMaxSizeBytes; i++) {
+        EXPECT_EQ(repaired.buffer[i], 0) << i;
+    }
+    RawADSLPacket whole;
+    ASSERT_TRUE(whole.FromChips(chips.data(), chips.size()));
+    EXPECT_EQ(memcmp(whole.buffer, repaired.buffer, sizeof(whole.buffer)), 0);
+}
+
+TEST(ADSLPacket, BadLengthByteReachesTheDecoderAsInvalid) {
+    uint8_t chips[RawADSLPacket::kMaxChipBytes] = {0};  // Length byte all erasures.
+    RawADSLPacket raw;
+    EXPECT_FALSE(raw.ManchesterDecode(chips, sizeof(chips)));
+    EXPECT_EQ(raw.buffer_len_bytes, 0);
+    EXPECT_FALSE(raw.RepairErasures());
 }

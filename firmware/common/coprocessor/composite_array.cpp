@@ -19,8 +19,7 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
                                                                 PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
                                                                 PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
                                                                 PFBQueue<RawRemoteIDPacket>* remote_id_queue,
-                                                                const PackLimits& limits,
-                                                                PFBQueue<RawADSLPacket>* adsl_queue) {
+                                                                const PackLimits& limits) {
     RawPackets packets_to_report = {
         .len_bytes = sizeof(RawPackets::Header),
         .header = reinterpret_cast<RawPackets::Header*>(buf),
@@ -28,21 +27,19 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         .uat_adsb_packets = nullptr,
         .uat_uplink_packets = nullptr,
         .remote_id_packets = nullptr,
-        .adsl_packets = nullptr,
     };
 
     packets_to_report.header->num_mode_s_packets = 0;
     packets_to_report.header->num_uat_adsb_packets = 0;
     packets_to_report.header->num_uat_uplink_packets = 0;
     packets_to_report.header->num_remote_id_packets = 0;
-    packets_to_report.header->num_adsl_packets = 0;
-    packets_to_report.header->reserved = 0;
 
-    // Reserve room for a couple of uplink packets up front: Mode S and UAT ADS-B pack first, and under
-    // sustained traffic they would otherwise fill every batch and starve the low-rate uplink queue forever.
-    // Never reserve more than the buffer could actually hold past the header, so a buffer too small for
-    // any uplink still packs Mode S / UAT ADS-B instead of holding space no uplink can use.
+    // One sub-GHz reservation: Mode S packs first and under sustained traffic would otherwise fill every batch and
+    // starve the low-rate sub-GHz queues. It holds a few short packets (UAT ADS-B or ADS-L, which share a queue and a
+    // section) and a couple of uplinks; the short packets pack next and leave the uplinks' share. Never reserve more
+    // than the buffer could hold past the header, so a small buffer still packs Mode S instead of holding unusable room.
     constexpr uint16_t kMaxReservedUplinkPackets = 2;
+    constexpr uint16_t kMaxReservedShortSubGHzPackets = 4;
     uint16_t reserved_uplink_bytes = 0;
     if (uat_uplink_queue) {
         uint16_t max_uplinks_that_fit =
@@ -55,21 +52,17 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         if (num_uplinks > limits.max_uat_uplink_packets) num_uplinks = limits.max_uat_uplink_packets;
         reserved_uplink_bytes = num_uplinks * sizeof(RawUATUplinkPacket);
     }
-    // ADS-L packets pack last and are few per second, so reserve room for a few in the same way.
-    constexpr uint16_t kMaxReservedADSLPackets = 4;
-    uint16_t reserved_adsl_bytes = 0;
-    if (adsl_queue) {
-        uint16_t num_adsl = adsl_queue->Length();
-        if (num_adsl > kMaxReservedADSLPackets) num_adsl = kMaxReservedADSLPackets;
-        if (num_adsl > limits.max_adsl_packets) num_adsl = limits.max_adsl_packets;
-        if (sizeof(RawPackets::Header) + reserved_uplink_bytes + num_adsl * sizeof(RawADSLPacket) > buf_len_bytes) {
-            num_adsl = buf_len_bytes > sizeof(RawPackets::Header) + reserved_uplink_bytes
-                           ? (buf_len_bytes - sizeof(RawPackets::Header) - reserved_uplink_bytes) / sizeof(RawADSLPacket)
-                           : 0;
-        }
-        reserved_adsl_bytes = num_adsl * sizeof(RawADSLPacket);
+    uint16_t reserved_sub_ghz_bytes = reserved_uplink_bytes;
+    if (uat_adsb_queue) {
+        uint16_t room_bytes = buf_len_bytes > sizeof(RawPackets::Header) + reserved_uplink_bytes
+                                  ? buf_len_bytes - sizeof(RawPackets::Header) - reserved_uplink_bytes
+                                  : 0;
+        uint16_t num_short = uat_adsb_queue->Length();
+        if (num_short > kMaxReservedShortSubGHzPackets) num_short = kMaxReservedShortSubGHzPackets;
+        if (num_short > room_bytes / sizeof(RawUATADSBPacket)) num_short = room_bytes / sizeof(RawUATADSBPacket);
+        if (num_short > limits.max_uat_adsb_packets) num_short = limits.max_uat_adsb_packets;
+        reserved_sub_ghz_bytes += num_short * sizeof(RawUATADSBPacket);
     }
-    reserved_uplink_bytes += reserved_adsl_bytes;  // Mode S and UAT ADS-B leave room for both.
 
     // Fill up the CompositeArray::RawPackets header and associated buffers with as many packets as we can report.
     if (mode_s_queue) {
@@ -77,7 +70,7 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         RawModeSPacket mode_s_packet;
         packets_to_report.mode_s_packets = reinterpret_cast<RawModeSPacket*>(buf + packets_to_report.len_bytes);
         while (packets_to_report.header->num_mode_s_packets < limits.max_mode_s_packets &&
-               packets_to_report.len_bytes + sizeof(RawModeSPacket) + reserved_uplink_bytes <= buf_len_bytes &&
+               packets_to_report.len_bytes + sizeof(RawModeSPacket) + reserved_sub_ghz_bytes <= buf_len_bytes &&
                mode_s_queue->Dequeue(mode_s_packet)) {
             memcpy(&packets_to_report.mode_s_packets[packets_to_report.header->num_mode_s_packets], &mode_s_packet,
                    sizeof(RawModeSPacket));
@@ -103,7 +96,7 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         RawUATUplinkPacket uat_uplink_packet;
         packets_to_report.uat_uplink_packets = reinterpret_cast<RawUATUplinkPacket*>(buf + packets_to_report.len_bytes);
         while (packets_to_report.header->num_uat_uplink_packets < limits.max_uat_uplink_packets &&
-               packets_to_report.len_bytes + sizeof(RawUATUplinkPacket) + reserved_adsl_bytes <= buf_len_bytes &&
+               packets_to_report.len_bytes + sizeof(RawUATUplinkPacket) <= buf_len_bytes &&
                uat_uplink_queue->Dequeue(uat_uplink_packet)) {
             memcpy(&packets_to_report.uat_uplink_packets[packets_to_report.header->num_uat_uplink_packets],
                    &uat_uplink_packet, sizeof(RawUATUplinkPacket));
@@ -116,25 +109,12 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         RawRemoteIDPacket remote_id_packet;
         packets_to_report.remote_id_packets = reinterpret_cast<RawRemoteIDPacket*>(buf + packets_to_report.len_bytes);
         while (packets_to_report.header->num_remote_id_packets < limits.max_remote_id_packets &&
-               packets_to_report.len_bytes + sizeof(RawRemoteIDPacket) + reserved_adsl_bytes <= buf_len_bytes &&
+               packets_to_report.len_bytes + sizeof(RawRemoteIDPacket) <= buf_len_bytes &&
                remote_id_queue->Dequeue(remote_id_packet)) {
             memcpy(&packets_to_report.remote_id_packets[packets_to_report.header->num_remote_id_packets],
                    &remote_id_packet, sizeof(RawRemoteIDPacket));
             packets_to_report.header->num_remote_id_packets++;
             packets_to_report.len_bytes += sizeof(RawRemoteIDPacket);
-        }
-    }
-    if (adsl_queue) {
-        // Stuff with ADS-L packets.
-        RawADSLPacket adsl_packet;
-        packets_to_report.adsl_packets = reinterpret_cast<RawADSLPacket*>(buf + packets_to_report.len_bytes);
-        while (packets_to_report.header->num_adsl_packets < limits.max_adsl_packets &&
-               packets_to_report.len_bytes + sizeof(RawADSLPacket) <= buf_len_bytes &&
-               adsl_queue->Dequeue(adsl_packet)) {
-            memcpy(&packets_to_report.adsl_packets[packets_to_report.header->num_adsl_packets], &adsl_packet,
-                   sizeof(RawADSLPacket));
-            packets_to_report.header->num_adsl_packets++;
-            packets_to_report.len_bytes += sizeof(RawADSLPacket);
         }
     }
 
@@ -165,15 +145,12 @@ bool CompositeArray::UnpackRawPacketsBuffer(CompositeArray::RawPackets& packets,
         reinterpret_cast<RawUATUplinkPacket*>(packets.uat_adsb_packets + packets.header->num_uat_adsb_packets);
     packets.remote_id_packets =
         reinterpret_cast<RawRemoteIDPacket*>(packets.uat_uplink_packets + packets.header->num_uat_uplink_packets);
-    packets.adsl_packets =
-        reinterpret_cast<RawADSLPacket*>(packets.remote_id_packets + packets.header->num_remote_id_packets);
 
     // Extract the header and make sure buf is big enough to contain the claimed number of packets.
     packets.len_bytes = sizeof(RawPackets::Header) + packets.header->num_mode_s_packets * sizeof(RawModeSPacket) +
                         packets.header->num_uat_adsb_packets * sizeof(RawUATADSBPacket) +
                         packets.header->num_uat_uplink_packets * sizeof(RawUATUplinkPacket) +
-                        packets.header->num_remote_id_packets * sizeof(RawRemoteIDPacket) +
-                        packets.header->num_adsl_packets * sizeof(RawADSLPacket);
+                        packets.header->num_remote_id_packets * sizeof(RawRemoteIDPacket);
 
     if (buf_len_bytes < packets.len_bytes) {
         CONSOLE_ERROR(
@@ -192,8 +169,7 @@ bool CompositeArray::UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_l
                                                     PFBQueue<RawModeSPacket>* mode_s_queue,
                                                     PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
                                                     PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
-                                                    PFBQueue<RawRemoteIDPacket>* remote_id_queue,
-                                                    PFBQueue<RawADSLPacket>* adsl_queue) {
+                                                    PFBQueue<RawRemoteIDPacket>* remote_id_queue) {
     CompositeArray::RawPackets packets;
     if (!UnpackRawPacketsBuffer(packets, buf, buf_len_bytes)) {
         CONSOLE_ERROR("CompositeArray::UnpackRawPacketsBufferToQueues", "Failed to unpack buffer.");
@@ -223,11 +199,6 @@ bool CompositeArray::UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_l
                       packets.header->num_remote_id_packets);
         return false;  // No Remote ID queue provided but header claims packets.
     }
-    if (adsl_queue == nullptr && packets.header->num_adsl_packets > 0) {
-        CONSOLE_ERROR("CompositeArray::UnpackRawPacketsBufferToQueues",
-                      "No ADS-L queue provided but header claims %d packets.", packets.header->num_adsl_packets);
-        return false;  // No ADS-L queue provided but header claims packets.
-    }
 
     // Enqueue each packet type on its own, so one full queue doesn't also drop the other packet types in the array.
     QueueFullDrops drops;
@@ -255,12 +226,6 @@ bool CompositeArray::UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_l
             break;
         }
     }
-    for (uint16_t i = 0; i < packets.header->num_adsl_packets; i++) {
-        if (!adsl_queue->Enqueue(packets.adsl_packets[i])) {
-            drops.adsl = packets.header->num_adsl_packets - i;
-            break;
-        }
-    }
     if (drops.Total() == 0) {
         return true;  // All packets successfully enqueued.
     }
@@ -273,19 +238,17 @@ bool CompositeArray::UnpackRawPacketsBufferToQueues(uint8_t* buf, uint16_t buf_l
     queue_full_drops.uat_adsb += drops.uat_adsb;
     queue_full_drops.uat_uplink += drops.uat_uplink;
     queue_full_drops.remote_id += drops.remote_id;
-    queue_full_drops.adsl += drops.adsl;
     drops_since_last_log.mode_s += drops.mode_s;
     drops_since_last_log.uat_adsb += drops.uat_adsb;
     drops_since_last_log.uat_uplink += drops.uat_uplink;
     drops_since_last_log.remote_id += drops.remote_id;
-    drops_since_last_log.adsl += drops.adsl;
     uint32_t timestamp_ms = get_time_since_boot_ms();
     if (!logged_once || timestamp_ms - last_log_timestamp_ms >= kQueueFullLogIntervalMs) {
         CONSOLE_ERROR("CompositeArray::UnpackRawPacketsBufferToQueues",
-                      "Queue full, dropped %lu Mode S, %lu UAT ADS-B, %lu UAT uplink, %lu Remote ID, %lu ADS-L packets "
-                      "in the last %lu ms.",
+                      "Queue full, dropped %lu Mode S, %lu UAT ADS-B, %lu UAT uplink, %lu Remote ID packets in the last "
+                      "%lu ms.",
                       drops_since_last_log.mode_s, drops_since_last_log.uat_adsb, drops_since_last_log.uat_uplink,
-                      drops_since_last_log.remote_id, drops_since_last_log.adsl, logged_once ? timestamp_ms - last_log_timestamp_ms : 0);
+                      drops_since_last_log.remote_id, logged_once ? timestamp_ms - last_log_timestamp_ms : 0);
         drops_since_last_log = QueueFullDrops();
         last_log_timestamp_ms = timestamp_ms;
         logged_once = true;
@@ -297,7 +260,7 @@ bool CompositeArray::MergeRawPacketsBuffers(uint8_t* dst_buf, const uint8_t* src
     auto* dst_hdr = reinterpret_cast<RawPackets::Header*>(dst_buf);
     auto* src_hdr = reinterpret_cast<const RawPackets::Header*>(src_buf);
 
-    // dst counts (N/M/K/L/A) and src counts (P/Q/R/S/B) for Mode S / UAT ADS-B / UAT Uplink / Remote ID / ADS-L.
+    // dst counts (N/M/K/L) and src counts (P/Q/R/S) for Mode S / UAT ADS-B / UAT Uplink / Remote ID respectively.
     const uint16_t N = dst_hdr->num_mode_s_packets;
     const uint16_t M = dst_hdr->num_uat_adsb_packets;
     const uint16_t K = dst_hdr->num_uat_uplink_packets;
@@ -306,27 +269,23 @@ bool CompositeArray::MergeRawPacketsBuffers(uint8_t* dst_buf, const uint8_t* src
     const uint16_t Q = src_hdr->num_uat_adsb_packets;
     const uint16_t R = src_hdr->num_uat_uplink_packets;
     const uint16_t S = src_hdr->num_remote_id_packets;
-    const uint16_t A = dst_hdr->num_adsl_packets;
-    const uint16_t B = src_hdr->num_adsl_packets;
 
     const uint32_t ms = sizeof(RawModeSPacket);
     const uint32_t ad = sizeof(RawUATADSBPacket);
     const uint32_t up = sizeof(RawUATUplinkPacket);
     const uint32_t ri = sizeof(RawRemoteIDPacket);
-    const uint32_t al = sizeof(RawADSLPacket);
 
     const uint32_t combined_size = sizeof(RawPackets::Header) + (uint32_t)(N + P) * ms + (uint32_t)(M + Q) * ad +
-                                   (uint32_t)(K + R) * up + (uint32_t)(L + S) * ri + (uint32_t)(A + B) * al;
+                                   (uint32_t)(K + R) * up + (uint32_t)(L + S) * ri;
     if (combined_size > RawPackets::kMaxLenBytes) {
         return false;
     }
 
-    // Pointers into src's sections (layout: [Header|ModeS|ADSB|Uplink|RemoteID|ADSL]).
+    // Pointers into src's sections (layout: [Header|ModeS|ADSB|Uplink|RemoteID]).
     const uint8_t* src_ms_ptr = src_buf + sizeof(RawPackets::Header);
     const uint8_t* src_adsb_ptr = src_ms_ptr + P * ms;
     const uint8_t* src_upl_ptr = src_adsb_ptr + Q * ad;
     const uint8_t* src_rid_ptr = src_upl_ptr + R * up;
-    const uint8_t* src_adsl_ptr = src_rid_ptr + S * ri;
 
     // Each step inserts src's section immediately after dst's section of the same type, shifting all later sections
     // forward to make room, so within each type dst's packets stay ahead of src's. Processing front-to-back keeps the
@@ -334,35 +293,28 @@ bool CompositeArray::MergeRawPacketsBuffers(uint8_t* dst_buf, const uint8_t* src
 
     // Step 1: insert src Mode S after dst Mode S; shift dst's ADS-B + Uplink + Remote ID forward by P*ms.
     const uint32_t adsb_start = sizeof(RawPackets::Header) + N * ms;
-    const uint32_t tail1 = M * ad + K * up + L * ri + A * al;
+    const uint32_t tail1 = M * ad + K * up + L * ri;
     if (tail1 > 0) memmove(dst_buf + adsb_start + P * ms, dst_buf + adsb_start, tail1);
     if (P > 0) memcpy(dst_buf + adsb_start, src_ms_ptr, P * ms);
     dst_hdr->num_mode_s_packets = N + P;
 
     // Step 2: insert src ADS-B after dst ADS-B; shift dst's Uplink + Remote ID forward by Q*ad.
     const uint32_t upl_start = adsb_start + P * ms + M * ad;
-    const uint32_t tail2 = K * up + L * ri + A * al;
+    const uint32_t tail2 = K * up + L * ri;
     if (tail2 > 0) memmove(dst_buf + upl_start + Q * ad, dst_buf + upl_start, tail2);
     if (Q > 0) memcpy(dst_buf + upl_start, src_adsb_ptr, Q * ad);
     dst_hdr->num_uat_adsb_packets = M + Q;
 
     // Step 3: insert src Uplink after dst Uplink; shift dst's Remote ID forward by R*up.
     const uint32_t rid_start = upl_start + Q * ad + K * up;
-    const uint32_t tail3 = L * ri + A * al;
+    const uint32_t tail3 = L * ri;
     if (tail3 > 0) memmove(dst_buf + rid_start + R * up, dst_buf + rid_start, tail3);
     if (R > 0) memcpy(dst_buf + rid_start, src_upl_ptr, R * up);
     dst_hdr->num_uat_uplink_packets = K + R;
 
-    // Step 4: insert src Remote ID after dst Remote ID (which now sits at rid_start + R*up, length L*ri); shift dst's
-    // ADS-L forward by S*ri.
-    const uint32_t adsl_start = rid_start + R * up + L * ri;
-    if (A > 0) memmove(dst_buf + adsl_start + S * ri, dst_buf + adsl_start, A * al);
-    if (S > 0) memcpy(dst_buf + adsl_start, src_rid_ptr, S * ri);
+    // Step 4: append src Remote ID after dst Remote ID (which now sits at rid_start + R*up, length L*ri).
+    if (S > 0) memcpy(dst_buf + rid_start + R * up + L * ri, src_rid_ptr, S * ri);
     dst_hdr->num_remote_id_packets = L + S;
-
-    // Step 5: append src ADS-L after dst ADS-L.
-    if (B > 0) memcpy(dst_buf + adsl_start + S * ri + A * al, src_adsl_ptr, B * al);
-    dst_hdr->num_adsl_packets = A + B;
 
     return true;
 }
@@ -370,8 +322,7 @@ bool CompositeArray::MergeRawPacketsBuffers(uint8_t* dst_buf, const uint8_t* src
 uint16_t CompositeArray::CalculateRawPacketsBufferLength(PFBQueue<RawModeSPacket>* mode_s_queue,
                                                          PFBQueue<RawUATADSBPacket>* uat_adsb_queue,
                                                          PFBQueue<RawUATUplinkPacket>* uat_uplink_queue,
-                                                         PFBQueue<RawRemoteIDPacket>* remote_id_queue,
-                                                         PFBQueue<RawADSLPacket>* adsl_queue) {
+                                                         PFBQueue<RawRemoteIDPacket>* remote_id_queue) {
     uint16_t total_len_bytes = sizeof(RawPackets::Header);
 
     if (mode_s_queue) {
@@ -385,9 +336,6 @@ uint16_t CompositeArray::CalculateRawPacketsBufferLength(PFBQueue<RawModeSPacket
     }
     if (remote_id_queue) {
         total_len_bytes += remote_id_queue->Length() * sizeof(RawRemoteIDPacket);
-    }
-    if (adsl_queue) {
-        total_len_bytes += adsl_queue->Length() * sizeof(RawADSLPacket);
     }
 
     return total_len_bytes;

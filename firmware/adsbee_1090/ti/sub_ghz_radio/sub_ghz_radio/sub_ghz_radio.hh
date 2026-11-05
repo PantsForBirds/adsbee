@@ -85,9 +85,6 @@ public:
      */
     void SetMode(SettingsManager::SubGHzRadioMode mode);
     SettingsManager::SubGHzRadioMode GetMode() const { return mode_; }
-    static bool ModeIsADSL(SettingsManager::SubGHzRadioMode mode) {
-        return mode == SettingsManager::kSubGHzRadioModeADSLRx || mode == SettingsManager::kSubGHzRadioModeADSLRx868_4MHz;
-    }
 
     bool rx_enabled = true;
 

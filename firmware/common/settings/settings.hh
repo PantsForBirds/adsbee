@@ -126,6 +126,9 @@ class SettingsManager {
         kNumSubGHzRadioModes
     };
     static const char kSubGHzModeStrs[kNumSubGHzRadioModes][kSubGHzModeStrMaxLen];
+    static constexpr bool SubGHzModeIsADSL(SubGHzRadioMode mode) {
+        return mode == kSubGHzRadioModeADSLRx || mode == kSubGHzRadioModeADSLRx868_4MHz;
+    }
 
     // Broadcast Remote ID transports, as a bitmask stored in Settings::remote_id_transports. Whether a requested
     // transport actually runs additionally depends on the hardware build (PSRAM vs not) and the WiFi/ethernet state;

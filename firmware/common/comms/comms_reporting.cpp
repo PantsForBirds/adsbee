@@ -438,15 +438,12 @@ bool CommsManager::ReportRaw(ReportSink* sinks, uint16_t num_sinks, const Compos
                         kRawModeSFrameMaxNumChars);
     }
     for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
-        BUILD_RAW_FRAME(BuildRawUATADSBFrame(packets.uat_adsb_packets[i], raw_batch_buf + batch_len),
+        BUILD_RAW_FRAME(BuildRawSubGHzFrame(packets.uat_adsb_packets[i], raw_batch_buf + batch_len),
                         kRawUATADSBFrameMaxNumChars);
     }
     for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
         BUILD_RAW_FRAME(BuildRawUATUplinkFrame(packets.uat_uplink_packets[i], raw_batch_buf + batch_len),
                         kRawUATUplinkFrameMaxNumChars);
-    }
-    for (uint16_t i = 0; i < packets.header->num_adsl_packets; i++) {
-        BUILD_RAW_FRAME(BuildRawADSLFrame(packets.adsl_packets[i], raw_batch_buf + batch_len), kRawADSLFrameMaxNumChars);
     }
 #undef BUILD_RAW_FRAME
 
@@ -474,16 +471,12 @@ bool CommsManager::ReportRaw(ReportSink* sinks, uint16_t num_sinks, const Compos
     }
     for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
         char raw_frame_buf[kRawUATADSBFrameMaxNumChars];
-        SEND_RAW_FRAME(BuildRawUATADSBFrame(packets.uat_adsb_packets[i], raw_frame_buf), kRawUATADSBFrameMaxNumChars);
+        SEND_RAW_FRAME(BuildRawSubGHzFrame(packets.uat_adsb_packets[i], raw_frame_buf), kRawUATADSBFrameMaxNumChars);
     }
     for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
         char raw_frame_buf[kRawUATUplinkFrameMaxNumChars];
         SEND_RAW_FRAME(BuildRawUATUplinkFrame(packets.uat_uplink_packets[i], raw_frame_buf),
                        kRawUATUplinkFrameMaxNumChars);
-    }
-    for (uint16_t i = 0; i < packets.header->num_adsl_packets; i++) {
-        char raw_frame_buf[kRawADSLFrameMaxNumChars];
-        SEND_RAW_FRAME(BuildRawADSLFrame(packets.adsl_packets[i], raw_frame_buf), kRawADSLFrameMaxNumChars);
     }
 #undef SEND_RAW_FRAME
     FLUSH_REPORT_TALLY_RATE_LIMITED("CommsManager::ReportRaw", raw_tally);
@@ -533,6 +526,7 @@ bool CommsManager::ReportBeast(ReportSink* sinks, uint16_t num_sinks, const Comp
     }
     if (protocol != SettingsManager::kBeastNoUAT) {
         for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
+            if (packets.uat_adsb_packets[i].protocol != RawUATADSBPacket::kProtocolUATADSB) continue;  // No ADS-L in Beast.
             BUILD_BEAST_FRAME(
                 BeastReporter::BuildUATADSBBeastFrame(beast_batch_buf + batch_len, packets.uat_adsb_packets[i]),
                 BeastReporter::kUATADSBBeastFrameMaxLenBytes);
@@ -570,6 +564,7 @@ bool CommsManager::ReportBeast(ReportSink* sinks, uint16_t num_sinks, const Comp
     }
     if (protocol != SettingsManager::kBeastNoUAT) {
         for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
+            if (packets.uat_adsb_packets[i].protocol != RawUATADSBPacket::kProtocolUATADSB) continue;  // No ADS-L in Beast.
             uint8_t beast_frame_buf[BeastReporter::kUATADSBBeastFrameMaxLenBytes];
             SEND_BEAST_FRAME(BeastReporter::BuildUATADSBBeastFrame(beast_frame_buf, packets.uat_adsb_packets[i]));
         }

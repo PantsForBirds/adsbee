@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "uat_packet.hh"
+
 /**
  * ADS-L packets on the M-band (EASA ADS-L 4 SRD-860 Issue 2): 868.2 / 868.4 MHz, 100 kchip/s 2-GFSK, +/-50 kHz.
  *
@@ -10,7 +12,7 @@
  * optional signature follows without Manchester coding and is not counted in the length byte; receivers may ignore it.
  * Multi-byte fields are little endian with bit fields packed LSB first (spec B.3).
  */
-class RawADSLPacket {
+class RawADSLPacket : public RawUATADSBPacket {
    public:
     // Manchester coding of sync word 0x724B, the 32 chips the radio syncs on.
     static constexpr uint32_t kSyncWordChips = 0x95A69A65;
@@ -30,10 +32,21 @@ class RawADSLPacket {
     // Manchester pairs that read 00 or 11 are erasures. Up to this many are repaired by trying both values against
     // the CRC (2^n CRC checks).
     static constexpr uint16_t kMaxErasures = 6;
+    // Until RepairErasures() runs, erasure bit positions (byte * 8 + bit) sit in the buffer after the packet bytes.
+    static constexpr uint16_t kErasuresOffsetBytes = kMaxPacketLenBytes;
+    static_assert(kErasuresOffsetBytes + kMaxErasures <= kADSBMessageMaxSizeBytes);
 
     enum Channel : uint8_t { kChannel868_2MHz = 0, kChannel868_4MHz = 1, kChannelUnknown = 0xFF };
 
-    RawADSLPacket() {}
+    RawADSLPacket() {
+        protocol = kProtocolADSL;
+        channel = kChannelUnknown;
+    }
+
+    /**
+     * Views a packet from a shared sub-GHz queue as ADS-L. Only meaningful when packet.protocol is kProtocolADSL.
+     */
+    explicit RawADSLPacket(const RawUATADSBPacket &packet) : RawUATADSBPacket(packet) {}
 
     /**
      * Builds a packet from on-air bytes (length byte first). Used by tests and when reading packets from text.
@@ -49,31 +62,34 @@ class RawADSLPacket {
     static uint16_t ChipBytesFromLengthChips(uint8_t chips_msb, uint8_t chips_lsb);
 
     /**
-     * Manchester decodes chips received after the sync word, repairs up to kMaxErasures erasures against the CRC and
-     * fills this packet.
+     * Manchester decodes chips received after the sync word into buffer. Cheap enough for the RF callback. Sets
+     * sigq_bits to the number of erasures and keeps the first kMaxErasures positions for RepairErasures().
      * @param[in] chips Chip bytes, MSB first, starting right after the sync word.
      * @param[in] num_chip_bytes Number of chip bytes available.
+     * @retval False (and buffer_len_bytes = 0) if the length byte is unusable or the chips are too short.
+     */
+    bool ManchesterDecode(const uint8_t *chips, uint16_t num_chip_bytes);
+
+    /**
+     * Tries every value of the erased bits against the CRC (main loop work: up to 2^kMaxErasures CRC checks).
+     * @retval True if the packet passed the CRC; sigq_bits is then the number of repaired erasures.
+     */
+    bool RepairErasures();
+
+    /**
+     * ManchesterDecode() then RepairErasures().
      * @retval True if the packet passed the CRC.
      */
-    bool FromChips(const uint8_t *chips, uint16_t num_chip_bytes);
+    bool FromChips(const uint8_t *chips, uint16_t num_chip_bytes) {
+        return ManchesterDecode(chips, num_chip_bytes) && RepairErasures();
+    }
 
     /**
      * @retval True if buffer holds a whole packet with a matching CRC.
      */
     bool CRCIsValid() const;
-
-    uint64_t GetMLAT12MHzCounter() const { return (mlat_48mhz_64bit_counts >> 2) & 0xFFFFFFFFFFFF; }
-    uint64_t GetTimestampMs() const { return mlat_48mhz_64bit_counts / 48000; }
-
-    uint8_t buffer[kMaxPacketLenBytes] = {0};  // On-air bytes after the sync word, length byte first.
-    uint8_t buffer_len_bytes = 0;
-    uint8_t channel = kChannelUnknown;      // Channel enum.
-    int16_t sigs_dbm = INT16_MIN;           // Signal strength, in dBm.
-    int16_t sigq_bits = INT16_MIN;          // Manchester erasures repaired (0 = best).
-    uint16_t reserved = 0;                  // Keeps mlat_48mhz_64bit_counts 8-byte aligned.
-    uint64_t mlat_48mhz_64bit_counts = 0;  // Receive timestamp.
 };
-static_assert(sizeof(RawADSLPacket) % 4 == 0, "RawADSLPacket must be word-aligned for CompositeArray access.");
+static_assert(sizeof(RawADSLPacket) == sizeof(RawUATADSBPacket), "RawADSLPacket must fit the shared sub-GHz slot.");
 
 /**
  * Fields of a CRC-checked, descrambled ADS-L packet. Traffic and Status payloads are parsed; other payload types keep

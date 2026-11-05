@@ -6,21 +6,33 @@
 
 namespace {
 
-// Decodes one Manchester chip byte pair into a data byte. Erasure (00 or 11) bit positions, MSB = 7, go into
-// erasure_mask; those bits read as 0.
-inline uint8_t ManchesterDecodeByte(uint8_t chips_msb, uint8_t chips_lsb, uint8_t &erasure_mask) {
-    uint16_t chips = static_cast<uint16_t>(chips_msb << 8) | chips_lsb;
-    uint8_t byte = 0;
-    erasure_mask = 0;
-    for (int16_t bit = 7; bit >= 0; bit--) {
-        uint8_t pair = (chips >> (2 * bit)) & 0b11;
-        if (pair == 0b01) {
-            byte |= 1 << bit;
-        } else if (pair != 0b10) {
-            erasure_mask |= 1 << bit;
+// Manchester decode of one chip byte (4 chip pairs): data nibble in the low 4 bits, erasure (00 or 11) nibble in the
+// high 4 bits. A table keeps the RF callback's per-packet decode short.
+struct ManchesterTable {
+    uint8_t entries[256] = {};
+    constexpr ManchesterTable() {
+        for (uint16_t chips = 0; chips < 256; chips++) {
+            uint8_t entry = 0;
+            for (uint16_t bit = 0; bit < 4; bit++) {
+                uint8_t pair = (chips >> (2 * bit)) & 0b11;
+                if (pair == 0b01) {
+                    entry |= 1 << bit;
+                } else if (pair != 0b10) {
+                    entry |= 1 << (bit + 4);
+                }
+            }
+            entries[chips] = entry;
         }
     }
-    return byte;
+};
+constexpr ManchesterTable kManchesterTable;
+
+// Decodes one Manchester chip byte pair into a data byte. Erasure bit positions (MSB = 7) go into erasure_mask; those
+// bits read as 0.
+inline uint8_t ManchesterDecodeByte(uint8_t chips_msb, uint8_t chips_lsb, uint8_t &erasure_mask) {
+    uint8_t msb = kManchesterTable.entries[chips_msb], lsb = kManchesterTable.entries[chips_lsb];
+    erasure_mask = (msb & 0xF0) | (lsb >> 4);
+    return static_cast<uint8_t>(msb << 4) | (lsb & 0x0F);
 }
 
 inline bool LenFieldIsSupported(uint8_t len_field) {
@@ -41,7 +53,10 @@ inline uint32_t XXTEAMix(uint32_t z, uint32_t y, uint32_t sum, uint32_t p, uint3
 
 RawADSLPacket::RawADSLPacket(const uint8_t *buf, uint16_t buf_len_bytes, int16_t sigs_dbm_in, int16_t sigq_bits_in,
                              uint64_t mlat_48mhz_64bit_counts_in)
-    : sigs_dbm(sigs_dbm_in), sigq_bits(sigq_bits_in), mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
+    : RawADSLPacket() {
+    sigs_dbm = sigs_dbm_in;
+    sigq_bits = sigq_bits_in;
+    mlat_48mhz_64bit_counts = mlat_48mhz_64bit_counts_in;
     buffer_len_bytes = buf_len_bytes > kMaxPacketLenBytes ? kMaxPacketLenBytes : buf_len_bytes;
     memcpy(buffer, buf, buffer_len_bytes);
 }
@@ -55,9 +70,9 @@ uint16_t RawADSLPacket::ChipBytesFromLengthChips(uint8_t chips_msb, uint8_t chip
     return (1 + len_field) * kChipBytesPerByte;
 }
 
-bool RawADSLPacket::FromChips(const uint8_t *chips, uint16_t num_chip_bytes) {
+bool RawADSLPacket::ManchesterDecode(const uint8_t *chips, uint16_t num_chip_bytes) {
     buffer_len_bytes = 0;
-    sigq_bits = INT16_MIN;
+    sigq_bits = 0;
     if (num_chip_bytes < kChipBytesPerByte) return false;
     uint8_t erasures;
     uint8_t len_field = ManchesterDecodeByte(chips[0], chips[1], erasures);
@@ -65,32 +80,42 @@ bool RawADSLPacket::FromChips(const uint8_t *chips, uint16_t num_chip_bytes) {
     uint16_t len_bytes = 1 + len_field;
     if (num_chip_bytes < len_bytes * kChipBytesPerByte) return false;
 
-    // Decode, noting erasure bit positions (byte index * 8 + bit).
-    uint16_t erasure_bits[kMaxErasures];
     uint16_t num_erasures = 0;
     for (uint16_t i = 0; i < len_bytes; i++) {
         buffer[i] = ManchesterDecodeByte(chips[2 * i], chips[2 * i + 1], erasures);
         for (int16_t bit = 7; erasures != 0 && bit >= 0; bit--) {
             if (!(erasures & (1 << bit))) continue;
-            if (num_erasures == kMaxErasures) return false;
-            erasure_bits[num_erasures++] = i * 8 + bit;
+            if (num_erasures < kMaxErasures) buffer[kErasuresOffsetBytes + num_erasures] = i * 8 + bit;
+            num_erasures++;
         }
     }
     buffer_len_bytes = len_bytes;
+    sigq_bits = num_erasures;
+    return true;
+}
 
+bool RawADSLPacket::RepairErasures() {
+    uint16_t num_erasures = sigq_bits;
+    if (buffer_len_bytes == 0 || num_erasures > kMaxErasures) {
+        buffer_len_bytes = 0;
+        return false;
+    }
     // Try every value of the erased bits (all read as 0 so far), in Gray code order: one bit flip per try.
+    const uint8_t *erasure_bits = buffer + kErasuresOffsetBytes;
+    bool valid = false;
     for (uint32_t trial = 0; trial < (1u << num_erasures); trial++) {
         if (trial != 0) {
             uint16_t flip = __builtin_ctz(trial);
             buffer[erasure_bits[flip] / 8] ^= 1 << (erasure_bits[flip] % 8);
         }
         if (CRCIsValid()) {
-            sigq_bits = num_erasures;
-            return true;
+            valid = true;
+            break;
         }
     }
-    buffer_len_bytes = 0;
-    return false;
+    memset(buffer + kErasuresOffsetBytes, 0, kMaxErasures);
+    if (!valid) buffer_len_bytes = 0;
+    return valid;
 }
 
 bool RawADSLPacket::CRCIsValid() const {

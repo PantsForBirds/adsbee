@@ -1,6 +1,5 @@
 #include "sub_ghz_radio.hh"
 
-#include "adsl_packet_decoder.hh"
 #include "hal.hh"
 #include "macros.hh"
 #include "pico.hh"  // For LED blinks.
@@ -138,7 +137,7 @@ bool SubGHzRadio::Init() {
     RF_Params_init(&rf_params);
 
     mode_ = requested_mode_;
-    bool adsl = ModeIsADSL(mode_);
+    bool adsl = SettingsManager::SubGHzModeIsADSL(mode_);
 
     // Overriding settings from smartrf/smartrf_settings.c.
     /* RF_cmdPropRxAdv  - Advanced Rx command settings. */
@@ -312,14 +311,19 @@ bool SubGHzRadio::HandlePacketRx(rfc_dataEntryPartial_t* filled_entry) {
     static_assert(kPartialDataEntryNumAppendedBytes == 6);  // This section is hardcoded to match the appended bytes.
 
     if (adsl_rx) {
-        // The header byte is the first chip byte.
+        // The header byte is the first chip byte. Erasure repair and the CRC check wait for the decoder's main loop
+        // pass; a bad length byte still goes there as an empty packet so it is logged as invalid.
         uint16_t num_chip_bytes = packet_len_bytes + kPacketHeaderSizeBytes;
         if (num_chip_bytes > RawADSLPacket::kMaxChipBytes) {
             return false;
         }
-        object_dictionary.metrics.num_raw_adsl_packets++;
-        adsl_packet_decoder.EnqueueChips(buf + kPartialDataEntryPayloadLenSzBytes, num_chip_bytes, rssi_dbm, timestamp,
-                                         adsl_channel);
+        RawADSLPacket raw_packet;
+        raw_packet.ManchesterDecode(buf + kPartialDataEntryPayloadLenSzBytes, num_chip_bytes);
+        raw_packet.sigs_dbm = rssi_dbm;
+        raw_packet.channel = adsl_channel;
+        raw_packet.mlat_48mhz_64bit_counts = timestamp;
+        object_dictionary.metrics.num_raw_uat_adsb_packets++;
+        uat_packet_decoder.raw_uat_adsb_packet_queue.Enqueue(raw_packet);
         return true;
     }
 

@@ -130,3 +130,20 @@ TEST(ADSLAircraft, RawFrame) {
     for (char& c : got) c = toupper(c);
     EXPECT_EQ(got, expected);
 }
+
+TEST(ADSLAircraft, RawFrameFromTheSharedSubGHzSlot) {
+    // RAW reporting reads ADS-L packets from the UAT ADS-B section and picks the line by protocol.
+    RawADSLPacket p = Packet("traffic_v0_k0", -61);
+    RawUATADSBPacket slot = p;
+    char adsl_line[kRawADSLFrameMaxNumChars];
+    char shared_line[kRawUATADSBFrameMaxNumChars];
+    uint16_t len = BuildRawSubGHzFrame(slot, shared_line);
+    ASSERT_EQ(len, BuildRawADSLFrame(p, adsl_line));
+    EXPECT_EQ(std::string(shared_line, len), std::string(adsl_line, len));
+
+    RawUATADSBPacket uat("00a66ef135445d525a0c05191190212048006cb82bc4d53a5b2bb0a8ec6e", -60, 5, 0x123456);
+    char uat_line[kRawUATADSBFrameMaxNumChars];
+    len = BuildRawSubGHzFrame(uat, shared_line);
+    ASSERT_EQ(len, BuildRawUATADSBFrame(uat, uat_line));
+    EXPECT_EQ(std::string(shared_line, 6), "#UAT*-");
+}

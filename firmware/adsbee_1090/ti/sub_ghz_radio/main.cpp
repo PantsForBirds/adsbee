@@ -12,7 +12,6 @@ extern "C" {
 #include "ti/drivers/SPI.h"
 }
 
-#include "adsl_packet_decoder.hh"
 #include "bsp.hh"
 #include "comms.hh"
 #include "cpu_utils.hh"
@@ -44,7 +43,6 @@ CommsManager comms_manager = CommsManager({});
 SettingsManager settings_manager = SettingsManager();
 SubGHzRadio subg_radio = SubGHzRadio({});
 UATPacketDecoder uat_packet_decoder = UATPacketDecoder();
-ADSLPacketDecoder adsl_packet_decoder = ADSLPacketDecoder();
 
 /**
  * A note on interrupt priorities (configured via Sysconfig):
@@ -131,7 +129,6 @@ int main(void) {
         pico_ll.ProcessPendingTransaction();
         pico.UpdateLED();
         uat_packet_decoder.Update();
-        adsl_packet_decoder.Update();
         subg_radio.Update();
     }
 }

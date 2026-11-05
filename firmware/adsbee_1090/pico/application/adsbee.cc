@@ -760,8 +760,7 @@ void ADSBee::IngestAndForwardPackets() {
     // keeps outputting packets.
     uint16_t num_decoded_mode_s_packets = decoder.decoded_mode_s_packet_out_queue.Length();
     if (num_decoded_mode_s_packets == 0 && raw_uat_adsb_packet_queue.Length() == 0 &&
-        raw_uat_uplink_packet_queue.Length() == 0 && raw_remote_id_packet_queue.Length() == 0 &&
-        raw_adsl_packet_queue.Length() == 0) {
+        raw_uat_uplink_packet_queue.Length() == 0 && raw_remote_id_packet_queue.Length() == 0) {
         return;
     }
     CPUMonitor::WorkScope work;
@@ -802,21 +801,24 @@ void ADSBee::IngestAndForwardPackets() {
     // NOTE: The UAT packet queues are updated on this core, so we don't need to count the number of packets to
     // process before dequeueing.
 
-    // Ingest new UAT packets into the dictionary and report them.
+    // Ingest new UAT packets into the dictionary and report them. ADS-L packets share the queue (protocol tag).
     RawUATADSBPacket uat_adsb_packet;
     while (raw_uat_adsb_packet_queue.Dequeue(uat_adsb_packet)) {
-        DecodedUATADSBPacket decoded_uat_adsb_packet = DecodedUATADSBPacket(uat_adsb_packet);
-        if (!decoded_uat_adsb_packet.is_valid) {
-            CONSOLE_ERROR("ADSBee::IngestAndForwardPackets", "Invalid UAT ADS-B packet received.");
-            continue;
-        }
-
-        if (aircraft_dictionary.IngestDecodedUATADSBPacket(decoded_uat_adsb_packet)) {
-            // Packet was used to update the dictionary or was silently ignored (but presumed to be valid).
-            // NOTE: Pushing to the reporting queue here means that we only will report validated packets!
-            // comms_manager.uat_adsb_packet_reporting_queue.Enqueue(uat_adsb_packet);
-            CONSOLE_INFO("ADSBee::IngestAndForwardPackets", "\taircraft_dictionary: %d aircraft",
-                         aircraft_dictionary.GetNumAircraft());
+        if (uat_adsb_packet.protocol == RawUATADSBPacket::kProtocolADSL) {
+            aircraft_dictionary.IngestADSLPacket(RawADSLPacket(uat_adsb_packet));
+        } else {
+            DecodedUATADSBPacket decoded_uat_adsb_packet = DecodedUATADSBPacket(uat_adsb_packet);
+            if (!decoded_uat_adsb_packet.is_valid) {
+                CONSOLE_ERROR("ADSBee::IngestAndForwardPackets", "Invalid UAT ADS-B packet received.");
+                continue;
+            }
+            if (aircraft_dictionary.IngestDecodedUATADSBPacket(decoded_uat_adsb_packet)) {
+                // Packet was used to update the dictionary or was silently ignored (but presumed to be valid).
+                // NOTE: Pushing to the reporting queue here means that we only will report validated packets!
+                // comms_manager.uat_adsb_packet_reporting_queue.Enqueue(uat_adsb_packet);
+                CONSOLE_INFO("ADSBee::IngestAndForwardPackets", "\taircraft_dictionary: %d aircraft",
+                             aircraft_dictionary.GetNumAircraft());
+            }
         }
         // Push all decoded packets to the reporting queue, even if the aircraft dictionary didn't know what to do
         // with them.
@@ -847,18 +849,6 @@ void ADSBee::IngestAndForwardPackets() {
     RawRemoteIDPacket remote_id_packet;
     while (raw_remote_id_packet_queue.Dequeue(remote_id_packet)) {
         aircraft_dictionary.IngestRawRemoteIDPacket(remote_id_packet);
-    }
-
-    // Ingest ADS-L packets from the CC1312 and report them.
-    RawADSLPacket adsl_packet;
-    while (raw_adsl_packet_queue.Dequeue(adsl_packet)) {
-        aircraft_dictionary.IngestADSLPacket(adsl_packet);
-        if (comms_manager.adsl_packet_reporting_queue.IsFull()) {
-            comms_manager.ForceFlushRawPackets();
-        }
-        if (!comms_manager.adsl_packet_reporting_queue.Enqueue(adsl_packet)) {
-            CONSOLE_ERROR("ADSBee::IngestAndForwardPackets", "ADS-L packet reporting queue overflowed.");
-        }
     }
 }
 

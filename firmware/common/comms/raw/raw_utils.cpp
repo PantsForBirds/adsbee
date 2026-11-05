@@ -32,3 +32,10 @@ uint16_t BuildRawADSLFrame(const RawADSLPacket& packet, char* raw_frame_buf) {
                     packet.sigs_dbm, packet.sigq_bits, packet.channel == RawADSLPacket::kChannelUnknown ? -1 : packet.channel,
                     packet.mlat_48mhz_64bit_counts);
 }
+
+uint16_t BuildRawSubGHzFrame(const RawUATADSBPacket& packet, char* raw_frame_buf) {
+    if (packet.protocol == RawUATADSBPacket::kProtocolADSL) {
+        return BuildRawADSLFrame(RawADSLPacket(packet), raw_frame_buf);
+    }
+    return BuildRawUATADSBFrame(packet, raw_frame_buf);
+}

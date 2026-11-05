@@ -303,8 +303,7 @@ bool ADSBeeServer::Update() {
     bool at_least_one_queue_half_full =
         (raw_mode_s_packet_in_queue.Length() > raw_mode_s_packet_in_queue.MaxNumElements() / 2) ||
         (raw_uat_adsb_packet_in_queue.Length() > raw_uat_adsb_packet_in_queue.MaxNumElements() / 2) ||
-        (raw_uat_uplink_packet_in_queue.Length() > raw_uat_uplink_packet_in_queue.MaxNumElements() / 2) ||
-        (raw_adsl_packet_in_queue.Length() > raw_adsl_packet_in_queue.MaxNumElements() / 2);
+        (raw_uat_uplink_packet_in_queue.Length() > raw_uat_uplink_packet_in_queue.MaxNumElements() / 2);
 
     if (timestamp_ms - last_raw_packet_process_timestamp_ms_ > kRawPacketProcessingIntervalMs ||
         at_least_one_queue_half_full) {
@@ -321,8 +320,7 @@ bool ADSBeeServer::Update() {
         // packet reporting time interval.
         CompositeArray::RawPackets raw_packets = CompositeArray::PackRawPacketsBuffer(
             raw_packets_buf_, CompositeArray::RawPackets::kMaxLenBytes, &(adsbee_server.raw_mode_s_packet_in_queue),
-            &(adsbee_server.raw_uat_adsb_packet_in_queue), &(adsbee_server.raw_uat_uplink_packet_in_queue), nullptr,
-            CompositeArray::PackLimits(), &(adsbee_server.raw_adsl_packet_in_queue));
+            &(adsbee_server.raw_uat_adsb_packet_in_queue), &(adsbee_server.raw_uat_uplink_packet_in_queue));
 
         if (!raw_packets.IsValid()) {
             if (raw_packets.len_bytes > sizeof(CompositeArray::RawPackets::Header)) {
@@ -372,9 +370,13 @@ bool ADSBeeServer::Update() {
                 }
             }
 
-            // UAT ADSB Packets
+            // UAT ADSB Packets, and ADS-L packets in the same section (protocol tag).
             for (uint16_t i = 0; i < raw_packets.header->num_uat_adsb_packets; i++) {
                 RawUATADSBPacket& raw_uat_adsb_packet = raw_packets.uat_adsb_packets[i];
+                if (raw_uat_adsb_packet.protocol == RawUATADSBPacket::kProtocolADSL) {
+                    aircraft_dictionary.IngestADSLPacket(RawADSLPacket(raw_uat_adsb_packet));
+                    continue;
+                }
                 DecodedUATADSBPacket decoded_packet = DecodedUATADSBPacket(raw_uat_adsb_packet);
                 if (!decoded_packet.is_valid) {
                     CONSOLE_ERROR("ADSBeeServer::Update", "Received invalid UAT ADSB packet.");
@@ -400,11 +402,6 @@ bool ADSBeeServer::Update() {
                 }
                 ReportGDL90UplinkDataMessage(decoded_packet);
                 QueueUplinkMessage(decoded_packet);
-            }
-
-            // ADS-L Packets
-            for (uint16_t i = 0; i < raw_packets.header->num_adsl_packets; i++) {
-                aircraft_dictionary.IngestADSLPacket(raw_packets.adsl_packets[i]);
             }
         }
     }

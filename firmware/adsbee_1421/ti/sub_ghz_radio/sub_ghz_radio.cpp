@@ -3,7 +3,6 @@
 #include <posix/unistd.h>  // For usleep.
 
 #include "adsbee.hh"
-#include "adsl_packet_decoder.hh"
 #include "hal.hh"
 #include "macros.hh"
 #include "uat_packet_decoder.hh"
@@ -384,8 +383,15 @@ bool SubGHzRadio::HandlePacketRx(rfc_dataEntryPartial_t* filled_entry) {
         if (num_chip_bytes > RawADSLPacket::kMaxChipBytes) {
             return false;
         }
-        adsl_packet_decoder.EnqueueChips(buf + kPartialDataEntryPayloadLenSzBytes, num_chip_bytes, rssi_dbm, timestamp,
-                                         adsl_channel);
+        // Erasure repair and the CRC check wait for the decoder's main loop pass; a bad length byte still goes there as
+        // an empty packet so it is logged as invalid.
+        RawADSLPacket raw_packet;
+        raw_packet.ManchesterDecode(buf + kPartialDataEntryPayloadLenSzBytes, num_chip_bytes);
+        raw_packet.sigs_dbm = rssi_dbm;
+        raw_packet.channel = adsl_channel;
+        raw_packet.mlat_48mhz_64bit_counts = timestamp;
+        adsbee.aircraft_dictionary.RecordADSLMetrics(1, 0);
+        uat_packet_decoder.raw_uat_adsb_packet_queue.Enqueue(raw_packet);
         return true;
     }
 
