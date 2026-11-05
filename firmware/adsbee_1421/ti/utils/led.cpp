@@ -1,6 +1,9 @@
 #include "led.hh"
 
 #include "hal.hh"
+#include "settings.hh"
+
+#include <ti/drivers/dpl/HwiP.h>
 
 void LEDs::TimerCallback(uintptr_t arg) { static_cast<LEDs*>(reinterpret_cast<void*>(arg))->Update(); }
 
@@ -33,6 +36,7 @@ void LEDs::Suspend() {
     for (uint16_t i = 0; i < config_.num_leds; i++) {
         GPIO_write(config_.pins[i], 0);
         led_on_[i] = false;
+        led_forced_[i] = false;
     }
 }
 
@@ -40,22 +44,56 @@ void LEDs::Resume() { ClockP_start(clock_handle_); }
 
 void LEDs::Update() {
     uint32_t now_ms = get_time_since_boot_ms();
+    bool enabled = settings_manager.settings.led_enabled;
     for (uint16_t i = 0; i < config_.num_leds; i++) {
-        if (led_on_[i] && now_ms - led_on_timestamp_ms_[i] >= led_on_duration_ms_[i]) {
-            GPIO_write(config_.pins[i], 0);  // Turn off the LED
+        // AT+LED_ENABLE=0 turns a lit LED off right away, unless it's a forced blink.
+        if (led_on_[i] &&
+            (now_ms - led_on_timestamp_ms_[i] >= led_on_duration_ms_[i] || (!enabled && !led_forced_[i]))) {
+            GPIO_write(config_.pins[i], 0);
             led_on_[i] = false;
+            led_forced_[i] = false;
         }
     }
 }
 
-void LEDs::FlashLED(uint16_t pin, uint32_t duration_ms) {
+int16_t LEDs::IndexOf(uint16_t pin) const {
     for (uint16_t i = 0; i < config_.num_leds; i++) {
         if (config_.pins[i] == pin) {
-            GPIO_write(pin, 1);  // Turn on the LED
-            led_on_timestamp_ms_[i] = get_time_since_boot_ms();
-            led_on_duration_ms_[i] = duration_ms;
-            led_on_[i] = true;
-            break;
+            return i;
         }
+    }
+    return -1;
+}
+
+void LEDs::Light(uint16_t i, uint32_t duration_ms, bool force) {
+    uint32_t now_ms = get_time_since_boot_ms();
+    // Update() runs from a clock interrupt: keep it from seeing a half-updated LED.
+    uintptr_t key = HwiP_disable();
+    // Later off-deadline wins, so a short packet flash doesn't cut a longer blink short.
+    if (!led_on_[i] ||
+        (int32_t)((now_ms + duration_ms) - (led_on_timestamp_ms_[i] + led_on_duration_ms_[i])) > 0) {
+        led_on_timestamp_ms_[i] = now_ms;
+        led_on_duration_ms_[i] = duration_ms;
+    }
+    if (force) {
+        led_forced_[i] = true;
+    }
+    led_on_[i] = true;
+    GPIO_write(config_.pins[i], 1);
+    HwiP_restore(key);
+}
+
+void LEDs::FlashLED(uint16_t pin, uint32_t duration_ms) {
+    int16_t i = IndexOf(pin);
+    if (i < 0 || !settings_manager.settings.led_enabled) {
+        return;
+    }
+    Light(i, duration_ms, false);
+}
+
+void LEDs::ForceBlinkLED(uint16_t pin, uint32_t duration_ms) {
+    int16_t i = IndexOf(pin);
+    if (i >= 0) {
+        Light(i, duration_ms, true);
     }
 }

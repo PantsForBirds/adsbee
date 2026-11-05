@@ -11,6 +11,8 @@
 #include "object_dictionary.hh"
 #include "packet_decoder.hh"
 #include "flash_utils.hh"
+#include "led.hh"
+#include "led_blink_args.hh"
 #include "settings.hh"
 #include "settings_hash.hh"
 #include "sub_ghz_radio.hh"
@@ -308,6 +310,60 @@ CPP_AT_CALLBACK(CommsManager::ATFilterDistanceNMCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+
+CPP_AT_CALLBACK(CommsManager::ATLEDBlinkCallback) {
+    switch (op) {
+        case '=': {
+            uint32_t duration_ms;
+            CPP_AT_TRY_ARG2NUM(0, duration_ms);
+            if (!LEDBlinkArgs::DurationIsValid(duration_ms)) {
+                CPP_AT_ERROR("Duration must be 1-%lu ms.", (unsigned long)LEDBlinkArgs::kMaxDurationMs);
+            }
+            // Parse all LED tokens before blinking anything so an invalid token doesn't half-execute the command.
+            LEDBlinkArgs::Selection selection;
+            uint16_t bad_index = 0;
+            switch (LEDBlinkArgs::ParseLEDs(&args[1], num_args - 1, selection, bad_index)) {
+                case LEDBlinkArgs::kOK:
+                    break;
+                case LEDBlinkArgs::kNoNetworkLED:
+                    CPP_AT_ERROR("No NETWORK LED on the ADSBee 1421. Must be 1090, SUBG, or ALL.");
+                    break;
+                default:
+                    CPP_AT_ERROR("Invalid LED '%.*s'. Must be 1090, SUBG, or ALL.", (int)args[1 + bad_index].length(),
+                                 args[1 + bad_index].data());
+                    break;
+            }
+            if (selection.led_1090) {
+                leds.ForceBlinkLED(bsp.k1090LEDPin, duration_ms);
+            }
+            if (selection.led_subg) {
+                leds.ForceBlinkLED(bsp.kSubGLEDPin, duration_ms);
+            }
+            CPP_AT_SUCCESS();
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATLEDEnableCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d", settings_manager.settings.led_enabled);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (CPP_AT_HAS_ARG(0)) {
+                bool enabled;
+                CPP_AT_TRY_ARG2NUM(0, enabled);
+                // A lit LED goes off within 1 ms (LEDs::Update()), unless it's a forced blink.
+                settings_manager.settings.led_enabled = enabled;
+                CPP_AT_SUCCESS();
+            }
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
 
 CPP_AT_CALLBACK(CommsManager::ATLogLevelCallback) {
     switch (op) {
@@ -1526,6 +1582,19 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "no receiver position, see AT+RX_POSITION) are always kept. Default: 0,100.0 (off).\r\n\t"
                     "AT+FILTER_DISTANCE_NM?\r\n\tQuery whether the filter is enabled and its distance.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFilterDistanceNMCallback, comms_manager)},
+    {.command = "LED_BLINK",
+     .min_args = 2,
+     .max_args = 4,
+     .help_string = "AT+LED_BLINK=<duration_ms>,<led>[,<led>...]\r\n\tForce one or more LEDs (1090, SUBG, or ALL) "
+                    "solid ON for duration_ms (1-60000) then off.\r\n\tBypasses AT+LED_ENABLE; intended for test "
+                    "fixtures. Returns immediately.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLEDBlinkCallback, comms_manager)},
+    {.command = "LED_ENABLE",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+LED_ENABLE=<enabled>\r\n\tEnable or disable the hardware status/activity "
+                    "LEDs.\r\n\tAT+LED_ENABLE?\r\n\tQuery whether the hardware LEDs are enabled.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLEDEnableCallback, comms_manager)},
     {.command = "LOG_LEVEL",
      .min_args = 0,
      .max_args = 1,
