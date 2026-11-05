@@ -78,7 +78,12 @@ class RawUATADSBPacket {
     int16_t sigq_bits = INT16_MIN;         // Signal quality (num bits corrected by FEC, 0 = best).
     uint8_t protocol = kProtocolUATADSB;   // Protocol enum.
     uint8_t channel = 0;                   // ADS-L channel (RawADSLPacket::Channel), 0 for UAT.
-    uint64_t mlat_48mhz_64bit_counts = 0;  // High resolution MLAT counter.
+    // Receive time. Despite the name, for every sub-GHz packet (UAT ADS-B and ADS-L) this is the CC13xx radio timer
+    // (RAT) value the RF core appends to the packet at sync word detection: 32 bits, kSubGHzTimestampTicksPerUs ticks
+    // per microsecond, wrapping every 2^32 / 4 MHz = 1073.7 s, on the sub-GHz radio's own clock (not the RP2040's
+    // 48 MHz MLAT counter). The upper 32 bits are always 0.
+    uint64_t mlat_48mhz_64bit_counts = 0;
+    static constexpr uint32_t kSubGHzTimestampTicksPerUs = 4;  // RF_RAT_TICKS_PER_US in the TI SDK.
 };
 // protocol and channel sit in what was alignment padding, so the size every queue and CompositeArray uses is unchanged.
 static_assert(sizeof(RawUATADSBPacket) == 64, "RawUATADSBPacket must stay 64 bytes.");

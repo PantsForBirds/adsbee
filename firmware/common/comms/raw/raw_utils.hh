@@ -13,7 +13,8 @@ uint16_t BuildRawModeSFrame(const RawModeSPacket& packet, char* raw_frame_buf);
 uint16_t BuildRawUATADSBFrame(const RawUATADSBPacket& packet, char* raw_frame_buf);
 uint16_t BuildRawUATUplinkFrame(const RawUATUplinkPacket& packet, char* raw_frame_buf);
 static const uint16_t kRawADSLFrameMaxNumChars = RawADSLPacket::kMaxPacketLenBytes * 2 + 50;
-// "#ADL*<length byte .. CRC hex>;(<rssi dBm>,<repaired chips>,<channel 0=868.2 1=868.4>,<timestamp>)"
+// "#ADL*<length byte .. CRC hex>;(<rssi dBm>,<repaired chips>,<channel 0=868.2 1=868.4>,<timestamp>)", timestamp in
+// sub-GHz radio timer ticks like #UAT* lines (see RawUATADSBPacket::mlat_48mhz_64bit_counts).
 uint16_t BuildRawADSLFrame(const RawADSLPacket& packet, char* raw_frame_buf);
 static_assert(kRawADSLFrameMaxNumChars <= kRawUATADSBFrameMaxNumChars, "ADS-L lines share the UAT ADS-B line budget.");
 // A packet from the shared short sub-GHz queues and section: a UAT ADS-B or an ADS-L line, by packet.protocol.
