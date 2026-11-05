@@ -195,10 +195,10 @@ Want to check the status of your feed? Use the links below to see your feed stat
 
 ## 🌍 Use IPv6 { #ipv6 }
 
-Ethernet and the WiFi station use IPv4 only by default; turn on IPv6 with `AT+IP_MODE=DUAL` (IPv4 and IPv6) or `IPV6`. Units upgraded from firmware that already had `AT+IP_MODE` keep their setting. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router, or from a [static IPv6 address](#static-ip); DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 isn't supported.
+Ethernet and the WiFi station use IPv4 and IPv6 at the same time by default. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router, or from a [static IPv6 address](#static-ip); DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 isn't supported.
 
 1. Check the addresses with `AT+NETWORK_INFO?`. The web interface is reachable at `http://[<IPv6 address>]/`, and as `<hostname>.local` over mDNS.
-2. Select the IP versions with `AT+IP_MODE=<mode>`: `IPV4` (IPv4 only, the default), `DUAL` (IPv4 and IPv6) or `IPV6` (IPv6 only, DHCP off). The WiFi access point is always IPv4.
+2. Select the IP versions with `AT+IP_MODE=<mode>`: `DUAL` (default), `IPV4` (IPv4 only) or `IPV6` (IPv6 only, DHCP off). The WiFi access point is always IPv4.
 3. Apply with `AT+SETTINGS=SAVE`; the network interfaces restart.
 
 ## 📌 Use a Static IP Address { #static-ip }

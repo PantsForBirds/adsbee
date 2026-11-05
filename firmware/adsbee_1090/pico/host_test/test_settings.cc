@@ -179,7 +179,7 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
     EXPECT_FALSE(out.led_enabled);
 
     EXPECT_TRUE(out.feeds_enabled);  // New in v15.
-    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4);  // New in v17 (added in the unshipped v16): the default.
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);  // New in v17 (added in the unshipped v16).
     EXPECT_TRUE(out.gnss_enabled);
     EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
     EXPECT_TRUE(out.gnss_notify);
@@ -776,7 +776,7 @@ TEST(SettingsMigration, V15ToCurrentPreservesAllFieldsAndDefaultsIPMode) {
     ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 15, out));
 
     EXPECT_EQ(out.settings_version, kSettingsVersion);
-    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4);
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);
 
     SettingsManager::Settings::CoreNetworkSettings cns_out = out.core_network_settings;
     EXPECT_TRUE(cns_out.IsValid());
@@ -1134,7 +1134,7 @@ TEST(SettingsManager, SanitizeClampsOutOfRangeEnumFields) {
     s.ip_mode = static_cast<SettingsManager::IPMode>(200);
 
     EXPECT_TRUE(settings_manager.Sanitize());
-    EXPECT_EQ(s.ip_mode, SettingsManager::kIPModeIPv4);
+    EXPECT_EQ(s.ip_mode, SettingsManager::kIPModeDual);
 
     EXPECT_LT(s.log_level, SettingsManager::LogLevel::kNumLogLevels);
     EXPECT_LT(s.reporting_protocols[0], SettingsManager::ReportingProtocol::kNumProtocols);
@@ -1533,9 +1533,9 @@ TEST(Settings, StaticIPDumpReplaysThroughTheParser) {
     EXPECT_LT(len, (int)sizeof(buf));
 }
 
-TEST(Settings, FreshDefaultsAreIPv4WithDHCPAndAuto) {
+TEST(Settings, FreshDefaultsAreDualWithDHCPAndAuto) {
     SettingsManager::Settings fresh;
-    EXPECT_EQ(fresh.ip_mode, SettingsManager::kIPModeIPv4);
+    EXPECT_EQ(fresh.ip_mode, SettingsManager::kIPModeDual);
     EXPECT_FALSE(fresh.ethernet_ipv4.is_static);
     EXPECT_FALSE(fresh.wifi_sta_ipv4.is_static);
     EXPECT_FALSE(fresh.ethernet_ipv6.is_static);
@@ -1546,14 +1546,14 @@ TEST(Settings, FreshDefaultsAreIPv4WithDHCPAndAuto) {
     testing::internal::CaptureStdout();
     manager.PrintAT();
     std::string dump = testing::internal::GetCapturedStdout();
-    for (const char* line : {"AT+IP_MODE=IPV4\r\n", "AT+ETHERNET_IP=IPV4,DHCP\r\n", "AT+ETHERNET_IP=IPV6,AUTO\r\n",
+    for (const char* line : {"AT+IP_MODE=DUAL\r\n", "AT+ETHERNET_IP=IPV4,DHCP\r\n", "AT+ETHERNET_IP=IPV6,AUTO\r\n",
                              "AT+WIFI_STA_IP=IPV4,DHCP\r\n", "AT+WIFI_STA_IP=IPV6,AUTO\r\n"}) {
         EXPECT_NE(dump.find(line), std::string::npos) << line;
     }
 }
 
 TEST(SettingsMigration, StoredIPModeIsKeptOnUpgrade) {
-    // A v19 unit on the old default (DUAL), or on any other mode, keeps it: upgrades don't change networks.
+    // A v19 unit keeps its stored IP mode, whatever it is: upgrades don't change networks.
     for (SettingsManager::IPMode mode :
          {SettingsManager::kIPModeDual, SettingsManager::kIPModeIPv4, SettingsManager::kIPModeIPv6}) {
         uint8_t blob[sizeof(SettingsManager::Settings)];
@@ -1573,10 +1573,10 @@ TEST(SettingsMigration, StoredIPModeIsKeptOnUpgrade) {
         settings_v18::Settings v18;
         memset(&v18, 0, sizeof(v18));
         v18.settings_version = version;
-        v18.ip_mode = SettingsManager::kIPModeDual;
+        v18.ip_mode = SettingsManager::kIPModeIPv6;
         memcpy(blob, &v18, sizeof(v18));  // v17 and v18 share a layout.
         SettingsManager::Settings out;
         ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), version, out));
-        EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual) << version;
+        EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv6) << version;
     }
 }

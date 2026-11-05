@@ -1237,7 +1237,7 @@ const SETTINGS_SCHEMA_1090 = [
         'DHCP or static IPv4, and Auto (link-local and SLAAC) or static IPv6; link-local stays. IPv4 is not used with IP Mode IPV6, IPv6 not with IPV4.'),
     {
         cmd: 'IP_MODE', label: 'IP Mode', group: 'Network', disconnects: true,
-        help: 'IP versions on Ethernet and WiFi Station. IPV4 is the default; DUAL adds IPv6 (link-local plus SLAAC or static); IPV6 turns IPv4 off. The WiFi Access Point is always IPv4.',
+        help: 'IP versions on Ethernet and WiFi Station. DUAL adds IPv6 (link-local plus SLAAC or static) to IPv4; IPV6 turns IPv4 off. The WiFi Access Point is always IPv4.',
         fields: [{ id: 'mode', label: 'Mode', type: 'enum', options: ['IPV4', 'DUAL', 'IPV6'] }],
     },
     // ── Radio ──

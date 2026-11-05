@@ -393,7 +393,7 @@ class SettingsManager {
         RxPosition rx_position;
 
         // Network settings outside CoreNetworkSettings (which must keep its layout).
-        IPMode ip_mode = kIPModeIPv4;
+        IPMode ip_mode = kIPModeDual;
 
         // WiFi station networks 2 and up. The station joins the strongest stored network in range.
         WiFiNetwork wifi_sta_extra_networks[kWiFiSTANumExtraNetworks];

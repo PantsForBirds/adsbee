@@ -221,9 +221,9 @@ bool SettingsManager::Sanitize() {
     }
 
     if (settings.ip_mode >= kNumIPModes) {
-        CONSOLE_ERROR("SettingsManager::Sanitize", "ip_mode %u out of range, resetting to kIPModeIPv4.",
+        CONSOLE_ERROR("SettingsManager::Sanitize", "ip_mode %u out of range, resetting to kIPModeDual.",
                       settings.ip_mode);
-        settings.ip_mode = kIPModeIPv4;
+        settings.ip_mode = kIPModeDual;
         changed = true;
     }
 

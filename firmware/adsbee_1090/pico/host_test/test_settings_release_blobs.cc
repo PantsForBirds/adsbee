@@ -73,13 +73,7 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         EXPECT_EQ(out.settings_version, kSettingsVersion);
         ExpectCoreNetworkSettingsKept(out.core_network_settings);
         EXPECT_FALSE(out.auto_update_enabled);  // Opt-in: off after every upgrade.
-        // IP_MODE (v17+) is kept as stored, so upgrades don't change networks; older versions get the IPV4 default.
-        if (version >= 17) {
-            EXPECT_EQ(out.ip_mode, raw[offsetof(SettingsManager::Settings, ip_mode)]) << r.release;
-            EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual) << r.release;  // Each release's default.
-        } else {
-            EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4) << r.release;
-        }
+        EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);
         EXPECT_FALSE(out.ethernet_ipv4.is_static);
         EXPECT_FALSE(out.wifi_sta_ipv4.is_static);
         EXPECT_EQ(ValidateIPv4Config(out.ethernet_ipv4), nullptr);

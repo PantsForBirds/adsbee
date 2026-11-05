@@ -2760,7 +2760,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 1,
      .help_string = "AT+IP_MODE=<IPV4|DUAL|IPV6>\r\n\tSet the IP versions used on Ethernet and WiFi Station: IPV4 "
-                    "(DHCP or static, the default), DUAL (IPv4 plus IPv6) or IPV6 (no IPv4). IPv6 is link-local plus SLAAC "
+                    "(DHCP or static), DUAL (IPv4 plus IPv6, the default) or IPV6 (no IPv4). IPv6 is link-local plus SLAAC "
                     "or static. Static addresses: AT+ETHERNET_IP, AT+WIFI_STA_IP. The WiFi Access Point is always IPv4. Applied with AT+SETTINGS=SAVE.\r\n\tAT+IP_MODE?\r\n\t"
                     "Query the IP mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATIPModeCallback, comms_manager)},
