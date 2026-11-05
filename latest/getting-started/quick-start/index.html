@@ -622,6 +622,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#static-ip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📌 Use a Static IP Address
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#embedded-project" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1379,6 +1390,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#static-ip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        📌 Use a Static IP Address
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#embedded-project" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1648,12 +1670,47 @@
 <li>Apply the new WiFi settings by restarting the device with <code>AT+REBOOT</code>.</li>
 </ol>
 <h2 id="ipv6">🌍 Use IPv6<a class="headerlink" href="#ipv6" title="Permanent link">&para;</a></h2>
-<p>Ethernet and the WiFi station use IPv4 and IPv6 at the same time by default. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router; DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 and static addresses aren't supported.</p>
+<p>Ethernet and the WiFi station use IPv4 and IPv6 at the same time by default. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router, or from a <a href="#static-ip">static IPv6 address</a>; DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 isn't supported.</p>
 <ol>
 <li>Check the addresses with <code>AT+NETWORK_INFO?</code>. The web interface is reachable at <code>http://[&lt;IPv6 address&gt;]/</code>, and as <code>&lt;hostname&gt;.local</code> over mDNS.</li>
 <li>Select the IP versions with <code>AT+IP_MODE=&lt;mode&gt;</code>: <code>DUAL</code> (default), <code>IPV4</code> (IPv4 only) or <code>IPV6</code> (IPv6 only, DHCP off). The WiFi access point is always IPv4.</li>
 <li>Apply with <code>AT+SETTINGS=SAVE</code>; the network interfaces restart.</li>
 </ol>
+<h2 id="static-ip">📌 Use a Static IP Address<a class="headerlink" href="#static-ip" title="Permanent link">&para;</a></h2>
+<p>Ethernet and the WiFi station get their IPv4 address from DHCP and their IPv6 addresses from SLAAC by default. Each can use a static IPv4 address, a static IPv6 address, or both, set with one command per interface: <code>AT+ETHERNET_IP</code> or <code>AT+WIFI_STA_IP</code> (the WiFi station's applies to whichever stored network it joins). The first argument is the address family.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AT+ETHERNET_IP=IPV4,DHCP</code></td>
+<td>IPv4 from DHCP (default)</td>
+</tr>
+<tr>
+<td><code>AT+ETHERNET_IP=IPV4,&lt;ip&gt;,&lt;netmask&gt;[,&lt;gateway&gt;[,&lt;dns1&gt;[,&lt;dns2&gt;]]]</code></td>
+<td>Static IPv4. Netmask as <code>255.255.255.0</code> or a prefix length (<code>24</code>).</td>
+</tr>
+<tr>
+<td><code>AT+ETHERNET_IP=IPV6,AUTO</code></td>
+<td>IPv6 from SLAAC (default)</td>
+</tr>
+<tr>
+<td><code>AT+ETHERNET_IP=IPV6,&lt;address&gt;/&lt;prefix&gt;[,&lt;gateway&gt;[,&lt;dns1&gt;[,&lt;dns2&gt;]]]</code></td>
+<td>Static IPv6, a global or unique local (<code>fd00::/8</code>) address</td>
+</tr>
+</tbody>
+</table>
+<ol>
+<li>Pick unused addresses on your network: for IPv4 outside your router's DHCP pool, for IPv6 on your network's prefix.</li>
+<li>Set them, e.g. <code>AT+ETHERNET_IP=IPV4,192.168.1.50,255.255.255.0,192.168.1.1,192.168.1.1</code> and <code>AT+ETHERNET_IP=IPV6,2001:db8:1::50/64,fe80::1,2001:4860:4860::8888</code>. An IPv6 gateway is your router's link-local address or an address on the prefix. Leave a gateway empty for none (IPv6: use the routers your network advertises) and DNS servers empty to keep the ones from DHCP or the router; feeds that use hostnames need a DNS server.</li>
+<li>Apply with <code>AT+SETTINGS=SAVE</code>; the interface restarts. Check with <code>AT+ETHERNET_IP?</code> (one line per family) and <code>AT+NETWORK_INFO?</code>.</li>
+<li>To go back, send <code>AT+ETHERNET_IP=IPV4,DHCP</code> and/or <code>AT+ETHERNET_IP=IPV6,AUTO</code>, then <code>AT+SETTINGS=SAVE</code>.</li>
+</ol>
+<p>Static IPv4 works with <code>AT+IP_MODE=IPV4</code> and <code>DUAL</code>, static IPv6 with <code>IPV6</code> and <code>DUAL</code>; the replies say when the IP mode doesn't use an address. With a static IPv6 address the interface keeps its link-local address but forms no SLAAC addresses. Static DNS servers of both families are used together (IPv4 first, up to three); router advertisements with DNS servers (RDNSS) can still replace them. The web interface has the same settings under Network.</p>
 <h2 id="embedded-project">💡 Integrate the ADSBee with an Embedded Project<a class="headerlink" href="#embedded-project" title="Permanent link">&para;</a></h2>
 <p>The ADSBee 1090 is intended to interface easily with external modules via UART! Both the USB connector (CONSOLE) and UART output can be used to report received aircraft data in a variety of formats, including MAVLINK1, MAVLINK2, GDL90, Mode S Beast, and CSBEE. Of these protocols, CSBEE is the easiest to decode from scratch, and is also the most information rich.</p>
 <h3 id="connect-a-device-via-uart">Connect a Device via UART<a class="headerlink" href="#connect-a-device-via-uart" title="Permanent link">&para;</a></h3>
