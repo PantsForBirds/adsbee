@@ -42,13 +42,14 @@ global.document = new FakeDocument();
 global.confirm = () => true;
 const { SettingsEngine, SETTINGS_SCHEMA_1090 } = require('../settings.js');
 
-// The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc9.
-const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHERNET":[1],"ESP32_ENABLE":[1],' +
+// The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc9, plus ETHERNET_IP and WIFI_STA_IP (0.9.1-rc12).
+const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHERNET":[1],"ETHERNET_IP":["STATIC","192.168.1.50","255.255.255.0","192.168.1.1","1.1.1.1",""],"ESP32_ENABLE":[1],' +
     '"FEED_ENABLE":[1],"FILTER_ALTITUDE_FT":["OFF",0,10000],"FILTER_DISTANCE_NM":[0,100.0],"SWARM":[0,"https://adsbee.aero",""],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"IP_MODE":["DUAL"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
     '"MAVLINK_ID":[1,156],"NTP_SERVER":["pool.ntp.org"],"PROTOCOL_OUT":["NONE","NONE"],"REMOTE_ID":[0,7,"0x00"],' +
     '"REMOTE_ID_TX":[0,7,"",1,2,"","0x0000"],"RX_ENABLE":[1,1],' +
     '"RX_POSITION":["LOWEST","OK",37.000000,-122.000000,-50,125,317.7,74,"000000"],"SUBG_ENABLE":["1"],' +
     '"TL_OFFSET":[600,"-104 dBm"],"WATCHDOG":[10],"WIFI_AP":[0,"test-bee","yummyflowers",1],"WIFI_STA":[0,""],' +
+    '"WIFI_STA_IP":["DHCP","","","","",""],' +
     '"WIFI_STA_NETWORK":["office",""]}';
 
 // Scripted transport: handler(cmd, opts, n) returns body lines or throws; records every command.
@@ -335,6 +336,67 @@ test('extra WiFi networks read from AT+WIFI_STA_NETWORK? when the dump lacks the
     assert.strictEqual(input('WIFI_STA_NETWORK', 'ssid2').value, 'office');
     assert.strictEqual(input('WIFI_STA_NETWORK', 'ssid3').value, 'lab');
     assert.strictEqual(input('WIFI_STA_NETWORK', 'pwd2').value, '');
+});
+
+test('static IPv4 loads from the dump, checks addresses and saves per interface', async () => {
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [DUMP];
+        if (cmd.startsWith('AT+ETHERNET_IP=') || cmd.startsWith('AT+WIFI_STA_IP=') || cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.strictEqual(input('ETHERNET_IP', 'mode').value, 'STATIC');
+    assert.strictEqual(input('ETHERNET_IP', 'ip').value, '192.168.1.50');
+    assert.strictEqual(input('ETHERNET_IP', 'dns1').value, '1.1.1.1');
+    assert.strictEqual(input('WIFI_STA_IP', 'mode').value, 'DHCP');
+    assert.strictEqual(engine.dirtyEntries().length, 0);
+
+    // Typos are caught before anything is written.
+    input('WIFI_STA_IP', 'mode').value = 'STATIC';
+    input('WIFI_STA_IP', 'ip').value = '10.0.0.256';
+    input('WIFI_STA_IP', 'netmask').value = '31';
+    await engine.save();
+    assert.deepStrictEqual(t.sent, ['AT+SETTINGS?JSON']);
+    const err = (field) => document.getElementById(`settings-error-WIFI_STA_IP-${field}`).textContent;
+    assert.match(err('ip'), /192\.168\.1\.50/);
+    assert.match(err('netmask'), /1 to 30/);
+
+    input('WIFI_STA_IP', 'ip').value = '10.0.0.20';
+    input('WIFI_STA_IP', 'netmask').value = '24';
+    input('WIFI_STA_IP', 'dns2').value = '9.9.9.9';
+    input('ETHERNET_IP', 'mode').value = 'DHCP';
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 4),
+        ['AT+WIFI_STA_IP=10.0.0.20,24,,,9.9.9.9', 'AT+ETHERNET_IP=DHCP', 'AT+SETTINGS=SAVE']);
+});
+
+test('static IPv4 fields hide for DHCP', () => {
+    const engine = makeEngine(makeTransport(timeout));
+    const entry = SETTINGS_SCHEMA_1090.find(e => e.cmd === 'ETHERNET_IP');
+    const visible = (mode) => entry.fields.filter(f => !f.visibleIf || f.visibleIf({ mode })).map(f => f.id);
+    assert.deepStrictEqual(visible('DHCP'), ['mode']);
+    assert.deepStrictEqual(visible('STATIC'), ['mode', 'ip', 'netmask', 'gateway', 'dns1', 'dns2']);
+    assert.ok(engine);
+});
+
+test('static IPv4 reads from AT+ETHERNET_IP? when the dump lacks it', async () => {
+    const json = JSON.parse(DUMP.slice('SETTINGS='.length));
+    delete json.ETHERNET_IP;
+    delete json.WIFI_STA_IP;
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return ['SETTINGS=' + JSON.stringify(json)];
+        if (cmd === 'AT+ETHERNET_IP?') return ['ETHERNET_IP=10.42.2.60,255.255.255.0,10.42.2.1,,'];
+        if (cmd === 'AT+WIFI_STA_IP?') return ['WIFI_STA_IP=DHCP'];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.strictEqual(input('ETHERNET_IP', 'mode').value, 'STATIC');
+    assert.strictEqual(input('ETHERNET_IP', 'gateway').value, '10.42.2.1');
+    assert.strictEqual(input('ETHERNET_IP', 'dns1').value, '');
+    assert.strictEqual(input('WIFI_STA_IP', 'mode').value, 'DHCP');
+    assert.strictEqual(engine.dirtyEntries().length, 0);
 });
 
 // AT+SETTINGS?JSON Remote ID entries from a unit without PSRAM, as [REMOTE_ID, REMOTE_ID_TX].

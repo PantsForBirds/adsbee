@@ -239,6 +239,9 @@ class CommsManager {
 
     // IP versions used on Ethernet and the WiFi station. Takes effect when those interfaces are initialized.
     SettingsManager::IPMode ip_mode = SettingsManager::kIPModeIPv4;
+    // DHCP or static IPv4 on Ethernet and the WiFi station. Takes effect when the interface connects.
+    IPv4Config ethernet_ipv4;
+    IPv4Config wifi_sta_ipv4;
 
     // Ethernet public variables.
     bool ethernet_enabled = false;
@@ -363,6 +366,12 @@ class CommsManager {
      * Sets the DHCP client and SLAAC flags of an Ethernet or WiFi station netif config for ip_mode.
      */
     void ApplyIPModeToNetifConfig(esp_netif_inherent_config_t& base);
+
+    /**
+     * Gives an Ethernet or WiFi station netif its static IPv4 address, if config has one and ip_mode uses IPv4. Call
+     * when the link comes up, before the netif's own connected handler, so the DHCP client never starts.
+     */
+    void ApplyStaticIPv4(esp_netif_t* netif, const IPv4Config& config);
 
     /**
      * Writes an interface's IPv6 link-local address and its first global or unique local address as strings (empty if

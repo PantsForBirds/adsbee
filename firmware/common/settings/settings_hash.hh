@@ -13,9 +13,10 @@ enum Scope : uint8_t {
 };
 
 // Left out of kScopeFleet: hostname, WiFi access point SSID and channel (defaults come from the part code and a random
-// number), feed receiver IDs, the Remote ID UAS ID, the receiver position values, the ASTERIX SIC and the swarm token.
+// number), feed receiver IDs, the Remote ID UAS ID, the receiver position values, the ASTERIX SIC, the swarm token and
+// static IPv4 addresses.
 inline uint32_t Compute(const SettingsManager::Settings& settings, Scope scope) {
-    static_assert(kSettingsVersion == 19 && sizeof(SettingsManager::Settings) == 1792,
+    static_assert(kSettingsVersion == 20 && sizeof(SettingsManager::Settings) == 1832,
                   "Settings changed: add the new fields below, then update this check.");
     typedef SettingsManager::Settings Settings;
     const bool full = scope == kScopeFull;
@@ -111,6 +112,15 @@ inline uint32_t Compute(const SettingsManager::Settings& settings, Scope scope) 
     hasher.AddBool(settings.swarm_enabled);
     hasher.AddString(settings.swarm_server, sizeof(settings.swarm_server));
     if (full) hasher.AddString(settings.swarm_token, sizeof(settings.swarm_token));
+    const IPv4Config* ipv4_configs[] = {&settings.ethernet_ipv4, &settings.wifi_sta_ipv4};
+    for (const IPv4Config* ipv4 : ipv4_configs) {
+        hasher.AddBool(ipv4->is_static);
+        if (!full) continue;
+        hasher.AddBytes(ipv4->ip, sizeof(ipv4->ip));
+        hasher.AddBytes(ipv4->netmask, sizeof(ipv4->netmask));
+        hasher.AddBytes(ipv4->gateway, sizeof(ipv4->gateway));
+        hasher.AddBytes(&ipv4->dns[0][0], sizeof(ipv4->dns));
+    }
 
     return hasher.Value();
 }

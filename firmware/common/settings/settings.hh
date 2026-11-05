@@ -8,6 +8,7 @@
 #include "crc.hh"
 #include "macros.hh"
 #include "altitude_filter.hh"
+#include "ipv4_config.hh"
 #include "unit_conversions.hh"  // DeciNmToMeters
 #include "stdio.h"
 #include "stdlib.h"  // for strtoull
@@ -17,7 +18,7 @@
 #include "pico/rand.h"
 #endif
 
-static constexpr uint32_t kSettingsVersion = 19;  // Change this when settings format changes!
+static constexpr uint32_t kSettingsVersion = 20;  // Change this when settings format changes!
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 class SettingsManager {
@@ -109,9 +110,9 @@ class SettingsManager {
 
     // IP versions used on the Ethernet and WiFi station interfaces. The WiFi access point is always IPv4.
     enum IPMode : uint8_t {
-        kIPModeIPv4 = 0,  // IPv4 only (DHCP).
-        kIPModeDual,      // IPv4 (DHCP) and IPv6 (link-local + SLAAC).
-        kIPModeIPv6,      // IPv6 only (link-local + SLAAC), no DHCPv4 client.
+        kIPModeIPv4 = 0,  // IPv4 only (DHCP or static).
+        kIPModeDual,      // IPv4 (DHCP or static) and IPv6 (link-local + SLAAC).
+        kIPModeIPv6,      // IPv6 only (link-local + SLAAC), no IPv4.
         kNumIPModes
     };
     static constexpr uint16_t kIPModeStrMaxLen = 4;  // Longest AT string ("IPV4", "DUAL", "IPV6").
@@ -437,6 +438,10 @@ class SettingsManager {
         char swarm_server[kSwarmServerMaxLen + 1];  // Base URL, e.g. https://adsbee.aero.
         char swarm_token[kSwarmTokenMaxLen + 1];    // Enroll token from the swarm account.
 
+        // DHCP or static IPv4 per interface (AT+ETHERNET_IP, AT+WIFI_STA_IP). Static IPv4 is not used in kIPModeIPv6.
+        IPv4Config ethernet_ipv4;
+        IPv4Config wifi_sta_ipv4;
+
         /**
          * Default constructor.
          */
@@ -707,6 +712,16 @@ class SettingsManager {
         }
     }
 
+    // "ip,netmask,gateway,dns1,dns2" at most.
+    static constexpr uint16_t kIPv4ConfigStrMaxLen = (IPv4Config::kAddrStrMaxLen + 1) * (3 + IPv4Config::kNumDNSServers);
+
+    /**
+     * Writes an IPv4 configuration as AT+ETHERNET_IP / AT+WIFI_STA_IP arguments: "DHCP", or
+     * "<ip>,<netmask>,<gateway>,<dns1>,<dns2>" with empty fields for unset addresses.
+     * @retval snprintf's return value.
+     */
+    static int FormatIPv4ConfigArgs(const IPv4Config& config, char* buf, size_t buf_len);
+
     /**
      * Converts an IPMode to its AT command string. Returns "DUAL" for out-of-range values.
      */
@@ -880,9 +895,9 @@ extern SettingsManager settings_manager;
 //      settings_migration.cpp (see the recipe at the top of settings_versions.hh).
 //   3. Update the version and the numbers below to the new layout.
 // Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
-static_assert(kSettingsVersion == 19,
+static_assert(kSettingsVersion == 20,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
-static_assert(sizeof(SettingsManager::Settings) == 1792,
+static_assert(sizeof(SettingsManager::Settings) == 1832,
               "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");
 static_assert(alignof(SettingsManager::Settings) == 4, "Settings alignment changed. See the comment above.");
 static_assert(sizeof(SettingsManager::Settings::CoreNetworkSettings) == 240,
@@ -918,5 +933,8 @@ static_assert(offsetof(SettingsManager::Settings, filter_altitude_b_ft) == 1656,
 static_assert(offsetof(SettingsManager::Settings, swarm_enabled) == 1660, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, swarm_server) == 1661, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, swarm_token) == 1725, "Settings layout changed. See above.");
+static_assert(sizeof(IPv4Config) == 21, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, ethernet_ipv4) == 1789, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, wifi_sta_ipv4) == 1810, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */

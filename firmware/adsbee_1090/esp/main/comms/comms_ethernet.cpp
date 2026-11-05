@@ -48,6 +48,8 @@ void CommsManager::EthernetEventHandler(void* arg, esp_event_base_t event_base, 
                          mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
             ethernet_connected_ = true;
             ethernet_link_up_timestamp_ms_ = get_time_since_boot_ms();
+            // Runs before the netif's connected handler: handlers for any event of a base come first.
+            ApplyStaticIPv4(ethernet_netif_, ethernet_ipv4);
             break;
         }
         case ETHERNET_EVENT_DISCONNECTED: {

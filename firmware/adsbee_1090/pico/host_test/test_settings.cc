@@ -1,4 +1,6 @@
 #include <cstring>
+#include <string_view>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "feed_ram_budget.hh"
@@ -51,7 +53,9 @@ TEST(SettingsMigration, LayoutLockedSizes) {
 
     EXPECT_EQ(sizeof(settings_v17::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v18::Settings), 1340u);
-    EXPECT_EQ(sizeof(SettingsManager::Settings), 1792u);
+    EXPECT_EQ(sizeof(settings_v19::Settings), 1792u);
+    EXPECT_EQ(sizeof(SettingsManager::Settings), 1832u);
+    EXPECT_EQ(offsetof(settings_v19::Settings, swarm_token), offsetof(SettingsManager::Settings, swarm_token));
 
     EXPECT_EQ(sizeof(settings_v14::Settings), 1140u);
     EXPECT_EQ(sizeof(settings_v14::CoreNetworkSettings),
@@ -707,12 +711,17 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ntp = dump.find("AT+NTP_SERVER=pool.ntp.org");
     ASSERT_NE(ntp, std::string::npos);
     EXPECT_LT(asterix, ntp);
-    // Then the altitude filter, then swarm reports last.
+    // Then the altitude filter, swarm reports, and static IPv4 last.
     EXPECT_LT(ntp, filter_altitude);
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
     EXPECT_EQ(dump.find("AT+", filter_altitude + 1), swarm);
-    EXPECT_EQ(dump.find("AT+", swarm + 1), std::string::npos);
+    size_t ethernet_ip = dump.find("AT+ETHERNET_IP=DHCP\r\n");
+    ASSERT_NE(ethernet_ip, std::string::npos);
+    EXPECT_EQ(dump.find("AT+", swarm + 1), ethernet_ip);
+    size_t wifi_sta_ip = dump.find("AT+WIFI_STA_IP=DHCP\r\n");
+    EXPECT_EQ(dump.find("AT+", ethernet_ip + 1), wifi_sta_ip);
+    EXPECT_EQ(dump.find("AT+", wifi_sta_ip + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
     memcpy(&manager.settings.auto_update_enabled, &raw, 1);
@@ -1271,4 +1280,159 @@ TEST(Settings, NTPServerDefaultsToPoolAndIsSanitized) {
     memset(manager.settings.ntp_server, 'a', sizeof(manager.settings.ntp_server));
     EXPECT_TRUE(manager.Sanitize());
     EXPECT_EQ(strlen(manager.settings.ntp_server), SettingsManager::Settings::kNTPServerMaxLen);
+}
+
+TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
+    settings_v15::Settings v15;
+    PopulateV15(v15);
+    // 0xFF past the v19 struct, as Load() reads erased flash there.
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memset(blob, 0xFF, sizeof(blob));
+    settings_v19::Settings v19;
+    memset(&v19, 0, sizeof(v19));
+    memcpy(&v19, &v15, sizeof(v15));
+    v19.settings_version = 19;
+    v19.ip_mode = SettingsManager::kIPModeIPv4;
+    strcpy(v19.wifi_sta_extra_networks[1].ssid, "Hangar");
+    v19.auto_update_enabled = true;
+    v19.filter_distance_enabled = true;
+    v19.filter_distance_deci_nm = 425;
+    v19.feed_transports[3] = SettingsManager::kFeedTransportMQTT;
+    strcpy(v19.mqtt_broker.host, "broker.lan");
+    v19.mqtt_broker.port = 8883;
+    v19.mqtt_broker.tls = true;
+    v19.mqtt_broker.qos = 2;
+    v19.mqtt_broker.transport = SettingsManager::kMQTTTransportWebSocket;
+    strcpy(v19.mqtt_broker.websocket_path, "/ws");
+    v19.asterix_sac = 7;
+    v19.asterix_sic = 8;
+    strcpy(v19.ntp_server, "time.lan");
+    v19.filter_altitude_mode = kAltitudeFilterBetween;
+    v19.filter_altitude_a_ft = 1000;
+    v19.filter_altitude_b_ft = 9000;
+    v19.swarm_enabled = true;
+    strcpy(v19.swarm_server, "https://swarm.example.com");
+    strcpy(v19.swarm_token, "tok123");
+    memcpy(blob, &v19, sizeof(v19));
+
+    SettingsManager::Settings out;
+    out.ethernet_ipv4.is_static = true;  // Stale: must not survive.
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(memcmp(&out.core_network_settings, &v19.core_network_settings, sizeof(v19.core_network_settings)), 0);
+    EXPECT_STREQ(out.feed_uris[0], "myfeed.example.com");
+    EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4);
+    EXPECT_STREQ(out.wifi_sta_extra_networks[1].ssid, "Hangar");
+    EXPECT_TRUE(out.auto_update_enabled);
+    EXPECT_TRUE(out.filter_distance_enabled);
+    EXPECT_EQ(out.filter_distance_deci_nm, 425u);
+    EXPECT_EQ(out.feed_transports[3], SettingsManager::kFeedTransportMQTT);
+    EXPECT_STREQ(out.mqtt_broker.host, "broker.lan");
+    EXPECT_EQ(out.mqtt_broker.port, 8883);
+    EXPECT_TRUE(out.mqtt_broker.tls);
+    EXPECT_EQ(out.mqtt_broker.qos, 2);
+    EXPECT_EQ(out.mqtt_broker.transport, SettingsManager::kMQTTTransportWebSocket);
+    EXPECT_STREQ(out.mqtt_broker.websocket_path, "/ws");
+    EXPECT_EQ(out.asterix_sac, 7);
+    EXPECT_EQ(out.asterix_sic, 8);
+    EXPECT_STREQ(out.ntp_server, "time.lan");
+    EXPECT_EQ(out.filter_altitude_mode, kAltitudeFilterBetween);
+    EXPECT_EQ(out.filter_altitude_a_ft, 1000);
+    EXPECT_EQ(out.filter_altitude_b_ft, 9000);
+    EXPECT_TRUE(out.swarm_enabled);
+    EXPECT_STREQ(out.swarm_server, "https://swarm.example.com");
+    EXPECT_STREQ(out.swarm_token, "tok123");
+    // New in v20: DHCP on both interfaces, whatever the erased tail held.
+    IPv4Config dhcp;
+    EXPECT_EQ(memcmp(&out.ethernet_ipv4, &dhcp, sizeof(dhcp)), 0);
+    EXPECT_EQ(memcmp(&out.wifi_sta_ipv4, &dhcp, sizeof(dhcp)), 0);
+
+    SettingsManager manager;
+    manager.settings = out;
+    EXPECT_FALSE(manager.Sanitize());
+    EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v19::Settings) - 1, 19, out));
+}
+
+TEST(SettingsMigration, V18ToCurrentUsesDHCPAndV19Defaults) {
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memset(blob, 0xFF, sizeof(blob));
+    settings_v18::Settings v18;
+    memset(&v18, 0, sizeof(v18));
+    v18.settings_version = 18;
+    memcpy(blob, &v18, sizeof(v18));
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 18, out));
+    SettingsManager::Settings defaults;
+    EXPECT_EQ(out.filter_distance_deci_nm, defaults.filter_distance_deci_nm);
+    EXPECT_EQ(out.mqtt_broker.port, defaults.mqtt_broker.port);
+    EXPECT_STREQ(out.ntp_server, defaults.ntp_server);
+    EXPECT_STREQ(out.swarm_server, defaults.swarm_server);
+    EXPECT_EQ(out.filter_altitude_b_ft, defaults.filter_altitude_b_ft);
+    EXPECT_FALSE(out.ethernet_ipv4.is_static);
+    EXPECT_FALSE(out.wifi_sta_ipv4.is_static);
+}
+
+TEST(SettingsManager, SanitizeResetsInvalidIPv4ConfigToDHCP) {
+    SettingsManager manager;
+    EXPECT_FALSE(manager.Sanitize());
+
+    // Off-subnet gateway.
+    IPv4Config& eth = manager.settings.ethernet_ipv4;
+    eth.is_static = true;
+    IPv4FromU32(0xC0A80132, eth.ip);       // 192.168.1.50
+    IPv4FromU32(0xFFFFFF00, eth.netmask);  // /24
+    IPv4FromU32(0x0A000001, eth.gateway);  // 10.0.0.1
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(eth.is_static);
+    EXPECT_TRUE(IPv4IsZero(eth.ip));
+
+    // Addresses left behind on a DHCP interface.
+    IPv4FromU32(0x01010101, manager.settings.wifi_sta_ipv4.dns[1]);
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_TRUE(IPv4IsZero(manager.settings.wifi_sta_ipv4.dns[1]));
+
+    // A raw non-boolean is_static is normalized, then validated.
+    uint8_t raw = 0x7F;
+    memcpy(&manager.settings.wifi_sta_ipv4.is_static, &raw, 1);
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(manager.settings.wifi_sta_ipv4.is_static);
+
+    // A valid static configuration is kept.
+    eth.is_static = true;
+    IPv4FromU32(0xC0A80132, eth.ip);
+    IPv4FromU32(0xFFFFFF00, eth.netmask);
+    IPv4FromU32(0xC0A80101, eth.gateway);
+    EXPECT_FALSE(manager.Sanitize());
+    EXPECT_TRUE(eth.is_static);
+}
+
+TEST(Settings, StaticIPv4DumpReplaysThroughTheParser) {
+    SettingsManager manager;
+    const char* args[] = {"10.42.2.60", "255.255.255.0", "10.42.2.1", "", "9.9.9.9"};
+    std::string_view views[5];
+    for (int i = 0; i < 5; i++) views[i] = args[i];
+    ASSERT_EQ(ParseIPv4ConfigArgs(views, 5, manager.settings.ethernet_ipv4), nullptr);
+
+    testing::internal::CaptureStdout();
+    manager.PrintAT();
+    std::string dump = testing::internal::GetCapturedStdout();
+    const std::string prefix = "AT+ETHERNET_IP=";
+    size_t start = dump.find(prefix);
+    ASSERT_NE(start, std::string::npos);
+    std::string line = dump.substr(start + prefix.size(), dump.find("\r\n", start) - start - prefix.size());
+    EXPECT_EQ(line, "10.42.2.60,255.255.255.0,10.42.2.1,,9.9.9.9");
+    EXPECT_NE(dump.find("AT+WIFI_STA_IP=DHCP\r\n"), std::string::npos);
+
+    std::vector<std::string_view> parts;
+    size_t pos = 0;
+    while (true) {
+        size_t comma = line.find(',', pos);
+        parts.push_back(std::string_view(line).substr(pos, comma == std::string::npos ? std::string::npos : comma - pos));
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    IPv4Config replayed;
+    ASSERT_EQ(ParseIPv4ConfigArgs(parts.data(), parts.size(), replayed), nullptr);
+    EXPECT_EQ(memcmp(&replayed, &manager.settings.ethernet_ipv4, sizeof(replayed)), 0);
 }

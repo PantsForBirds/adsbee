@@ -167,6 +167,55 @@ void CommsManager::ApplyIPModeToNetifConfig(esp_netif_inherent_config_t& base) {
     base.flags = static_cast<esp_netif_flags_t>(flags);
 }
 
+void CommsManager::ApplyStaticIPv4(esp_netif_t* netif, const IPv4Config& config) {
+    if (netif == nullptr || !config.is_static || ip_mode == SettingsManager::kIPModeIPv6) {
+        return;
+    }
+    const char* desc = esp_netif_get_desc(netif);
+    esp_err_t err = esp_netif_dhcpc_stop(netif);
+    if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        CONSOLE_ERROR("CommsManager::ApplyStaticIPv4", "Failed to stop the DHCP client on %s: %s", desc,
+                      esp_err_to_name(err));
+        return;
+    }
+
+    // Setting the address clears the DNS servers, which all interfaces share: keep them unless config has its own.
+    esp_netif_dns_type_t dns_types[IPv4Config::kNumDNSServers] = {ESP_NETIF_DNS_MAIN, ESP_NETIF_DNS_BACKUP};
+    esp_netif_dns_info_t old_dns[IPv4Config::kNumDNSServers] = {};
+    bool has_own_dns = false;
+    for (uint16_t i = 0; i < IPv4Config::kNumDNSServers; i++) {
+        esp_netif_get_dns_info(netif, dns_types[i], &old_dns[i]);
+        has_own_dns |= !IPv4IsZero(config.dns[i]);
+    }
+
+    esp_netif_ip_info_t ip_info = {};
+    ip_info.ip.addr = ESP_IP4TOADDR(config.ip[0], config.ip[1], config.ip[2], config.ip[3]);
+    ip_info.netmask.addr = ESP_IP4TOADDR(config.netmask[0], config.netmask[1], config.netmask[2], config.netmask[3]);
+    ip_info.gw.addr = ESP_IP4TOADDR(config.gateway[0], config.gateway[1], config.gateway[2], config.gateway[3]);
+    err = esp_netif_set_ip_info(netif, &ip_info);
+    if (err != ESP_OK) {
+        CONSOLE_ERROR("CommsManager::ApplyStaticIPv4", "Failed to set the static IPv4 address on %s: %s", desc,
+                      esp_err_to_name(err));
+        return;
+    }
+
+    for (uint16_t i = 0; i < IPv4Config::kNumDNSServers; i++) {
+        esp_netif_dns_info_t dns = {};
+        if (has_own_dns) {
+            const uint8_t* a = config.dns[i];
+            dns.ip.type = ESP_IPADDR_TYPE_V4;
+            dns.ip.u_addr.ip4.addr = ESP_IP4TOADDR(a[0], a[1], a[2], a[3]);
+        } else {
+            dns = old_dns[i];
+        }
+        if (!ESP_IP_IS_ANY(dns.ip)) {
+            esp_netif_set_dns_info(netif, dns_types[i], &dns);
+        }
+    }
+    CONSOLE_INFO("CommsManager::ApplyStaticIPv4", "%s uses static IPv4 address " IPSTR ".", desc,
+                 IP2STR(&ip_info.ip));
+}
+
 void CommsManager::IP6LinkUpEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
                                          void* event_data) {
     if (ip_mode == SettingsManager::kIPModeIPv4) {

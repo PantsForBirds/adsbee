@@ -227,6 +227,19 @@ bool SettingsManager::Sanitize() {
         changed = true;
     }
 
+    IPv4Config* ipv4_configs[] = {&settings.ethernet_ipv4, &settings.wifi_sta_ipv4};
+    const char* ipv4_config_names[] = {"ethernet_ipv4", "wifi_sta_ipv4"};
+    for (uint16_t i = 0; i < 2; i++) {
+        changed |= SanitizeBool(ipv4_configs[i]->is_static, ipv4_config_names[i]);
+        const char* error = ValidateIPv4Config(*ipv4_configs[i]);
+        if (error != nullptr) {
+            CONSOLE_ERROR("SettingsManager::Sanitize", "%s invalid (%s), resetting to DHCP.", ipv4_config_names[i],
+                          error);
+            *ipv4_configs[i] = IPv4Config();
+            changed = true;
+        }
+    }
+
     if (settings.rx_position.source >= RxPosition::kNumPositionSources) {
         CONSOLE_ERROR("SettingsManager::Sanitize", "rx_position.source %u out of range, resetting to kPositionSourceLowestAircraft.",
                       settings.rx_position.source);
@@ -235,6 +248,28 @@ bool SettingsManager::Sanitize() {
     }
 
     return changed;
+}
+
+int SettingsManager::FormatIPv4ConfigArgs(const IPv4Config& config, char* buf, size_t buf_len) {
+    if (!config.is_static) {
+        return snprintf(buf, buf_len, "DHCP");
+    }
+    char addrs[3 + IPv4Config::kNumDNSServers][IPv4Config::kAddrStrMaxLen + 1];
+    FormatIPv4Addr(config.ip, addrs[0], sizeof(addrs[0]));
+    FormatIPv4Addr(config.netmask, addrs[1], sizeof(addrs[1]));
+    FormatIPv4Addr(config.gateway, addrs[2], sizeof(addrs[2]));
+    for (uint16_t i = 0; i < IPv4Config::kNumDNSServers; i++) {
+        FormatIPv4Addr(config.dns[i], addrs[3 + i], sizeof(addrs[3 + i]));
+    }
+    return snprintf(buf, buf_len, "%s,%s,%s,%s,%s", addrs[0], addrs[1], addrs[2], addrs[3], addrs[4]);
+}
+
+// Appends "<label><config>\r\n" to a print buffer. Returns the number of characters written.
+static uint16_t PrintIPv4Config(char* buf, size_t buf_len, const char* label, const IPv4Config& config) {
+    char config_str[SettingsManager::kIPv4ConfigStrMaxLen + 1];
+    SettingsManager::FormatIPv4ConfigArgs(config, config_str, sizeof(config_str));
+    int len = snprintf(buf, buf_len, "%s%s\r\n", label, config_str);
+    return len < 0 ? 0 : (static_cast<size_t>(len) < buf_len ? len : buf_len - 1);
 }
 
 // NOTE: This function needs to be updated separately for ESP32.
@@ -366,11 +401,16 @@ void SettingsManager::Print() {
                               settings.core_network_settings.ethernet_enabled ? "ENABLED" : "DISABLED");
     print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
                               "\tIP Mode (Ethernet, WiFi Station): %s\r\n", IPModeToStr(settings.ip_mode));
+    print_buf_len += PrintIPv4Config(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
+                                     "\tEthernet IPv4: ", settings.ethernet_ipv4);
+    print_buf_len += PrintIPv4Config(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
+                                     "\tWiFi Station IPv4: ", settings.wifi_sta_ipv4);
+
+    CONSOLE_PRINTF("%s", print_buf);
+    print_buf_len = 0;
 
     // Print feed settings.
     CONSOLE_PRINTF("\tFeed URIs:\r\n");
-    CONSOLE_PRINTF("%s", print_buf);
-    print_buf_len = 0;
     for (uint16_t i = 0; i < Settings::kMaxNumFeeds; i++) {
         print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len,
                                   "\t\t%d URI:%s Port:%d %s Protocol:%s Transport:%s ID:0x", i,
@@ -497,4 +537,11 @@ void SettingsManager::PrintAT() {
     // AT+SWARM. "-" is an empty string.
     CONSOLE_PRINTF("AT+SWARM=%d,%s,%s\r\n", settings.swarm_enabled, settings.swarm_server[0] ? settings.swarm_server : "-",
                    settings.swarm_token[0] ? settings.swarm_token : "-");
+
+    // AT+ETHERNET_IP, AT+WIFI_STA_IP
+    char ipv4_config_str[kIPv4ConfigStrMaxLen + 1];
+    FormatIPv4ConfigArgs(settings.ethernet_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
+    CONSOLE_PRINTF("AT+ETHERNET_IP=%s\r\n", ipv4_config_str);
+    FormatIPv4ConfigArgs(settings.wifi_sta_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
+    CONSOLE_PRINTF("AT+WIFI_STA_IP=%s\r\n", ipv4_config_str);
 }

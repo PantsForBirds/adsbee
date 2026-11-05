@@ -45,6 +45,21 @@ ObjectDictionary::ESP32NetworkInfo CommsManager::GetNetworkInfo() {
     GetIP6AddrStrs(wifi_sta_netif_, network_info.wifi_sta_ip6_link_local, network_info.wifi_sta_ip6_global,
                    ObjectDictionary::kIP6AddrStrLen + 1);
 
+    for (uint16_t i = 0; i < ObjectDictionary::ESP32NetworkInfo::kNumDNSServers; i++) {
+        esp_netif_dns_info_t dns = {};
+        esp_netif_t* netif = ethernet_netif_ != nullptr ? ethernet_netif_ : wifi_sta_netif_;
+        if (netif != nullptr &&
+            esp_netif_get_dns_info(netif, i == 0 ? ESP_NETIF_DNS_MAIN : ESP_NETIF_DNS_BACKUP, &dns) == ESP_OK &&
+            !ESP_IP_IS_ANY(dns.ip)) {
+            if (dns.ip.type == ESP_IPADDR_TYPE_V4) {
+                inet_ntop(AF_INET, &dns.ip.u_addr.ip4, network_info.dns_servers[i], ObjectDictionary::kIP6AddrStrLen + 1);
+            } else {
+                inet_ntop(AF_INET6, dns.ip.u_addr.ip6.addr, network_info.dns_servers[i],
+                          ObjectDictionary::kIP6AddrStrLen + 1);
+            }
+        }
+    }
+
     // WiFi access point network info.
     network_info.wifi_ap_enabled = wifi_ap_enabled;
     network_info.wifi_ap_num_clients = num_wifi_clients_;

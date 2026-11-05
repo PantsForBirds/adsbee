@@ -144,6 +144,8 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
             CONSOLE_INFO("CommsManager::WiFiInit", "Connected to ap SSID:%s", WiFiStationSSID(wifi_sta_network_index_));
             wifi_sta_connected_ = true;
             wifi_sta_connected_timestamp_ms_ = get_time_since_boot_ms();
+            // Runs before the netif's connected handler: handlers for any event of a base come first.
+            ApplyStaticIPv4(wifi_sta_netif_, wifi_sta_ipv4);
             break;
         case WIFI_EVENT_SCAN_DONE:
             // Second half of WiFiStationJoin(): the scan it started has finished.

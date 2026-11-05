@@ -195,11 +195,22 @@ Want to check the status of your feed? Use the links below to see your feed stat
 
 ## 🌍 Use IPv6 { #ipv6 }
 
-Ethernet and the WiFi station use IPv4 and IPv6 at the same time by default. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router; DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 and static addresses aren't supported.
+Ethernet and the WiFi station use IPv4 and IPv6 at the same time by default. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router; DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 and static IPv6 addresses aren't supported.
 
 1. Check the addresses with `AT+NETWORK_INFO?`. The web interface is reachable at `http://[<IPv6 address>]/`, and as `<hostname>.local` over mDNS.
 2. Select the IP versions with `AT+IP_MODE=<mode>`: `DUAL` (default), `IPV4` (IPv4 only) or `IPV6` (IPv6 only, DHCP off). The WiFi access point is always IPv4.
 3. Apply with `AT+SETTINGS=SAVE`; the network interfaces restart.
+
+## 📌 Use a Static IPv4 Address { #static-ipv4 }
+
+Ethernet and the WiFi station get their IPv4 address from DHCP by default. Each can use a static address instead; the WiFi station's applies to whichever stored network it joins.
+
+1. Pick an unused address on your network, outside your router's DHCP pool.
+2. Set it with `AT+ETHERNET_IP=<ip>,<netmask>,<gateway>,<dns1>,<dns2>` (or `AT+WIFI_STA_IP=...`), e.g. `AT+ETHERNET_IP=192.168.1.50,255.255.255.0,192.168.1.1,192.168.1.1`. The netmask can also be a prefix length (`24`). Leave the gateway or DNS servers empty for none; feeds that use hostnames need a DNS server.
+3. Apply with `AT+SETTINGS=SAVE`; the interface restarts. Check with `AT+NETWORK_INFO?`.
+4. To go back to DHCP, send `AT+ETHERNET_IP=DHCP` (or `AT+WIFI_STA_IP=DHCP`) and `AT+SETTINGS=SAVE`.
+
+Static IPv4 works with `AT+IP_MODE=IPV4` and `DUAL`; with `IPV6` there is no IPv4 and the static address is not used. The web interface has the same settings under Network.
 
 ## 💡 Integrate the ADSBee with an Embedded Project { #embedded-project }
 

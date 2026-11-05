@@ -43,11 +43,12 @@
 //   hex      text input for hex values (no 0x prefix); optional maxVal
 //   display  read-only informational value populated by parse(); never written
 // Fields may declare visibleIf(values) to show/hide based on sibling values,
-// note: '...' for a hint line under the input, and validate(value) returning an error
-// message (or '') for checks beyond the type's own. lockOffIf(deviceValues) (bool) and
-// lockOffBits(deviceValues) (bitmask) stop the user from turning a setting or option on
-// while still allowing it to be turned off; entries may declare notice(deviceValues),
-// a line under the help text explaining such a lock.
+// note: '...' for a hint line under the input, and validate(value, values) returning an
+// error message (or '') for checks beyond the type's own; values holds the entry's field
+// values. lockOffIf(deviceValues) (bool) and lockOffBits(deviceValues) (bitmask) stop the
+// user from turning a setting or option on while still allowing it to be turned off;
+// entries may declare notice(deviceValues), a line under the help text explaining such a
+// lock.
 //
 // To expose a new AT command in the GUI, add one entry to the product's schema array.
 
@@ -494,7 +495,7 @@ class SettingsEngine {
                 else if (field.maxLen && value.length > field.maxLen) msg = `Maximum ${field.maxLen} characters.`;
                 else if (field.type === 'hex' && value !== '' && !/^[0-9A-F]+$/.test(value)) msg = 'Enter a hex value.';
             }
-            if (!msg && field.validate) msg = field.validate(value) || '';
+            if (!msg && field.validate) msg = field.validate(value, this.entryValues(entry)) || '';
             if (msg) { errEl.textContent = msg; ok = false; }
         }
         return ok;
@@ -960,6 +961,58 @@ const SETTINGS_RID = {
     allowedField() { return { id: 'allowed', label: 'Allowed Transports', type: 'display', visibleIf: () => false }; },
 };
 
+// AT+ETHERNET_IP and AT+WIFI_STA_IP: DHCP, or <ip>,<netmask>,<gateway>,<dns1>,<dns2>. The device checks the
+// subnet; these checks catch typos before anything is written.
+function makeIPv4Entry(cmd, label, help) {
+    const isStatic = v => v.mode === 'STATIC';
+    const quad = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+    const addr = (id, fieldLabel, required) => ({
+        id, label: fieldLabel, type: 'string', maxLen: 15, visibleIf: isStatic,
+        note: required ? undefined : 'Leave blank for none.',
+        validate: (v, values) => {
+            if (!isStatic(values) || (v === '' && !required)) return '';
+            if (v === '') return 'Required for a static address.';
+            return quad.test(v) ? '' : 'Enter an address like 192.168.1.50.';
+        },
+    });
+    const ids = ['ip', 'netmask', 'gateway', 'dns1', 'dns2'];
+    return {
+        cmd, label, group: 'Network', disconnects: true, help,
+        fields: [
+            { id: 'mode', label: 'Mode', type: 'enum', options: [{ value: 'DHCP', label: 'DHCP' }, { value: 'STATIC', label: 'Static' }] },
+            addr('ip', 'IP Address', true),
+            {
+                ...addr('netmask', 'Netmask', true), note: 'e.g. 255.255.255.0 or 24.',
+                validate: (v, values) => {
+                    if (!isStatic(values)) return '';
+                    if (v === '') return 'Required for a static address.';
+                    const m = v.match(/^\/?(\d{1,2})$/);
+                    if (m) return +m[1] >= 1 && +m[1] <= 30 ? '' : 'Use a prefix length from 1 to 30.';
+                    return quad.test(v) ? '' : 'Enter a netmask like 255.255.255.0 or 24.';
+                },
+            },
+            addr('gateway', 'Gateway', false),
+            addr('dns1', 'DNS Server 1', false),
+            addr('dns2', 'DNS Server 2', false),
+        ],
+        parse(lines) {
+            const m = lines[0] && lines[0].match(new RegExp(`^${cmd}=(.*)$`));
+            if (!m) return null;
+            if (m[1].trim().toUpperCase() === 'DHCP') return { mode: 'DHCP', ip: '', netmask: '', gateway: '', dns1: '', dns2: '' };
+            const args = m[1].trim().split(',');
+            const values = { mode: 'STATIC' };
+            ids.forEach((id, i) => { values[id] = args[i] || ''; });
+            return values;
+        },
+        build(v) {
+            if (v.mode !== 'STATIC') return [`AT+${cmd}=DHCP`];
+            const args = ids.map(id => v[id] || '');
+            while (args.length > 2 && args[args.length - 1] === '') args.pop();
+            return [`AT+${cmd}=${args.join(',')}`];
+        },
+    };
+}
+
 const SETTINGS_SCHEMA_1090 = [
     // ── Network ──
     {
@@ -1022,13 +1075,16 @@ const SETTINGS_SCHEMA_1090 = [
             });
         },
     },
+    makeIPv4Entry('WIFI_STA_IP', 'WiFi Station IPv4',
+        'DHCP, or a static IPv4 address on whichever network WiFi Station joins. Not used with IP Mode IPV6.'),
     {
         cmd: 'ETHERNET', label: 'Ethernet', group: 'Network', disconnects: true,
         fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
     },
+    makeIPv4Entry('ETHERNET_IP', 'Ethernet IPv4', 'DHCP, or a static IPv4 address. Not used with IP Mode IPV6.'),
     {
         cmd: 'IP_MODE', label: 'IP Mode', group: 'Network', disconnects: true,
-        help: 'IP versions on Ethernet and WiFi Station. DUAL adds IPv6 (link-local and SLAAC) to IPv4 DHCP; IPV6 turns off DHCP. The WiFi Access Point is always IPv4.',
+        help: 'IP versions on Ethernet and WiFi Station. DUAL adds IPv6 (link-local and SLAAC) to IPv4; IPV6 turns IPv4 off. The WiFi Access Point is always IPv4.',
         fields: [{ id: 'mode', label: 'Mode', type: 'enum', options: ['IPV4', 'DUAL', 'IPV6'] }],
     },
     // ── Radio ──
