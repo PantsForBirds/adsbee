@@ -195,33 +195,29 @@ Want to check the status of your feed? Use the links below to see your feed stat
 
 ## 🌍 Use IPv6 { #ipv6 }
 
-Ethernet and the WiFi station use IPv4 and IPv6 at the same time by default. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router, or from a [static IPv6 address](#static-ipv6); DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 isn't supported.
+Ethernet and the WiFi station use IPv4 only by default; turn on IPv6 with `AT+IP_MODE=DUAL` (IPv4 and IPv6) or `IPV6`. Units upgraded from firmware that already had `AT+IP_MODE` keep their setting. IPv6 addresses come from link-local and stateless autoconfiguration (SLAAC) from your router, or from a [static IPv6 address](#static-ip); DNS servers come from DHCP or from router advertisements (RDNSS). DHCPv6 isn't supported.
 
 1. Check the addresses with `AT+NETWORK_INFO?`. The web interface is reachable at `http://[<IPv6 address>]/`, and as `<hostname>.local` over mDNS.
-2. Select the IP versions with `AT+IP_MODE=<mode>`: `DUAL` (default), `IPV4` (IPv4 only) or `IPV6` (IPv6 only, DHCP off). The WiFi access point is always IPv4.
+2. Select the IP versions with `AT+IP_MODE=<mode>`: `IPV4` (IPv4 only, the default), `DUAL` (IPv4 and IPv6) or `IPV6` (IPv6 only, DHCP off). The WiFi access point is always IPv4.
 3. Apply with `AT+SETTINGS=SAVE`; the network interfaces restart.
 
-## 📌 Use a Static IPv4 Address { #static-ipv4 }
+## 📌 Use a Static IP Address { #static-ip }
 
-Ethernet and the WiFi station get their IPv4 address from DHCP by default. Each can use a static address instead; the WiFi station's applies to whichever stored network it joins.
+Ethernet and the WiFi station get their IPv4 address from DHCP and their IPv6 addresses from SLAAC by default. Each can use a static IPv4 address, a static IPv6 address, or both, set with one command per interface: `AT+ETHERNET_IP` or `AT+WIFI_STA_IP` (the WiFi station's applies to whichever stored network it joins). The first argument is the address family.
 
-1. Pick an unused address on your network, outside your router's DHCP pool.
-2. Set it with `AT+ETHERNET_IP=<ip>,<netmask>,<gateway>,<dns1>,<dns2>` (or `AT+WIFI_STA_IP=...`), e.g. `AT+ETHERNET_IP=192.168.1.50,255.255.255.0,192.168.1.1,192.168.1.1`. The netmask can also be a prefix length (`24`). Leave the gateway or DNS servers empty for none; feeds that use hostnames need a DNS server.
-3. Apply with `AT+SETTINGS=SAVE`; the interface restarts. Check with `AT+NETWORK_INFO?`.
-4. To go back to DHCP, send `AT+ETHERNET_IP=DHCP` (or `AT+WIFI_STA_IP=DHCP`) and `AT+SETTINGS=SAVE`.
+| Command | Meaning |
+|---|---|
+| `AT+ETHERNET_IP=IPV4,DHCP` | IPv4 from DHCP (default) |
+| `AT+ETHERNET_IP=IPV4,<ip>,<netmask>[,<gateway>[,<dns1>[,<dns2>]]]` | Static IPv4. Netmask as `255.255.255.0` or a prefix length (`24`). |
+| `AT+ETHERNET_IP=IPV6,AUTO` | IPv6 from SLAAC (default) |
+| `AT+ETHERNET_IP=IPV6,<address>/<prefix>[,<gateway>[,<dns1>[,<dns2>]]]` | Static IPv6, a global or unique local (`fd00::/8`) address |
 
-Static IPv4 works with `AT+IP_MODE=IPV4` and `DUAL`; with `IPV6` there is no IPv4 and the static address is not used. The web interface has the same settings under Network.
+1. Pick unused addresses on your network: for IPv4 outside your router's DHCP pool, for IPv6 on your network's prefix.
+2. Set them, e.g. `AT+ETHERNET_IP=IPV4,192.168.1.50,255.255.255.0,192.168.1.1,192.168.1.1` and `AT+ETHERNET_IP=IPV6,2001:db8:1::50/64,fe80::1,2001:4860:4860::8888`. An IPv6 gateway is your router's link-local address or an address on the prefix. Leave a gateway empty for none (IPv6: use the routers your network advertises) and DNS servers empty to keep the ones from DHCP or the router; feeds that use hostnames need a DNS server.
+3. Apply with `AT+SETTINGS=SAVE`; the interface restarts. Check with `AT+ETHERNET_IP?` (one line per family) and `AT+NETWORK_INFO?`.
+4. To go back, send `AT+ETHERNET_IP=IPV4,DHCP` and/or `AT+ETHERNET_IP=IPV6,AUTO`, then `AT+SETTINGS=SAVE`.
 
-## 📌 Use a Static IPv6 Address { #static-ipv6 }
-
-Ethernet and the WiFi station get their IPv6 addresses from SLAAC by default. Each can use a static address instead; the WiFi station's applies to whichever stored network it joins.
-
-1. Pick an unused global or unique local (`fd00::/8`) address on your network's prefix.
-2. Set it with `AT+ETHERNET_IP6=<address>/<prefix>,<gateway>,<dns1>,<dns2>` (or `AT+WIFI_STA_IP6=...`), e.g. `AT+ETHERNET_IP6=2001:db8:1::50/64,fe80::1,2001:4860:4860::8888`. The gateway is your router's link-local address or an address on the prefix. Leave the gateway empty to use the routers your network advertises, and the DNS servers empty to keep the ones from DHCP or the router.
-3. Apply with `AT+SETTINGS=SAVE`; the interface restarts. Check with `AT+NETWORK_INFO?`.
-4. To go back to SLAAC, send `AT+ETHERNET_IP6=AUTO` (or `AT+WIFI_STA_IP6=AUTO`) and `AT+SETTINGS=SAVE`.
-
-With a static address the interface keeps its link-local address but forms no SLAAC addresses. Static IPv6 works with `AT+IP_MODE=IPV6` and `DUAL`; with `IPV4` it is not used. Static DNS servers from `AT+ETHERNET_IP` and `AT+ETHERNET_IP6` are used together (IPv4 first, up to three); router advertisements with DNS servers (RDNSS) can still replace them. The web interface has the same settings under Network.
+Static IPv4 works with `AT+IP_MODE=IPV4` and `DUAL`, static IPv6 with `IPV6` and `DUAL`; the replies say when the IP mode doesn't use an address. With a static IPv6 address the interface keeps its link-local address but forms no SLAAC addresses. Static DNS servers of both families are used together (IPv4 first, up to three); router advertisements with DNS servers (RDNSS) can still replace them. The web interface has the same settings under Network.
 
 ## 💡 Integrate the ADSBee with an Embedded Project { #embedded-project }
 

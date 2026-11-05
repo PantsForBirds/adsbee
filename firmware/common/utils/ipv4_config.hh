@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <cstdio>
 
-// IPv4 addressing of the Ethernet or WiFi station interface: DHCP, or a static address (AT+ETHERNET_IP,
-// AT+WIFI_STA_IP). Addresses are octets in dotted-quad order; 0.0.0.0 means not set.
+// IPv4 addressing of the Ethernet or WiFi station interface: DHCP, or a static address (AT+ETHERNET_IP=IPV4,...,
+// AT+WIFI_STA_IP=IPV4,...). Addresses are octets in dotted-quad order; 0.0.0.0 means not set.
 struct IPv4Config {
     static constexpr uint16_t kNumDNSServers = 2;
     static constexpr uint16_t kAddrStrMaxLen = 15;  // "255.255.255.255"
@@ -137,13 +137,14 @@ inline const char* ValidateIPv4Config(const IPv4Config& c) {
 }
 
 /**
- * Parses AT+ETHERNET_IP / AT+WIFI_STA_IP arguments: DHCP, or <ip>,<netmask>[,<gateway>[,<dns1>[,<dns2>]]].
+ * Parses the IPv4 arguments of AT+ETHERNET_IP / AT+WIFI_STA_IP (after IPV4): DHCP, or
+ * <ip>,<netmask>[,<gateway>[,<dns1>[,<dns2>]]].
  * Empty gateway and DNS arguments mean none. StrView needs data() and size() (std::string_view).
  * @retval nullptr on success (out is set), else an error message (out is unchanged).
  */
 template <typename StrView>
 const char* ParseIPv4ConfigArgs(const StrView args[], uint16_t num_args, IPv4Config& out) {
-    static const char* const kUsage = "Use DHCP or <ip>,<netmask>[,<gateway>[,<dns1>[,<dns2>]]].";
+    static const char* const kUsage = "Use IPV4,DHCP or IPV4,<ip>,<netmask>[,<gateway>[,<dns1>[,<dns2>]]].";
     IPv4Config c;
     if (num_args == 1 && args[0].size() == 4) {
         const char* s = args[0].data();

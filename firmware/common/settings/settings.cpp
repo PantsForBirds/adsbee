@@ -221,9 +221,9 @@ bool SettingsManager::Sanitize() {
     }
 
     if (settings.ip_mode >= kNumIPModes) {
-        CONSOLE_ERROR("SettingsManager::Sanitize", "ip_mode %u out of range, resetting to kIPModeDual.",
+        CONSOLE_ERROR("SettingsManager::Sanitize", "ip_mode %u out of range, resetting to kIPModeIPv4.",
                       settings.ip_mode);
-        settings.ip_mode = kIPModeDual;
+        settings.ip_mode = kIPModeIPv4;
         changed = true;
     }
 
@@ -570,17 +570,13 @@ void SettingsManager::PrintAT() {
     CONSOLE_PRINTF("AT+SWARM=%d,%s,%s\r\n", settings.swarm_enabled, settings.swarm_server[0] ? settings.swarm_server : "-",
                    settings.swarm_token[0] ? settings.swarm_token : "-");
 
-    // AT+ETHERNET_IP, AT+WIFI_STA_IP
+    // AT+ETHERNET_IP, AT+WIFI_STA_IP: one line per address family.
     char ipv4_config_str[kIPv4ConfigStrMaxLen + 1];
-    FormatIPv4ConfigArgs(settings.ethernet_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
-    CONSOLE_PRINTF("AT+ETHERNET_IP=%s\r\n", ipv4_config_str);
-    FormatIPv4ConfigArgs(settings.wifi_sta_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
-    CONSOLE_PRINTF("AT+WIFI_STA_IP=%s\r\n", ipv4_config_str);
-
-    // AT+ETHERNET_IP6, AT+WIFI_STA_IP6
     char ipv6_config_str[kIPv6ConfigStrMaxLen + 1];
+    FormatIPv4ConfigArgs(settings.ethernet_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
     FormatIPv6ConfigArgs(settings.ethernet_ipv6, ipv6_config_str, sizeof(ipv6_config_str));
-    CONSOLE_PRINTF("AT+ETHERNET_IP6=%s\r\n", ipv6_config_str);
+    CONSOLE_PRINTF("AT+ETHERNET_IP=IPV4,%s\r\nAT+ETHERNET_IP=IPV6,%s\r\n", ipv4_config_str, ipv6_config_str);
+    FormatIPv4ConfigArgs(settings.wifi_sta_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
     FormatIPv6ConfigArgs(settings.wifi_sta_ipv6, ipv6_config_str, sizeof(ipv6_config_str));
-    CONSOLE_PRINTF("AT+WIFI_STA_IP6=%s\r\n", ipv6_config_str);
+    CONSOLE_PRINTF("AT+WIFI_STA_IP=IPV4,%s\r\nAT+WIFI_STA_IP=IPV6,%s\r\n", ipv4_config_str, ipv6_config_str);
 }

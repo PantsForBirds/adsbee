@@ -202,7 +202,7 @@ void SettingsMigrator::MigrateV15ToV17(const settings_v15::Settings& in, setting
     out.mavlink_component_id = in.mavlink_component_id;
 
     memcpy(&out.rx_position, &in.rx_position, sizeof(in.rx_position));
-    out.ip_mode = 1;  // New in v17 (added in the unshipped v16): IPv4 + IPv6 (kIPModeDual).
+    out.ip_mode = 0;  // New in v17 (added in the unshipped v16): IPv4 only (kIPModeIPv4), the default.
 }
 
 void SettingsMigrator::MigrateV17ToV18(const settings_v17::Settings& in, settings_v18::Settings& out) {

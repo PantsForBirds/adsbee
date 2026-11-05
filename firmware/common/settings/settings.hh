@@ -393,7 +393,7 @@ class SettingsManager {
         RxPosition rx_position;
 
         // Network settings outside CoreNetworkSettings (which must keep its layout).
-        IPMode ip_mode = kIPModeDual;
+        IPMode ip_mode = kIPModeIPv4;
 
         // WiFi station networks 2 and up. The station joins the strongest stored network in range.
         WiFiNetwork wifi_sta_extra_networks[kWiFiSTANumExtraNetworks];
@@ -439,10 +439,11 @@ class SettingsManager {
         char swarm_server[kSwarmServerMaxLen + 1];  // Base URL, e.g. https://adsbee.aero.
         char swarm_token[kSwarmTokenMaxLen + 1];    // Enroll token from the swarm account.
 
-        // DHCP or static IPv4 per interface (AT+ETHERNET_IP, AT+WIFI_STA_IP). Static IPv4 is not used in kIPModeIPv6.
+        // DHCP or static IPv4 per interface (AT+ETHERNET_IP=IPV4,..., AT+WIFI_STA_IP=IPV4,...). Not used in kIPModeIPv6.
         IPv4Config ethernet_ipv4;
         IPv4Config wifi_sta_ipv4;
-        // AUTO (SLAAC) or static IPv6 per interface (AT+ETHERNET_IP6, AT+WIFI_STA_IP6). Not used in kIPModeIPv4.
+        // AUTO (SLAAC) or static IPv6 per interface (AT+ETHERNET_IP=IPV6,..., AT+WIFI_STA_IP=IPV6,...). Not used in
+        // kIPModeIPv4.
         IPv6Config ethernet_ipv6;
         IPv6Config wifi_sta_ipv6;
 
@@ -720,7 +721,7 @@ class SettingsManager {
     static constexpr uint16_t kIPv4ConfigStrMaxLen = (IPv4Config::kAddrStrMaxLen + 1) * (3 + IPv4Config::kNumDNSServers);
 
     /**
-     * Writes an IPv4 configuration as AT+ETHERNET_IP / AT+WIFI_STA_IP arguments: "DHCP", or
+     * Writes an IPv4 configuration as AT+ETHERNET_IP / AT+WIFI_STA_IP arguments after IPV4: "DHCP", or
      * "<ip>,<netmask>,<gateway>,<dns1>,<dns2>" with empty fields for unset addresses.
      * @retval snprintf's return value.
      */
@@ -730,7 +731,7 @@ class SettingsManager {
     static constexpr uint16_t kIPv6ConfigStrMaxLen = (IPv6Config::kAddrStrMaxLen + 1) * (2 + IPv6Config::kNumDNSServers) + 4;
 
     /**
-     * Writes an IPv6 configuration as AT+ETHERNET_IP6 / AT+WIFI_STA_IP6 arguments: "AUTO", or
+     * Writes an IPv6 configuration as AT+ETHERNET_IP / AT+WIFI_STA_IP arguments after IPV6: "AUTO", or
      * "<addr>/<prefix>,<gateway>,<dns1>,<dns2>" with empty fields for unset addresses.
      * @retval snprintf's return value.
      */

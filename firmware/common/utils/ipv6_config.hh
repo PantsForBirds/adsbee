@@ -7,8 +7,8 @@
 
 #include "ipv4_config.hh"  // ParseIPv4Addr for embedded IPv4 (::ffff:1.2.3.4).
 
-// IPv6 addressing of the Ethernet or WiFi station interface: AUTO (link-local + SLAAC), or a static address (AT+
-// ETHERNET_IP6, AT+WIFI_STA_IP6). Addresses are 16 bytes in network order; :: means not set.
+// IPv6 addressing of the Ethernet or WiFi station interface: AUTO (link-local + SLAAC), or a static address
+// (AT+ETHERNET_IP=IPV6,..., AT+WIFI_STA_IP=IPV6,...). Addresses are 16 bytes in network order; :: means not set.
 struct IPv6Config {
     static constexpr uint16_t kNumDNSServers = 2;
     static constexpr uint16_t kAddrStrMaxLen = 45;  // "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255"
@@ -201,13 +201,14 @@ inline const char* ValidateIPv6Config(const IPv6Config& c) {
 }
 
 /**
- * Parses AT+ETHERNET_IP6 / AT+WIFI_STA_IP6 arguments: AUTO, or <addr>/<prefix>[,<gateway>[,<dns1>[,<dns2>]]].
+ * Parses the IPv6 arguments of AT+ETHERNET_IP / AT+WIFI_STA_IP (after IPV6): AUTO, or
+ * <addr>/<prefix>[,<gateway>[,<dns1>[,<dns2>]]].
  * Empty gateway and DNS arguments mean none. StrView needs data() and size() (std::string_view).
  * @retval nullptr on success (out is set), else an error message (out is unchanged).
  */
 template <typename StrView>
 const char* ParseIPv6ConfigArgs(const StrView args[], uint16_t num_args, IPv6Config& out) {
-    static const char* const kUsage = "Use AUTO or <addr>/<prefix>[,<gateway>[,<dns1>[,<dns2>]]].";
+    static const char* const kUsage = "Use IPV6,AUTO or IPV6,<addr>/<prefix>[,<gateway>[,<dns1>[,<dns2>]]].";
     IPv6Config c;
     if (num_args == 1 && args[0].size() == 4) {
         const char* s = args[0].data();

@@ -116,9 +116,9 @@ TEST(IPv4Config, RejectsBadStaticConfigurations) {
         const char* error_part;
     };
     const Case cases[] = {
-        {"", "Use DHCP"},
-        {"192.168.1.50", "Use DHCP"},
-        {"192.168.1.50,24,192.168.1.1,1.1.1.1,9.9.9.9,8.8.8.8", "Use DHCP"},
+        {"", "Use IPV4,DHCP"},
+        {"192.168.1.50", "Use IPV4,DHCP"},
+        {"192.168.1.50,24,192.168.1.1,1.1.1.1,9.9.9.9,8.8.8.8", "Use IPV4,DHCP"},
         {"192.168.1.500,24", "IP address must be a dotted quad"},
         {",24", "IP address must be a dotted quad"},
         {"192.168.1.50,", "Netmask"},

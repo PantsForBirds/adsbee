@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "static_ip_config.hh"
 #include "feed_ram_budget.hh"
 #include "settings.hh"
 #include "settings_migration.hh"
@@ -178,7 +179,7 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
     EXPECT_FALSE(out.led_enabled);
 
     EXPECT_TRUE(out.feeds_enabled);  // New in v15.
-    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);  // New in v17 (added in the unshipped v16).
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4);  // New in v17 (added in the unshipped v16): the default.
     EXPECT_TRUE(out.gnss_enabled);
     EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
     EXPECT_TRUE(out.gnss_notify);
@@ -716,18 +717,16 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
     EXPECT_EQ(dump.find("AT+", filter_altitude + 1), swarm);
-    size_t ethernet_ip = dump.find("AT+ETHERNET_IP=DHCP\r\n");
-    ASSERT_NE(ethernet_ip, std::string::npos);
-    EXPECT_EQ(dump.find("AT+", swarm + 1), ethernet_ip);
-    size_t wifi_sta_ip = dump.find("AT+WIFI_STA_IP=DHCP\r\n");
-    EXPECT_EQ(dump.find("AT+", ethernet_ip + 1), wifi_sta_ip);
-    size_t ethernet_ip6 = dump.find("AT+ETHERNET_IP6=AUTO\r\n");
-    ASSERT_NE(ethernet_ip6, std::string::npos);
-    EXPECT_EQ(dump.find("AT+", wifi_sta_ip + 1), ethernet_ip6);
-    size_t wifi_sta_ip6 = dump.find("AT+WIFI_STA_IP6=AUTO\r\n");
-    ASSERT_NE(wifi_sta_ip6, std::string::npos);
-    EXPECT_EQ(dump.find("AT+", ethernet_ip6 + 1), wifi_sta_ip6);
-    EXPECT_EQ(dump.find("AT+", wifi_sta_ip6 + 1), std::string::npos);
+    const char* ip_lines[] = {"AT+ETHERNET_IP=IPV4,DHCP\r\n", "AT+ETHERNET_IP=IPV6,AUTO\r\n",
+                              "AT+WIFI_STA_IP=IPV4,DHCP\r\n", "AT+WIFI_STA_IP=IPV6,AUTO\r\n"};
+    size_t prev = swarm;
+    for (const char* ip_line : ip_lines) {
+        size_t at = dump.find(ip_line);
+        ASSERT_NE(at, std::string::npos) << ip_line;
+        EXPECT_EQ(dump.find("AT+", prev + 1), at) << ip_line;
+        prev = at;
+    }
+    EXPECT_EQ(dump.find("AT+", prev + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
     memcpy(&manager.settings.auto_update_enabled, &raw, 1);
@@ -777,7 +776,7 @@ TEST(SettingsMigration, V15ToCurrentPreservesAllFieldsAndDefaultsIPMode) {
     ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 15, out));
 
     EXPECT_EQ(out.settings_version, kSettingsVersion);
-    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4);
 
     SettingsManager::Settings::CoreNetworkSettings cns_out = out.core_network_settings;
     EXPECT_TRUE(cns_out.IsValid());
@@ -1135,7 +1134,7 @@ TEST(SettingsManager, SanitizeClampsOutOfRangeEnumFields) {
     s.ip_mode = static_cast<SettingsManager::IPMode>(200);
 
     EXPECT_TRUE(settings_manager.Sanitize());
-    EXPECT_EQ(s.ip_mode, SettingsManager::kIPModeDual);
+    EXPECT_EQ(s.ip_mode, SettingsManager::kIPModeIPv4);
 
     EXPECT_LT(s.log_level, SettingsManager::LogLevel::kNumLogLevels);
     EXPECT_LT(s.reporting_protocols[0], SettingsManager::ReportingProtocol::kNumProtocols);
@@ -1419,36 +1418,6 @@ TEST(SettingsManager, SanitizeResetsInvalidIPv4ConfigToDHCP) {
     EXPECT_TRUE(eth.is_static);
 }
 
-TEST(Settings, StaticIPv4DumpReplaysThroughTheParser) {
-    SettingsManager manager;
-    const char* args[] = {"10.42.2.60", "255.255.255.0", "10.42.2.1", "", "9.9.9.9"};
-    std::string_view views[5];
-    for (int i = 0; i < 5; i++) views[i] = args[i];
-    ASSERT_EQ(ParseIPv4ConfigArgs(views, 5, manager.settings.ethernet_ipv4), nullptr);
-
-    testing::internal::CaptureStdout();
-    manager.PrintAT();
-    std::string dump = testing::internal::GetCapturedStdout();
-    const std::string prefix = "AT+ETHERNET_IP=";
-    size_t start = dump.find(prefix);
-    ASSERT_NE(start, std::string::npos);
-    std::string line = dump.substr(start + prefix.size(), dump.find("\r\n", start) - start - prefix.size());
-    EXPECT_EQ(line, "10.42.2.60,255.255.255.0,10.42.2.1,,9.9.9.9");
-    EXPECT_NE(dump.find("AT+WIFI_STA_IP=DHCP\r\n"), std::string::npos);
-
-    std::vector<std::string_view> parts;
-    size_t pos = 0;
-    while (true) {
-        size_t comma = line.find(',', pos);
-        parts.push_back(std::string_view(line).substr(pos, comma == std::string::npos ? std::string::npos : comma - pos));
-        if (comma == std::string::npos) break;
-        pos = comma + 1;
-    }
-    IPv4Config replayed;
-    ASSERT_EQ(ParseIPv4ConfigArgs(parts.data(), parts.size(), replayed), nullptr);
-    EXPECT_EQ(memcmp(&replayed, &manager.settings.ethernet_ipv4, sizeof(replayed)), 0);
-}
-
 TEST(SettingsManager, SanitizeResetsInvalidIPv6ConfigToAuto) {
     SettingsManager manager;
     IPv6Config& eth = manager.settings.ethernet_ipv6;
@@ -1474,7 +1443,7 @@ TEST(SettingsManager, SanitizeResetsInvalidIPv6ConfigToAuto) {
     EXPECT_FALSE(manager.settings.wifi_sta_ipv6.is_static);
 
     // Erased flash (0xFF everywhere) is not a valid configuration.
-    memset(&eth, 0xFF, sizeof(eth));
+    memset(static_cast<void*>(&eth), 0xFF, sizeof(eth));
     EXPECT_TRUE(manager.Sanitize());
     EXPECT_FALSE(eth.is_static);
 
@@ -1487,23 +1456,8 @@ TEST(SettingsManager, SanitizeResetsInvalidIPv6ConfigToAuto) {
     EXPECT_TRUE(eth.is_static);
 }
 
-TEST(Settings, StaticIPv6DumpReplaysThroughTheParser) {
-    SettingsManager manager;
-    const char* args[] = {"2001:DB8:1:0::50/64", "fe80::1", "", "2001:4860:4860::8888"};
-    std::string_view views[4];
-    for (int i = 0; i < 4; i++) views[i] = args[i];
-    ASSERT_EQ(ParseIPv6ConfigArgs(views, 4, manager.settings.wifi_sta_ipv6), nullptr);
-
-    testing::internal::CaptureStdout();
-    manager.PrintAT();
-    std::string dump = testing::internal::GetCapturedStdout();
-    const std::string prefix = "AT+WIFI_STA_IP6=";
-    size_t start = dump.find(prefix);
-    ASSERT_NE(start, std::string::npos);
-    std::string line = dump.substr(start + prefix.size(), dump.find("\r\n", start) - start - prefix.size());
-    EXPECT_EQ(line, "2001:db8:1::50/64,fe80::1,,2001:4860:4860::8888");
-    EXPECT_NE(dump.find("AT+ETHERNET_IP6=AUTO\r\n"), std::string::npos);
-
+// Splits "a,b,c" into AT arguments, as cppAT does after the operator.
+static std::vector<std::string_view> SplitArgs(const std::string& line) {
     std::vector<std::string_view> parts;
     size_t pos = 0;
     while (true) {
@@ -1512,9 +1466,56 @@ TEST(Settings, StaticIPv6DumpReplaysThroughTheParser) {
         if (comma == std::string::npos) break;
         pos = comma + 1;
     }
-    IPv6Config replayed;
-    ASSERT_EQ(ParseIPv6ConfigArgs(parts.data(), parts.size(), replayed), nullptr);
-    EXPECT_EQ(memcmp(&replayed, &manager.settings.wifi_sta_ipv6, sizeof(replayed)), 0);
+    return parts;
+}
+
+static const char* SetStaticIP(const char* arg_str, IPv4Config& v4, IPv6Config& v6) {
+    static std::string storage;
+    storage = arg_str;
+    std::vector<std::string_view> parts = SplitArgs(storage);
+    IPFamily family;
+    return ParseStaticIPArgs(parts.data(), parts.size(), v4, v6, family);
+}
+
+TEST(Settings, StaticIPDumpReplaysThroughTheParser) {
+    SettingsManager manager;
+    SettingsManager::Settings& s = manager.settings;
+    ASSERT_EQ(SetStaticIP("IPV4,10.42.2.60,255.255.255.0,10.42.2.1,,9.9.9.9", s.ethernet_ipv4, s.ethernet_ipv6), nullptr);
+    ASSERT_EQ(SetStaticIP("IPV6,2001:DB8:1:0::50/64,fe80::1,,2001:4860:4860::8888", s.wifi_sta_ipv4, s.wifi_sta_ipv6),
+              nullptr);
+    // Lowercase family; only the IPv6 configuration changes.
+    ASSERT_EQ(SetStaticIP("ipv6,fd00:42::60/48", s.ethernet_ipv4, s.ethernet_ipv6), nullptr);
+    EXPECT_TRUE(s.ethernet_ipv4.is_static);
+
+    testing::internal::CaptureStdout();
+    manager.PrintAT();
+    std::string dump = testing::internal::GetCapturedStdout();
+    EXPECT_NE(dump.find("AT+ETHERNET_IP=IPV4,10.42.2.60,255.255.255.0,10.42.2.1,,9.9.9.9\r\n"), std::string::npos);
+    EXPECT_NE(dump.find("AT+ETHERNET_IP=IPV6,fd00:42::60/48,,,\r\n"), std::string::npos);
+    EXPECT_NE(dump.find("AT+WIFI_STA_IP=IPV4,DHCP\r\n"), std::string::npos);
+    EXPECT_NE(dump.find("AT+WIFI_STA_IP=IPV6,2001:db8:1::50/64,fe80::1,,2001:4860:4860::8888\r\n"), std::string::npos);
+
+    // Replaying every line into fresh settings gives the same four configurations.
+    SettingsManager replayed;
+    SettingsManager::Settings& r = replayed.settings;
+    int num_lines = 0;
+    for (const char* cmd : {"AT+ETHERNET_IP=", "AT+WIFI_STA_IP="}) {
+        bool ethernet = strcmp(cmd, "AT+ETHERNET_IP=") == 0;
+        for (size_t at = dump.find(cmd); at != std::string::npos; at = dump.find(cmd, at + 1)) {
+            size_t start = at + strlen(cmd);
+            std::string line = dump.substr(start, dump.find("\r\n", start) - start);
+            EXPECT_EQ(SetStaticIP(line.c_str(), ethernet ? r.ethernet_ipv4 : r.wifi_sta_ipv4,
+                                  ethernet ? r.ethernet_ipv6 : r.wifi_sta_ipv6),
+                      nullptr)
+                << line;
+            num_lines++;
+        }
+    }
+    EXPECT_EQ(num_lines, 4);
+    EXPECT_EQ(memcmp(&r.ethernet_ipv4, &s.ethernet_ipv4, sizeof(IPv4Config)), 0);
+    EXPECT_EQ(memcmp(&r.wifi_sta_ipv4, &s.wifi_sta_ipv4, sizeof(IPv4Config)), 0);
+    EXPECT_EQ(memcmp(&r.ethernet_ipv6, &s.ethernet_ipv6, sizeof(IPv6Config)), 0);
+    EXPECT_EQ(memcmp(&r.wifi_sta_ipv6, &s.wifi_sta_ipv6, sizeof(IPv6Config)), 0);
 
     // The longest configuration fits the format buffer.
     IPv6Config longest;
@@ -1530,4 +1531,52 @@ TEST(Settings, StaticIPv6DumpReplaysThroughTheParser) {
     int len = SettingsManager::FormatIPv6ConfigArgs(longest, buf, sizeof(buf));
     EXPECT_GT(len, 0);
     EXPECT_LT(len, (int)sizeof(buf));
+}
+
+TEST(Settings, FreshDefaultsAreIPv4WithDHCPAndAuto) {
+    SettingsManager::Settings fresh;
+    EXPECT_EQ(fresh.ip_mode, SettingsManager::kIPModeIPv4);
+    EXPECT_FALSE(fresh.ethernet_ipv4.is_static);
+    EXPECT_FALSE(fresh.wifi_sta_ipv4.is_static);
+    EXPECT_FALSE(fresh.ethernet_ipv6.is_static);
+    EXPECT_FALSE(fresh.wifi_sta_ipv6.is_static);
+
+    SettingsManager manager;
+    EXPECT_FALSE(manager.Sanitize());
+    testing::internal::CaptureStdout();
+    manager.PrintAT();
+    std::string dump = testing::internal::GetCapturedStdout();
+    for (const char* line : {"AT+IP_MODE=IPV4\r\n", "AT+ETHERNET_IP=IPV4,DHCP\r\n", "AT+ETHERNET_IP=IPV6,AUTO\r\n",
+                             "AT+WIFI_STA_IP=IPV4,DHCP\r\n", "AT+WIFI_STA_IP=IPV6,AUTO\r\n"}) {
+        EXPECT_NE(dump.find(line), std::string::npos) << line;
+    }
+}
+
+TEST(SettingsMigration, StoredIPModeIsKeptOnUpgrade) {
+    // A v19 unit on the old default (DUAL), or on any other mode, keeps it: upgrades don't change networks.
+    for (SettingsManager::IPMode mode :
+         {SettingsManager::kIPModeDual, SettingsManager::kIPModeIPv4, SettingsManager::kIPModeIPv6}) {
+        uint8_t blob[sizeof(SettingsManager::Settings)];
+        memset(blob, 0xFF, sizeof(blob));
+        settings_v19::Settings v19{};
+        v19.settings_version = 19;
+        v19.ip_mode = mode;
+        memcpy(blob, &v19, sizeof(v19));
+        SettingsManager::Settings out;
+        ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
+        EXPECT_EQ(out.ip_mode, mode);
+    }
+    // Same for v17 and v18.
+    for (uint32_t version : {17u, 18u}) {
+        uint8_t blob[sizeof(SettingsManager::Settings)];
+        memset(blob, 0xFF, sizeof(blob));
+        settings_v18::Settings v18;
+        memset(&v18, 0, sizeof(v18));
+        v18.settings_version = version;
+        v18.ip_mode = SettingsManager::kIPModeDual;
+        memcpy(blob, &v18, sizeof(v18));  // v17 and v18 share a layout.
+        SettingsManager::Settings out;
+        ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), version, out));
+        EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual) << version;
+    }
 }
