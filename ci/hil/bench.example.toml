@@ -36,6 +36,7 @@ usb_port = "1-1.4"
 # id = "wiggler-a"
 # type = "bee_wiggler"           # Bee Wiggler, Pluto Wiggler or Bee Waggler (command set from AT+DEVICE_INFO?)
 # usb_serial = "E000000000000003"
+# usb_port = "1-1.2.3.4"           # instead of usb_serial: Pluto-type units can share one serial
 # receivers = ["1090u-a", "1421-a"]
 # mode_s_atten_db = 60             # default Mode S (1090 MHz) / UAT (978 MHz) attenuation when a pattern sets none;
 # subg_atten_db = 60               # on firmware 2.x: level = +5 dBm (or power_dbm) - attenuation

@@ -9,10 +9,12 @@ radiating on 1090/978 MHz outside a shielded setup is illegal in most places.
 """
 
 import contextlib
+import glob
 import hashlib
 import json
 import logging
 import math
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -248,8 +250,9 @@ class BeeWiggler(Transmitter):
     port 2) for that run only. After a 2.x run ``last_result`` holds each job's counts and ``warnings`` any
     ``+TX:warning`` lines and level notes.
 
-    Bench file keys: usb_serial (required), mode_s_atten_db / subg_atten_db (applied when the pattern doesn't set
-    atten_db); 2.x only: mode_s_port / uat_port (1, 2 or "BOTH"; default BOTH on a two-port unit), simultaneous (default
+    Bench file keys: usb_serial or usb_port (a sysfs port path such as "1-1.2.3.4", for Pluto-type units that
+    share one serial; then the lock is ``pluto-<usb_port>``), mode_s_atten_db / subg_atten_db (applied when the
+    pattern doesn't set atten_db); 2.x only: mode_s_port / uat_port (1, 2 or "BOTH"; default BOTH on a two-port unit), simultaneous (default
     false), command_set ("auto", "1" or "2"; default auto).
     """
 
@@ -258,8 +261,9 @@ class BeeWiggler(Transmitter):
 
     def __init__(self, cfg: TransmitterConfig, bench: Optional[Bench] = None, lock_timeout: float = 600.0):
         super().__init__(cfg, bench, lock_timeout)
-        if not cfg.usb_serial:
-            raise TransmitterError(f"{cfg.id}: bee_wiggler needs usb_serial in the bench file")
+        self._usb_port = cfg.options.get("usb_port")
+        if not cfg.usb_serial and not self._usb_port:
+            raise TransmitterError(f"{cfg.id}: bee_wiggler needs usb_serial or usb_port in the bench file")
         self._console: Optional[AtConsole] = None
         self._lock: Optional[DeviceLock] = None
         self._out = ""
@@ -276,12 +280,26 @@ class BeeWiggler(Transmitter):
         self.last_result: Optional[Dict] = None
 
     def _device(self) -> Optional[usb.UsbDevice]:
+        if self._usb_port:
+            return usb.find_by_port(self._usb_port)
         return usb.find_by_serial(self.cfg.usb_serial)
+
+    def lock(self, purpose: str = "") -> DeviceLock:
+        if self._usb_port:  # the bench's name for a Pluto-type unit's lock
+            return DeviceLock(f"pluto-{self._usb_port}", self.bench.lock_dir, self.lock_timeout, purpose, self.id)
+        return super().lock(purpose)
 
     def _port(self) -> Optional[str]:
         d = self._device()
         if d is None:
             return None
+        if self._usb_port and not d.is_rp2040:
+            # The tty of the highest-numbered interface (pwiggd's AT console), from sysfs: by-id links of units
+            # sharing a serial can point at another unit.
+            base = os.path.join(usb.SYSFS_ROOT, "bus", "usb", "devices", d.port_path)
+            ttys = glob.glob(os.path.join(base, f"{d.port_path}:*", "tty", "tty*"))
+            ttys.sort(key=lambda t: tuple(int(x) for x in t.split(":")[-1].split("/")[0].split(".")))
+            return os.path.join(usb.DEV_ROOT, os.path.basename(ttys[-1])) if ttys else None
         if not d.is_rp2040 and len(d.by_id) + len(d.ttys) > 1:
             # A pwiggd unit's AT console is its LAST CDC-ACM port (the first is the stock Pluto console).
             return d.by_id[-1] if d.by_id else f"/dev/{d.ttys[-1]}"

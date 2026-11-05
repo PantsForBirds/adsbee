@@ -107,6 +107,16 @@ def test_loopback_explicit_messages_match_exactly():
     assert res.status == "fail"  # background traffic doesn't count
 
 
+def test_loopback_uat_payload_matches_frame_with_fec():
+    # The 1090U reports UAT ADS-B as payload + FEC (as seen on pi-1); a payload-only message matches its start.
+    sent = "00BEE00B0000000000000000000000000000"
+    lines = [f"#UAT*-{sent}3D23C10259BD1CB862D79BEF;(-52,0,00000000DD17897B)"] * 3
+    lines += ["#UAT*-00A1B2C30000000000000000000000000000AABBCCDDEEFF00112233;(-52,0,0)"]  # another aircraft
+    p = TestPattern(band="978", count=3, rate=10, messages=[sent])
+    res = rf_loopback(FakeRx(lines), FakeTx(), p, min_fraction=1.0, settle_s=0)
+    assert (res.status, res.received, res.matched) == ("pass", 4, 3)
+
+
 def test_loopback_table_pattern_counts_band():
     lines = ["#UAT*-00A1B2C3;(0,0,0)"] * 30 + ["#MDS*8D4840D6202CC371C32CE0576098;(1,0,0,0)"] * 30
     res = rf_loopback(FakeRx(lines), FakeTx(), TestPattern(band="978", count=40, rate=100), settle_s=0)
@@ -397,3 +407,19 @@ def test_wiggler_pwiggd_1x_keeps_bee_commands(fake_sysfs, fake_at):
                        info=PWIGGD1_INFO)
     wiggler(mode_s_atten_db=60).transmit(TestPattern(band="1090", count=3, rate=100))
     assert dev.received == ["AT+DEVICE_INFO?", "AT+MODE_S_ATTEN=60", "AT+MODE_S_TABLE_TX=3,100"]
+
+
+def test_wiggler_v2_by_usb_port_uses_last_interface_and_bench_lock(fake_sysfs, fake_at, tmp_path):
+    import os
+
+    jobs = _Jobs()
+    dev = fake_at({"AT+DEVICE_INFO?": PWIGGD2_INFO, "AT+CONTROL=TAKE": "+CONTROL=USB,1", "AT+STOP=ALL": "",
+                   "AT+TX=BOTH,MODE_S,TABLE,3,100,-55": jobs.tx})
+    d = fake_sysfs.add("1-1.2.3.4", "0456", "b673", "44BD31D473CD01CB", tty_name="ttyACM10")  # 1.0: not AT
+    os.makedirs(os.path.join(d, "1-1.2.3.4:1.6", "tty", "ttyACM7"))
+    os.symlink(dev.path, os.path.join(fake_sysfs.dev, "ttyACM7"))
+    w = BeeWiggler(TransmitterConfig("w", "bee_wiggler", options={"usb_port": "1-1.2.3.4", "mode_s_atten_db": 60}))
+    assert w._port() == os.path.join(fake_sysfs.dev, "ttyACM7")
+    assert w.lock().path.endswith("/pluto-1-1.2.3.4.lock")
+    w.transmit(TestPattern(band="1090", count=3, rate=100))
+    assert dev.received[-1] == "AT+TX=BOTH,MODE_S,TABLE,3,100,-55"

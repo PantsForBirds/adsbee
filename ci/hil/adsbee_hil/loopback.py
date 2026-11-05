@@ -69,7 +69,10 @@ def rf_loopback(receiver: Receiver, transmitter: Optional[Transmitter], pattern:
     res.distinct_icao = len({f.icao for f in frames if f.icao is not None})
     wanted = {m.upper() for m in pattern.messages}
     if wanted:
-        res.matched = sum(1 for f in frames if f.hex in wanted)
+        # UAT frames come back with their FEC: a payload-only message matches their first bytes.
+        payloads = tuple(w for w in wanted if len(w) in (36, 68, 864))
+        res.matched = sum(1 for f in frames if f.hex in wanted
+                          or (f.kind.startswith("uat") and payloads and f.hex.startswith(payloads)))
         got = res.matched
     else:
         got = res.received
