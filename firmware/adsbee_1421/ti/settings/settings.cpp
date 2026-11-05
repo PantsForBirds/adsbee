@@ -134,9 +134,10 @@ bool SettingsManager::Load() {
     // was interrupted after the leading words leaves a blob that passes a version-only check on every
     // boot forever, and whose remaining fields are erased flash (0xFF).
     if (!settings.IsValid()) {
-        if (MigrateFromVersion5((const uint8_t*)kFlashSettingsStartAddr, settings)) {
-            CONSOLE_INFO("SettingsManager::Load", "Migrated settings from version 5 to %lu.",
-                         (unsigned long)kSettingsVersion);
+        uint32_t old_version = MigrateFromOlderVersion((const uint8_t*)kFlashSettingsStartAddr, settings);
+        if (old_version != 0) {
+            CONSOLE_INFO("SettingsManager::Load", "Migrated settings from version %lu to %lu.",
+                         (unsigned long)old_version, (unsigned long)kSettingsVersion);
             return WriteSettingsToFlash(settings);
         }
         CONSOLE_ERROR("SettingsManager::Load",
@@ -242,6 +243,7 @@ void SettingsManager::Print() {
     CONSOLE_PRINTF("\t1090 Preamble Mode: %s\r\n", kR1090PreambleModeStrs[adsbee.GetR1090PreambleMode()]);
     CONSOLE_PRINTF("\t1090 Gain: %u (0 = auto AGC)\r\n", adsbee.GetR1090Gain());
     CONSOLE_PRINTF("\t1090 RX Boost: %u (0 = off, 7 = max)\r\n", adsbee.GetR1090RxBoost());
+    CONSOLE_PRINTF("\tHardware LEDs: %s\r\n", settings.led_enabled ? "ENABLED" : "DISABLED");
 
     // CommunicationsManager settings
     CONSOLE_PRINTF("\tLog Level: %s\r\n", kConsoleLogLevelStrs[settings.log_level]);
@@ -296,6 +298,9 @@ void SettingsManager::PrintAT() {
     // AT+FILTER_ALTITUDE_FT
     CONSOLE_PRINTF("AT+FILTER_ALTITUDE_FT=%s,%ld,%ld\r\n", AltitudeFilterModeStr(settings.filter_altitude_mode),
                    (long)settings.filter_altitude_a_ft, (long)settings.filter_altitude_b_ft);
+
+    // AT+LED_ENABLE
+    CONSOLE_PRINTF("AT+LED_ENABLE=%d\r\n", settings.led_enabled);
 
     // AT+LOG_LEVEL
     CONSOLE_PRINTF("AT+LOG_LEVEL=%s\r\n", kConsoleLogLevelStrs[settings.log_level]);
