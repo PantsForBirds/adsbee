@@ -67,7 +67,9 @@ def swarm_range(devices, since: datetime, until: datetime, protocol: str = range
 
 def stats_series(devices, since: datetime, until: datetime, step: str = 'hour') -> list[dict]:
     """Counts summed over bees per step; peaks (aircraft_max, aircraft_unique) are summed too
-    across bees (each bee hears its own sky), maxed within a bee's step."""
+    across bees (each bee hears its own sky), maxed within a bee's step. `bees`: how many of them
+    reported in that step (a dip may be a quiet bee, not a quiet sky). Steps without a report are
+    left out."""
     width = 3600 if step == 'hour' else 86400
     per_bee: dict = defaultdict(lambda: defaultdict(int))
     span = Sample.HOUR if step == 'hour' else Sample.DAY
@@ -76,8 +78,9 @@ def stats_series(devices, since: datetime, until: datetime, step: str = 'hour') 
         slot = per_bee[(epoch, sample['device_id'])]
         for name in STATS:
             slot[name] = max(slot[name], sample[name]) if name in PEAK_STATS else slot[name] + sample[name]
-    totals: dict = defaultdict(lambda: dict.fromkeys(STATS, 0))
+    totals: dict = defaultdict(lambda: {'bees': 0, **dict.fromkeys(STATS, 0)})
     for (epoch, _device), slot in per_bee.items():
+        totals[epoch]['bees'] += 1
         for name in STATS:
             totals[epoch][name] += slot[name]
     return [{'t': datetime.fromtimestamp(epoch, tz.utc).isoformat(), **totals[epoch]} for epoch in sorted(totals)]

@@ -168,6 +168,7 @@ components:
             type: object
             properties:
               t: {type: string, format: date-time}
+              bees: {type: integer, description: Bees that reported in this step}
               modes_valid: {type: integer}
               es_valid: {type: integer}
               uat_adsb: {type: integer}
@@ -299,7 +300,7 @@ paths:
         - {$ref: '#/components/parameters/device'}
         - {$ref: '#/components/parameters/since'}
         - {$ref: '#/components/parameters/until'}
-        - {name: step, in: query, schema: {type: string, enum: [hour, day], default: hour}}
+        - {name: step, in: query, description: 'day: no 400-day window limit', schema: {type: string, enum: [hour, day], default: hour}}
       responses: {'200': {description: Series, content: {application/json: {schema: {$ref: '#/components/schemas/Stats'}}}}}
   /api/swarm/v1/rollouts:
     get:

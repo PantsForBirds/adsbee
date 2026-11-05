@@ -17,7 +17,7 @@
 #endif
 
 // Change this when settings format changes! A mismatched version resets all settings to factory defaults on boot.
-static constexpr uint32_t kSettingsVersion = 6;
+static constexpr uint32_t kSettingsVersion = 7;
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 // Leading word of a valid settings blob. Deliberately not 0x00000000 or 0xFFFFFFFF so that blank,
@@ -212,6 +212,10 @@ class SettingsManager {
         int32_t filter_altitude_a_ft = kDefaultFilterAltitudeAFt;
         int32_t filter_altitude_b_ft = kDefaultFilterAltitudeBFt;
 
+        // AT+LED_ENABLE, added in version 7: false keeps the 1090 and Sub-GHz activity LEDs off (AT+LED_BLINK still
+        // lights them).
+        bool led_enabled = true;
+
         // Integrity check over every preceding byte. Must stay the last member; stamped by Stamp().
         uint32_t crc = 0;
 
@@ -262,33 +266,51 @@ class SettingsManager {
     static_assert(offsetof(Settings, crc) == sizeof(Settings) - sizeof(uint32_t),
                   "Settings::crc must be the last member, with no trailing padding.");
 
-    // Version 5 stored the same fields up to rx_position, then the CRC; version 6 appended filter_distance_enabled,
-    // filter_distance_deci_nm, asterix_sac, asterix_sic and the altitude filter (filter_altitude_*).
+    // Older settings versions are today's fields up to a cutoff, then the CRC. Version 6 appended
+    // filter_distance_enabled, filter_distance_deci_nm, asterix_sac, asterix_sic and filter_altitude_*; version 7
+    // appended led_enabled.
     static constexpr uint16_t kVersion5SettingsSize = 62;
-    static_assert(kSettingsVersion == 6 &&
+    static constexpr uint16_t kVersion6SettingsSize = 78;
+    static_assert(kSettingsVersion == 7 &&
                       offsetof(Settings, filter_distance_enabled) == kVersion5SettingsSize - sizeof(uint32_t) &&
-                      sizeof(Settings) == kVersion5SettingsSize + 16,
-                  "Settings changed: update MigrateFromVersion5 or add a migration from version 6.");
+                      offsetof(Settings, led_enabled) == kVersion6SettingsSize - sizeof(uint32_t) &&
+                      sizeof(Settings) == kVersion6SettingsSize + 1,
+                  "Settings changed: update MigrateFromOlderVersion.");
 
     /**
-     * Converts a version 5 settings blob, so a firmware update keeps the user's settings.
-     * @param[in] blob Stored bytes, at least kVersion5SettingsSize long.
-     * @param[out] out Migrated and stamped settings. Untouched unless the blob is an intact version 5 blob.
-     * @retval True if the blob was an intact version 5 blob.
+     * Converts a version 5 or 6 settings blob, so a firmware update keeps the user's settings. Fields added since
+     * take their defaults.
+     * @param[in] blob Stored bytes, at least sizeof(Settings) long.
+     * @param[out] out Migrated and stamped settings. Untouched unless the blob is an intact older blob.
+     * @retval Version migrated from, or 0 if the blob is not an intact version 5 or 6 blob.
      */
-    static bool MigrateFromVersion5(const uint8_t *blob, Settings &out) {
-        constexpr uint16_t kFieldBytes = kVersion5SettingsSize - sizeof(uint32_t);  // Everything before the CRC.
-        uint32_t magic, version, crc;
+    static uint32_t MigrateFromOlderVersion(const uint8_t *blob, Settings &out) {
+        static constexpr struct {
+            uint32_t version;
+            uint16_t size;
+        } kOlderVersions[] = {{5, kVersion5SettingsSize}, {6, kVersion6SettingsSize}};
+        uint32_t magic, version;
         memcpy(&magic, blob, sizeof(magic));
         memcpy(&version, blob + sizeof(magic), sizeof(version));
-        memcpy(&crc, blob + kFieldBytes, sizeof(crc));
-        if (magic != kSettingsMagic || version != 5 || crc != crc32_ieee_802_3(blob, kFieldBytes)) {
-            return false;
+        if (magic != kSettingsMagic) {
+            return 0;
         }
-        out = Settings();  // The fields added in version 6 take their defaults.
-        memcpy(static_cast<void *>(&out), blob, kFieldBytes);
-        out.Stamp();
-        return true;
+        for (const auto &older : kOlderVersions) {
+            if (version != older.version) {
+                continue;
+            }
+            const uint16_t field_bytes = older.size - sizeof(uint32_t);  // Everything before the CRC.
+            uint32_t crc;
+            memcpy(&crc, blob + field_bytes, sizeof(crc));
+            if (crc != crc32_ieee_802_3(blob, field_bytes)) {
+                return 0;
+            }
+            out = Settings();
+            memcpy(static_cast<void *>(&out), blob, field_bytes);
+            out.Stamp();
+            return older.version;
+        }
+        return 0;
     }
 
     // This struct contains device information that should persist across firmware upgrades.

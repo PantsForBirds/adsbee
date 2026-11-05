@@ -4,12 +4,15 @@
 #include "esp_heap_caps.h"
 #include "hardware_capabilities.hh"  // Internal-RAM heap guards (PSRAM must not mask an internal shortage).
 #include "esp_mac.h"
+#include "esp_netif_net_stack.h"  // esp_netif_get_netif_impl
 #include "crc.hh"
 #include "feed_datagram.hh"
 #include "hal.hh"
 #include "heap_diagnostics.hh"
 #include "lwip/dns.h"
 #include "lwip/err.h"
+#include "lwip/nd6.h"
+#include "lwip/netif.h"
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
@@ -152,19 +155,213 @@ bool CommsManager::IPInit() {
     return true;
 }
 
-void CommsManager::ApplyIPModeToNetifConfig(esp_netif_inherent_config_t& base) {
+// Static IPv6 routing, read by the lwIP hooks below. Written only in the TCP/IP task (see ApplyStaticIPv6()).
+struct StaticIP6Route {
+    struct netif* netif = nullptr;  // nullptr: slot unused.
+    ip6_addr_t ip = {};
+    uint8_t prefix_len = 0;
+    bool has_gateway = false;
+    ip6_addr_t gateway = {};
+};
+static StaticIP6Route static_ip6_routes[2];  // Ethernet, WiFi station.
+
+static bool StaticIP6RouteIsUp(const StaticIP6Route& r) {
+    return r.netif != nullptr && netif_is_up(r.netif) && netif_is_link_up(r.netif);
+}
+
+static bool IP6OnPrefix(const ip6_addr_t* addr, const StaticIP6Route& r) {
+    return IPv6PrefixMatch(reinterpret_cast<const uint8_t*>(addr->addr), reinterpret_cast<const uint8_t*>(r.ip.addr),
+                           r.prefix_len);
+}
+
+// lwIP picks an interface for an unscoped destination (CONFIG_LWIP_HOOK_IP6_ROUTE_CUSTOM). Called before lwIP's own
+// rules. Returns nullptr to leave the choice to lwIP.
+extern "C" struct netif* lwip_hook_ip6_route(const ip6_addr_t* src, const ip6_addr_t* dest) {
+    for (const StaticIP6Route& r : static_ip6_routes) {
+        if (!StaticIP6RouteIsUp(r)) continue;
+        // Replies from the static address, and destinations on its prefix (lwIP only knows /64), go out its interface.
+        if ((src != nullptr && ip6_addr_eq(src, &r.ip)) || IP6OnPrefix(dest, r)) return r.netif;
+    }
+    // Destinations lwIP can route itself: on an interface's /64, or behind a router learned from advertisements.
+    struct netif* netif;
+    NETIF_FOREACH(netif) {
+        if (!netif_is_up(netif) || !netif_is_link_up(netif)) continue;
+        for (int i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
+            if (ip6_addr_isvalid(netif_ip6_addr_state(netif, i)) && ip6_addr_net_eq(dest, netif_ip6_addr(netif, i)) &&
+                (netif_ip6_addr_isstatic(netif, i) || ip6_addr_nethost_eq(dest, netif_ip6_addr(netif, i)))) {
+                return nullptr;
+            }
+        }
+    }
+    if (nd6_find_route(dest) != nullptr) return nullptr;
+    // Else the first interface with a static gateway, Ethernet before the WiFi station.
+    for (const StaticIP6Route& r : static_ip6_routes) {
+        if (StaticIP6RouteIsUp(r) && r.has_gateway) return r.netif;
+    }
+    return nullptr;
+}
+
+// lwIP asks for the next hop of an off-link destination before it picks a router from advertisements
+// (CONFIG_LWIP_HOOK_ND6_GET_GW_CUSTOM). Returns nullptr to use those routers.
+extern "C" const ip6_addr_t* lwip_hook_nd6_get_gw(struct netif* netif, const ip6_addr_t* dest) {
+    for (const StaticIP6Route& r : static_ip6_routes) {
+        if (r.netif != netif) continue;
+        if (IP6OnPrefix(dest, r)) return dest;  // On-link: a prefix shorter than lwIP's /64.
+        if (r.has_gateway) return &r.gateway;
+    }
+    return nullptr;
+}
+
+struct StaticIP6RouteUpdate {
+    int slot;
+    StaticIP6Route route;
+};
+
+static esp_err_t SetStaticIP6Route(void* ctx) {
+    const StaticIP6RouteUpdate* update = static_cast<const StaticIP6RouteUpdate*>(ctx);
+    static_ip6_routes[update->slot] = update->route;
+    // The address stays static: SLAAC never gives it a lifetime, and lwIP takes its /64 as on-link.
+    struct netif* netif = update->route.netif;
+    for (int i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
+        if (ip6_addr_eq(netif_ip6_addr(netif, i), &update->route.ip)) {
+            netif_ip6_addr_set_valid_life(netif, i, IP6_ADDR_LIFE_STATIC);
+            netif_ip6_addr_set_pref_life(netif, i, IP6_ADDR_LIFE_STATIC);
+        }
+    }
+    // Next-hop decisions cached for the old configuration are stale.
+    nd6_clear_destination_cache();
+    return ESP_OK;
+}
+
+void CommsManager::ApplyIPModeToNetifConfig(esp_netif_inherent_config_t& base, const IPv6Config& ipv6) {
     uint32_t flags = base.flags;
     if (ip_mode == SettingsManager::kIPModeIPv6) {
         flags &= ~ESP_NETIF_DHCP_CLIENT;
     } else {
         flags |= ESP_NETIF_DHCP_CLIENT;
     }
-    if (ip_mode == SettingsManager::kIPModeIPv4) {
+    if (ip_mode == SettingsManager::kIPModeIPv4 || ipv6.is_static) {
+        // A static IPv6 address replaces SLAAC: no addresses from router advertisements (routers are still learned).
         flags &= ~ESP_NETIF_FLAG_IPV6_AUTOCONFIG_ENABLED;
     } else {
         flags |= ESP_NETIF_FLAG_IPV6_AUTOCONFIG_ENABLED;
     }
     base.flags = static_cast<esp_netif_flags_t>(flags);
+}
+
+void CommsManager::ApplyStaticIPv4(esp_netif_t* netif, const IPv4Config& config) {
+    if (netif == nullptr || !config.is_static || ip_mode == SettingsManager::kIPModeIPv6) {
+        return;
+    }
+    const char* desc = esp_netif_get_desc(netif);
+    esp_err_t err = esp_netif_dhcpc_stop(netif);
+    if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        CONSOLE_ERROR("CommsManager::ApplyStaticIPv4", "Failed to stop the DHCP client on %s: %s", desc,
+                      esp_err_to_name(err));
+        return;
+    }
+
+    // Setting the address clears the DNS servers, which all interfaces share: put them back, then the static ones.
+    esp_netif_dns_type_t dns_types[] = {ESP_NETIF_DNS_MAIN, ESP_NETIF_DNS_BACKUP, ESP_NETIF_DNS_FALLBACK};
+    esp_netif_dns_info_t old_dns[3] = {};
+    for (uint16_t i = 0; i < 3; i++) {
+        esp_netif_get_dns_info(netif, dns_types[i], &old_dns[i]);
+    }
+
+    esp_netif_ip_info_t ip_info = {};
+    ip_info.ip.addr = ESP_IP4TOADDR(config.ip[0], config.ip[1], config.ip[2], config.ip[3]);
+    ip_info.netmask.addr = ESP_IP4TOADDR(config.netmask[0], config.netmask[1], config.netmask[2], config.netmask[3]);
+    ip_info.gw.addr = ESP_IP4TOADDR(config.gateway[0], config.gateway[1], config.gateway[2], config.gateway[3]);
+    err = esp_netif_set_ip_info(netif, &ip_info);
+    if (err != ESP_OK) {
+        CONSOLE_ERROR("CommsManager::ApplyStaticIPv4", "Failed to set the static IPv4 address on %s: %s", desc,
+                      esp_err_to_name(err));
+        return;
+    }
+
+    for (uint16_t i = 0; i < 3; i++) {
+        if (!ESP_IP_IS_ANY(old_dns[i].ip)) {
+            esp_netif_set_dns_info(netif, dns_types[i], &old_dns[i]);
+        }
+    }
+    ApplyStaticDNS(netif);
+    CONSOLE_INFO("CommsManager::ApplyStaticIPv4", "%s uses static IPv4 address " IPSTR ".", desc,
+                 IP2STR(&ip_info.ip));
+}
+
+void CommsManager::ApplyStaticIPv6(esp_netif_t* netif, const IPv6Config& config) {
+    if (netif == nullptr || !config.is_static || ip_mode == SettingsManager::kIPModeIPv4) {
+        return;
+    }
+    StaticIP6RouteUpdate update = {.slot = netif == ethernet_netif_ ? 0 : 1, .route = {}};
+    const char* desc = esp_netif_get_desc(netif);
+    esp_ip6_addr_t addr = {};
+    memcpy(addr.addr, config.ip, sizeof(addr.addr));
+    // Preferred at once, without duplicate address detection: lwIP only runs DAD for addresses it forms itself.
+    esp_err_t err = esp_netif_add_ip6_address(netif, addr, true);
+    if (err != ESP_OK) {
+        CONSOLE_ERROR("CommsManager::ApplyStaticIPv6", "Failed to add the static IPv6 address on %s: %s", desc,
+                      esp_err_to_name(err));
+        return;
+    }
+
+    StaticIP6Route& r = update.route;
+    r.netif = static_cast<struct netif*>(esp_netif_get_netif_impl(netif));
+    memcpy(r.ip.addr, config.ip, sizeof(r.ip.addr));
+    ip6_addr_assign_zone(&r.ip, IP6_UNICAST, r.netif);
+    r.prefix_len = config.prefix_len;
+    r.has_gateway = !IPv6IsZero(config.gateway);
+    memcpy(r.gateway.addr, config.gateway, sizeof(r.gateway.addr));
+    ip6_addr_assign_zone(&r.gateway, IP6_UNICAST, r.netif);
+    err = esp_netif_tcpip_exec(SetStaticIP6Route, &update);
+    if (err != ESP_OK) {
+        CONSOLE_ERROR("CommsManager::ApplyStaticIPv6", "Failed to set the static IPv6 route on %s: %s", desc,
+                      esp_err_to_name(err));
+    }
+    ApplyStaticDNS(netif);
+
+    char addr_str[IPv6Config::kAddrStrMaxLen + 1], gw_str[IPv6Config::kAddrStrMaxLen + 1];
+    FormatIPv6Addr(config.ip, addr_str, sizeof(addr_str));
+    FormatIPv6Addr(config.gateway, gw_str, sizeof(gw_str));
+    CONSOLE_INFO("CommsManager::ApplyStaticIPv6", "%s uses static IPv6 address %s/%u, gateway %s.", desc, addr_str,
+                 config.prefix_len, r.has_gateway ? gw_str : "from router advertisements");
+}
+
+void CommsManager::ApplyStaticDNS(esp_netif_t* netif) {
+    if (netif == nullptr) {
+        return;
+    }
+    const bool is_ethernet = netif == ethernet_netif_;
+    const IPv4Config& v4 = is_ethernet ? ethernet_ipv4 : wifi_sta_ipv4;
+    const IPv6Config& v6 = is_ethernet ? ethernet_ipv6 : wifi_sta_ipv6;
+    esp_netif_dns_info_t servers[3] = {};
+    uint16_t num_servers = 0;
+    if (ip_mode != SettingsManager::kIPModeIPv6 && v4.is_static) {
+        for (uint16_t i = 0; i < IPv4Config::kNumDNSServers && num_servers < 3; i++) {
+            const uint8_t* a = v4.dns[i];
+            if (IPv4IsZero(a)) continue;
+            servers[num_servers].ip.type = ESP_IPADDR_TYPE_V4;
+            servers[num_servers++].ip.u_addr.ip4.addr = ESP_IP4TOADDR(a[0], a[1], a[2], a[3]);
+        }
+    }
+    if (ip_mode != SettingsManager::kIPModeIPv4 && v6.is_static) {
+        for (uint16_t i = 0; i < IPv6Config::kNumDNSServers && num_servers < 3; i++) {
+            if (IPv6IsZero(v6.dns[i])) continue;
+            esp_netif_dns_info_t& dns = servers[num_servers++];
+            dns.ip.type = ESP_IPADDR_TYPE_V6;
+            memcpy(dns.ip.u_addr.ip6.addr, v6.dns[i], sizeof(dns.ip.u_addr.ip6.addr));
+            // A link-local server is reached through this interface.
+            dns.ip.u_addr.ip6.zone = IPv6IsLinkLocal(v6.dns[i]) ? esp_netif_get_netif_impl_index(netif) : 0;
+        }
+    }
+    esp_netif_dns_type_t types[] = {ESP_NETIF_DNS_MAIN, ESP_NETIF_DNS_BACKUP, ESP_NETIF_DNS_FALLBACK};
+    for (uint16_t i = 0; i < num_servers; i++) {
+        esp_err_t err = esp_netif_set_dns_info(netif, types[i], &servers[i]);
+        if (err != ESP_OK) {
+            CONSOLE_ERROR("CommsManager::ApplyStaticDNS", "Failed to set DNS server %u on %s: %s", i + 1,
+                          esp_netif_get_desc(netif), esp_err_to_name(err));
+        }
+    }
 }
 
 void CommsManager::IP6LinkUpEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
@@ -187,6 +384,7 @@ void CommsManager::IP6LinkUpEventHandler(void* arg, esp_event_base_t event_base,
         CONSOLE_ERROR("CommsManager::IP6LinkUpEventHandler", "Failed to create IPv6 link-local address on %s: %s",
                       esp_netif_get_desc(netif), esp_err_to_name(err));
     }
+    ApplyStaticIPv6(netif, netif == ethernet_netif_ ? ethernet_ipv6 : wifi_sta_ipv6);
 }
 
 void CommsManager::GetIP6AddrStrs(esp_netif_t* netif, char* link_local, char* global, size_t len) {
@@ -248,6 +446,7 @@ void CommsManager::IPEventHandler(void* arg, esp_event_base_t event_base, int32_
             CONSOLE_INFO("CommsManager::IPEventHandler",
                          "WiFi Station got IP Address. IP: %s, Netmask: %s, Gateway: %s", wifi_sta_ip, wifi_sta_netmask,
                          wifi_sta_gateway);
+            ApplyStaticDNS(wifi_sta_netif_);  // DHCP may have replaced the static IPv6 DNS servers.
             break;
         }
         case IP_EVENT_ETH_GOT_IP: {
@@ -265,6 +464,7 @@ void CommsManager::IPEventHandler(void* arg, esp_event_base_t event_base, int32_
 
             CONSOLE_INFO("CommsManager::IPEventHandler", "Ethernet got IP address. IP: %s, Netmask: %s, Gateway: %s",
                          ethernet_ip, ethernet_netmask, ethernet_gateway);
+            ApplyStaticDNS(ethernet_netif_);  // DHCP may have replaced the static IPv6 DNS servers.
             break;
         }
         case IP_EVENT_GOT_IP6: {

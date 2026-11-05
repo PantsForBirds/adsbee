@@ -10,14 +10,25 @@ class FlashUtils {
     static const uint32_t kFlashSettingsRegionSizeBytes = 0x2000;  // 8 KB (4 sectors) reserved per settings region
 
     /**
-     * Disables interrupts before flash erase/program operations.
+     * Disables interrupts and the flash cache (VIMS) before flash erase/program operations.
      */
     static void FlashSafe();
 
     /**
-     * Restores interrupts after flash erase/program operations.
+     * Restores the flash cache (emptied, so later reads see the new flash contents) and interrupts after flash
+     * erase/program operations.
      */
     static void FlashUnsafe();
+
+    /**
+     * Turns the flash cache and line buffer off. Returns the previous VIMS mode for RestoreFlashCache().
+     */
+    static uint32_t DisableFlashCache();
+
+    /**
+     * Turns the line buffer and, if mode says it was on, the flash cache back on.
+     */
+    static void RestoreFlashCache(uint32_t mode);
 
     /**
      * Erases kFlashSettingsRegionSizeBytes of flash starting at addr.
@@ -49,4 +60,5 @@ class FlashUtils {
 
    private:
     static uint32_t stored_key_;
+    static uint32_t stored_cache_mode_;
 };

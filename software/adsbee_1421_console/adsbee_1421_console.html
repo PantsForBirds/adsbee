@@ -4276,7 +4276,7 @@
                 }
             } else if (serial.connected) {
                 // Bare Enter: forward a newline as a raw keystroke (bypassing the AT queue) so blocking
-                // commands that wait for "any key" (AT+RX_CW; AT+TX_CW on Debug builds) can be stopped from the console.
+                // commands that wait for "any key" (AT+RX_CW, AT+TX_CW) can be stopped from the console.
                 // The firmware ignores blank lines otherwise, so this is silent when idle. Not added to
                 // history.
                 appendToTerminal('> \n');
@@ -4695,11 +4695,12 @@
 //   hex      text input for hex values (no 0x prefix); optional maxVal
 //   display  read-only informational value populated by parse(); never written
 // Fields may declare visibleIf(values) to show/hide based on sibling values,
-// note: '...' for a hint line under the input, and validate(value) returning an error
-// message (or '') for checks beyond the type's own. lockOffIf(deviceValues) (bool) and
-// lockOffBits(deviceValues) (bitmask) stop the user from turning a setting or option on
-// while still allowing it to be turned off; entries may declare notice(deviceValues),
-// a line under the help text explaining such a lock.
+// note: '...' for a hint line under the input, and validate(value, values) returning an
+// error message (or '') for checks beyond the type's own; values holds the entry's field
+// values. lockOffIf(deviceValues) (bool) and lockOffBits(deviceValues) (bitmask) stop the
+// user from turning a setting or option on while still allowing it to be turned off;
+// entries may declare notice(deviceValues), a line under the help text explaining such a
+// lock.
 //
 // To expose a new AT command in the GUI, add one entry to the product's schema array.
 
@@ -5146,7 +5147,7 @@ class SettingsEngine {
                 else if (field.maxLen && value.length > field.maxLen) msg = `Maximum ${field.maxLen} characters.`;
                 else if (field.type === 'hex' && value !== '' && !/^[0-9A-F]+$/.test(value)) msg = 'Enter a hex value.';
             }
-            if (!msg && field.validate) msg = field.validate(value) || '';
+            if (!msg && field.validate) msg = field.validate(value, this.entryValues(entry)) || '';
             if (msg) { errEl.textContent = msg; ok = false; }
         }
         return ok;

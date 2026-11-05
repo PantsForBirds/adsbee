@@ -69,8 +69,8 @@ TEST(SettingsHash, SameSettingsSameHashWhateverThePadding) {
 TEST(SettingsHash, DefaultSettingsHashIsPinned) {
     // Host defaults (no device info, access point channel 1). Changes only with the Settings struct or its defaults.
     Settings settings;
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0x6ED01E80u);
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x1D6E4B4Bu);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0xA2A2895Fu);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xCBEC1242u);
 }
 
 TEST(SettingsHash, StoredCRCDoesNotCount) {
@@ -161,6 +161,10 @@ TEST(SettingsHash, EverySharedSettingChangesBothHashes) {
     EXPECT_CHANGES_BOTH(strcpy(s.mqtt_broker.websocket_path, "/ws"));
     EXPECT_CHANGES_BOTH(s.asterix_sac = 25);
     EXPECT_CHANGES_BOTH(strcpy(s.ntp_server, "time.example.com"));
+    EXPECT_CHANGES_BOTH(s.ethernet_ipv4.is_static = true);
+    EXPECT_CHANGES_BOTH(s.wifi_sta_ipv4.is_static = true);
+    EXPECT_CHANGES_BOTH(s.ethernet_ipv6.is_static = true);
+    EXPECT_CHANGES_BOTH(s.wifi_sta_ipv6.is_static = true);
     EXPECT_CHANGES_BOTH(s.ble_output_mode = SettingsManager::kBLEOutputGDL90);
 }
 
@@ -172,6 +176,14 @@ TEST(SettingsHash, FeedSlotsAreNotInterchangeable) {
 }
 
 TEST(SettingsHash, PerUnitSettingsChangeOnlyTheFullHash) {
+    EXPECT_CHANGES_FULL_ONLY(s.ethernet_ipv4.ip[3] = 50);
+    EXPECT_CHANGES_FULL_ONLY(s.ethernet_ipv4.netmask[0] = 255);
+    EXPECT_CHANGES_FULL_ONLY(s.wifi_sta_ipv4.gateway[3] = 1);
+    EXPECT_CHANGES_FULL_ONLY(s.wifi_sta_ipv4.dns[1][0] = 9);
+    EXPECT_CHANGES_FULL_ONLY(s.ethernet_ipv6.prefix_len = 64);
+    EXPECT_CHANGES_FULL_ONLY(s.ethernet_ipv6.ip[0] = 0x20);
+    EXPECT_CHANGES_FULL_ONLY(s.wifi_sta_ipv6.gateway[15] = 1);
+    EXPECT_CHANGES_FULL_ONLY(s.wifi_sta_ipv6.dns[1][0] = 0x20);
     EXPECT_CHANGES_FULL_ONLY(strcpy(s.core_network_settings.hostname, "ADSBee1090-0240907986541"));
     EXPECT_CHANGES_FULL_ONLY(strcpy(s.core_network_settings.wifi_ap_ssid, "ADSBee1090-0240907986541"));
     EXPECT_CHANGES_FULL_ONLY(s.core_network_settings.wifi_ap_channel = 11);
