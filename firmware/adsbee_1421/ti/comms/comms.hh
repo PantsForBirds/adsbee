@@ -136,6 +136,8 @@ class CommsManager {
     CPP_AT_CALLBACK(ATDeviceInfoCallback);
     CPP_AT_HELP_CALLBACK(ATOTAHelpCallback);
     CPP_AT_CALLBACK(ATR1090GainCallback);
+    CPP_AT_CALLBACK(ATLEDBlinkCallback);
+    CPP_AT_CALLBACK(ATLEDEnableCallback);
     CPP_AT_CALLBACK(ATLogLevelCallback);
     CPP_AT_CALLBACK(ATLREnableCallback);
     CPP_AT_CALLBACK(ATASTERIXSACSICCallback);
