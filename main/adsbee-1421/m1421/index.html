@@ -1618,6 +1618,14 @@
 <td>Receiver packet and health counters.</td>
 </tr>
 <tr>
+<td><code>AT+LED_ENABLE=&lt;enabled&gt;</code></td>
+<td>0 keeps the 1090MHz and sub-GHz activity LEDs (SD26, SD27) off; 1 (default) turns them back on. Firmware 0.3.11-rc11 and later.</td>
+</tr>
+<tr>
+<td><code>AT+LED_BLINK=&lt;ms&gt;,&lt;led&gt;[,&lt;led&gt;...]</code></td>
+<td>Light LEDs <code>1090</code>, <code>SUBG</code> or <code>ALL</code> for 1 to 60000 ms, even with <code>AT+LED_ENABLE=0</code>. For test fixtures.</td>
+</tr>
+<tr>
 <td><code>AT+WATCHDOG=&lt;seconds&gt;</code></td>
 <td>Watchdog timeout (10 seconds by default, 0 disables).</td>
 </tr>
