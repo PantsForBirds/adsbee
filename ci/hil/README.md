@@ -182,14 +182,22 @@ override them.
   | Firmware | Commands | End of a transmission |
   |---|---|---|
   | Bee Wiggler; Pluto Wiggler / Bee Waggler 1.x | `AT+MODE_S_ATTEN`, `AT+SUBG_ATTEN`, `AT+MODE_S_TABLE_TX`, `AT+MODE_S_TX`, `AT+UAT_ADSB_TABLE_TX`, `AT+DUAL_TABLE_TX` | `OK`; any character stops an unbounded one |
-  | Pluto Wiggler / Bee Waggler 2.x | `AT+TX=<port>,MODE_S\|UAT,…` jobs with the level in dBm, `AT+HOLD` (dual), `AT+SCHED` + `AT+TX=…,FILE,sched` (several explicit messages) | `+DONE:<id>,…` per job; `AT+STOP` ends unbounded ones |
+  | Pluto Wiggler / Bee Waggler 2.x | `AT+TX=<port>,MODE_S\|UAT,…` jobs with the level in dBm, `AT+HOLD` (dual); several explicit messages: `AT+SCHED` entries (finite, ≤ 256 packets) or an `AT+FILE` packet file with a period | `+DONE:<id>,sent=,late=,dropped=,reason=` per job; `AT+STOP` ends unbounded ones |
 
   On 2.x, `atten_db` keeps its meaning: the level is `power_dbm` (default +5 dBm, the 1.x reference) minus
   the Bee-quantized attenuation, so a bench file gives the same level on every firmware. On a Bee Waggler
   every job goes out on both ports (`AT+TX=BOTH`, each at its own calibration), as 1.x mirrored TX1 to TX2,
   so the cabling stays as it was; a Pluto Wiggler has port 1. `mode_s_port` and `uat_port` (1, 2 or BOTH)
-  change that. `dual` is time-shared unless the rate is 0 or `simultaneous = true`; then a Bee Waggler opts
-  in to the fixed-LO plan for that run (about 25 dB less maximum level, Mode S on port 1, UAT on port 2).
+  change that. `dual` is time-shared unless the rate is 0 or `simultaneous = true`; then a Bee Waggler checks
+  `AT+SIMULTANEOUS?` (pair available, levels under the plan's maximum) and opts in to the fixed-LO plan for
+  that run (about 25 dB less maximum level, Mode S on port 1, UAT on port 2). An ADSBee 1090U fed more than
+  about -45 dBm in that plan misses frames unless its `AT+TL_OFFSET` is raised (1200 mV worked, DESIGN-2
+  §5.3) or you attenuate more; the driver warns. Explicit messages may be Mode S (14/28 hex digits) or, on
+  2.x, UAT payloads (`packets.unique_uat_set()`); `dual` with messages needs both kinds. A looped `sched`
+  or a packet file without a period wraps back to back and loses a packet per loop, so the driver plays
+  `sched` once and gives files a period. Each job's sent/late/dropped counts end up in the loopback line.
+  `adsbee-hil tx stop` sends `AT+STOP=ALL` and `AT+SIMULTANEOUS=OFF` to a 2.x unit (it ignores a bare
+  character).
 - **`pluto`**: ADALM-Pluto (or compatible) SDR at `uri`, not a Pluto Wiggler, playing a 1090 MHz
   waveform of distinct DF17 messages (`packets.unique_df17_set()`). **Not yet tested on hardware;**
   see the TODO in `transmitters.py`.

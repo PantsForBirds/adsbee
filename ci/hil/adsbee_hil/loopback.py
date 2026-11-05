@@ -76,4 +76,7 @@ def rf_loopback(receiver: Receiver, transmitter: Optional[Transmitter], pattern:
     need = int(res.sent * min_fraction + 0.999)
     res.status = "pass" if got >= need else "fail"
     res.detail = f"needed {need}"
+    tx = getattr(transmitter, "last_result", None)
+    if tx:  # the transmitter's own counts (pwiggd 2.x)
+        res.detail += f"; tx sent {tx['sent']}, late {tx['late']}, dropped {tx['dropped']}"
     return res

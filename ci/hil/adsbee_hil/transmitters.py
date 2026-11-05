@@ -9,6 +9,9 @@ radiating on 1090/978 MHz outside a shielded setup is illegal in most places.
 """
 
 import contextlib
+import hashlib
+import json
+import logging
 import math
 import re
 import time
@@ -21,6 +24,7 @@ from .console import AtConsole
 from .lock import DeviceLock
 from .packets import unique_df17_set
 
+log = logging.getLogger(__name__)
 
 class TransmitterError(RuntimeError):
     pass
@@ -138,6 +142,15 @@ CMD_SET_2 = "2"  # pwiggd 2.x: AT+TX jobs, AT+LEVEL, AT+STOP (projects/adsbee/fi
 #: ``power_dbm`` (or this) minus the Bee-quantized attenuation, in dBm at the SMA.
 PWIGGD_REF_DBM = 5.0
 
+#: An ADSBee 1090U fed Mode S above about this level in the simultaneous plan misses frames unless its
+#: AT+TL_OFFSET is raised (the plan's LO leaves its noise floor low; DESIGN-2 §5.3, t-1014).
+SIMULTANEOUS_TL_DBM = -45.0
+
+SCHED_MAX = 256  # AT+SCHED entries
+FILE_CHUNK = 4096  # bytes per AT+FILE=DATA (8192 hex digits)
+_MODE_S_HEX = (14, 28)
+_UAT_HEX = (36, 68, 864, 60, 96, 1104)  # payload only (the unit adds the FEC) or payload + FEC
+
 _FW_VERSION = re.compile(r"Firmware Version:\s*(\d+)\.(\d+)\.(\d+)")
 _PRODUCT_2X = re.compile(r"^\s*Product:\s*(Bee Waggler|Pluto Wiggler)\b", re.MULTILINE)
 
@@ -163,6 +176,52 @@ def bee_quantize_atten(db: float) -> float:
     return total
 
 
+def split_messages(messages: List[str]) -> Tuple[List[str], List[str]]:
+    """(Mode S, UAT) messages, told apart by length."""
+    ms = [m for m in messages if len(m) in _MODE_S_HEX]
+    uat = [m for m in messages if len(m) in _UAT_HEX]
+    bad = [m for m in messages if m not in ms and m not in uat]
+    if bad:
+        raise TransmitterError(f"not a Mode S (14/28 hex digits) or UAT (36/68/864, or with FEC 60/96/1104) "
+                               f"message: {bad[0]}")
+    return ms, uat
+
+
+def packet_file(proto: str, messages: List[str], count: int, rate: float,
+                dbm: Optional[str]) -> Tuple[str, int]:
+    """A waggler-packets/1 JSONL file (DESIGN-2 §6) of ``messages`` cycled at ``rate``, and its loop count.
+
+    The header's period is the cycle's length, so loops stay evenly spaced: without one a loop starts right after
+    the last packet and a receiver loses a packet per loop (DESIGN-2 §6.4). Without ``dbm`` packets play at the
+    port's AT+LEVEL.
+    """
+    n = len(messages)
+    if count < 0:
+        packets, loops = messages, -1
+    elif count % n == 0:
+        packets, loops = messages, count // n
+    else:
+        packets, loops = [messages[i % n] for i in range(count)], 1
+    lines = [json.dumps({"format": "waggler-packets/1", "time": "relative", "crc": "check",
+                         "period": round(len(packets) / rate, 9)})]
+    for i, m in enumerate(packets):
+        pkt = {"t": round(i / rate, 9), "proto": proto, "hex": m}
+        if dbm is not None:
+            pkt["dBm"] = float(dbm)
+        lines.append(json.dumps(pkt))
+    return "\n".join(lines) + "\n", loops
+
+
+def file_upload_commands(name: str, text: str) -> List[str]:
+    """AT+FILE=BEGIN / DATA / END lines that upload ``text`` as file ``name`` (the same name replaces it)."""
+    data = text.encode()
+    cmds = [f"AT+FILE=BEGIN,{name},{len(data)},{hashlib.sha256(data).hexdigest()},jsonl"]
+    for off in range(0, len(data), FILE_CHUNK):
+        cmds.append(f"AT+FILE=DATA,{off},{data[off:off + FILE_CHUNK].hex().upper()}")
+    cmds.append("AT+FILE=END")
+    return cmds
+
+
 class BeeWiggler(Transmitter):
     """The wiggler family over its USB AT console: Bee Wiggler (RP2040), Pluto Wiggler (ADALM-Pluto) and Bee
     Waggler (ZynqSDR 7020). The command set follows the firmware.
@@ -177,14 +236,17 @@ class BeeWiggler(Transmitter):
     A running transmission ends with OK; any received character stops an unbounded one.
 
     pwiggd 2.x (command set 2, AT.md): every transmission is a job, ``AT+TX=<port>,<proto>,…`` answers
-    ``+TX:job=<id>`` at once and ends with ``+DONE:<id>,…``; ``AT+STOP`` ends unbounded ones. Levels are absolute
-    dBm at the SMA: ``power_dbm`` (default PWIGGD_REF_DBM) minus the Bee-quantized attenuation, so a bench file
-    gives the same level as on 1.x. Several explicit Mode S messages play as an ``AT+SCHED`` file. On a two-port
-    Bee Waggler every job goes out on both ports (``AT+TX=BOTH``, each port at its own calibration), as 1.x
-    mirrored TX1 to TX2; a Pluto Wiggler has port 1. ``dual`` starts both tables together with ``AT+HOLD``,
-    time-shared unless the pattern needs overlap (rate 0) or ``simultaneous = true``: then a Bee Waggler opts in to
-    the fixed-LO plan (``AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS``, about 25 dB less maximum level, Mode S on
-    port 1 and UAT on port 2) for that run only.
+    ``+TX:job=<id>`` at once and ends with ``+DONE:<id>,sent=,late=,dropped=,reason=``; ``AT+STOP`` ends unbounded
+    ones. Levels are absolute dBm at the SMA: ``power_dbm`` (default PWIGGD_REF_DBM) minus the Bee-quantized
+    attenuation, so a bench file gives the same level as on 1.x. Several explicit messages of one protocol play as
+    ``AT+SCHED`` entries (finite, up to 256 packets) or else as an uploaded packet file with a period (deleted
+    after). On a two-port Bee Waggler every job goes out on both ports (``AT+TX=BOTH``, each port at its own
+    calibration), as 1.x mirrored TX1 to TX2; a Pluto Wiggler has port 1. ``dual`` starts a Mode S and a UAT job
+    together with ``AT+HOLD``, time-shared unless the pattern needs overlap (rate 0) or ``simultaneous = true``:
+    then a Bee Waggler checks ``AT+SIMULTANEOUS?`` and opts in to the fixed-LO plan
+    (``AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS``, about 25 dB less maximum level, Mode S on port 1 and UAT on
+    port 2) for that run only. After a 2.x run ``last_result`` holds each job's counts and ``warnings`` any
+    ``+TX:warning`` lines and level notes.
 
     Bench file keys: usb_serial (required), mode_s_atten_db / subg_atten_db (applied when the pattern doesn't set
     atten_db); 2.x only: mode_s_port / uat_port (1, 2 or "BOTH"; default BOTH on a two-port unit), simultaneous (default
@@ -204,8 +266,14 @@ class BeeWiggler(Transmitter):
         self._cmd_set: Optional[str] = None
         self._ports = 1
         self._jobs: Dict[str, Optional[str]] = {}  # 2.x: job id -> its +DONE line (None while running)
+        self._job_cmd: Dict[str, str] = {}
         self._buf = ""
         self._simultaneous = False
+        self._files: List[str] = []  # 2.x: packet files uploaded for this run
+        self._levels: Dict[str, Optional[float]] = {}  # 2.x: dBm per protocol in this run (None = AT+LEVEL)
+        self.simultaneous_costs: List[str] = []
+        self.warnings: List[str] = []
+        self.last_result: Optional[Dict] = None
 
     def _device(self) -> Optional[usb.UsbDevice]:
         return usb.find_by_serial(self.cfg.usb_serial)
@@ -317,50 +385,65 @@ class BeeWiggler(Transmitter):
         return (str(self.cfg.options.get("mode_s_port", default)).upper(),
                 str(self.cfg.options.get("uat_port", default)).upper())
 
-    def commands_for_v2(self, p: TestPattern, ports: Optional[int] = None) -> List[str]:
-        """Command set 2 (pwiggd 2.x): AT commands that play pattern p. Each AT+TX line starts a job."""
+    def _band_v2(self, proto: str, port: str, msgs: List[str], p: TestPattern, level: List[str], name: str,
+                 default_level, allow_sched: bool) -> List[str]:
+        """Commands for one protocol's job: its table, one message repeated, AT+SCHED entries or a packet file."""
+        self._levels[proto] = float(level[0]) if level else None
+        if len(msgs) <= 1:
+            payload = msgs[0] if msgs else "TABLE"
+            return [",".join([f"AT+TX={port}", proto, payload, self._count_v2(p.count), _num(p.rate)] + level)]
+        if p.rate <= 0:
+            raise TransmitterError("several explicit messages need a rate > 0")
+        if allow_sched and 0 <= p.count <= SCHED_MAX:
+            # Finite: every packet is an entry, played once (a looped sched wraps back to back). No validator, so
+            # rates above the packet files' 7,800 Mode S/s per lane work.
+            dbm = level[0] if level else (_num(default_level(port, proto)) if default_level else None)
+            if dbm is None:
+                raise TransmitterError("AT+SCHED entries need a level: set atten_db or power_dbm")
+            cmds = ["AT+SCHED=CLEAR"]
+            for i in range(p.count):
+                cmds.append(f"AT+SCHED=ADD,{port},{proto},{round(i * 1e6 / p.rate)},{dbm},{msgs[i % len(msgs)]}")
+            return cmds + [f"AT+TX={port},FILE,sched,1"]
+        text, loops = packet_file(proto, msgs, p.count, p.rate, level[0] if level else None)
+        self._files.append(name)
+        return file_upload_commands(name, text) + [f"AT+TX={port},FILE,{name},{loops}"]
+
+    def commands_for_v2(self, p: TestPattern, ports: Optional[int] = None, default_level=None) -> List[str]:
+        """Command set 2 (pwiggd 2.x): AT commands that play pattern p. Each AT+TX line starts a job.
+
+        ``default_level(port, proto)`` gives the unit's AT+LEVEL when AT+SCHED entries need a level the pattern
+        and bench file don't set.
+        """
         if ports is not None:
             self._ports = ports
+        self._files, self._levels = [], {}
         ms_port, uat_port = self.v2_ports()
-        rate = _num(p.rate)
+        ms_msgs, uat_msgs = split_messages(p.messages)
         cmds: List[str] = []
         if p.band == "1090":
-            level = self._level_v2(p, "mode_s_atten_db")
-            msgs = p.messages
-            if len(msgs) > 1:
-                # Several messages, cycled: an in-memory schedule played `loops` times.
-                if p.rate <= 0:
-                    raise TransmitterError("several explicit messages need a rate > 0")
-                if len(msgs) > 256:
-                    raise TransmitterError("AT+SCHED holds at most 256 messages")
-                dbm = level[0] if level else _num(PWIGGD_REF_DBM)
-                # BOTH (a Bee Waggler's default): every entry on both ports, as 1.x mirrored everything.
-                cmds.append("AT+SCHED=CLEAR")
-                for i, m in enumerate(msgs):
-                    cmds.append(f"AT+SCHED=ADD,{ms_port},MODE_S,{round(i * 1e6 / p.rate)},{dbm},{m}")
-                loops = -1 if p.count < 0 else max(1, math.ceil(p.count / len(msgs)))
-                cmds.append(f"AT+TX={ms_port},FILE,sched,{loops}")
-            else:
-                payload = msgs[0] if msgs else "TABLE"
-                cmds.append(",".join([f"AT+TX={ms_port}", "MODE_S", payload, self._count_v2(p.count), rate] + level))
+            if uat_msgs:
+                raise TransmitterError("band 1090 takes Mode S messages only")
+            cmds += self._band_v2("MODE_S", ms_port, ms_msgs, p, self._level_v2(p, "mode_s_atten_db"), "hil_mode_s",
+                                  default_level, True)
         elif p.band == "978":
-            if p.messages:
-                raise TransmitterError("explicit UAT messages are not supported yet")
-            cmds.append(",".join([f"AT+TX={uat_port}", "UAT", "TABLE", self._count_v2(p.count), rate]
-                                 + self._level_v2(p, "subg_atten_db")))
+            if ms_msgs:
+                raise TransmitterError("band 978 takes UAT messages only")
+            cmds += self._band_v2("UAT", uat_port, uat_msgs, p, self._level_v2(p, "subg_atten_db"), "hil_uat",
+                                  default_level, True)
         elif p.band == "dual":
-            if p.messages:
-                raise TransmitterError("dual-band patterns use the wiggler's tables")
+            if p.messages and not (ms_msgs and uat_msgs):
+                raise TransmitterError("dual with explicit messages needs Mode S and UAT messages")
             want_simul = bool(self.cfg.options.get("simultaneous", False)) or p.rate <= 0
             if want_simul and self._ports >= 2:
                 cmds.append("AT+SIMULTANEOUS=MODE_S,UAT,ACCEPT_COSTS")
                 ms_port, uat_port = "1", "2"  # the fixed-LO plan: Mode S on port 1, UAT on port 2
-            cmds.append("AT+HOLD=1")
-            cmds.append(",".join([f"AT+TX={ms_port}", "MODE_S", "TABLE", self._count_v2(p.count), rate]
-                                 + self._level_v2(p, "mode_s_atten_db")))
-            cmds.append(",".join([f"AT+TX={uat_port}", "UAT", "TABLE", self._count_v2(p.count), rate]
-                                 + self._level_v2(p, "subg_atten_db")))
-            cmds.append("AT+HOLD=0")
+            # Two jobs, so no AT+SCHED (one in-memory file): several messages go in packet files.
+            jobs = (self._band_v2("MODE_S", ms_port, ms_msgs, p, self._level_v2(p, "mode_s_atten_db"), "hil_mode_s",
+                                  default_level, False)
+                    + self._band_v2("UAT", uat_port, uat_msgs, p, self._level_v2(p, "subg_atten_db"), "hil_uat",
+                                    default_level, False))
+            uploads = [c for c in jobs if c.startswith("AT+FILE=")]
+            cmds += uploads + ["AT+HOLD=1"] + [c for c in jobs if not c.startswith("AT+FILE=")] + ["AT+HOLD=0"]
         else:
             raise TransmitterError(f"unknown band {p.band!r}")
         return cmds
@@ -371,7 +454,14 @@ class BeeWiggler(Transmitter):
         if m:
             self._jobs[m.group(1)] = line
             return True
-        return line.startswith("+CONTROL:lost")
+        if line.startswith("+CONTROL:lost"):
+            self._warn(f"{self.id}: another session took control")
+            return True
+        return False
+
+    def _warn(self, msg: str) -> None:
+        self.warnings.append(msg)
+        log.warning("%s", msg)
 
     def _lines(self, deadline: float) -> Iterator[str]:
         while time.monotonic() < deadline:
@@ -393,28 +483,68 @@ class BeeWiggler(Transmitter):
                 m = next((re.match(r"\+TX:job=(\d+)", x) for x in out if x.startswith("+TX:job=")), None)
                 if m:
                     self._jobs.setdefault(m.group(1), None)
+                    self._job_cmd[m.group(1)] = cmd
+                for x in out:
+                    if x.startswith("+TX:warning="):  # e.g. a looped file without a period
+                        self._warn(f"{self.id}: {x}")
                 return out
             if line.startswith("ERROR"):
                 raise TransmitterError(f"{self.id}: {cmd} -> {line}")
             out.append(line)
         raise TransmitterError(f"{self.id}: {cmd}: no OK within {timeout:g} s")
 
+    def _default_level(self, port: str, proto: str) -> float:
+        """The unit's AT+LEVEL for a port (port 1 for BOTH) and protocol."""
+        want = "1" if port == "BOTH" else port
+        for line in self._cmd_v2("AT+LEVEL?"):
+            f = line.split("=", 1)[-1].split(",")
+            if line.startswith("+LEVEL=") and len(f) >= 3 and f[0] == want and f[1] == proto:
+                return float(f[2])
+        raise TransmitterError(f"{self.id}: AT+LEVEL? has no level for port {want} {proto}")
+
+    def _check_simultaneous(self) -> None:
+        """Before opting in: the unit can do Mode S + UAT, and the levels fit the plan. Keeps the cost lines."""
+        out = self._cmd_v2("AT+SIMULTANEOUS?")
+        # Prefix match: the pair line goes on with the method and a status note.
+        pair = next((x for x in out if x.startswith("+SIMULTANEOUS:pair=MODE_S+UAT,")), None)
+        if pair is None or not pair.startswith("+SIMULTANEOUS:pair=MODE_S+UAT,available,"):
+            raise TransmitterError(f"{self.id}: no simultaneous Mode S + UAT on this unit ({pair or 'no pair line'})")
+        self.simultaneous_costs = [x.split("=", 1)[1] for x in out if x.startswith("+SIMULTANEOUS:cost=")]
+        for c in self.simultaneous_costs:
+            log.info("%s: simultaneous cost: %s", self.id, c)
+        for proto, key in (("MODE_S", "max_mode_s_dbm"), ("UAT", "max_uat_dbm")):
+            line = next((x for x in out if x.startswith(f"+SIMULTANEOUS:{key}=")), None)
+            level = self._levels.get(proto)
+            if line and level is not None and level > float(line.split("=", 1)[1]) + 1e-9:
+                raise TransmitterError(f"{self.id}: {proto} at {level:g} dBm is above the simultaneous plan's "
+                                       f"maximum ({line.split('=', 1)[1]} dBm); attenuate more")
+        level = self._levels.get("MODE_S")
+        if level is not None and level > SIMULTANEOUS_TL_DBM:
+            self._warn(f"{self.id}: simultaneous Mode S at {level:g} dBm: an ADSBee fed above about "
+                       f"{SIMULTANEOUS_TL_DBM:g} dBm misses frames unless its AT+TL_OFFSET is raised (or attenuate "
+                       f"more)")
+
     def _start_v2(self, pattern: TestPattern) -> None:
-        self._jobs, self._buf, self._simultaneous = {}, "", False
-        cmds = self.commands_for_v2(pattern)
+        self._jobs, self._job_cmd, self._buf, self._simultaneous = {}, {}, "", False
+        self.simultaneous_costs, self.warnings, self.last_result = [], [], None
         self._cmd_v2("AT+CONTROL=TAKE")  # The bench lock makes this tool the unit's only user.
         self._cmd_v2("AT+STOP=ALL")  # A job left running by a crashed run.
+        cmds = self.commands_for_v2(pattern, default_level=self._default_level)
         try:
             for cmd in cmds:
-                self._cmd_v2(cmd, 10.0 if cmd.startswith("AT+SIMULTANEOUS") else 5.0)
+                if cmd.startswith("AT+SIMULTANEOUS="):
+                    self._check_simultaneous()
+                out = self._cmd_v2(cmd, 10.0 if cmd.startswith(("AT+SIMULTANEOUS", "AT+FILE=END")) else 5.0)
                 if cmd.startswith("AT+SIMULTANEOUS="):
                     self._simultaneous = True
+                if cmd == "AT+FILE=END" and not (out and ",valid," in out[0]):
+                    raise TransmitterError(f"{self.id}: packet file refused: {'; '.join(out[:4])}")
         except Exception:
             if "AT+HOLD=1" in cmds:
                 with contextlib.suppress(Exception):
                     self._cmd_v2("AT+STOP=ALL")
                     self._cmd_v2("AT+HOLD=0")
-            self._leave_simultaneous()
+            self._finish_v2()
             raise
 
     def _wait_v2(self, deadline: float) -> None:
@@ -427,15 +557,51 @@ class BeeWiggler(Transmitter):
         if pending:
             raise TransmitterError(f"{self.id}: transmission did not finish within the timeout")
         self._out = "\n".join(d for d in self._jobs.values() if d)
+        jobs = []
+        for job, line in self._jobs.items():
+            f = dict(kv.split("=", 1) for kv in line.split(",")[1:] if "=" in kv)
+            jobs.append({"job": int(job), "command": self._job_cmd.get(job, ""), "reason": f.get("reason", ""),
+                         **{k: int(f.get(k, 0)) for k in ("sent", "late", "dropped")}})
+        self.last_result = {k: sum(j[k] for j in jobs) for k in ("sent", "late", "dropped")}
+        self.last_result["jobs"] = jobs
+        for j in jobs:  # per job since pwiggd 2.0 counts each late / dropped packet to its own job
+            if j["late"] or j["dropped"]:
+                self._warn(f"{self.id}: job {j['job']} ({j['command']}): {j['late']} late, {j['dropped']} dropped "
+                           f"of {j['sent']} sent")
         bad = [d for d in self._jobs.values() if d and not re.search(r"reason=(done|stopped)\b", d)]
         if bad:
             raise TransmitterError(f"{self.id}: {'; '.join(bad)}")
 
-    def _leave_simultaneous(self) -> None:
-        if self._simultaneous and self._console is not None:
+    def _finish_v2(self) -> None:
+        """After a 2.x run: back to the time-shared plan, uploaded files deleted."""
+        if self._console is None:
+            return
+        if self._simultaneous:
             self._simultaneous = False
             with contextlib.suppress(Exception):
                 self._cmd_v2("AT+SIMULTANEOUS=OFF", 10.0)
+        for name in self._files:
+            with contextlib.suppress(Exception):
+                self._cmd_v2(f"AT+FILE=DELETE,{name}")
+        self._files = []
+
+    def stop_all(self) -> str:
+        """Emergency stop for a transmission left running by another process. 2.x ignores a bare character."""
+        with self.lock("at"):
+            self._console = self._open()
+            try:
+                if self._detect(self._console) != CMD_SET_2:
+                    return self._console.transact("x", 3.0)  # Any character ends a 1.x transmission.
+                self._buf, self._jobs = "", {}
+                out = []
+                for cmd in ("AT+CONTROL=TAKE", "AT+STOP=ALL", "AT+SIMULTANEOUS=OFF"):
+                    out += [cmd] + self._cmd_v2(cmd, 10.0)
+                for line in self._lines(time.monotonic() + 0.5):  # +DONE lines of the stopped jobs
+                    self._note(line)
+                return "\n".join(out + [d for d in self._jobs.values() if d])
+            finally:
+                self._console.close()
+                self._console = None
 
     # ── common ──────────────────────────────────────────────────────────────
 
@@ -469,7 +635,7 @@ class BeeWiggler(Transmitter):
                 self._wait_v2(deadline)
             finally:
                 self._active = None
-                self._leave_simultaneous()
+                self._finish_v2()
                 self._cleanup()
             return
         while time.monotonic() < deadline:
@@ -494,7 +660,8 @@ class BeeWiggler(Transmitter):
             self.wait(5)
         finally:
             self._active = None
-            self._leave_simultaneous()
+            if self._cmd_set == CMD_SET_2:
+                self._finish_v2()
             self._cleanup()
 
     def _cleanup(self) -> None:
