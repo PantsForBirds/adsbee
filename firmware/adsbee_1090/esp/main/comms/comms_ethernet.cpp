@@ -48,6 +48,8 @@ void CommsManager::EthernetEventHandler(void* arg, esp_event_base_t event_base, 
                          mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
             ethernet_connected_ = true;
             ethernet_link_up_timestamp_ms_ = get_time_since_boot_ms();
+            // Runs before the netif's connected handler: handlers for any event of a base come first.
+            ApplyStaticIPv4(ethernet_netif_, ethernet_ipv4);
             break;
         }
         case ETHERNET_EVENT_DISCONNECTED: {
@@ -83,7 +85,7 @@ void CommsManager::EthernetEventHandler(void* arg, esp_event_base_t event_base, 
 bool CommsManager::EthernetInit() {
     //  Create instance(s) of esp-netif for SPI Ethernet(s)
     esp_netif_inherent_config_t base = ESP_NETIF_INHERENT_DEFAULT_ETH();
-    ApplyIPModeToNetifConfig(base);
+    ApplyIPModeToNetifConfig(base, ethernet_ipv6);
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
     cfg.base = &base;
     ethernet_netif_ = esp_netif_new(&cfg);

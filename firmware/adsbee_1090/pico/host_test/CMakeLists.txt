@@ -61,6 +61,9 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_fixedmath.cc
         test_geo_utils.cc
         test_idle_session_tracker.cc
+        test_ipv4_config.cc
+        test_ipv6_config.cc
+        test_static_ip_config.cc
         test_nasa_cpr.cc
         test_mode_s_packet_decoder.cc
         test_mode_s_single_bit_correction.cc

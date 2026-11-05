@@ -20,7 +20,7 @@ struct ReleaseBlob {
 const ReleaseBlob kReleaseBlobs[] = {
     {"0.9.0-rc4", 10, false}, {"0.9.0-rc9", 11, false}, {"0.9.0-rc19", 12, true},
     {"0.9.0", 12, true},      {"0.9.1-rc2", 14, true},  {"0.9.1-rc6", 15, true},
-    {"0.9.1-rc7", 17, true},  {"0.9.1-rc8", 18, true},
+    {"0.9.1-rc7", 17, true},  {"0.9.1-rc8", 18, true},  {"0.9.1-rc11", 19, true},
 };
 
 // Reads a blob the way Load() does: sizeof(Settings) bytes, the tail past the old struct left as erased EEPROM.
@@ -74,6 +74,10 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         ExpectCoreNetworkSettingsKept(out.core_network_settings);
         EXPECT_FALSE(out.auto_update_enabled);  // Opt-in: off after every upgrade.
         EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);
+        EXPECT_FALSE(out.ethernet_ipv4.is_static);
+        EXPECT_FALSE(out.wifi_sta_ipv4.is_static);
+        EXPECT_EQ(ValidateIPv4Config(out.ethernet_ipv4), nullptr);
+        EXPECT_EQ(ValidateIPv4Config(out.wifi_sta_ipv4), nullptr);
         for (uint16_t i = 0; i < SettingsManager::Settings::kWiFiSTANumExtraNetworks; i++) {
             EXPECT_STREQ(out.wifi_sta_extra_networks[i].ssid, "");
         }
