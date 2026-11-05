@@ -275,7 +275,8 @@ void SettingsMigrator::MigrateV18ToV19(const settings_v18::Settings& in, setting
 }
 
 void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, SettingsManager::Settings& out) {
-    // Start from a fresh, fully-defaulted current struct: Ethernet and WiFi station IPv4 (new in v20) use DHCP.
+    // Start from a fresh, fully-defaulted current struct: Ethernet and WiFi station IPv4 and IPv6 (new in v20) use DHCP
+    // and AUTO.
     new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
 
     out.settings_version = kSettingsVersion;

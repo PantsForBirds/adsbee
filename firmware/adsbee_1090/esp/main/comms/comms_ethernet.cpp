@@ -85,7 +85,7 @@ void CommsManager::EthernetEventHandler(void* arg, esp_event_base_t event_base, 
 bool CommsManager::EthernetInit() {
     //  Create instance(s) of esp-netif for SPI Ethernet(s)
     esp_netif_inherent_config_t base = ESP_NETIF_INHERENT_DEFAULT_ETH();
-    ApplyIPModeToNetifConfig(base);
+    ApplyIPModeToNetifConfig(base, ethernet_ipv6);
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
     cfg.base = &base;
     ethernet_netif_ = esp_netif_new(&cfg);

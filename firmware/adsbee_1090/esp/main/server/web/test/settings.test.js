@@ -40,16 +40,18 @@ class FakeDocument {
 
 global.document = new FakeDocument();
 global.confirm = () => true;
-const { SettingsEngine, SETTINGS_SCHEMA_1090 } = require('../settings.js');
+const { SettingsEngine, SETTINGS_SCHEMA_1090, parseIPv6 } = require('../settings.js');
 
-// The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc9, plus ETHERNET_IP and WIFI_STA_IP (0.9.1-rc12).
-const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHERNET":[1],"ETHERNET_IP":["STATIC","192.168.1.50","255.255.255.0","192.168.1.1","1.1.1.1",""],"ESP32_ENABLE":[1],' +
+// The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc9, plus ETHERNET_IP, ETHERNET_IP6, WIFI_STA_IP and
+// WIFI_STA_IP6 (0.9.1-rc12).
+const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHERNET":[1],"ETHERNET_IP":["STATIC","192.168.1.50","255.255.255.0","192.168.1.1","1.1.1.1",""],' +
+    '"ETHERNET_IP6":["STATIC","2001:db8:1::50/64","fe80::1","2001:4860:4860::8888",""],"ESP32_ENABLE":[1],' +
     '"FEED_ENABLE":[1],"FILTER_ALTITUDE_FT":["OFF",0,10000],"FILTER_DISTANCE_NM":[0,100.0],"SWARM":[0,"https://adsbee.aero",""],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"IP_MODE":["DUAL"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
     '"MAVLINK_ID":[1,156],"NTP_SERVER":["pool.ntp.org"],"PROTOCOL_OUT":["NONE","NONE"],"REMOTE_ID":[0,7,"0x00"],' +
     '"REMOTE_ID_TX":[0,7,"",1,2,"","0x0000"],"RX_ENABLE":[1,1],' +
     '"RX_POSITION":["LOWEST","OK",37.000000,-122.000000,-50,125,317.7,74,"000000"],"SUBG_ENABLE":["1"],' +
     '"TL_OFFSET":[600,"-104 dBm"],"WATCHDOG":[10],"WIFI_AP":[0,"test-bee","yummyflowers",1],"WIFI_STA":[0,""],' +
-    '"WIFI_STA_IP":["DHCP","","","","",""],' +
+    '"WIFI_STA_IP":["DHCP","","","","",""],"WIFI_STA_IP6":["AUTO","","","",""],' +
     '"WIFI_STA_NETWORK":["office",""]}';
 
 // Scripted transport: handler(cmd, opts, n) returns body lines or throws; records every command.
@@ -396,6 +398,101 @@ test('static IPv4 reads from AT+ETHERNET_IP? when the dump lacks it', async () =
     assert.strictEqual(input('ETHERNET_IP', 'gateway').value, '10.42.2.1');
     assert.strictEqual(input('ETHERNET_IP', 'dns1').value, '');
     assert.strictEqual(input('WIFI_STA_IP', 'mode').value, 'DHCP');
+    assert.strictEqual(engine.dirtyEntries().length, 0);
+});
+
+test('IPv6 parser takes the usual text forms', () => {
+    const hex = (str) => { const b = parseIPv6(str); return b && b.map(x => x.toString(16).padStart(2, '0')).join(''); };
+    assert.strictEqual(hex('2001:db8::50'), '20010db8000000000000000000000050');
+    assert.strictEqual(hex('::'), '0'.repeat(32));
+    assert.strictEqual(hex('::1'), '0'.repeat(31) + '1');
+    assert.strictEqual(hex('fe80::'), 'fe80' + '0'.repeat(28));
+    assert.strictEqual(hex('1:2:3:4:5:6:7:8'), '00010002000300040005000600070008');
+    assert.strictEqual(hex('::ffff:192.0.2.1'), '00000000000000000000ffffc0000201');
+    assert.strictEqual(hex('2001:DB8:0:0:0:0:0:50'), hex('2001:db8::50'));
+    for (const bad of ['', ':', ':::', '1::2::3', '1:2:3:4:5:6:7', '1:2:3:4:5:6:7:8:9', '12345::', 'g::1', 'fe80::1%eth0',
+        '2001:db8::/64', '1.2.3.4', '::1.2.3', '::256.0.0.1', '1:2:3:4:5:6:7:8::', '::1:2:3:4:5:6:7:8', '1.2.3.4::']) {
+        assert.strictEqual(parseIPv6(bad), null, bad);
+    }
+});
+
+test('static IPv6 loads from the dump, checks addresses and saves per interface', async () => {
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [DUMP];
+        if (cmd.startsWith('AT+ETHERNET_IP6=') || cmd.startsWith('AT+WIFI_STA_IP6=') || cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.strictEqual(input('ETHERNET_IP6', 'mode').value, 'STATIC');
+    assert.strictEqual(input('ETHERNET_IP6', 'ip').value, '2001:db8:1::50');
+    assert.strictEqual(input('ETHERNET_IP6', 'prefix').value, '64');
+    assert.strictEqual(input('ETHERNET_IP6', 'gateway').value, 'fe80::1');
+    assert.strictEqual(input('ETHERNET_IP6', 'dns1').value, '2001:4860:4860::8888');
+    assert.strictEqual(input('ETHERNET_IP6', 'dns2').value, '');
+    assert.strictEqual(input('WIFI_STA_IP6', 'mode').value, 'AUTO');
+    assert.strictEqual(engine.dirtyEntries().length, 0);
+
+    // Errors are caught before anything is written.
+    const err = (field) => document.getElementById(`settings-error-WIFI_STA_IP6-${field}`).textContent;
+    const tryValues = async (values) => {
+        input('WIFI_STA_IP6', 'mode').value = 'STATIC';
+        for (const [id, v] of Object.entries(values)) input('WIFI_STA_IP6', id).value = v;
+        await engine.save();
+        assert.deepStrictEqual(t.sent, ['AT+SETTINGS?JSON']);
+    };
+    await tryValues({ ip: '2001:db8::zz', prefix: '0', gateway: '', dns1: '', dns2: '' });
+    assert.match(err('ip'), /2001:db8::50/);
+    assert.match(err('prefix'), /1 to 128/);
+    await tryValues({ ip: 'fe80::50', prefix: '64' });
+    assert.match(err('ip'), /global/);
+    await tryValues({ ip: '2001:db8:1::', prefix: '64' });
+    assert.match(err('ip'), /host bits/);
+    await tryValues({ ip: '2001:db8:1::50', prefix: '64', gateway: '2001:db8:2::1', dns1: 'ff02::fb' });
+    assert.strictEqual(err('ip'), '');
+    assert.match(err('gateway'), /prefix/);
+    assert.match(err('dns1'), /unicast/);
+    await tryValues({ gateway: '2001:db8:1::50', dns1: '' });
+    assert.match(err('gateway'), /differ/);
+
+    input('WIFI_STA_IP6', 'gateway').value = '2001:db8:1::1';
+    input('WIFI_STA_IP6', 'dns2').value = 'fd00::53';
+    input('ETHERNET_IP6', 'mode').value = 'AUTO';
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 4),
+        ['AT+WIFI_STA_IP6=2001:db8:1::50/64,2001:db8:1::1,,fd00::53', 'AT+ETHERNET_IP6=AUTO', 'AT+SETTINGS=SAVE']);
+});
+
+test('static IPv6 fields hide for AUTO and an address-only entry saves without trailing commas', () => {
+    const entry = SETTINGS_SCHEMA_1090.find(e => e.cmd === 'ETHERNET_IP6');
+    const visible = (mode) => entry.fields.filter(f => !f.visibleIf || f.visibleIf({ mode })).map(f => f.id);
+    assert.deepStrictEqual(visible('AUTO'), ['mode']);
+    assert.deepStrictEqual(visible('STATIC'), ['mode', 'ip', 'prefix', 'gateway', 'dns1', 'dns2']);
+    assert.deepStrictEqual(entry.build({ mode: 'STATIC', ip: 'fd00:42::60', prefix: '48', gateway: '', dns1: '', dns2: '' }),
+        ['AT+ETHERNET_IP6=fd00:42::60/48']);
+    // Each IPv6 entry sits right after its IPv4 entry.
+    const cmds = SETTINGS_SCHEMA_1090.map(e => e.cmd);
+    assert.strictEqual(cmds.indexOf('ETHERNET_IP6'), cmds.indexOf('ETHERNET_IP') + 1);
+    assert.strictEqual(cmds.indexOf('WIFI_STA_IP6'), cmds.indexOf('WIFI_STA_IP') + 1);
+});
+
+test('static IPv6 reads from AT+ETHERNET_IP6? when the dump lacks it', async () => {
+    const json = JSON.parse(DUMP.slice('SETTINGS='.length));
+    delete json.ETHERNET_IP6;
+    delete json.WIFI_STA_IP6;
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return ['SETTINGS=' + JSON.stringify(json)];
+        if (cmd === 'AT+ETHERNET_IP6?') return ['ETHERNET_IP6=fd00:42::60/64,,,'];
+        if (cmd === 'AT+WIFI_STA_IP6?') return ['WIFI_STA_IP6=AUTO'];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.strictEqual(input('ETHERNET_IP6', 'mode').value, 'STATIC');
+    assert.strictEqual(input('ETHERNET_IP6', 'ip').value, 'fd00:42::60');
+    assert.strictEqual(input('ETHERNET_IP6', 'prefix').value, '64');
+    assert.strictEqual(input('ETHERNET_IP6', 'gateway').value, '');
+    assert.strictEqual(input('WIFI_STA_IP6', 'mode').value, 'AUTO');
     assert.strictEqual(engine.dirtyEntries().length, 0);
 });
 

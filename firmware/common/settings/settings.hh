@@ -9,6 +9,7 @@
 #include "macros.hh"
 #include "altitude_filter.hh"
 #include "ipv4_config.hh"
+#include "ipv6_config.hh"
 #include "unit_conversions.hh"  // DeciNmToMeters
 #include "stdio.h"
 #include "stdlib.h"  // for strtoull
@@ -111,8 +112,8 @@ class SettingsManager {
     // IP versions used on the Ethernet and WiFi station interfaces. The WiFi access point is always IPv4.
     enum IPMode : uint8_t {
         kIPModeIPv4 = 0,  // IPv4 only (DHCP or static).
-        kIPModeDual,      // IPv4 (DHCP or static) and IPv6 (link-local + SLAAC).
-        kIPModeIPv6,      // IPv6 only (link-local + SLAAC), no IPv4.
+        kIPModeDual,      // IPv4 (DHCP or static) and IPv6 (link-local plus SLAAC or static).
+        kIPModeIPv6,      // IPv6 only (link-local plus SLAAC or static), no IPv4.
         kNumIPModes
     };
     static constexpr uint16_t kIPModeStrMaxLen = 4;  // Longest AT string ("IPV4", "DUAL", "IPV6").
@@ -441,6 +442,9 @@ class SettingsManager {
         // DHCP or static IPv4 per interface (AT+ETHERNET_IP, AT+WIFI_STA_IP). Static IPv4 is not used in kIPModeIPv6.
         IPv4Config ethernet_ipv4;
         IPv4Config wifi_sta_ipv4;
+        // AUTO (SLAAC) or static IPv6 per interface (AT+ETHERNET_IP6, AT+WIFI_STA_IP6). Not used in kIPModeIPv4.
+        IPv6Config ethernet_ipv6;
+        IPv6Config wifi_sta_ipv6;
 
         /**
          * Default constructor.
@@ -722,6 +726,16 @@ class SettingsManager {
      */
     static int FormatIPv4ConfigArgs(const IPv4Config& config, char* buf, size_t buf_len);
 
+    // "addr/prefix,gateway,dns1,dns2" at most.
+    static constexpr uint16_t kIPv6ConfigStrMaxLen = (IPv6Config::kAddrStrMaxLen + 1) * (2 + IPv6Config::kNumDNSServers) + 4;
+
+    /**
+     * Writes an IPv6 configuration as AT+ETHERNET_IP6 / AT+WIFI_STA_IP6 arguments: "AUTO", or
+     * "<addr>/<prefix>,<gateway>,<dns1>,<dns2>" with empty fields for unset addresses.
+     * @retval snprintf's return value.
+     */
+    static int FormatIPv6ConfigArgs(const IPv6Config& config, char* buf, size_t buf_len);
+
     /**
      * Converts an IPMode to its AT command string. Returns "DUAL" for out-of-range values.
      */
@@ -897,7 +911,7 @@ extern SettingsManager settings_manager;
 // Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
 static_assert(kSettingsVersion == 20,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
-static_assert(sizeof(SettingsManager::Settings) == 1832,
+static_assert(sizeof(SettingsManager::Settings) == 1964,
               "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");
 static_assert(alignof(SettingsManager::Settings) == 4, "Settings alignment changed. See the comment above.");
 static_assert(sizeof(SettingsManager::Settings::CoreNetworkSettings) == 240,
@@ -936,5 +950,8 @@ static_assert(offsetof(SettingsManager::Settings, swarm_token) == 1725, "Setting
 static_assert(sizeof(IPv4Config) == 21, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, ethernet_ipv4) == 1789, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, wifi_sta_ipv4) == 1810, "Settings layout changed. See above.");
+static_assert(sizeof(IPv6Config) == 66, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, ethernet_ipv6) == 1831, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, wifi_sta_ipv6) == 1897, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */

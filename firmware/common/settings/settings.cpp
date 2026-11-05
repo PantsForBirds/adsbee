@@ -240,6 +240,19 @@ bool SettingsManager::Sanitize() {
         }
     }
 
+    IPv6Config* ipv6_configs[] = {&settings.ethernet_ipv6, &settings.wifi_sta_ipv6};
+    const char* ipv6_config_names[] = {"ethernet_ipv6", "wifi_sta_ipv6"};
+    for (uint16_t i = 0; i < 2; i++) {
+        changed |= SanitizeBool(ipv6_configs[i]->is_static, ipv6_config_names[i]);
+        const char* error = ValidateIPv6Config(*ipv6_configs[i]);
+        if (error != nullptr) {
+            CONSOLE_ERROR("SettingsManager::Sanitize", "%s invalid (%s), resetting to AUTO.", ipv6_config_names[i],
+                          error);
+            *ipv6_configs[i] = IPv6Config();
+            changed = true;
+        }
+    }
+
     if (settings.rx_position.source >= RxPosition::kNumPositionSources) {
         CONSOLE_ERROR("SettingsManager::Sanitize", "rx_position.source %u out of range, resetting to kPositionSourceLowestAircraft.",
                       settings.rx_position.source);
@@ -262,6 +275,19 @@ int SettingsManager::FormatIPv4ConfigArgs(const IPv4Config& config, char* buf, s
         FormatIPv4Addr(config.dns[i], addrs[3 + i], sizeof(addrs[3 + i]));
     }
     return snprintf(buf, buf_len, "%s,%s,%s,%s,%s", addrs[0], addrs[1], addrs[2], addrs[3], addrs[4]);
+}
+
+int SettingsManager::FormatIPv6ConfigArgs(const IPv6Config& config, char* buf, size_t buf_len) {
+    if (!config.is_static) {
+        return snprintf(buf, buf_len, "AUTO");
+    }
+    char addrs[2 + IPv6Config::kNumDNSServers][IPv6Config::kAddrStrMaxLen + 1];
+    FormatIPv6Addr(config.ip, addrs[0], sizeof(addrs[0]));
+    FormatIPv6Addr(config.gateway, addrs[1], sizeof(addrs[1]));
+    for (uint16_t i = 0; i < IPv6Config::kNumDNSServers; i++) {
+        FormatIPv6Addr(config.dns[i], addrs[2 + i], sizeof(addrs[2 + i]));
+    }
+    return snprintf(buf, buf_len, "%s/%u,%s,%s,%s", addrs[0], config.prefix_len, addrs[1], addrs[2], addrs[3]);
 }
 
 // Appends "<label><config>\r\n" to a print buffer. Returns the number of characters written.
@@ -409,6 +435,12 @@ void SettingsManager::Print() {
     CONSOLE_PRINTF("%s", print_buf);
     print_buf_len = 0;
 
+    char ipv6_config_str[kIPv6ConfigStrMaxLen + 1];
+    FormatIPv6ConfigArgs(settings.ethernet_ipv6, ipv6_config_str, sizeof(ipv6_config_str));
+    CONSOLE_PRINTF("\tEthernet IPv6: %s\r\n", ipv6_config_str);
+    FormatIPv6ConfigArgs(settings.wifi_sta_ipv6, ipv6_config_str, sizeof(ipv6_config_str));
+    CONSOLE_PRINTF("\tWiFi Station IPv6: %s\r\n", ipv6_config_str);
+
     // Print feed settings.
     CONSOLE_PRINTF("\tFeed URIs:\r\n");
     for (uint16_t i = 0; i < Settings::kMaxNumFeeds; i++) {
@@ -544,4 +576,11 @@ void SettingsManager::PrintAT() {
     CONSOLE_PRINTF("AT+ETHERNET_IP=%s\r\n", ipv4_config_str);
     FormatIPv4ConfigArgs(settings.wifi_sta_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
     CONSOLE_PRINTF("AT+WIFI_STA_IP=%s\r\n", ipv4_config_str);
+
+    // AT+ETHERNET_IP6, AT+WIFI_STA_IP6
+    char ipv6_config_str[kIPv6ConfigStrMaxLen + 1];
+    FormatIPv6ConfigArgs(settings.ethernet_ipv6, ipv6_config_str, sizeof(ipv6_config_str));
+    CONSOLE_PRINTF("AT+ETHERNET_IP6=%s\r\n", ipv6_config_str);
+    FormatIPv6ConfigArgs(settings.wifi_sta_ipv6, ipv6_config_str, sizeof(ipv6_config_str));
+    CONSOLE_PRINTF("AT+WIFI_STA_IP6=%s\r\n", ipv6_config_str);
 }

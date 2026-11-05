@@ -69,8 +69,8 @@ TEST(SettingsHash, SameSettingsSameHashWhateverThePadding) {
 TEST(SettingsHash, DefaultSettingsHashIsPinned) {
     // Host defaults (no device info, access point channel 1). Changes only with the Settings struct or its defaults.
     Settings settings;
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0x3FD4BCB3u);
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x3D78FC32u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0x4CE62FF7u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xD09BEC4Eu);
 }
 
 TEST(SettingsHash, StoredCRCDoesNotCount) {
@@ -163,6 +163,8 @@ TEST(SettingsHash, EverySharedSettingChangesBothHashes) {
     EXPECT_CHANGES_BOTH(strcpy(s.ntp_server, "time.example.com"));
     EXPECT_CHANGES_BOTH(s.ethernet_ipv4.is_static = true);
     EXPECT_CHANGES_BOTH(s.wifi_sta_ipv4.is_static = true);
+    EXPECT_CHANGES_BOTH(s.ethernet_ipv6.is_static = true);
+    EXPECT_CHANGES_BOTH(s.wifi_sta_ipv6.is_static = true);
 }
 
 TEST(SettingsHash, FeedSlotsAreNotInterchangeable) {
@@ -177,6 +179,10 @@ TEST(SettingsHash, PerUnitSettingsChangeOnlyTheFullHash) {
     EXPECT_CHANGES_FULL_ONLY(s.ethernet_ipv4.netmask[0] = 255);
     EXPECT_CHANGES_FULL_ONLY(s.wifi_sta_ipv4.gateway[3] = 1);
     EXPECT_CHANGES_FULL_ONLY(s.wifi_sta_ipv4.dns[1][0] = 9);
+    EXPECT_CHANGES_FULL_ONLY(s.ethernet_ipv6.prefix_len = 64);
+    EXPECT_CHANGES_FULL_ONLY(s.ethernet_ipv6.ip[0] = 0x20);
+    EXPECT_CHANGES_FULL_ONLY(s.wifi_sta_ipv6.gateway[15] = 1);
+    EXPECT_CHANGES_FULL_ONLY(s.wifi_sta_ipv6.dns[1][0] = 0x20);
     EXPECT_CHANGES_FULL_ONLY(strcpy(s.core_network_settings.hostname, "ADSBee1090-0240907986541"));
     EXPECT_CHANGES_FULL_ONLY(strcpy(s.core_network_settings.wifi_ap_ssid, "ADSBee1090-0240907986541"));
     EXPECT_CHANGES_FULL_ONLY(s.core_network_settings.wifi_ap_channel = 11);

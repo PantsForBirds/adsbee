@@ -54,7 +54,7 @@ TEST(SettingsMigration, LayoutLockedSizes) {
     EXPECT_EQ(sizeof(settings_v17::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v18::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v19::Settings), 1792u);
-    EXPECT_EQ(sizeof(SettingsManager::Settings), 1832u);
+    EXPECT_EQ(sizeof(SettingsManager::Settings), 1964u);
     EXPECT_EQ(offsetof(settings_v19::Settings, swarm_token), offsetof(SettingsManager::Settings, swarm_token));
 
     EXPECT_EQ(sizeof(settings_v14::Settings), 1140u);
@@ -711,7 +711,7 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ntp = dump.find("AT+NTP_SERVER=pool.ntp.org");
     ASSERT_NE(ntp, std::string::npos);
     EXPECT_LT(asterix, ntp);
-    // Then the altitude filter, swarm reports, and static IPv4 last.
+    // Then the altitude filter, swarm reports, and static IPv4 and IPv6 last.
     EXPECT_LT(ntp, filter_altitude);
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
@@ -721,7 +721,13 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     EXPECT_EQ(dump.find("AT+", swarm + 1), ethernet_ip);
     size_t wifi_sta_ip = dump.find("AT+WIFI_STA_IP=DHCP\r\n");
     EXPECT_EQ(dump.find("AT+", ethernet_ip + 1), wifi_sta_ip);
-    EXPECT_EQ(dump.find("AT+", wifi_sta_ip + 1), std::string::npos);
+    size_t ethernet_ip6 = dump.find("AT+ETHERNET_IP6=AUTO\r\n");
+    ASSERT_NE(ethernet_ip6, std::string::npos);
+    EXPECT_EQ(dump.find("AT+", wifi_sta_ip + 1), ethernet_ip6);
+    size_t wifi_sta_ip6 = dump.find("AT+WIFI_STA_IP6=AUTO\r\n");
+    ASSERT_NE(wifi_sta_ip6, std::string::npos);
+    EXPECT_EQ(dump.find("AT+", ethernet_ip6 + 1), wifi_sta_ip6);
+    EXPECT_EQ(dump.find("AT+", wifi_sta_ip6 + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
     memcpy(&manager.settings.auto_update_enabled, &raw, 1);
@@ -1317,6 +1323,7 @@ TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
 
     SettingsManager::Settings out;
     out.ethernet_ipv4.is_static = true;  // Stale: must not survive.
+    out.wifi_sta_ipv6.is_static = true;
     ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
     EXPECT_EQ(out.settings_version, kSettingsVersion);
     EXPECT_EQ(memcmp(&out.core_network_settings, &v19.core_network_settings, sizeof(v19.core_network_settings)), 0);
@@ -1347,6 +1354,9 @@ TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
     IPv4Config dhcp;
     EXPECT_EQ(memcmp(&out.ethernet_ipv4, &dhcp, sizeof(dhcp)), 0);
     EXPECT_EQ(memcmp(&out.wifi_sta_ipv4, &dhcp, sizeof(dhcp)), 0);
+    IPv6Config slaac;
+    EXPECT_EQ(memcmp(&out.ethernet_ipv6, &slaac, sizeof(slaac)), 0);
+    EXPECT_EQ(memcmp(&out.wifi_sta_ipv6, &slaac, sizeof(slaac)), 0);
 
     SettingsManager manager;
     manager.settings = out;
@@ -1371,6 +1381,8 @@ TEST(SettingsMigration, V18ToCurrentUsesDHCPAndV19Defaults) {
     EXPECT_EQ(out.filter_altitude_b_ft, defaults.filter_altitude_b_ft);
     EXPECT_FALSE(out.ethernet_ipv4.is_static);
     EXPECT_FALSE(out.wifi_sta_ipv4.is_static);
+    EXPECT_FALSE(out.ethernet_ipv6.is_static);
+    EXPECT_FALSE(out.wifi_sta_ipv6.is_static);
 }
 
 TEST(SettingsManager, SanitizeResetsInvalidIPv4ConfigToDHCP) {
@@ -1435,4 +1447,87 @@ TEST(Settings, StaticIPv4DumpReplaysThroughTheParser) {
     IPv4Config replayed;
     ASSERT_EQ(ParseIPv4ConfigArgs(parts.data(), parts.size(), replayed), nullptr);
     EXPECT_EQ(memcmp(&replayed, &manager.settings.ethernet_ipv4, sizeof(replayed)), 0);
+}
+
+TEST(SettingsManager, SanitizeResetsInvalidIPv6ConfigToAuto) {
+    SettingsManager manager;
+    IPv6Config& eth = manager.settings.ethernet_ipv6;
+    // Off-prefix gateway.
+    eth.is_static = true;
+    eth.prefix_len = 64;
+    ASSERT_TRUE(ParseIPv6Addr("2001:db8:1::50", 14, eth.ip));
+    ASSERT_TRUE(ParseIPv6Addr("2001:db8:2::1", 13, eth.gateway));
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(eth.is_static);
+    EXPECT_TRUE(IPv6IsZero(eth.ip));
+    EXPECT_TRUE(IPv6IsZero(eth.gateway));
+
+    // A prefix length left behind on an AUTO interface.
+    manager.settings.wifi_sta_ipv6.prefix_len = 64;
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_EQ(manager.settings.wifi_sta_ipv6.prefix_len, 0);
+
+    // A raw non-boolean is_static is normalized, then validated (no address: back to AUTO).
+    uint8_t raw = 0x7F;
+    memcpy(&manager.settings.wifi_sta_ipv6.is_static, &raw, 1);
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(manager.settings.wifi_sta_ipv6.is_static);
+
+    // Erased flash (0xFF everywhere) is not a valid configuration.
+    memset(&eth, 0xFF, sizeof(eth));
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(eth.is_static);
+
+    // A valid static configuration is kept.
+    eth.is_static = true;
+    eth.prefix_len = 64;
+    ASSERT_TRUE(ParseIPv6Addr("2001:db8:1::50", 14, eth.ip));
+    ASSERT_TRUE(ParseIPv6Addr("fe80::1", 7, eth.gateway));
+    EXPECT_FALSE(manager.Sanitize());
+    EXPECT_TRUE(eth.is_static);
+}
+
+TEST(Settings, StaticIPv6DumpReplaysThroughTheParser) {
+    SettingsManager manager;
+    const char* args[] = {"2001:DB8:1:0::50/64", "fe80::1", "", "2001:4860:4860::8888"};
+    std::string_view views[4];
+    for (int i = 0; i < 4; i++) views[i] = args[i];
+    ASSERT_EQ(ParseIPv6ConfigArgs(views, 4, manager.settings.wifi_sta_ipv6), nullptr);
+
+    testing::internal::CaptureStdout();
+    manager.PrintAT();
+    std::string dump = testing::internal::GetCapturedStdout();
+    const std::string prefix = "AT+WIFI_STA_IP6=";
+    size_t start = dump.find(prefix);
+    ASSERT_NE(start, std::string::npos);
+    std::string line = dump.substr(start + prefix.size(), dump.find("\r\n", start) - start - prefix.size());
+    EXPECT_EQ(line, "2001:db8:1::50/64,fe80::1,,2001:4860:4860::8888");
+    EXPECT_NE(dump.find("AT+ETHERNET_IP6=AUTO\r\n"), std::string::npos);
+
+    std::vector<std::string_view> parts;
+    size_t pos = 0;
+    while (true) {
+        size_t comma = line.find(',', pos);
+        parts.push_back(std::string_view(line).substr(pos, comma == std::string::npos ? std::string::npos : comma - pos));
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    IPv6Config replayed;
+    ASSERT_EQ(ParseIPv6ConfigArgs(parts.data(), parts.size(), replayed), nullptr);
+    EXPECT_EQ(memcmp(&replayed, &manager.settings.wifi_sta_ipv6, sizeof(replayed)), 0);
+
+    // The longest configuration fits the format buffer.
+    IPv6Config longest;
+    longest.is_static = true;
+    longest.prefix_len = 128;
+    memset(longest.ip, 0xFF, 16);
+    longest.ip[0] = 0x2F;
+    memset(longest.gateway, 0xFF, 16);
+    longest.gateway[0] = 0x2F;
+    memset(longest.dns[0], 0xFF, 16);
+    memset(longest.dns[1], 0xFF, 16);
+    char buf[SettingsManager::kIPv6ConfigStrMaxLen + 1];
+    int len = SettingsManager::FormatIPv6ConfigArgs(longest, buf, sizeof(buf));
+    EXPECT_GT(len, 0);
+    EXPECT_LT(len, (int)sizeof(buf));
 }

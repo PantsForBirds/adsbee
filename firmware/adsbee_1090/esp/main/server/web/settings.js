@@ -1013,6 +1013,147 @@ function makeIPv4Entry(cmd, label, help) {
     };
 }
 
+// IPv6 text form to 16 bytes, or null: hex groups, one '::', an optional dotted quad at the end. No zone or prefix.
+function parseIPv6(str) {
+    if (typeof str !== 'string' || !/^[0-9A-Fa-f:.]+$/.test(str)) return null;
+    let head = str, tail = '';
+    const gap = str.indexOf('::');
+    if (gap >= 0) {
+        if (str.indexOf('::', gap + 1) >= 0) return null;
+        head = str.slice(0, gap);
+        tail = str.slice(gap + 2);
+    }
+    const groups = (part) => {
+        if (part === '') return [];
+        const out = [];
+        const items = part.split(':');
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (i === items.length - 1 && item.includes('.')) {
+                const q = item.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+                if (!q || q.slice(1).some(o => +o > 255)) return null;
+                out.push((+q[1] << 8) | +q[2], (+q[3] << 8) | +q[4]);
+            } else {
+                if (!/^[0-9A-Fa-f]{1,4}$/.test(item)) return null;
+                out.push(parseInt(item, 16));
+            }
+        }
+        return out;
+    };
+    const h = groups(head), t = groups(tail);
+    if (!h || !t) return null;
+    if (gap < 0 ? h.length !== 8 : h.length + t.length > 7) return null;
+    if (gap >= 0 && head.includes('.')) return null;
+    const all = gap < 0 ? h : [...h, ...new Array(8 - h.length - t.length).fill(0), ...t];
+    const bytes = [];
+    all.forEach(g => bytes.push(g >> 8, g & 0xFF));
+    return bytes;
+}
+
+// The device's checks for AT+ETHERNET_IP6 / AT+WIFI_STA_IP6, so typos show before anything is written.
+const IPV6 = {
+    isGlobalOrULA: b => (b[0] & 0xE0) === 0x20 || (b[0] & 0xFE) === 0xFC,
+    isLinkLocal: b => b[0] === 0xFE && (b[1] & 0xC0) === 0x80,
+    prefixMatch(a, b, len) {
+        for (let bit = 0; bit < len; bit++) {
+            const m = 0x80 >> (bit % 8);
+            if ((a[bit >> 3] & m) !== (b[bit >> 3] & m)) return false;
+        }
+        return true;
+    },
+    hostZero(a, len) {
+        for (let bit = len; bit < 128; bit++) if (a[bit >> 3] & (0x80 >> (bit % 8))) return false;
+        return true;
+    },
+};
+
+// AT+ETHERNET_IP6 and AT+WIFI_STA_IP6: AUTO, or <addr>/<prefix>,<gateway>,<dns1>,<dns2>. The GUI splits the address
+// and prefix length into two fields.
+function makeIPv6Entry(cmd, label, help) {
+    const isStatic = v => v.mode === 'STATIC';
+    const prefixOf = values => (/^\d{1,3}$/.test(values.prefix || '') ? +values.prefix : NaN);
+    const anycast = (b, len) => len < 127 && IPV6.hostZero(b, len);
+    const ids = ['ip', 'prefix', 'gateway', 'dns1', 'dns2'];
+    const empty = { mode: 'AUTO', ip: '', prefix: '', gateway: '', dns1: '', dns2: '' };
+    const fromArgs = (args) => {
+        const [addr = '', gateway = '', dns1 = '', dns2 = ''] = args;
+        const slash = addr.indexOf('/');
+        return {
+            mode: 'STATIC', ip: slash >= 0 ? addr.slice(0, slash) : addr, prefix: slash >= 0 ? addr.slice(slash + 1) : '',
+            gateway, dns1, dns2,
+        };
+    };
+    return {
+        cmd, label, group: 'Network', disconnects: true, help,
+        fields: [
+            { id: 'mode', label: 'Mode', type: 'enum', options: [{ value: 'AUTO', label: 'Auto (SLAAC)' }, { value: 'STATIC', label: 'Static' }] },
+            {
+                id: 'ip', label: 'IPv6 Address', type: 'string', maxLen: 45, visibleIf: isStatic,
+                validate: (v, values) => {
+                    if (!isStatic(values)) return '';
+                    if (v === '') return 'Required for a static address.';
+                    const b = parseIPv6(v);
+                    if (!b) return 'Enter an address like 2001:db8::50.';
+                    if (!IPV6.isGlobalOrULA(b)) return 'Use a global (2000::/3) or unique local (fc00::/7) address.';
+                    const len = prefixOf(values);
+                    if (len >= 1 && len <= 128 && anycast(b, len)) return 'All host bits are zero: pick another address.';
+                    return '';
+                },
+            },
+            {
+                id: 'prefix', label: 'Prefix Length', type: 'string', maxLen: 3, visibleIf: isStatic, note: 'Usually 64.',
+                validate: (v, values) => {
+                    if (!isStatic(values)) return '';
+                    const len = prefixOf(values);
+                    return len >= 1 && len <= 128 ? '' : 'Use a prefix length from 1 to 128.';
+                },
+            },
+            {
+                id: 'gateway', label: 'Gateway', type: 'string', maxLen: 45, visibleIf: isStatic,
+                note: 'Link-local (fe80::...) or on the prefix. Leave blank to use routers on the network.',
+                validate: (v, values) => {
+                    if (!isStatic(values) || v === '') return '';
+                    const g = parseIPv6(v);
+                    if (!g) return 'Enter an address like fe80::1.';
+                    if (IPV6.isLinkLocal(g)) return '';
+                    const ip = parseIPv6(values.ip), len = prefixOf(values);
+                    if (!ip || !(len >= 1 && len <= 128)) return '';  // The address's own error shows.
+                    if (!IPV6.isGlobalOrULA(g) || !IPV6.prefixMatch(g, ip, len) || anycast(g, len)) {
+                        return 'Must be link-local or a host on the address\'s prefix.';
+                    }
+                    return g.every((x, i) => x === ip[i]) ? 'Must differ from the IPv6 address.' : '';
+                },
+            },
+            ...['dns1', 'dns2'].map((id, i) => ({
+                id, label: `DNS Server ${i + 1}`, type: 'string', maxLen: 45, visibleIf: isStatic, note: 'Leave blank for none.',
+                validate: (v, values) => {
+                    if (!isStatic(values) || v === '') return '';
+                    const b = parseIPv6(v);
+                    if (!b) return 'Enter an address like 2001:4860:4860::8888.';
+                    const loopback = b.slice(0, 15).every(x => x === 0) && b[15] === 1;
+                    return b[0] === 0xFF || loopback || b.every(x => x === 0) ? 'Use a unicast address.' : '';
+                },
+            })),
+        ],
+        parse(lines) {
+            const m = lines[0] && lines[0].match(new RegExp(`^${cmd}=(.*)$`));
+            if (!m) return null;
+            if (m[1].trim().toUpperCase() === 'AUTO') return { ...empty };
+            return fromArgs(m[1].trim().split(','));
+        },
+        parseJson(raw) {
+            if (!Array.isArray(raw) || raw[0] !== 'STATIC') return { ...empty };
+            return fromArgs(raw.slice(1).map(String));
+        },
+        build(v) {
+            if (v.mode !== 'STATIC') return [`AT+${cmd}=AUTO`];
+            const args = [`${v.ip}/${v.prefix}`, v.gateway || '', v.dns1 || '', v.dns2 || ''];
+            while (args.length > 1 && args[args.length - 1] === '') args.pop();
+            return [`AT+${cmd}=${args.join(',')}`];
+        },
+    };
+}
+
 const SETTINGS_SCHEMA_1090 = [
     // ── Network ──
     {
@@ -1077,14 +1218,18 @@ const SETTINGS_SCHEMA_1090 = [
     },
     makeIPv4Entry('WIFI_STA_IP', 'WiFi Station IPv4',
         'DHCP, or a static IPv4 address on whichever network WiFi Station joins. Not used with IP Mode IPV6.'),
+    makeIPv6Entry('WIFI_STA_IP6', 'WiFi Station IPv6',
+        'Auto (link-local and SLAAC), or a static IPv6 address on whichever network WiFi Station joins; link-local stays. Not used with IP Mode IPV4.'),
     {
         cmd: 'ETHERNET', label: 'Ethernet', group: 'Network', disconnects: true,
         fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
     },
     makeIPv4Entry('ETHERNET_IP', 'Ethernet IPv4', 'DHCP, or a static IPv4 address. Not used with IP Mode IPV6.'),
+    makeIPv6Entry('ETHERNET_IP6', 'Ethernet IPv6',
+        'Auto (link-local and SLAAC), or a static IPv6 address; link-local stays. Not used with IP Mode IPV4.'),
     {
         cmd: 'IP_MODE', label: 'IP Mode', group: 'Network', disconnects: true,
-        help: 'IP versions on Ethernet and WiFi Station. DUAL adds IPv6 (link-local and SLAAC) to IPv4; IPV6 turns IPv4 off. The WiFi Access Point is always IPv4.',
+        help: 'IP versions on Ethernet and WiFi Station. DUAL adds IPv6 (link-local plus SLAAC or static) to IPv4; IPV6 turns IPv4 off. The WiFi Access Point is always IPv4.',
         fields: [{ id: 'mode', label: 'Mode', type: 'enum', options: ['IPV4', 'DUAL', 'IPV6'] }],
     },
     // ── Radio ──
@@ -1478,5 +1623,5 @@ const settingsTab = {
 
 // Host-side tests (test/settings.test.js) load this file under Node.
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { SettingsEngine, Settings1090Transport, SETTINGS_SCHEMA_1090, SETTINGS_RID, SETTINGS_RID_TRANSPORTS, SETTINGS_RID_STATUS_NAMES };
+    module.exports = { SettingsEngine, Settings1090Transport, SETTINGS_SCHEMA_1090, SETTINGS_RID, SETTINGS_RID_TRANSPORTS, SETTINGS_RID_STATUS_NAMES, parseIPv6 };
 }

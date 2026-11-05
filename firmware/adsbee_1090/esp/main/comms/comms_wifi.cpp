@@ -323,7 +323,7 @@ bool CommsManager::WiFiInit() {
     assert(wifi_ap_netif_);
     // Same as esp_netif_create_default_wifi_sta(), with the IP mode applied.
     esp_netif_inherent_config_t sta_base = ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
-    ApplyIPModeToNetifConfig(sta_base);
+    ApplyIPModeToNetifConfig(sta_base, wifi_sta_ipv6);
     esp_netif_config_t sta_cfg = ESP_NETIF_DEFAULT_WIFI_STA();
     sta_cfg.base = &sta_base;
     wifi_sta_netif_ = esp_netif_new(&sta_cfg);

@@ -14,9 +14,9 @@ enum Scope : uint8_t {
 
 // Left out of kScopeFleet: hostname, WiFi access point SSID and channel (defaults come from the part code and a random
 // number), feed receiver IDs, the Remote ID UAS ID, the receiver position values, the ASTERIX SIC, the swarm token and
-// static IPv4 addresses.
+// static IPv4 and IPv6 addresses.
 inline uint32_t Compute(const SettingsManager::Settings& settings, Scope scope) {
-    static_assert(kSettingsVersion == 20 && sizeof(SettingsManager::Settings) == 1832,
+    static_assert(kSettingsVersion == 20 && sizeof(SettingsManager::Settings) == 1964,
                   "Settings changed: add the new fields below, then update this check.");
     typedef SettingsManager::Settings Settings;
     const bool full = scope == kScopeFull;
@@ -120,6 +120,15 @@ inline uint32_t Compute(const SettingsManager::Settings& settings, Scope scope) 
         hasher.AddBytes(ipv4->netmask, sizeof(ipv4->netmask));
         hasher.AddBytes(ipv4->gateway, sizeof(ipv4->gateway));
         hasher.AddBytes(&ipv4->dns[0][0], sizeof(ipv4->dns));
+    }
+    const IPv6Config* ipv6_configs[] = {&settings.ethernet_ipv6, &settings.wifi_sta_ipv6};
+    for (const IPv6Config* ipv6 : ipv6_configs) {
+        hasher.AddBool(ipv6->is_static);
+        if (!full) continue;
+        hasher.AddU8(ipv6->prefix_len);
+        hasher.AddBytes(ipv6->ip, sizeof(ipv6->ip));
+        hasher.AddBytes(ipv6->gateway, sizeof(ipv6->gateway));
+        hasher.AddBytes(&ipv6->dns[0][0], sizeof(ipv6->dns));
     }
 
     return hasher.Value();

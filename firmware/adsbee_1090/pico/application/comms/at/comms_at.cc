@@ -1358,6 +1358,13 @@ CPP_AT_CALLBACK(CommsManager::ATIPModeCallback) {
                 CPP_AT_ERROR("Invalid IP mode '%s'. AT+IP_MODE=<IPV4|DUAL|IPV6>", mode_str);
             }
             settings_manager.settings.ip_mode = mode;
+            const SettingsManager::Settings& s = settings_manager.settings;
+            if (mode == SettingsManager::kIPModeIPv6 && (s.ethernet_ipv4.is_static || s.wifi_sta_ipv4.is_static)) {
+                CPP_AT_PRINTF("Static IPv4 (AT+ETHERNET_IP, AT+WIFI_STA_IP) is not used with IPV6.\r\n");
+            }
+            if (mode == SettingsManager::kIPModeIPv4 && (s.ethernet_ipv6.is_static || s.wifi_sta_ipv6.is_static)) {
+                CPP_AT_PRINTF("Static IPv6 (AT+ETHERNET_IP6, AT+WIFI_STA_IP6) is not used with IPV4.\r\n");
+            }
             CPP_AT_SUCCESS();
             break;
         }
@@ -1401,6 +1408,44 @@ CPP_AT_CALLBACK(CommsManager::ATEthernetIPCallback) {
 
 CPP_AT_CALLBACK(CommsManager::ATWiFiSTAIPCallback) {
     return IPv4ConfigCallback(def, op, args, num_args, settings_manager.settings.wifi_sta_ipv4);
+}
+
+// AT+ETHERNET_IP6 and AT+WIFI_STA_IP6.
+static bool IPv6ConfigCallback(const CppAT::ATCommandDef_t& def, char op, const std::string_view args[],
+                               uint16_t num_args, IPv6Config& config) {
+    const bool ipv4_only = settings_manager.settings.ip_mode == SettingsManager::kIPModeIPv4;
+    switch (op) {
+        case '?': {
+            char config_str[SettingsManager::kIPv6ConfigStrMaxLen + 1];
+            SettingsManager::FormatIPv6ConfigArgs(config, config_str, sizeof(config_str));
+            CPP_AT_CMD_PRINTF("=%s", config_str);
+            if (ipv4_only) {
+                CPP_AT_PRINTF("Not used: AT+IP_MODE is IPV4.\r\n");
+            }
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        }
+        case '=': {
+            const char* error = ParseIPv6ConfigArgs(args, num_args, config);
+            if (error != nullptr) {
+                CPP_AT_ERROR("%s", error);
+            }
+            if (ipv4_only) {
+                CPP_AT_PRINTF("Not used while AT+IP_MODE is IPV4.\r\n");
+            }
+            CPP_AT_SUCCESS();
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATEthernetIP6Callback) {
+    return IPv6ConfigCallback(def, op, args, num_args, settings_manager.settings.ethernet_ipv6);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATWiFiSTAIP6Callback) {
+    return IPv6ConfigCallback(def, op, args, num_args, settings_manager.settings.wifi_sta_ipv6);
 }
 
 CPP_AT_CALLBACK(CommsManager::ATOTACallback) {
@@ -1772,6 +1817,7 @@ CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
 
             const SettingsManager::Settings& s = settings_manager.settings;
             const char* ipv4_note = s.ip_mode == SettingsManager::kIPModeIPv6 ? " (not used: IP mode IPV6)" : "";
+            const char* ipv6_note = s.ip_mode == SettingsManager::kIPModeIPv4 ? " (not used: IP mode IPV4)" : "";
             CPP_AT_PRINTF("IP Mode: %s\r\n", SettingsManager::IPModeToStr(s.ip_mode));
             CPP_AT_PRINTF("Ethernet: %s\r\n", network_info.ethernet_enabled ? "ENABLED" : "DISABLED");
             CPP_AT_PRINTF("\tIPv4: %s%s\r\n", s.ethernet_ipv4.is_static ? "STATIC" : "DHCP", ipv4_note);
@@ -1782,6 +1828,7 @@ CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
                 CPP_AT_PRINTF("\tSubnet Mask: %s\r\n", network_info.ethernet_netmask);
                 CPP_AT_PRINTF("\tGateway: %s\r\n", network_info.ethernet_gateway);
             }
+            CPP_AT_PRINTF("\tIPv6: %s%s\r\n", s.ethernet_ipv6.is_static ? "STATIC" : "AUTO", ipv6_note);
             PrintIP6Addrs(network_info.ethernet_ip6_link_local, network_info.ethernet_ip6_global);
 
             CPP_AT_PRINTF("WiFi Station: %s\r\n", network_info.wifi_sta_enabled ? "ENABLED" : "DISABLED");
@@ -1794,6 +1841,7 @@ CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
                 CPP_AT_PRINTF("\tSubnet Mask: %s\r\n", network_info.wifi_sta_netmask);
                 CPP_AT_PRINTF("\tGateway: %s\r\n", network_info.wifi_sta_gateway);
             }
+            CPP_AT_PRINTF("\tIPv6: %s%s\r\n", s.wifi_sta_ipv6.is_static ? "STATIC" : "AUTO", ipv6_note);
             PrintIP6Addrs(network_info.wifi_sta_ip6_link_local, network_info.wifi_sta_ip6_global);
 
             for (uint16_t i = 0; i < ObjectDictionary::ESP32NetworkInfo::kNumDNSServers; i++) {
@@ -2118,6 +2166,20 @@ static void PrintIPv4ConfigJSON(const char* cmd, const IPv4Config& c) {
                   addrs[1], addrs[2], addrs[3], addrs[4]);
 }
 
+// Prints "<cmd>":["AUTO"|"STATIC","<addr>/<prefix>","<gateway>","<dns1>","<dns2>"], with "" for unset addresses.
+static void PrintIPv6ConfigJSON(const char* cmd, const IPv6Config& c) {
+    char addrs[2 + IPv6Config::kNumDNSServers][IPv6Config::kAddrStrMaxLen + 1];
+    FormatIPv6Addr(c.ip, addrs[0], sizeof(addrs[0]));
+    FormatIPv6Addr(c.gateway, addrs[1], sizeof(addrs[1]));
+    for (uint16_t i = 0; i < IPv6Config::kNumDNSServers; i++) {
+        FormatIPv6Addr(c.dns[i], addrs[2 + i], sizeof(addrs[2 + i]));
+    }
+    char prefix[5] = "";
+    if (c.is_static) snprintf(prefix, sizeof(prefix), "/%u", c.prefix_len);
+    CPP_AT_PRINTF("\"%s\":[\"%s\",\"%s%s\",\"%s\",\"%s\",\"%s\"],", cmd, c.is_static ? "STATIC" : "AUTO", addrs[0], prefix,
+                  addrs[1], addrs[2], addrs[3]);
+}
+
 // Prints all settings as one JSON object on a single line: SETTINGS={"CMD":[...],...}.
 // Each value is an array ordered to match the web settings GUI's field list for that
 // command (the writable AT= args plus query-only extras like live status, minus the
@@ -2139,6 +2201,7 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"BIAS_TEE_ENABLE\":[%d,%d],", adsbee.BiasTeeIsEnabled(), s.subg_bias_tee_enabled);
     CPP_AT_PRINTF("\"ETHERNET\":[%d],", cns.ethernet_enabled);
     PrintIPv4ConfigJSON("ETHERNET_IP", s.ethernet_ipv4);
+    PrintIPv6ConfigJSON("ETHERNET_IP6", s.ethernet_ipv6);
     CPP_AT_PRINTF("\"ESP32_ENABLE\":[%d],", esp32.IsEnabled());
     CPP_AT_PRINTF("\"FEED_ENABLE\":[%d],", s.feeds_enabled);
     CPP_AT_PRINTF("\"FILTER_ALTITUDE_FT\":[\"%s\",%ld,%ld],", AltitudeFilterModeStr(s.filter_altitude_mode),
@@ -2186,6 +2249,7 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"%s\",%d],", JSONEscapeStr(cns.wifi_ap_password, esc, sizeof(esc)), cns.wifi_ap_channel);
     CPP_AT_PRINTF("\"WIFI_STA\":[%d,\"%s\"],", cns.wifi_sta_enabled, JSONEscapeStr(cns.wifi_sta_ssid, esc, sizeof(esc)));
     PrintIPv4ConfigJSON("WIFI_STA_IP", s.wifi_sta_ipv4);
+    PrintIPv6ConfigJSON("WIFI_STA_IP6", s.wifi_sta_ipv6);
     // Networks 2 and up; network 1 is in WIFI_STA.
     CPP_AT_PRINTF("\"WIFI_STA_NETWORK\":[");
     for (uint16_t i = 0; i < SettingsManager::Settings::kWiFiSTANumExtraNetworks; i++) {
@@ -2618,6 +2682,15 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "AT+IP_MODE=IPV6. Applied with AT+SETTINGS=SAVE.\r\n\tAT+ETHERNET_IP?\r\n\t"
                     "+ETHERNET_IP=<DHCP|ip,netmask,gateway,dns1,dns2>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATEthernetIPCallback, comms_manager)},
+    {.command = "ETHERNET_IP6",
+     .min_args = 0,
+     .max_args = 4,
+     .help_string = "AT+ETHERNET_IP6=AUTO\r\n\tIPv6 on Ethernet from link-local and SLAAC (the default).\r\n\t"
+                    "AT+ETHERNET_IP6=<addr>/<prefix>[,<gateway>[,<dns1>[,<dns2>]]]\r\n\tUse a static IPv6 address on "
+                    "Ethernet (link-local stays, no SLAAC). gateway: link-local or on the prefix. Leave gateway or DNS "
+                    "empty for none. Not used with AT+IP_MODE=IPV4. Applied with AT+SETTINGS=SAVE.\r\n\t"
+                    "AT+ETHERNET_IP6?\r\n\t+ETHERNET_IP6=<AUTO|addr/prefix,gateway,dns1,dns2>",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATEthernetIP6Callback, comms_manager)},
     {.command = "ESP32_ENABLE",
      .min_args = 0,
      .max_args = 1,
@@ -2723,8 +2796,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 1,
      .help_string = "AT+IP_MODE=<IPV4|DUAL|IPV6>\r\n\tSet the IP versions used on Ethernet and WiFi Station: IPV4 "
-                    "(DHCP or static, see AT+ETHERNET_IP), DUAL (IPv4 plus IPv6 link-local and SLAAC, the default) or "
-                    "IPV6 (link-local and SLAAC, no IPv4). The WiFi Access Point is always IPv4. Applied with AT+SETTINGS=SAVE.\r\n\tAT+IP_MODE?\r\n\t"
+                    "(DHCP or static, see AT+ETHERNET_IP), DUAL (IPv4 plus IPv6, the default) or IPV6 (no IPv4). IPv6 is "
+                    "link-local plus SLAAC or static, see AT+ETHERNET_IP6. The WiFi Access Point is always IPv4. Applied with AT+SETTINGS=SAVE.\r\n\tAT+IP_MODE?\r\n\t"
                     "Query the IP mode.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATIPModeCallback, comms_manager)},
     {.command = "LED_BLINK",
@@ -2923,6 +2996,15 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "DNS empty for none. Not used with AT+IP_MODE=IPV6. Applied with AT+SETTINGS=SAVE.\r\n\t"
                     "AT+WIFI_STA_IP?\r\n\t+WIFI_STA_IP=<DHCP|ip,netmask,gateway,dns1,dns2>",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiSTAIPCallback, comms_manager)},
+    {.command = "WIFI_STA_IP6",
+     .min_args = 0,
+     .max_args = 4,
+     .help_string = "AT+WIFI_STA_IP6=AUTO\r\n\tIPv6 on WiFi Station from link-local and SLAAC (the default).\r\n\t"
+                    "AT+WIFI_STA_IP6=<addr>/<prefix>[,<gateway>[,<dns1>[,<dns2>]]]\r\n\tUse a static IPv6 address on "
+                    "WiFi Station, whichever stored network it joins (link-local stays, no SLAAC). gateway: link-local "
+                    "or on the prefix. Leave gateway or DNS empty for none. Not used with AT+IP_MODE=IPV4. Applied "
+                    "with AT+SETTINGS=SAVE.\r\n\tAT+WIFI_STA_IP6?\r\n\t+WIFI_STA_IP6=<AUTO|addr/prefix,gateway,dns1,dns2>",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATWiFiSTAIP6Callback, comms_manager)},
     {.command = "WIFI_STA_NETWORK",
      .min_args = 0,
      .max_args = 3,
