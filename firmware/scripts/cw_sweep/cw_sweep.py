@@ -7,8 +7,8 @@ Drives AT+TX_CW over the console UART, dwelling at each frequency so a spectrum 
 notch / balun / filter response on the LR2021 LRHF (2.4 GHz) output, but works for LRLF
 and SUBG too.
 
-Requires a Debug build of adsbee_1421 firmware >= 0.3.11-rc2 (AT+TX_CW accepts fractional MHz). AT+TX_CW is
-compiled into Debug builds only (build with `./build.sh -d` in firmware/adsbee_1421); Release firmware rejects it.
+Requires adsbee_1421 firmware >= 0.3.11-rc2 (AT+TX_CW accepts fractional MHz). Release builds (>= 0.3.11-rc10)
+have AT+TX_CW on LRHF only; SUBG and LRLF need a Debug build (`./build.sh -d` in firmware/adsbee_1421).
 
 Conducted measurements only: connect the RF output to the analyzer through an attenuator or into a dummy load,
 never to an antenna. See README.md.
@@ -138,8 +138,8 @@ def probe_baud(port: str, requested: int | None, verbose: bool) -> serial.Serial
     raise SweepError(f"Device did not answer on {port} at {'requested baud' if requested else 'any whitelisted baud'}.")
 
 
-def check_debug_build(ser: serial.Serial, verbose: bool) -> None:
-    """AT+TX_CW only exists in Debug firmware. Fail early with a clear message instead of on the first step.
+def check_build(ser: serial.Serial, band: str, verbose: bool) -> None:
+    """Release firmware has AT+TX_CW on LRHF only. Fail early with a clear message instead of on the first step.
 
     Firmware that predates the "Firmware Build" line in AT+DEVICE_INFO? is let through; AT+TX_CW then reports
     its own error if it's missing.
@@ -153,8 +153,8 @@ def check_debug_build(ser: serial.Serial, verbose: bool) -> None:
             build = line.split("Firmware Build:", 1)[1].strip()
             if verbose:
                 print(f"Firmware build type: {build}")
-            if build != "Debug":
-                raise SweepError(f"Device firmware is a {build} build; AT+TX_CW needs a Debug build "
+            if build != "Debug" and band != "LRHF":
+                raise SweepError(f"Device firmware is a {build} build; AT+TX_CW on {band} needs a Debug build "
                                  "(firmware/adsbee_1421: ./build.sh -d).")
             return
     if verbose:
@@ -233,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
     try:
-        check_debug_build(ser, args.verbose)
+        check_build(ser, args.band, args.verbose)
     except SweepError as e:
         ser.close()
         print(f"ERROR: {e}", file=sys.stderr)

@@ -52,8 +52,8 @@ cd firmware/adsbee_1421
 ```
 
 With `-d` (`./build.sh -d ti`, `./build.sh -d programmer`, or `./build.sh -d build_and_flash`) both are
-built in Debug and the Programmer bakes in `ti/build/Debug/adsbee_1421.hex`. Only Debug images have the RF test
-command `AT+TX_CW`; see [firmware/README.md](../../README.md#debug-builds-and-rf-test-commands).
+built in Debug and the Programmer bakes in `ti/build/Debug/adsbee_1421.hex`. Only Debug images have `AT+TX_CW` on
+SUBG and LRLF (Release: LRHF only); see [firmware/README.md](../../README.md#debug-builds-and-rf-test-commands).
 
 Artifact: `firmware/adsbee_1421/programmer/build/Release/adsbee_1421_programmer.uf2` —
 hold BOOT on the RP2040-Zero while plugging it in (or open its port at 233495534 baud, see below) and

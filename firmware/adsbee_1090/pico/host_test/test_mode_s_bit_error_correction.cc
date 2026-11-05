@@ -327,6 +327,48 @@ TEST_F(BitErrorCorrection, RepeatedNearbyAddressesAreNotCorrected) {
     EXPECT_TRUE(Ingest(Flip(Raw(kAltitudeReply), {9})));  // Errors outside the parity field are still corrected.
 }
 
+// Untracked aircraft 3 address bits from a tracked one, same altitude, one bit error in the parity field: its reply
+// is 2 parity bits from the tracked aircraft's.
+TEST_F(BitErrorCorrection, TwoParityBitFixesAreNotMade) {
+    for (uint16_t bit = 32; bit < 56; bit++) {
+        RawModeSPacket neighbor = WithAddressParity(Raw(kAltitudeReply), kICAO ^ 0x000007);
+        inc_time_since_boot_ms(100);
+        EXPECT_FALSE(Ingest(Flip(neighbor, {bit}))) << bit;
+        EXPECT_FALSE(last.is_valid) << bit;
+    }
+    EXPECT_FALSE(Ingest(Flip(Raw(kAltitudeReply), {40, 50})));
+    EXPECT_FALSE(Ingest(Flip(Raw(kIdentityReply), {33, 55})));
+    AircraftDictionary::Metrics metrics = Metrics();
+    EXPECT_EQ(metrics.corrected_frames[AircraftDictionary::kCorrectionAddressParity2Bit], 0);
+    EXPECT_EQ(metrics.corrected_frames[AircraftDictionary::kCorrectionAddressParity1Bit], 0);
+}
+
+// The fixes the parity field rule keeps: one parity bit, or a data bit with a parity bit (one kind per test, since a
+// repeated sender address stops the fixes).
+TEST_F(BitErrorCorrection, OneParityBitFixesAreStillMade) {
+    for (uint16_t bit = 32; bit < 56; bit++) {
+        EXPECT_TRUE(Ingest(Flip(Raw(kAltitudeReply), {bit}))) << bit;
+    }
+    EXPECT_EQ(Metrics().corrected_frames[AircraftDictionary::kCorrectionAddressParity1Bit], 24);
+}
+
+TEST_F(BitErrorCorrection, DataAndParityBitFixesAreStillMade) {
+    for (uint16_t bit = 32; bit < 56; bit++) {
+        EXPECT_TRUE(Ingest(Flip(Raw(kAltitudeReply), {9, bit}))) << bit;
+    }
+    EXPECT_EQ(Metrics().corrected_frames[AircraftDictionary::kCorrectionAddressParity2Bit], 24);
+}
+
+// A read between dictionary updates (ADSBee 1421 AT+RX_STATS?) adds the pending corrections.
+TEST_F(BitErrorCorrection, CorrectionsArePendingUntilTheUpdate) {
+    Metrics();
+    EXPECT_TRUE(Ingest(Flip(Raw(kAltitudeReply), {9})));
+    EXPECT_EQ(dictionary.PendingCorrectedFrames(AircraftDictionary::kCorrectionAddressParity1Bit), 1);
+    EXPECT_EQ(dictionary.metrics.corrected_frames[AircraftDictionary::kCorrectionAddressParity1Bit], 0);
+    EXPECT_EQ(Metrics().corrected_frames[AircraftDictionary::kCorrectionAddressParity1Bit], 1);
+    EXPECT_EQ(dictionary.PendingCorrectedFrames(AircraftDictionary::kCorrectionAddressParity1Bit), 0);
+}
+
 TEST_F(BitErrorCorrection, AddressParitySearchesAreLimited) {
     RawModeSPacket reply = Flip(Raw(kAltitudeReply), {9});
     dictionary.Update(get_time_since_boot_ms());

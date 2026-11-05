@@ -1,7 +1,6 @@
 #include "ccfg_bootloader_flash.hh"
 
 #include <ti/devices/cc13x4_cc26x4/driverlib/flash.h>
-#include <ti/devices/cc13x4_cc26x4/driverlib/vims.h>
 #include <ti/devices/cc13x4_cc26x4/inc/hw_memmap.h>
 
 #include "flash_utils.hh"
@@ -46,25 +45,6 @@ Plan Prepare(bool enable) {
     prepared = plan.method != Method::kRefused;
     return plan;
 }
-// TI requires the flash cache (VIMS) off while erasing or programming; it also makes read-back come from flash.
-static uint32_t DisableFlashCache() {
-    uint32_t mode = VIMSModeGet(VIMS_BASE);
-    VIMSLineBufDisable(VIMS_BASE);
-    if (mode != VIMS_MODE_DISABLED) {
-        VIMSModeSet(VIMS_BASE, VIMS_MODE_DISABLED);
-        while (VIMSModeGet(VIMS_BASE) != VIMS_MODE_DISABLED) {
-        }
-    }
-    return mode;
-}
-
-static void RestoreFlashCache(uint32_t mode) {
-    if (mode != VIMS_MODE_DISABLED) {
-        VIMSModeSet(VIMS_BASE, VIMS_MODE_ENABLED);
-    }
-    VIMSLineBufEnable(VIMS_BASE);
-}
-
 // These ROM functions can write the flash bank we execute from, as long as interrupts are masked.
 struct RomFlash {
     bool Erase() { return FlashSectorErase(kCcfgBaseAddr) == FAPI_STATUS_SUCCESS; }
@@ -116,13 +96,11 @@ WriteReport Apply(const Plan& plan, bool enable) {
         return finish(WriteResult::kNotWritten);
     }
 
-    uint32_t cache_mode = DisableFlashCache();
-    FlashUtils::FlashSafe();
+    FlashUtils::FlashSafe();  // Also turns the flash cache off, as TI requires, so read-back comes from flash.
     RomFlash flash;
     WriteResult result =
         WriteAndVerify(flash, plan, original_sector, new_sector, report.restore_attempts, report.error);
     FlashUtils::FlashUnsafe();
-    RestoreFlashCache(cache_mode);
 
     // Keep the original in RAM while the sector is in an unknown state so the next Prepare() can restore it.
     restore_pending = result == WriteResult::kFailedNotRestored;

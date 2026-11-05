@@ -113,8 +113,19 @@ class ADSBee {
     // IRQ-paced drain reads 9): their CPU time would otherwise leave the FIFO to the IRQ-paced drain.
     static constexpr uint16_t kMinQueuedPacketsForBusy = 6;
     static constexpr uint16_t kBusyReads = 64;
-    // Bit error corrections by AircraftDictionary::CorrectionKind, reported and reset via AT+RX_STATS.
+    // Bit error corrections by AircraftDictionary::CorrectionKind, added at each dictionary update. Read and reset
+    // with CorrectedFrames() / ResetCorrectedFrames(), which include the corrections since the last update.
     uint32_t corrected_frames[AircraftDictionary::kNumCorrectionKinds] = {0};
+    inline uint32_t CorrectedFrames(AircraftDictionary::CorrectionKind kind) const {
+        return corrected_frames[kind] + aircraft_dictionary.PendingCorrectedFrames(kind);
+    }
+    inline void ResetCorrectedFrames() {
+        for (uint16_t i = 0; i < AircraftDictionary::kNumCorrectionKinds; i++) {
+            // Unsigned wrap: the next update adds the pending count back to 0.
+            corrected_frames[i] =
+                0u - aircraft_dictionary.PendingCorrectedFrames(static_cast<AircraftDictionary::CorrectionKind>(i));
+        }
+    }
 
     // Health / diagnostics counter, reported and reset via AT+RX_STATS. Incremented when the LR2021
     // RX FIFO reads back completely full (the poll loop fell behind; frames were likely dropped).
