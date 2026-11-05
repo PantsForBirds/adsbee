@@ -175,9 +175,9 @@ and optionally output power, attenuation and explicit hex messages. Named patter
 `transmitters.PATTERNS`; `--band`, `--count`, `--rate`, `--power-dbm`, `--atten-db` and `--message`
 override them.
 
-- **`bee_wiggler`**: the wiggler family over its USB AT console (`usb_serial`): Bee Wiggler (RP2040),
-  Pluto Wiggler (ADALM-Pluto) and Bee Waggler (ZynqSDR 7020). The driver picks the command set from
-  `AT+DEVICE_INFO?`:
+- **`bee_wiggler`**: the wiggler family over its USB AT console (`usb_serial`, or `usb_port` for
+  Pluto-type units that share a serial): Bee Wiggler (RP2040), Pluto Wiggler (ADALM-Pluto) and Bee
+  Waggler (ZynqSDR 7020). The driver picks the command set from `AT+DEVICE_INFO?`:
 
   | Firmware | Commands | End of a transmission |
   |---|---|---|
