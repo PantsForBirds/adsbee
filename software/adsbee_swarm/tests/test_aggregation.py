@@ -58,6 +58,18 @@ def test_stats_sum_counts_and_max_peaks_per_bee(device):
     _sample(second, hour, {}, es_valid=5, aircraft_max=3)
     series = queries.stats_series([device, second], hour - timedelta(hours=1), hour + timedelta(hours=1))
     assert len(series) == 1 and series[0]['es_valid'] == 15 and series[0]['aircraft_max'] == 10
+    assert series[0]['bees'] == 2
     _sample(device, hour.replace(hour=0), {}, span=Sample.DAY, es_valid=10)
     daily = queries.stats_series([device], hour - timedelta(days=1), hour + timedelta(hours=1), 'day')
     assert sum(row['es_valid'] for row in daily) == 10, "step=day reads the daily rows"
+
+
+def test_stats_count_the_bees_that_reported_and_leave_out_silent_steps(device):
+    hour = timezone.now().replace(minute=0, second=0, microsecond=0) - timedelta(hours=5)
+    second = Device.objects.create(account=device.account, product='adsbee_1090', unique_id='0000000000000002')
+    _sample(device, hour, {}, es_valid=4)
+    _sample(second, hour, {}, es_valid=6)
+    _sample(device, hour + timedelta(hours=3), {}, es_valid=1)
+    series = queries.stats_series([device, second], hour - timedelta(hours=1), hour + timedelta(hours=4))
+    assert [(row['t'], row['bees'], row['es_valid']) for row in series] == [
+        (hour.isoformat(), 2, 10), ((hour + timedelta(hours=3)).isoformat(), 1, 1)], "no rows for the silent hours"

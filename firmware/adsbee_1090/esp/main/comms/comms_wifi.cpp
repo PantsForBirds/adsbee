@@ -144,6 +144,8 @@ void CommsManager::WiFiEventHandler(void* arg, esp_event_base_t event_base, int3
             CONSOLE_INFO("CommsManager::WiFiInit", "Connected to ap SSID:%s", WiFiStationSSID(wifi_sta_network_index_));
             wifi_sta_connected_ = true;
             wifi_sta_connected_timestamp_ms_ = get_time_since_boot_ms();
+            // Runs before the netif's connected handler: handlers for any event of a base come first.
+            ApplyStaticIPv4(wifi_sta_netif_, wifi_sta_ipv4);
             break;
         case WIFI_EVENT_SCAN_DONE:
             // Second half of WiFiStationJoin(): the scan it started has finished.
@@ -321,7 +323,7 @@ bool CommsManager::WiFiInit() {
     assert(wifi_ap_netif_);
     // Same as esp_netif_create_default_wifi_sta(), with the IP mode applied.
     esp_netif_inherent_config_t sta_base = ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
-    ApplyIPModeToNetifConfig(sta_base);
+    ApplyIPModeToNetifConfig(sta_base, wifi_sta_ipv6);
     esp_netif_config_t sta_cfg = ESP_NETIF_DEFAULT_WIFI_STA();
     sta_cfg.base = &sta_base;
     wifi_sta_netif_ = esp_netif_new(&sta_cfg);

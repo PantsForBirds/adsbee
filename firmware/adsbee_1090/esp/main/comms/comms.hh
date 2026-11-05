@@ -239,6 +239,13 @@ class CommsManager {
 
     // IP versions used on Ethernet and the WiFi station. Takes effect when those interfaces are initialized.
     SettingsManager::IPMode ip_mode = SettingsManager::kIPModeIPv4;
+    // DHCP or static IPv4 on Ethernet and the WiFi station. Takes effect when the interface connects.
+    IPv4Config ethernet_ipv4;
+    IPv4Config wifi_sta_ipv4;
+    // AUTO (SLAAC) or static IPv6 on Ethernet and the WiFi station. Takes effect when the interface is initialized
+    // (SLAAC on or off) and when it connects (the address).
+    IPv6Config ethernet_ipv6;
+    IPv6Config wifi_sta_ipv6;
 
     // Ethernet public variables.
     bool ethernet_enabled = false;
@@ -362,7 +369,25 @@ class CommsManager {
     /**
      * Sets the DHCP client and SLAAC flags of an Ethernet or WiFi station netif config for ip_mode.
      */
-    void ApplyIPModeToNetifConfig(esp_netif_inherent_config_t& base);
+    void ApplyIPModeToNetifConfig(esp_netif_inherent_config_t& base, const IPv6Config& ipv6);
+
+    /**
+     * Gives an Ethernet or WiFi station netif its static IPv6 address and gateway, if config has one and ip_mode uses
+     * IPv6. Call when the link is up, after the link-local address is created.
+     */
+    void ApplyStaticIPv6(esp_netif_t* netif, const IPv6Config& config);
+
+    /**
+     * Sets the shared DNS servers from the interface's static IPv4 and IPv6 configurations (IPv4 first, up to three),
+     * if either has any. Does nothing otherwise, so DHCP's, the router's or the other interface's servers stay.
+     */
+    void ApplyStaticDNS(esp_netif_t* netif);
+
+    /**
+     * Gives an Ethernet or WiFi station netif its static IPv4 address, if config has one and ip_mode uses IPv4. Call
+     * when the link comes up, before the netif's own connected handler, so the DHCP client never starts.
+     */
+    void ApplyStaticIPv4(esp_netif_t* netif, const IPv4Config& config);
 
     /**
      * Writes an interface's IPv6 link-local address and its first global or unique local address as strings (empty if

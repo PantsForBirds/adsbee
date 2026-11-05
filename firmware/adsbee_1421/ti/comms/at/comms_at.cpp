@@ -11,6 +11,8 @@
 #include "object_dictionary.hh"
 #include "packet_decoder.hh"
 #include "flash_utils.hh"
+#include "led.hh"
+#include "led_blink_args.hh"
 #include "settings.hh"
 #include "settings_hash.hh"
 #include "sub_ghz_radio.hh"
@@ -119,7 +121,7 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
                               object_dictionary.kFirmwareVersionMinor, object_dictionary.kFirmwareVersionPatch,
                               object_dictionary.kFirmwareVersionReleaseCandidate);
             }
-            // Debug builds include RF test commands (AT+TX_CW); tools key off this line to find them.
+            // Debug builds have AT+TX_CW on all bands, Release on LRHF only; tools key off this line.
 #ifdef ADSBEE_DEBUG_BUILD
             CPP_AT_PRINTF("CC1314R10 Firmware Build: Debug\r\n");
 #else
@@ -153,13 +155,13 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
                     uint16_t device_info_version;
                     CPP_AT_TRY_ARG2NUM(1, device_info_version);
                     if (device_info_version != kDeviceInfoVersion) {
-                        CPP_AT_ERROR("Device info version must be %d, got %d.", device_info_version,
-                                     kDeviceInfoVersion);
+                        CPP_AT_ERROR("Device info version must be %d, got %d.", kDeviceInfoVersion,
+                                     device_info_version);
                     }
-                    if (device_info_version == device_info.device_info_version) {
-                        // Existing device info is compatible, use existing DeviceInfo struct as a starter.
-                        settings_manager.GetDeviceInfo(device_info);
-                    }
+                    // Start from the stored device info so fields left out keep their values, then store the
+                    // current version: on a blank module the stored version word is 0xFFFFFFFF.
+                    settings_manager.GetDeviceInfo(device_info);
+                    device_info.device_info_version = kDeviceInfoVersion;
                 }
                 // Else (no argument provided for device info), use default values for everything.
                 if (CPP_AT_HAS_ARG(2)) {
@@ -308,6 +310,60 @@ CPP_AT_CALLBACK(CommsManager::ATFilterDistanceNMCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+
+CPP_AT_CALLBACK(CommsManager::ATLEDBlinkCallback) {
+    switch (op) {
+        case '=': {
+            uint32_t duration_ms;
+            CPP_AT_TRY_ARG2NUM(0, duration_ms);
+            if (!LEDBlinkArgs::DurationIsValid(duration_ms)) {
+                CPP_AT_ERROR("Duration must be 1-%lu ms.", (unsigned long)LEDBlinkArgs::kMaxDurationMs);
+            }
+            // Parse all LED tokens before blinking anything so an invalid token doesn't half-execute the command.
+            LEDBlinkArgs::Selection selection;
+            uint16_t bad_index = 0;
+            switch (LEDBlinkArgs::ParseLEDs(&args[1], num_args - 1, selection, bad_index)) {
+                case LEDBlinkArgs::kOK:
+                    break;
+                case LEDBlinkArgs::kNoNetworkLED:
+                    CPP_AT_ERROR("No NETWORK LED on the ADSBee 1421. Must be 1090, SUBG, or ALL.");
+                    break;
+                default:
+                    CPP_AT_ERROR("Invalid LED '%.*s'. Must be 1090, SUBG, or ALL.", (int)args[1 + bad_index].length(),
+                                 args[1 + bad_index].data());
+                    break;
+            }
+            if (selection.led_1090) {
+                leds.ForceBlinkLED(bsp.k1090LEDPin, duration_ms);
+            }
+            if (selection.led_subg) {
+                leds.ForceBlinkLED(bsp.kSubGLEDPin, duration_ms);
+            }
+            CPP_AT_SUCCESS();
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATLEDEnableCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d", settings_manager.settings.led_enabled);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (CPP_AT_HAS_ARG(0)) {
+                bool enabled;
+                CPP_AT_TRY_ARG2NUM(0, enabled);
+                // A lit LED goes off within 1 ms (LEDs::Update()), unless it's a forced blink.
+                settings_manager.settings.led_enabled = enabled;
+                CPP_AT_SUCCESS();
+            }
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
 
 CPP_AT_CALLBACK(CommsManager::ATLogLevelCallback) {
     switch (op) {
@@ -507,12 +563,12 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 ",two_bit_found=%lu,fixed_es_1bit=%lu,fixed_es_2bit=%lu,fixed_ap_1bit=%lu,fixed_ap_2bit=%lu,"
                 "fixes_rejected=%lu,fixes_skipped=%lu\r\n",
                 (unsigned long)packet_decoder.two_bit_fixed_count,
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionExtendedSquitter1Bit],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionExtendedSquitter2Bit],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionAddressParity1Bit],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionAddressParity2Bit],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionRejected],
-                (unsigned long)adsbee.corrected_frames[AircraftDictionary::kCorrectionSkipped]);
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionExtendedSquitter1Bit),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionExtendedSquitter2Bit),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionAddressParity1Bit),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionAddressParity2Bit),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionRejected),
+                (unsigned long)adsbee.CorrectedFrames(AircraftDictionary::kCorrectionSkipped));
             CPP_AT_SILENT_SUCCESS();
             break;
         }
@@ -528,9 +584,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             packet_decoder.raw_queue_overflow_count = 0;
             packet_decoder.bitflips_fixed_count = 0;
             packet_decoder.two_bit_fixed_count = 0;
-            for (uint32_t& count : adsbee.corrected_frames) {
-                count = 0;
-            }
+            adsbee.ResetCorrectedFrames();
             subg_radio.rx_error_restart_count = 0;
             subg_radio.set_len_error_count = 0;
             adsbee.max_loop_us = 0;
@@ -1030,6 +1084,12 @@ CPP_AT_CALLBACK(CommsManager::ATSettingsCallback) {
                     if (!settings_manager.Load()) {
                         CPP_AT_ERROR("Error while reading from EEPROM.");
                     }
+                    // Applied as at boot. OK first: Apply() may switch the console to the saved baud rate.
+                    CPP_AT_PRINTF("OK\r\n");
+                    if (!settings_manager.Apply()) {
+                        CONSOLE_ERROR("CommsManager::ATSettingsCallback", "Loaded settings could not all be applied.");
+                    }
+                    CPP_AT_SILENT_SUCCESS();
                 } else if (args[0].compare("RESET") == 0) {
                     settings_manager.ResetToDefaults();
                     // Acknowledge at the old baud rate first: Apply() may switch the console to the
@@ -1167,12 +1227,13 @@ static constexpr uint16_t kLrLfMaxMHz = 1100;
 static constexpr uint16_t kLrHfMinMHz = 1900;
 static constexpr uint16_t kLrHfMaxMHz = 2700;
 
-#ifdef ADSBEE_DEBUG_BUILD
-// Transmits RF on demand, so it is compiled into Debug builds only (see ADSBEE_DEBUG_BUILD in CMakeLists.txt).
+// Transmits RF on demand: all bands in Debug builds, LRHF (2.4 GHz) only in Release (ADSBEE_DEBUG_BUILD).
 CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     // LR2021 TX power bounds, in whole dBm (DS.LR2021: LF -9.5..22 dBm, HF -19.5..12 dBm).
+#ifdef ADSBEE_DEBUG_BUILD
     static constexpr int32_t kLrLfMinPowerDbm = -9;
     static constexpr int32_t kLrLfMaxPowerDbm = 22;
+#endif
     static constexpr int32_t kLrHfMinPowerDbm = -19;
     static constexpr int32_t kLrHfMaxPowerDbm = 12;
     static constexpr int8_t kDefaultPowerDbm = 0;
@@ -1181,10 +1242,19 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
         CPP_AT_ERROR("Operator '%c' not supported.", op);
     }
     if (!(CPP_AT_HAS_ARG(0) && CPP_AT_HAS_ARG(1))) {
+#ifdef ADSBEE_DEBUG_BUILD
         CPP_AT_ERROR(
             "Requires at least two arguments: AT+TX_CW=<band [SUBG LRLF LRHF]>,<freq_MHz>[,<power_dBm> (LRLF/LRHF "
             "only)].");
+#else
+        CPP_AT_ERROR("Requires at least two arguments: AT+TX_CW=LRHF,<freq_MHz>[,<power_dBm>].");
+#endif
     }
+#ifndef ADSBEE_DEBUG_BUILD
+    if (args[0].compare("LRHF") != 0) {
+        CPP_AT_ERROR("Band '%s' unavailable: AT+TX_CW is LRHF only in Release builds.", args[0].data());
+    }
+#endif
     // Frequency accepts fractional MHz (e.g. 2400.1) so the LR2021 bands can be swept at sub-MHz steps for
     // filter characterization. It is rounded to the nearest kHz to keep float error out of the Hz value.
     float freq_mhz_f = 0.0f;
@@ -1197,7 +1267,6 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     uint32_t freq_hz = freq_khz * 1000u;
     uint16_t freq_mhz = (uint16_t)(freq_khz / 1000u);  // Truncated whole-MHz value for range checks and SUBG.
     uint16_t freq_frac_khz = (uint16_t)(freq_khz % 1000u);
-    bool freq_is_whole_mhz = (freq_frac_khz == 0);
 
     // Optional third argument: TX power in dBm (LR2021 bands only). Range is band-specific and validated
     // in the per-band branches below. Defaults to 0 dBm.
@@ -1214,9 +1283,11 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     }
 
     // Dispatch on band, validating the frequency before keying up the radio.
-    enum CwBand { kBandSubG, kBandLrLf, kBandLrHf } band;
+    enum CwBand { kBandSubG, kBandLrLf, kBandLrHf };
+    [[maybe_unused]] CwBand band;  // Always kBandLrHf in Release builds.
+#ifdef ADSBEE_DEBUG_BUILD
     if (args[0].compare("SUBG") == 0) {
-        if (!freq_is_whole_mhz) {
+        if (freq_frac_khz != 0) {
             CPP_AT_ERROR("SUBG CW frequency must be a whole number of MHz.");
         }
         if (freq_mhz < kSubGMinMHz || freq_mhz > kSubGMaxMHz) {
@@ -1243,7 +1314,9 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
         if (!adsbee.lr2021.StartCwTone(/*use_hf_path=*/false, freq_hz, power_dbm)) {
             CPP_AT_ERROR("Failed to start CW on LRLF.");
         }
-    } else if (args[0].compare("LRHF") == 0) {
+    } else
+#endif
+    if (args[0].compare("LRHF") == 0) {
         if (freq_khz < (uint32_t)kLrHfMinMHz * 1000u || freq_khz > (uint32_t)kLrHfMaxMHz * 1000u) {
             CPP_AT_ERROR("Frequency %u.%03u MHz out of range for LRHF (%u-%u MHz).", freq_mhz, freq_frac_khz,
                          kLrHfMinMHz, kLrHfMaxMHz);
@@ -1260,9 +1333,12 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
         CPP_AT_ERROR("Unknown band '%s' (SUBG, LRLF, LRHF).", args[0].data());
     }
 
+#ifdef ADSBEE_DEBUG_BUILD
     if (band == kBandSubG) {
         CPP_AT_PRINTF("Transmitting CW on %s at %u MHz. Press any key to stop.\r\n", args[0].data(), freq_mhz);
-    } else {
+    } else
+#endif
+    {
         CPP_AT_PRINTF("Transmitting CW on %s at %u.%03u MHz, %d dBm. Press any key to stop.\r\n", args[0].data(),
                       freq_mhz, freq_frac_khz, power_dbm);
     }
@@ -1275,9 +1351,12 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
 
     // Stop the carrier and restore normal reception.
     bool restore_ok;
+#ifdef ADSBEE_DEBUG_BUILD
     if (band == kBandSubG) {
         restore_ok = subg_radio.StopCWTest();
-    } else {
+    } else
+#endif
+    {
         restore_ok = adsbee.lr2021.StopCwTone();
         restore_ok &= adsbee.Init();  // Re-apply the 1090 MHz receiver configuration.
     }
@@ -1298,7 +1377,6 @@ CPP_AT_CALLBACK(CommsManager::ATTxCWCallback) {
     CPP_AT_SUCCESS();
 }
 
-#endif  // ADSBEE_DEBUG_BUILD
 
 // Formats an RSSI value in half-dB units (dBm * 2) as e.g. "-93.5" into buf. Both radios report in
 // half-dB resolution or better, so this avoids float printf.
@@ -1504,6 +1582,19 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "no receiver position, see AT+RX_POSITION) are always kept. Default: 0,100.0 (off).\r\n\t"
                     "AT+FILTER_DISTANCE_NM?\r\n\tQuery whether the filter is enabled and its distance.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFilterDistanceNMCallback, comms_manager)},
+    {.command = "LED_BLINK",
+     .min_args = 2,
+     .max_args = 4,
+     .help_string = "AT+LED_BLINK=<duration_ms>,<led>[,<led>...]\r\n\tForce one or more LEDs (1090, SUBG, or ALL) "
+                    "solid ON for duration_ms (1-60000) then off.\r\n\tBypasses AT+LED_ENABLE; intended for test "
+                    "fixtures. Returns immediately.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLEDBlinkCallback, comms_manager)},
+    {.command = "LED_ENABLE",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+LED_ENABLE=<enabled>\r\n\tEnable or disable the hardware status/activity "
+                    "LEDs.\r\n\tAT+LED_ENABLE?\r\n\tQuery whether the hardware LEDs are enabled.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATLEDEnableCallback, comms_manager)},
     {.command = "LOG_LEVEL",
      .min_args = 0,
      .max_args = 1,
@@ -1600,8 +1691,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "SETTINGS",
      .min_args = 0,
      .max_args = 3,
-     .help_string = "Load, save, or reset nonvolatile settings. RESET restores defaults and writes them to "
-                    "flash.\r\n\tAT+SETTINGS=<op [LOAD SAVE RESET]>\r\n\t"
+     .help_string = "Load, save, or reset nonvolatile settings. LOAD reads the saved settings from flash and applies "
+                    "them as at boot (none need a reboot); the OK comes before a saved console baud rate takes "
+                    "effect. RESET restores defaults and writes them to flash.\r\n\tAT+SETTINGS=<op [LOAD SAVE RESET]>\r\n\t"
                     "Display nonvolatile settings.\r\n\tAT+SETTINGS?\r\n\t+SETTINGS=...\r\n\tDump settings in AT "
                     "command format.\r\n\tAT+SETTINGS?DUMP\r\n\t+SETTINGS=...\r\n\tDump settings as a "
                     "single-line JSON object keyed by AT command, plus the read-only live BOOTLOADER_PIN "
@@ -1623,17 +1715,21 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .help_string = "Run hardware self-tests. Reception resumes as configured afterwards. "
                     "Unavailable while AT+LR_ENABLE=0.",
      .callback = ATTestCallback},
-#ifdef ADSBEE_DEBUG_BUILD
     {.command = "TX_CW",
      .min_args = 2,
      .max_args = 3,
+#ifdef ADSBEE_DEBUG_BUILD
      .help_string = "AT+TX_CW=<band [SUBG LRLF LRHF]>,<freq_MHz>[,<power_dBm>]\r\n\tTransmit an unmodulated CW "
                     "carrier until a key is pressed.\r\n\tSUBG=CC1314 (whole MHz only), LRLF/LRHF=LR2021 low/high band "
                     "(fractional MHz accepted, 1 kHz resolution, e.g. 2400.1). Power "
                     "(default 0 dBm) applies to LR2021 bands only: LRLF -9..22 dBm, LRHF -19..12 dBm.\r\n\tSUBG "
                     "power is fixed at +12 dBm by the SmartRF TX power table; a power argument is an error.",
-     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTxCWCallback, comms_manager)},
+#else
+     .help_string = "AT+TX_CW=LRHF,<freq_MHz>[,<power_dBm>]\r\n\tTransmit an unmodulated CW carrier on the LR2021 "
+                    "high band (1900-2700 MHz, fractional MHz accepted, e.g. 2400.1) until a key is pressed. Power "
+                    "-19..12 dBm, default 0 dBm.\r\n\tRelease builds: LRHF only (SUBG and LRLF need a Debug build).",
 #endif
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTxCWCallback, comms_manager)},
     {.command = "RX_CW",
      .min_args = 2,
      .max_args = 2,

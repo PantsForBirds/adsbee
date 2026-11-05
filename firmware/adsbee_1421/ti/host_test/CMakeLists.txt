@@ -43,6 +43,7 @@ target_sources(host_test PRIVATE
     ${ADSBEE_COMMON_DIR}/adsb/mode_s_packet.cpp
     ${ADSBEE_COMMON_DIR}/utils/buffer_utils.cpp
     ${ADSBEE_COMMON_DIR}/utils/crc/crc.cpp  # crc32_ieee_802_3 for Settings::IsValid(), and the Mode S CRC.
+    test_led_blink_args.cc
     test_lr2021_drain_state.cc
     test_lr2021_ook_adsb.cc
     test_lr2021_status_tracker.cc

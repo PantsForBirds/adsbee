@@ -121,6 +121,7 @@ void AutoUpdateManager::Task() {
     xSemaphoreGive(updater_mutex_);
     uint32_t delay_ms = updater_->RunOnce();
     capturing_ = false;
+    reads_console_ = false;
     http_.Close();
     if (updater_->state() == AutoUpdater::kFailed) {
         CONSOLE_WARNING("AutoUpdateManager::Task", "Update to %s failed: %s.", updater_->version(), updater_->detail());
@@ -251,6 +252,7 @@ bool AutoUpdateManager::Http(const HttpRequest& request, HttpResult& result, Bod
 }
 
 void AutoUpdateManager::ConsoleSend(const uint8_t* data, size_t len) {
+    reads_console_ = true;
     // Same queue the /console websocket feeds; the RP2040 pulls from it over SPI.
     static constexpr uint32_t kTimeoutMs = 10000;
     uint32_t start_ms = NowMs();
