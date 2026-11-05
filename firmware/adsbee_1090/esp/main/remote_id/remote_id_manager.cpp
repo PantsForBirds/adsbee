@@ -5,6 +5,7 @@
 
 #include "comms.hh"                 // comms_manager (WiFi/Ethernet state) + logging.
 #include "hardware_capabilities.hh" // HasPSRAM() + internal-RAM heap guards.
+#include "ble/ble_host.hh"
 #include "hal.hh"                   // get_time_since_boot_ms.
 #include "object_dictionary.hh"     // object_dictionary.device_status.remote_id_status.
 #include "server/adsbee_server.hh"  // adsbee_server: local aircraft dictionary.
@@ -41,8 +42,10 @@ static_assert(RemoteIDGuard::kTransportsBLE ==
               (SettingsManager::kRemoteIDTransportBLE4 | SettingsManager::kRemoteIDTransportBLE5Long));
 static_assert(RemoteIDGuard::kTransportWiFiBeacon == SettingsManager::kRemoteIDTransportWiFiBeacon);
 
-// Free heap needed to bring the Bluetooth stack up for receive or transmit.
+// Free heap needed to bring the Bluetooth stack up for receive or transmit. Once the Bluetooth output holds the shared
+// host, its cost is paid: only the reserve is needed.
 static uint32_t BLEStartFreeBytes(uint32_t with_psram_bytes) {
+    if (BLEHost::IsInitialized()) return RemoteIDGuard::kReserveFreeBytes;
     return HardwareCapabilities::HasPSRAM() ? with_psram_bytes
                                             : RemoteIDGuard::kReserveFreeBytes + RemoteIDManager::kBLEHeapCostBytes;
 }

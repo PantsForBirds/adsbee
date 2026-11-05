@@ -16,7 +16,7 @@ enum Scope : uint8_t {
 // number), feed receiver IDs, the Remote ID UAS ID, the receiver position values, the ASTERIX SIC, the swarm token and
 // static IPv4 and IPv6 addresses.
 inline uint32_t Compute(const SettingsManager::Settings& settings, Scope scope) {
-    static_assert(kSettingsVersion == 20 && sizeof(SettingsManager::Settings) == 1964,
+    static_assert(kSettingsVersion == 21 && sizeof(SettingsManager::Settings) == 1964,
                   "Settings changed: add the new fields below, then update this check.");
     typedef SettingsManager::Settings Settings;
     const bool full = scope == kScopeFull;
@@ -130,6 +130,7 @@ inline uint32_t Compute(const SettingsManager::Settings& settings, Scope scope) 
         hasher.AddBytes(ipv6->gateway, sizeof(ipv6->gateway));
         hasher.AddBytes(&ipv6->dns[0][0], sizeof(ipv6->dns));
     }
+    hasher.AddU8(settings.ble_output_mode);
 
     return hasher.Value();
 }

@@ -253,6 +253,13 @@ bool SettingsManager::Sanitize() {
         }
     }
 
+    if (settings.ble_output_mode >= kNumBLEOutputModes) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "ble_output_mode %u out of range, turning Bluetooth output off.",
+                      settings.ble_output_mode);
+        settings.ble_output_mode = kBLEOutputOff;
+        changed = true;
+    }
+
     if (settings.rx_position.source >= RxPosition::kNumPositionSources) {
         CONSOLE_ERROR("SettingsManager::Sanitize", "rx_position.source %u out of range, resetting to kPositionSourceLowestAircraft.",
                       settings.rx_position.source);
@@ -348,6 +355,7 @@ void SettingsManager::Print() {
     RedactPassword(const_cast<char*>(settings.swarm_token), redacted_swarm_token, Settings::kSwarmTokenMaxLen);
     CONSOLE_PRINTF("\tSwarm Reports: %s, %s, token %s\r\n", settings.swarm_enabled ? "ENABLED" : "DISABLED",
                    settings.swarm_server, redacted_swarm_token);
+    CONSOLE_PRINTF("\tBluetooth Output: %s\r\n", BLEOutputModeToStr(settings.ble_output_mode));
 
 #ifdef ON_PICO
     // Only print serial reporting protocols on master, where we aren't constrained by log message size.
@@ -579,4 +587,7 @@ void SettingsManager::PrintAT() {
     FormatIPv4ConfigArgs(settings.wifi_sta_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
     FormatIPv6ConfigArgs(settings.wifi_sta_ipv6, ipv6_config_str, sizeof(ipv6_config_str));
     CONSOLE_PRINTF("AT+WIFI_STA_IP=IPV4,%s\r\nAT+WIFI_STA_IP=IPV6,%s\r\n", ipv4_config_str, ipv6_config_str);
+
+    // AT+BLE_OUTPUT
+    CONSOLE_PRINTF("AT+BLE_OUTPUT=%s\r\n", BLEOutputModeToStr(settings.ble_output_mode));
 }

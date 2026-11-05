@@ -21,14 +21,13 @@
 #include <atomic>
 #include <cstring>
 
+#include "ble/ble_host.hh"
 #include "ble_adv_watchdog.hh"
 #include "ble_scan_watchdog.hh"
 #include "comms.hh"  // Logging.
 #include "hal.hh"    // get_time_since_boot_ms.
 #include "host/ble_gap.h"
 #include "host/ble_hs.h"
-#include "nimble/nimble_port.h"
-#include "nimble/nimble_port_freertos.h"
 #include "os/os_mbuf.h"
 #include "remote_id_tx.hh"
 
@@ -42,7 +41,7 @@ constexpr uint8_t kODIDPayloadOffsetInSvcData = 4;
 
 constexpr uint8_t kAdvTypeServiceData16 = 0x16;  // BLE_HS_ADV_TYPE_SVC_DATA_UUID16.
 
-bool s_ble_initialized = false;
+bool s_ble_acquired = false;  // Remote ID holds the shared host (BLEHost).
 bool s_scanning = false;
 bool s_want_coded = false;
 bool s_scan_want = false;  // Receive scanning requested (may be pending until the host syncs).
@@ -52,7 +51,6 @@ std::atomic<uint32_t> s_num_scan_starts = 0;
 uint32_t s_watched_scan_starts = 0;
 uint32_t s_last_scan_watchdog_ms = 0;
 BLEScanWatchdog s_scan_watchdog;
-std::atomic<bool> s_watchdog_reset = false;  // The next host reset is a watchdog's, already logged.
 
 // --- Transmit state ---------------------------------------------------------------------------------------------
 // Extended advertising instance IDs. Instance 0 carries BT4 legacy advertisements (one 25-byte ODID message each, the
@@ -66,7 +64,6 @@ constexpr uint32_t kAdvIntervalMs = 500;
 // NimBLE advertising intervals are in units of 0.625 ms.
 constexpr uint32_t kAdvIntervalUnits = (kAdvIntervalMs * 1000) / 625;
 
-bool s_tx_host_ready = false;      // Host has synced, so advertising calls are legal.
 bool s_tx_legacy_configured = false;
 bool s_tx_coded_configured = false;
 bool s_tx_legacy_want = false;     // Requested by settings (applied once the host syncs).
@@ -186,7 +183,7 @@ bool ReloadAdvInstance(uint8_t instance, const uint8_t* odid, uint16_t odid_len,
 
 // Refreshes the advertised payload for whichever transmit instances are running. Called on the transmit tick.
 void ServiceAdvertisingPayloads() {
-    if (!s_tx_host_ready) return;
+    if (!BLEHost::IsSynced()) return;
 
     RemoteIDTransmitter& transmitter = remote_id_manager.GetTransmitter();
     uint8_t buf[RemoteIDTransmitter::kMaxPackLenBytes];
@@ -208,7 +205,7 @@ void ServiceAdvertisingPayloads() {
 
 // Brings the requested advertising instances up. Safe to call repeatedly; only (re)configures what changed.
 void StartRequestedAdvertising() {
-    if (!s_tx_host_ready) return;
+    if (!BLEHost::IsSynced()) return;
 
     if (s_tx_legacy_want && !s_tx_legacy_configured) {
         s_tx_legacy_configured = ConfigureAdvInstance(kAdvInstanceLegacy, /*legacy=*/true);
@@ -311,16 +308,17 @@ void StartExtDiscovery() {
     }
 }
 
-void OnHostReset(int reason) {
-    if (s_watchdog_reset.exchange(false)) return;
-    CONSOLE_WARNING("remote_id_ble", "Bluetooth host reset, reason=%d.", reason);
+void OnHostReset() {
+    s_scanning = false;
+    s_tx_legacy_advertising = false;
+    s_tx_coded_advertising = false;
 }
 
 void OnHostSync() {
     // Controller/host are in sync; safe to start scanning and/or advertising. Either may have been requested before the
     // host finished syncing, so both are (re)applied here. After a host reset the controller has lost its scan and
     // advertising sets (NimBLE still marks the sets configured), so everything is set up again.
-    s_tx_host_ready = true;
+    if (!s_ble_acquired) return;
     s_scanning = false;
     s_tx_legacy_configured = false;
     s_tx_coded_configured = false;
@@ -330,29 +328,14 @@ void OnHostSync() {
     StartRequestedAdvertising();
 }
 
-void HostTask(void* param) {
-    nimble_port_run();  // Runs until nimble_port_stop().
-    nimble_port_freertos_deinit();
-}
-
-}  // namespace
-
-namespace {
-
-// Brings the NimBLE host + controller up once, shared by the receive (scan) and transmit (advertise) paths. Returns
-// false only if the stack failed to initialize.
+// Brings the shared host up for the receive (scan) and transmit (advertise) paths. Returns false only if the stack
+// failed to initialize.
 bool EnsureHostInitialized() {
-    if (s_ble_initialized) return true;
-    esp_err_t err = nimble_port_init();
-    if (err != ESP_OK) {
-        CONSOLE_ERROR("remote_id_ble", "nimble_port_init failed: %d.", err);
-        return false;
-    }
-    ble_hs_cfg.sync_cb = OnHostSync;
-    ble_hs_cfg.reset_cb = OnHostReset;
-    nimble_port_freertos_init(HostTask);
-    s_ble_initialized = true;
-    return true;
+    if (s_ble_acquired) return true;
+    BLEHost::SetListener(BLEHost::kUserRemoteID, {.on_sync = OnHostSync, .on_reset = OnHostReset});
+    s_ble_acquired = BLEHost::Acquire(BLEHost::kUserRemoteID);
+    // The host may have synced already for another user: OnHostSync() won't run for us then.
+    return s_ble_acquired;
 }
 
 }  // namespace
@@ -374,7 +357,7 @@ bool RemoteIDManager::BLEStart(bool enable_coded_phy) {
     if (!EnsureHostInitialized()) return false;
     // If the host has already synced (e.g. transmit brought it up first, or scanning was toggled off and on), start
     // discovery now; otherwise OnHostSync() will start it. Sync can run first in the host task, so skip if it did.
-    if (s_tx_host_ready && !s_scanning) StartExtDiscovery();
+    if (BLEHost::IsSynced() && !s_scanning) StartExtDiscovery();
 
     ble_running_ = true;
     ble_coded_running_ = enable_coded_phy;
@@ -413,7 +396,7 @@ bool RemoteIDManager::BLETxStart(bool enable_legacy, bool enable_coded_phy) {
 void RemoteIDManager::BLETxStop() {
     s_tx_legacy_want = false;
     s_tx_coded_want = false;
-    if (s_tx_host_ready) {
+    if (BLEHost::IsSynced()) {
         StartRequestedAdvertising();  // Tears down whichever instances are configured.
     }
     ble_tx_legacy_running_ = false;
@@ -426,7 +409,7 @@ void RemoteIDManager::BLETxUpdateStatus() {
     if (s_tx_legacy_advertising) status_ |= kStatusTxBLELegacyActive;
     if (s_tx_coded_advertising) status_ |= kStatusTxBLECodedActive;
     // Until the host syncs, nothing is on the air yet and nothing has failed either.
-    if (s_tx_host_ready && ((s_tx_legacy_want && !s_tx_legacy_advertising) ||
+    if (BLEHost::IsSynced() && ((s_tx_legacy_want && !s_tx_legacy_advertising) ||
                             (s_tx_coded_want && !s_tx_coded_advertising))) {
         status_ |= kStatusTxBlocked;
     }
@@ -448,7 +431,7 @@ void RemoteIDManager::BLEServiceScanWatchdog() {
     uint32_t now_ms = get_time_since_boot_ms();
     if (now_ms - s_last_scan_watchdog_ms < 1000) return;
     s_last_scan_watchdog_ms = now_ms;
-    if (!ble_running_ || !s_scanning || !ble_hs_synced()) return;
+    if (!ble_running_ || !s_scanning || !BLEHost::IsSynced()) return;
 
     const uint32_t num_reports = s_num_scan_reports;
     const uint32_t num_starts = s_num_scan_starts;
@@ -460,8 +443,7 @@ void RemoteIDManager::BLEServiceScanWatchdog() {
     if (!s_scan_watchdog.Update(num_reports, now_ms)) return;
     // Resets the controller and syncs again; OnHostSync() restarts scanning and advertising.
     CONSOLE_INFO("remote_id_ble", "Bluetooth scan stalled, resetting the controller.");
-    s_watchdog_reset = true;
-    ble_hs_sched_reset(BLE_HS_ECONTROLLER);
+    BLEHost::ScheduleWatchdogReset();
     s_scan_watchdog.Restart(num_reports, now_ms);
 }
 
@@ -469,7 +451,7 @@ void RemoteIDManager::BLEServiceAdvWatchdog() {
     uint32_t now_ms = get_time_since_boot_ms();
     if (now_ms - s_last_adv_watchdog_ms < 1000) return;
     s_last_adv_watchdog_ms = now_ms;
-    const bool synced = s_ble_initialized && ble_hs_synced();
+    const bool synced = BLEHost::IsSynced();
     const bool advertising[kNumAdvInstances] = {synced && s_tx_legacy_want && s_tx_legacy_configured,
                                                 synced && s_tx_coded_want && s_tx_coded_configured};
     for (uint8_t instance = 0; instance < kNumAdvInstances; instance++) {
@@ -483,27 +465,17 @@ void RemoteIDManager::BLEServiceAdvWatchdog() {
         if (!s_adv_watchdogs[instance].Update(num_events, now_ms)) continue;
         // Resets the controller and syncs again; OnHostSync() restarts scanning and advertising.
         CONSOLE_INFO("remote_id_ble", "Bluetooth advertising stalled (set %u), resetting the controller.", instance);
-        s_watchdog_reset = true;
-        ble_hs_sched_reset(BLE_HS_ECONTROLLER);
+        BLEHost::ScheduleWatchdogReset();
         for (bool& watched : s_adv_watched) watched = false;
         return;
     }
 }
 
 void RemoteIDManager::BLEReleaseIfIdle() {
-    if (!s_ble_initialized || ble_running_ || ble_tx_legacy_running_ || ble_tx_coded_running_) return;
-    // Stops the host task and frees the host and controller, which hold most of the Remote ID RAM.
-    int rc = nimble_port_stop();
-    if (rc != 0) {
-        CONSOLE_ERROR("remote_id_ble", "nimble_port_stop failed, rc=%d.", rc);
-        return;
-    }
-    esp_err_t err = nimble_port_deinit();
-    if (err != ESP_OK) {
-        CONSOLE_ERROR("remote_id_ble", "nimble_port_deinit failed: %d.", err);
-    }
-    s_ble_initialized = false;
-    s_tx_host_ready = false;
+    if (!s_ble_acquired || ble_running_ || ble_tx_legacy_running_ || ble_tx_coded_running_) return;
+    // Frees the host and controller, which hold most of the Remote ID RAM, unless the GDL90 server still uses them.
+    BLEHost::Release(BLEHost::kUserRemoteID);
+    s_ble_acquired = false;
     s_scanning = false;
     s_tx_legacy_configured = false;
     s_tx_coded_configured = false;
