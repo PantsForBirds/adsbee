@@ -1768,11 +1768,14 @@ class AircraftDictionary {
             return VariantIndex<T, I + 1>();
         }
     }
+   public:
     // The swarm protocol an aircraft type feeds, or kNoSwarmProtocol.
     template <typename T>
     static constexpr uint8_t ProtocolOf() {
         return SwarmProtocolOfAircraftType(VariantIndex<T>());
     }
+
+   private:
     template <typename T>
     static constexpr bool kRecordsRange = ProtocolOf<T>() != kNoSwarmProtocol;
     // Whether an entry's aircraft count towards aircraft_max and aircraft_unique.

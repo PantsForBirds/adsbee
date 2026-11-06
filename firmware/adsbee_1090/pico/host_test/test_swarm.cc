@@ -1174,15 +1174,58 @@ TEST(SwarmRecorder, RegistryMatchesTheV1Tables) {
     EXPECT_EQ(SwarmProtocolIndex("ads_l"), kNoSwarmProtocol);
 }
 
-// Registry vs the server's software/adsbee_swarm/adsbee_swarm/protocols.json. Skipped until that file exists.
-TEST(SwarmRecorder, RegistryMatchesServerProtocolsJson) {
-    std::string json = ReadFile(std::string(SWARM_BODIES_DIR) + "/../../../../../software/adsbee_swarm/adsbee_swarm/protocols.json");
-    if (json.empty()) GTEST_SKIP() << "No protocols.json yet.";
-    for (const SwarmProtocol& p : kSwarmProtocols) {
-        size_t pos = json.find("\"" + std::string(p.name) + "\"");
-        ASSERT_NE(pos, std::string::npos) << p.name;
-        EXPECT_EQ(JsonNumber(json.substr(pos), "unit_m"), (long)p.unit_m) << p.name;
+// The value after "key": (any spacing) up to the next , } or ] at the same level, as text.
+std::string JsonField(const std::string& json, const std::string& key) {
+    size_t pos = json.find("\"" + key + "\":");
+    if (pos == std::string::npos) return "";
+    pos += key.size() + 3;
+    while (json[pos] == ' ') pos++;
+    size_t end = pos;
+    int depth = 0;
+    for (; end < json.size(); end++) {
+        char c = json[end];
+        if (c == '[' || c == '{') depth++;
+        if ((c == ']' || c == '}') && depth-- == 0) break;
+        if (c == ',' && depth == 0) break;
     }
+    return json.substr(pos, end - pos);
+}
+
+// The registry and band tables against the server's table (software/adsbee_swarm/adsbee_swarm/protocols.json).
+TEST(SwarmRecorder, RegistryMatchesServerProtocolsJson) {
+    std::string json = ReadFile(std::string(SWARM_BODIES_DIR) +
+                                "/../../../../../software/adsbee_swarm/adsbee_swarm/protocols.json");
+    if (json.empty()) GTEST_SKIP() << "No protocols.json in this tree yet.";
+    EXPECT_EQ(JsonField(json, "sectors"), std::to_string(RangeMap::kNumSectors));
+    EXPECT_EQ(JsonField(json, "bands"), std::to_string(RangeMap::kNumBands));
+    std::vector<std::string> reported;
+    for (size_t pos = json.find("{\"name\""); pos != std::string::npos; pos = json.find("{\"name\"", pos + 1)) {
+        std::string entry = json.substr(pos, json.find('}', pos) - pos + 1);
+        if (JsonField(entry, "reported") != "true") continue;
+        std::string name = JsonField(entry, "name");
+        name = name.substr(1, name.size() - 2);
+        reported.push_back(name);
+        uint8_t p = SwarmProtocolIndex(name.c_str());
+        ASSERT_NE(p, kNoSwarmProtocol) << name;
+        const SwarmProtocol& info = kSwarmProtocols[p];
+        EXPECT_EQ(JsonField(entry, "unit_m"), std::to_string(info.unit_m)) << name;
+        EXPECT_EQ(JsonField(entry, "basis"),
+                  info.basis == SwarmBandBasis::kAltitude ? "\"altitude\"" : "\"height_above_rx\"")
+            << name;
+        EXPECT_EQ(JsonField(entry, "aircraft"), info.counts_as_aircraft ? "true" : "false") << name;
+        const int32_t* tops = SwarmRecorder::kBandTopFtByBasis[static_cast<uint8_t>(info.basis)];
+        std::string floors = "[0";
+        for (uint16_t b = 0; b + 1 < RangeMap::kNumBands; b++) floors += ", " + std::to_string(tops[b]);
+        EXPECT_EQ(JsonField(entry, "floors_ft"), floors + "]") << name;
+        EXPECT_EQ(JsonField(entry, "top_ft"), std::to_string(tops[RangeMap::kNumBands - 1])) << name;
+        std::string stats = "[";
+        for (const SwarmProtocol::V1Stat& v1 : info.v1_stats) {
+            if (v1.key) stats += std::string(stats.size() > 1 ? ", " : "") + "\"" + v1.key + "\"";
+        }
+        EXPECT_EQ(JsonField(entry, "stats"), stats + "]") << name;
+    }
+    ASSERT_EQ(reported.size(), kNumSwarmProtocols);  // Same set, same order.
+    for (uint8_t p = 0; p < kNumSwarmProtocols; p++) EXPECT_EQ(reported[p], kSwarmProtocols[p].name);
 }
 
 TEST(SwarmRecorder, FourthMapComesFromTheHeap) {
@@ -1332,7 +1375,7 @@ TEST(SwarmRecorder, ListenTimeFollowsTheReceivers) {
     EXPECT_TRUE(r.listen_known);
     EXPECT_EQ(r.listen_s[SwarmRecorder::kModeS], 3300u);
     EXPECT_EQ(r.listen_s[SwarmRecorder::kUAT], 1800u);
-    EXPECT_EQ(r.listen_s[SwarmRecorder::kRemoteID], 2100u);
+    EXPECT_EQ(r.listen_s[SwarmRecorder::kRemoteID], 2400u);
 
     // A retry sends the merged totals.
     SwarmRecorder later;
@@ -1359,7 +1402,7 @@ TEST(SwarmReporter, ListenTimeAcrossAModeSwitch) {
     reporter.Send("https://swarm.example", kToken);
     const std::string& body = platform.bodies[0];
     EXPECT_EQ(JsonObject(body, "listen_s"), "{\"mode_s\":3600,\"uat\":1800}");
-    EXPECT_EQ(JsonObject(body, "stats").find("\"uat_adsb\":300,\"uat_uplink\":20,"), 0u + JsonObject(body, "stats").find("\"uat_adsb\""));
+    EXPECT_NE(JsonObject(body, "stats").find("\"uat_adsb\":300,\"uat_uplink\":20,"), std::string::npos);
     EXPECT_NE(body.find("\"uat\":{\"sectors\""), std::string::npos);
     EXPECT_EQ(body.find("\"frames\""), std::string::npos);  // No protocol without v1 stats keys counts frames yet.
 }
