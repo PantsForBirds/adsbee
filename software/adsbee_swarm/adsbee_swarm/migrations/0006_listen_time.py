@@ -12,23 +12,31 @@ from django.db import migrations, models
 BITMAP_BYTES = 54
 
 
-def count_bins_sql(connection, table: str) -> str:
-    """One UPDATE on PostgreSQL: bit_count(bytea) from 14; older servers count the 1s of the bitmap
-    as a bit string."""
+def bins_expression(connection) -> str:
+    """The bin count of a row in SQL: bit_count(bytea) from PostgreSQL 14; older servers count the
+    1s of the bitmap as a bit string."""
     head = f'substring(range_map from 1 for {BITMAP_BYTES})'
     if connection.pg_version >= 140000:
-        count = f'bit_count({head})'
-    else:
-        count = f"length(replace((('x' || encode({head}, 'hex'))::bit varying)::text, '0', ''))"
-    return f'UPDATE {connection.ops.quote_name(table)} SET bins = {count} WHERE range_map IS NOT NULL'
+        return f'bit_count({head})'
+    return f"length(replace((('x' || encode({head}, 'hex'))::bit varying)::text, '0', ''))"
+
+
+def count_bins_sql(connection, table: str, column_type: str) -> str:
+    """PostgreSQL: one statement that rewrites the table with each row's count. A column type
+    change with USING writes the table once and rebuilds its indexes in bulk; an UPDATE would leave a
+    dead copy of every row and add three index entries each (2.27M rows: about 1 min against 5)."""
+    return (f'ALTER TABLE {connection.ops.quote_name(table)} ALTER COLUMN bins TYPE {column_type} '
+            f'USING {bins_expression(connection)}')
 
 
 def count_bins(apps, schema_editor):
     SampleRange = apps.get_model('adsbee_swarm', 'SampleRange')
     if schema_editor.connection.vendor == 'postgresql':
-        # Set-based: seconds for millions of rows, where the loop below takes most of an hour.
-        with schema_editor.connection.cursor() as cursor:
-            cursor.execute(count_bins_sql(schema_editor.connection, SampleRange._meta.db_table))
+        # Set-based: about a minute for millions of rows, where the loop below takes most of an hour.
+        connection = schema_editor.connection
+        with connection.cursor() as cursor:
+            cursor.execute(count_bins_sql(connection, SampleRange._meta.db_table,
+                                          SampleRange._meta.get_field('bins').db_type(connection)))
         return
     count_bins_python(SampleRange)
 

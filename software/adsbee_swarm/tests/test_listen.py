@@ -263,7 +263,7 @@ def _migration_0006():
 
 @pytest.mark.skipif(connection.vendor != 'postgresql', reason='the set-based path is PostgreSQL only')
 def test_bins_sql_matches_python_on_the_same_rows():
-    """0006's UPDATE (bit_count from PG 14, the bit-string fallback before) gives each row the bins the
+    """0006's table rewrite (bit_count from PG 14, the bit-string fallback before) gives each row the bins the
     Python path gives: maps from the packer, random bytes, short, empty and all-ones bitmaps."""
     from types import SimpleNamespace
 
@@ -291,10 +291,12 @@ def test_bins_sql_matches_python_on_the_same_rows():
     table = SampleRange._meta.db_table
     for version in (connection.pg_version, 130000):     # this server, and a PG 13 one (the fallback)
         SampleRange.objects.update(bins=0)
-        sql = mig.count_bins_sql(SimpleNamespace(pg_version=version, ops=connection.ops), table)
-        assert ('bit_count' in sql) == (version >= 140000)
+        sql = mig.count_bins_sql(SimpleNamespace(pg_version=version, ops=connection.ops), table,
+                                 SampleRange._meta.get_field('bins').db_type(connection))
+        assert ('bit_count' in sql) == (version >= 140000) and 'TYPE smallint USING' in sql
         if version >= 140000 and connection.pg_version < 140000:
             continue
         with connection.cursor() as cursor:
+            cursor.execute('SET CONSTRAINTS ALL IMMEDIATE')   # this test's own inserts; the migration has none
             cursor.execute(sql)
         assert bins() == expected, version
