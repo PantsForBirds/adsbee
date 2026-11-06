@@ -198,25 +198,38 @@ void CC1312::BlockSyncPulses() {
 }
 
 void CC1312::UpdateTimeSync() {
+    uint32_t timestamp_ms = get_time_since_boot_ms();
     if (device_status.rat_epoch != rat_epoch_) {
-        // The radio timer restarted (radio re-opened or CC1312 rebooted): earlier sync points no longer apply.
+        // The radio timer restarted (radio re-opened or CC1312 rebooted): earlier sync points no longer apply. Pulse
+        // right away instead of waiting out the interval.
+        CONSOLE_INFO("CC1312::UpdateTimeSync", "Radio timer epoch %u -> %u: sub-GHz timestamps restart.", rat_epoch_,
+                     device_status.rat_epoch);
         rat_epoch_ = device_status.rat_epoch;
+        rat_epoch_start_timestamp_ms_ = timestamp_ms;
         time_sync.Reset();
         sync_pulse_pending_ = false;
+        sync_pulse_requested_ = false;
+        sync_pulse_request_timestamp_ms_ = timestamp_ms - kSyncPulseIntervalMs;
     }
     if (in_bootloader_ || !IsEnabled()) {
         return;
     }
     sync_pulse_allowed_ = true;  // The application just answered a status read.
 
-    uint32_t timestamp_ms = get_time_since_boot_ms();
     if (sync_pulse_pending_) {
         if (num_sync_pulses_sent_ != num_sync_pulses_sent_at_request_) {
             __dmb();
             uint16_t num_captures = device_status.sync_capture_count - sync_capture_count_at_request_;
             if (num_captures == 1) {
+                bool was_synced = time_sync.IsSynced();
                 time_sync.AddSyncPoint(device_status.sync_capture_rat, sync_pulse_mlat_48mhz_counts_);
                 sync_pulse_pending_ = false;
+                if (time_sync.IsSynced() != was_synced) {
+                    CONSOLE_INFO("CC1312::UpdateTimeSync",
+                                 "Sub-GHz timestamps on the MLAT clock %lu ms after the radio timer started (%ld ppb).",
+                                 timestamp_ms - rat_epoch_start_timestamp_ms_,
+                                 static_cast<int32_t>(time_sync.GetRateErrorPPB()));
+                }
                 return;
             } else if (num_captures > 1) {
                 sync_pulse_pending_ = false;  // An edge that wasn't ours: skip this pulse.

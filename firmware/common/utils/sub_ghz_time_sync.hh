@@ -21,6 +21,12 @@ class SubGHzTimeSync {
     // Each new rate measurement moves the estimate by 1 / 2^kRateFilterShift of the difference.
     static constexpr uint16_t kRateFilterShift = 3;
 
+    /**
+     * @param[in] min_sync_points Points needed before timestamps are given: 1 when both clocks share a crystal, 2 when
+     * the rate between them must be measured first.
+     */
+    explicit SubGHzTimeSync(uint16_t min_sync_points = 1) : min_sync_points_(min_sync_points) {}
+
     void Reset() {
         num_points_ = 0;
         rate_error_ppb_ = 0;
@@ -50,13 +56,13 @@ class SubGHzTimeSync {
         if (num_points_ < UINT16_MAX) num_points_++;
     }
 
-    bool IsSynced() const { return num_points_ > 0; }
+    bool IsSynced() const { return num_points_ >= min_sync_points_ && num_points_ > 0; }
     uint16_t GetNumSyncPoints() const { return num_points_; }
     int64_t GetRateErrorPPB() const { return rate_error_ppb_; }
 
     /**
      * @param[in] rat Radio timer value within +/-536 s (half the RAT period) of the last sync point.
-     * @retval 48 MHz MLAT counts, or 0 (no timestamp) before the first sync point.
+     * @retval 48 MHz MLAT counts, or 0 (no timestamp) until there are min_sync_points.
      */
     uint64_t ToMLAT48MHzCounts(uint32_t rat) const {
         if (!IsSynced()) return 0;
@@ -65,6 +71,7 @@ class SubGHzTimeSync {
     }
 
    private:
+    uint16_t min_sync_points_;
     uint16_t num_points_ = 0;
     uint32_t rat_ = 0;
     uint64_t mlat_48mhz_counts_ = 0;

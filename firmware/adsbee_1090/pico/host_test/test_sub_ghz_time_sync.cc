@@ -95,3 +95,15 @@ TEST(SubGHzTimeSync, ABadPointRestartsTheFit) {
     sync.Reset();
     EXPECT_FALSE(sync.IsSynced());
 }
+
+TEST(SubGHzTimeSync, TwoCrystalsWaitForTheSecondPoint) {
+    SubGHzTimeSync sync(2);
+    sync.AddSyncPoint(0, 1000);
+    EXPECT_FALSE(sync.IsSynced());
+    EXPECT_EQ(sync.ToMLAT48MHzCounts(10), 0u);
+    sync.AddSyncPoint(4'000'000, 1000 + 48'000'000 + 480);  // 10 ppm.
+    EXPECT_TRUE(sync.IsSynced());
+    EXPECT_EQ(sync.ToMLAT48MHzCounts(8'000'000), 1000u + 96'000'000 + 960);
+    sync.Reset();
+    EXPECT_FALSE(sync.IsSynced());
+}
