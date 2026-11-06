@@ -10,8 +10,7 @@
 // What the receivers run right now, sampled once a second for each protocol's listen time.
 struct SwarmListenState {
     bool r1090_rx_enabled = false;
-    SettingsManager::EnableState subg_enabled = SettingsManager::kEnableStateDisabled;
-    bool subg_rx_enabled = false;
+    bool subg_rx_enabled = false;  // Sub-GHz radio on and receiving.
     SettingsManager::SubGHzRadioMode subg_mode = SettingsManager::kSubGHzRadioModeUATRx;
     uint16_t remote_id_status = 0;  // RemoteIDGuard::Status bits: live state, settings only say what was requested.
 };
@@ -46,8 +45,7 @@ struct SwarmProtocol {
 
 inline bool SwarmListenModeS(const SwarmListenState& s) { return s.r1090_rx_enabled; }
 inline bool SwarmListenUAT(const SwarmListenState& s) {
-    return s.subg_enabled == SettingsManager::kEnableStateEnabled && s.subg_rx_enabled &&
-           s.subg_mode == SettingsManager::kSubGHzRadioModeUATRx;
+    return s.subg_rx_enabled && s.subg_mode == SettingsManager::kSubGHzRadioModeUATRx;
 }
 inline bool SwarmListenRemoteID(const SwarmListenState& s) {
     return s.remote_id_status & (RemoteIDGuard::kStatusBLEActive | RemoteIDGuard::kStatusBLECodedPHYActive |

@@ -45,7 +45,7 @@ class SwarmManager : public SwarmPlatform {
         if (live_ != nullptr) live_->AddFrames(protocol, valid, second);
     }
 
-    // Which receivers run now, from the settings and the live Remote ID state.
+    // Which receivers run now, from the RP2040's live status and the Remote ID state.
     static SwarmListenState ListenState();
 
     // A report is being sent.

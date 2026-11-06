@@ -34,12 +34,11 @@ void SwarmManager::Stop() {
 }
 
 SwarmListenState SwarmManager::ListenState() {
-    const SettingsManager::Settings& settings = settings_manager.settings;
+    const ObjectDictionary::RP2040DeviceStatus& rp2040 = object_dictionary.composite_device_status.rp2040;
     SwarmListenState state;
-    state.r1090_rx_enabled = settings.r1090_rx_enabled;
-    state.subg_enabled = settings.subg_enabled;
-    state.subg_rx_enabled = settings.subg_rx_enabled;
-    state.subg_mode = settings.subg_mode;
+    state.r1090_rx_enabled = rp2040.r1090_rx_enabled;
+    state.subg_rx_enabled = rp2040.subg_rx_enabled;
+    state.subg_mode = rp2040.subg_mode;
     state.remote_id_status = object_dictionary.device_status.remote_id_status;
     return state;
 }

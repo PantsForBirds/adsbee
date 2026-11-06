@@ -1128,7 +1128,6 @@ std::string Body(const SwarmReporter& reporter, bool ota_keys) {
 SwarmListenState ListenAll() {
     SwarmListenState s;
     s.r1090_rx_enabled = true;
-    s.subg_enabled = SettingsManager::kEnableStateEnabled;
     s.subg_rx_enabled = true;
     s.subg_mode = SettingsManager::kSubGHzRadioModeUATRx;
     s.remote_id_status = RemoteIDGuard::kStatusBLEActive;
@@ -1368,8 +1367,6 @@ TEST(SwarmRecorder, ListenTimeFollowsTheReceivers) {
     s.subg_rx_enabled = false;
     s.remote_id_status = RemoteIDGuard::kStatusWiFiSnifferActive;
     r.AddListening(s, 300);
-    s.subg_rx_enabled = true;
-    s.subg_enabled = SettingsManager::kEnableStateExternal;
     s.r1090_rx_enabled = false;
     r.AddListening(s, 300);
     EXPECT_TRUE(r.listen_known);
@@ -1412,7 +1409,7 @@ TEST(SwarmReporter, EuropeUnitSendsNoUATKeys) {
     SwarmReporter reporter(platform, "0.9.1");
     SwarmRecorder live;
     SwarmListenState s = ListenAll();
-    s.subg_enabled = SettingsManager::kEnableStateDisabled;
+    s.subg_rx_enabled = false;
     s.remote_id_status = 0;
     live.AddListening(s, 3600);
     live.AddFrames(1200000, 500000, 0, 0);
