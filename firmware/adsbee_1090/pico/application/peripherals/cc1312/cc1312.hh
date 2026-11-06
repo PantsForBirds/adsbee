@@ -513,6 +513,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
      */
     inline void SetEnableState(SettingsManager::EnableState enabled) {
         BlockSyncPulses();  // Every reset and bootloader entry comes through here.
+        time_sync.Reset();  // A reset restarts the radio timer.
         if (enabled == SettingsManager::EnableState::kEnableStateExternal) {
             gpio_set_dir(config_.enable_pin, GPIO_IN);
             gpio_set_pulls(config_.enable_pin, true, false);  // Pull pin up.

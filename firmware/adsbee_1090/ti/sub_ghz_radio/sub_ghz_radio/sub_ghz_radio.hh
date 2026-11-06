@@ -91,6 +91,9 @@ public:
 private:
     // Routes the sync pin to the radio timer and captures its rising edges (ObjectDictionary::sync_capture_rat).
     void StartSyncCapture();
+    // Frees the capture channel. Call before RF_close().
+    void StopSyncCapture();
+    RF_RatHandle sync_capture_handle_ = RF_ALLOC_ERROR;
 
     SubGHzRadioConfig config_;
 
