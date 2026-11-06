@@ -612,3 +612,12 @@ TEST(GDL90Utils, ADSLTrafficReport) {
     ASSERT_GE(DecodeGDL90Frame(frame, frame_len, msg, sizeof(msg)), 28u);
     EXPECT_EQ(msg[1] & 0x0F, GDL90Reporter::GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress);
 }
+
+TEST(GDL90Utils, UATTORTicksAre80Nanoseconds) {
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks(0), 0u);
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks(96), 25u);         // 2 us.
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks(48'000'000), 12'500'000u);  // 1 s.
+    // Wraps at 2^24 ticks (1.342 s), also from large counts.
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks(96ull << 24), 0u);
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks((96ull << 24) * 1000 + 96), 25u);
+}

@@ -98,6 +98,9 @@ public:
     volatile uint32_t uat_len_mismatch_count = 0;
 
 private:
+    // Routes the sync pin to the radio timer and captures its rising edges (ObjectDictionary::sync_capture_rat).
+    void StartSyncCapture();
+
     SubGHzRadioConfig config_;
 
     /**

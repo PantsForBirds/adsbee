@@ -644,6 +644,14 @@ void ObjectDictionary::UpdateDeviceStatus() {
         .num_valid_uat_adsb_packets = metrics.num_valid_uat_adsb_packets,
         .num_raw_uat_uplink_packets = metrics.num_raw_uat_uplink_packets,
         .num_valid_uat_uplink_packets = metrics.num_valid_uat_uplink_packets};
+    // The capture callback can run between reads: retry until the count is the same on both sides of the RAT value.
+    uint16_t capture_count;
+    do {
+        capture_count = sync_capture_count;
+        device_status.sync_capture_rat = sync_capture_rat;
+    } while (capture_count != sync_capture_count);
+    device_status.sync_capture_count = capture_count;
+    device_status.rat_epoch = rat_epoch;
     // Reset metrics after reading.
     metrics = {0};
 #endif

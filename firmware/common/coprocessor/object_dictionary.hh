@@ -278,6 +278,12 @@ class ObjectDictionary {
         uint16_t num_valid_uat_adsb_packets = 0;
         uint16_t num_raw_uat_uplink_packets = 0;
         uint16_t num_valid_uat_uplink_packets = 0;
+
+        // Radio timer (RAT) value captured on the last rising edge of the RP2040's sync pulse, the number of edges
+        // captured, and a count that changes whenever the RAT restarts (radio re-opened), which voids older captures.
+        uint32_t sync_capture_rat = 0;
+        uint16_t sync_capture_count = 0;
+        uint8_t rat_epoch = 0;
     };
 
     /**
@@ -454,6 +460,11 @@ class ObjectDictionary {
     };
     SubGHzRadioMetrics metrics = {0};
     SubGHzDeviceStatus device_status = {};
+
+    // Written by the radio's RAT capture callback and Init(); see SubGHzDeviceStatus.
+    volatile uint32_t sync_capture_rat = 0;
+    volatile uint16_t sync_capture_count = 0;
+    volatile uint8_t rat_epoch = 0;
 #endif
 
    private:

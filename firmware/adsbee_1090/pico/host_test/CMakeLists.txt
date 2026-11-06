@@ -58,6 +58,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_esp32_firmware_check.cc
         test_cpu_utils.cc
         test_crc.cc
+        test_sub_ghz_time_sync.cc
         test_data_structures.cc
         test_decode_utils.cc
         test_fixedmath.cc
