@@ -254,3 +254,49 @@ def test_migration_counts_bins_and_leaves_listen_time_null():
     row = SampleRange.objects.get()
     assert (row.bins, row.listen_s, row.frames) == (3, None, None)
     assert row.ranges() == {4: 6000, 5: 2000, 300: 10000}
+
+
+def _migration_0006():
+    import importlib
+    return importlib.import_module('adsbee_swarm.migrations.0006_listen_time')
+
+
+@pytest.mark.skipif(connection.vendor != 'postgresql', reason='the set-based path is PostgreSQL only')
+def test_bins_sql_matches_python_on_the_same_rows():
+    """0006's table rewrite (bit_count from PG 14, the bit-string fallback before) gives each row the bins the
+    Python path gives: maps from the packer, random bytes, short, empty and all-ones bitmaps."""
+    from types import SimpleNamespace
+
+    from django.contrib.auth import get_user_model
+    from adsbee_swarm.models import Account
+
+    mig = _migration_0006()
+    account = Account.objects.create(user=get_user_model().objects.create(username='bins'))
+    device = Device.objects.create(account=account, product='adsbee_1090', unique_id='00000000000000B1')
+    sample = Sample.objects.create(device=device, start=timezone.now(), span_s=3600)
+    rng = random.Random(7)
+    maps = [b'', bytes(10), b'\xff' * 54, b'\xff' * 80, bytes(54) + b'\xff' * 20,
+            ranges.pack({0: 2000, 431: 4000}, 2000), ranges.pack({b: 2000 for b in range(0, 432, 3)}, 2000)]
+    maps += [rng.randbytes(rng.randrange(0, 120)) for _ in range(200)]
+    for i, blob in enumerate(maps):
+        SampleRange.objects.create(sample=sample, protocol=f'p{i}', unit_m=2000, range_map=blob)
+
+    def bins():
+        return dict(SampleRange.objects.filter(sample=sample).values_list('protocol', 'bins'))
+
+    mig.count_bins_python(SampleRange)
+    expected = bins()
+    assert expected['p2'] == 432 and expected['p3'] == 432 and expected['p4'] == 0 and expected['p0'] == 0
+    assert expected['p5'] == 2
+    table = SampleRange._meta.db_table
+    for version in (connection.pg_version, 130000):     # this server, and a PG 13 one (the fallback)
+        SampleRange.objects.update(bins=0)
+        sql = mig.count_bins_sql(SimpleNamespace(pg_version=version, ops=connection.ops), table,
+                                 SampleRange._meta.get_field('bins').db_type(connection))
+        assert ('bit_count' in sql) == (version >= 140000) and 'TYPE smallint USING' in sql
+        if version >= 140000 and connection.pg_version < 140000:
+            continue
+        with connection.cursor() as cursor:
+            cursor.execute('SET CONSTRAINTS ALL IMMEDIATE')   # this test's own inserts; the migration has none
+            cursor.execute(sql)
+        assert bins() == expected, version

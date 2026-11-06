@@ -8,11 +8,44 @@ Existing range rows keep listen_s and frames null (not reported) and get their b
 from django.db import migrations, models
 
 
+#: A map's first BITMAP_BYTES (54) bytes are its bitmap: one bit per bin with a value.
+BITMAP_BYTES = 54
+
+
+def bins_expression(connection) -> str:
+    """The bin count of a row in SQL: bit_count(bytea) from PostgreSQL 14; older servers count the
+    1s of the bitmap as a bit string."""
+    head = f'substring(range_map from 1 for {BITMAP_BYTES})'
+    if connection.pg_version >= 140000:
+        return f'bit_count({head})'
+    return f"length(replace((('x' || encode({head}, 'hex'))::bit varying)::text, '0', ''))"
+
+
+def count_bins_sql(connection, table: str, column_type: str) -> str:
+    """PostgreSQL: one statement that rewrites the table with each row's count. A column type
+    change with USING writes the table once and rebuilds its indexes in bulk; an UPDATE would leave a
+    dead copy of every row and add three index entries each (2.27M rows: about 1 min against 5)."""
+    return (f'ALTER TABLE {connection.ops.quote_name(table)} ALTER COLUMN bins TYPE {column_type} '
+            f'USING {bins_expression(connection)}')
+
+
 def count_bins(apps, schema_editor):
     SampleRange = apps.get_model('adsbee_swarm', 'SampleRange')
+    if schema_editor.connection.vendor == 'postgresql':
+        # Set-based: about a minute for millions of rows, where the loop below takes most of an hour.
+        connection = schema_editor.connection
+        with connection.cursor() as cursor:
+            cursor.execute(count_bins_sql(connection, SampleRange._meta.db_table,
+                                          SampleRange._meta.get_field('bins').db_type(connection)))
+        return
+    count_bins_python(SampleRange)
+
+
+def count_bins_python(SampleRange):
+    """Other databases (SQLite): row by row."""
     changed = []
     for row in SampleRange.objects.only('pk', 'range_map').iterator(chunk_size=2000):
-        bitmap = bytes(row.range_map or b'')[:54]
+        bitmap = bytes(row.range_map or b'')[:BITMAP_BYTES]
         row.bins = sum(bin(byte).count('1') for byte in bitmap)
         changed.append(row)
         if len(changed) >= 2000:
