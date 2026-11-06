@@ -14,6 +14,7 @@ h2 { font-size: 1.05rem; margin: 1.2rem 0 .5rem; }
 .windows a { padding: .15rem .5rem; border: 1px solid var(--line); border-radius: 4px; margin-left: .25rem; color: var(--fg); }
 .protocols { margin-right: .8rem; }
 .windows a.on { background: var(--accent); color: #000; border-color: var(--accent); }
+.windows a.on small { color: inherit; opacity: .75; }
 .map { height: 420px; border: 1px solid var(--line); border-radius: 6px; margin: .8rem 0; }
 .bee-label { font-weight: 600; }
 table.list { width: 100%; border-collapse: collapse; margin: .5rem 0; }

@@ -63,6 +63,7 @@ components:
         rx_position: {$ref: '#/components/schemas/Position'}
         stats:
           type: object
+          description: "Missing keys count as 0. Newer firmware sends a protocol's keys only when it listened to it."
           properties:
             modes_valid: {type: integer}
             es_valid: {type: integer}
@@ -74,12 +75,23 @@ components:
         ranges:
           type: object
           nullable: true
-          description: "One map per protocol; protocols with no bins are omitted ({} is valid). Not with range. Ignored without rx_position."
-          additionalProperties: false
+          description: "One map per protocol (protocols.json); protocols with no bins are omitted ({} is valid). Not with range. Ignored without rx_position. Send only protocols in the last reply's protocols. An unknown protocol is ignored and counted (protocols_ignored)."
+          maxProperties: 16
+          additionalProperties: {type: object, description: "A protocol this server doesn't know: ignored."}
           properties:
             mode_s: {$ref: '#/components/schemas/Range'}
             uat: {$ref: '#/components/schemas/Range'}
             remote_id: {$ref: '#/components/schemas/Range'}
+        listen_s:
+          type: object
+          maxProperties: 16
+          description: "Seconds each protocol's receiver was on in the period (0 or missing: not listening; more than len_s is stored as len_s). A protocol listened to with no map: listened, heard nothing. Absent: unknown (older firmware). Unknown protocols are ignored and counted."
+          additionalProperties: {type: integer, minimum: 0, maximum: 604800}
+        frames:
+          type: object
+          maxProperties: 16
+          description: "Valid frames per protocol without stats keys (remote_id); ignored for mode_s and uat. Unknown protocols are ignored and counted."
+          additionalProperties: {type: integer, minimum: 0}
         range_withheld: {type: string, enum: [no_position, implausible], description: "Only when range is omitted for that reason."}
         range_dropped: {type: integer, minimum: 0, description: "Positions the bee dropped as beyond the horizon."}
     ReportAnswer:
@@ -90,6 +102,7 @@ components:
           type: object
           nullable: true
           properties: {tag: {type: string}, channel: {type: string}}
+        protocols: {type: array, items: {type: string}, description: "What this server takes in ranges, listen_s and frames. Without it (older servers): mode_s, uat, remote_id."}
     Device:
       type: object
       properties:
@@ -115,6 +128,8 @@ components:
         bins_ignored: {type: integer, description: "Last report: bins past the horizon limit, ignored here."}
         check_position: {type: boolean, description: "Any of the three above: show the user 'check position'."}
         old_token: {type: boolean, description: "Its last report used a replaced enroll token: give it the new AT+SWARM line."}
+        check_protocols: {type: boolean, description: "Its last report carried protocols this server doesn't know (ignored): update the server."}
+        ignored_protocols: {type: array, items: {type: string}, description: "Those protocols."}
     DeviceEdit:
       type: object
       properties:
@@ -137,6 +152,10 @@ components:
         sector_deg: {type: integer}
         band_basis: {type: string, enum: [altitude, height_above_rx], description: "altitude: baro, else geometric. height_above_rx: remote_id."}
         band_edges_ft: {type: array, items: {type: array, items: {type: integer, nullable: true}}}
+        listening:
+          type: object
+          description: "Per protocol: bees that listened (older firmware: that heard) and bees that heard something."
+          additionalProperties: {type: object, properties: {listened: {type: integer}, heard: {type: integer}}}
         devices:
           type: array
           items:
@@ -150,6 +169,12 @@ components:
               sector_max_m: {type: array, items: {type: integer, nullable: true}}
               bins: {type: integer}
               max_range_m: {type: integer, nullable: true}
+              check_position: {type: boolean}
+              check_protocols: {type: boolean}
+              listen_s: {type: integer, nullable: true, description: "Seconds listened in the window; null: unknown (older firmware)."}
+              listened: {type: boolean, nullable: true, description: "null: unknown (older firmware)."}
+              heard: {type: boolean}
+              frames: {type: integer, nullable: true}
         swarm:
           type: object
           description: "Max per bin over every bee (each relative to its own receiver)."
@@ -177,6 +202,8 @@ components:
               aircraft_unique: {type: integer}
               range_dropped: {type: integer}
               bins_ignored: {type: integer}
+              protocols_ignored: {type: integer, description: Protocols reports carried that this server doesn't know}
+              frames: {type: object, additionalProperties: {type: integer}, description: "Per protocol without stats keys, when reported."}
     RolloutNew:
       type: object
       required: [product, tag]

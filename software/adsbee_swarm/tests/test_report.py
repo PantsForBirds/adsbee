@@ -16,7 +16,7 @@ def test_a_report_is_stored_and_answered(client, owner, bee, rng):
     body = bee.report(rng=rng)
     response = post_report(client, owner.token, body)
     assert response.status_code == 200, response.content
-    assert response.json() == {'next_report_s': 3600, 'firmware': None}
+    assert response.json() == {'next_report_s': 3600, 'firmware': None, 'protocols': ['mode_s', 'uat', 'remote_id']}
     device = Device.objects.get(account=owner.account, unique_id=bee.unique_id)
     assert device.versions == {'rp2040': '0.9.1', 'esp32': '0.9.1'} and device.version == '0.9.1'
     assert (device.rx_lat, device.rx_source) == (bee.lat, 'fixed') and device.auto_update is True

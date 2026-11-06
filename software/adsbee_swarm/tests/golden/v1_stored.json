@@ -1,0 +1,454 @@
+{
+ "replies": [
+  [
+   200,
+   {
+    "firmware": null,
+    "next_report_s": 3600
+   }
+  ],
+  [
+   200,
+   {
+    "firmware": null,
+    "next_report_s": 3600
+   }
+  ],
+  [
+   200,
+   {
+    "firmware": null,
+    "next_report_s": 3600
+   }
+  ],
+  [
+   200,
+   {
+    "firmware": null,
+    "next_report_s": 3600
+   }
+  ],
+  [
+   200,
+   {
+    "firmware": null,
+    "next_report_s": 3600
+   }
+  ],
+  [
+   200,
+   {
+    "firmware": null,
+    "next_report_s": 3600
+   }
+  ],
+  [
+   200,
+   {
+    "firmware": null,
+    "next_report_s": 3600
+   }
+  ],
+  [
+   200,
+   {
+    "firmware": null,
+    "next_report_s": 3600
+   }
+  ]
+ ],
+ "stored": [
+  {
+   "auto_update": true,
+   "bins_ignored": 5,
+   "check_position": true,
+   "product": "adsbee_1090",
+   "range_dropped": 0,
+   "range_withheld": "",
+   "rx_alt_m": 30.0,
+   "rx_lat": 37.1234,
+   "rx_lon": -122.1234,
+   "rx_source": "fixed",
+   "samples": [
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 5,
+     "es_valid": 500000,
+     "modes_valid": 1200000,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {
+      "mode_s": {
+       "map": "814aa552a15402954aa552a9542a954aa552a9542a954aa15028140a8542a15028140a8542a15028140a8542a15028140a8542a15028010e0a061b171328242035312d3e3a4f4b47020f0b071c181429252136322e433f3b504c48035955100c081d19152a262237332f44403c514d49045a56110d091e1a162b27233834304541524e0501120e1f1b2c2839354642534f0602130f201c2d293a364743545007031410211d2e2a3b374844555108041511221e2f2b3c384945565209051612231f302c3d394a46",
+       "unit_m": 2000
+      }
+     },
+     "reports": 1,
+     "span_s": 3600,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    },
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 5,
+     "es_valid": 500000,
+     "modes_valid": 1200000,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {
+      "mode_s": {
+       "map": "814aa552a15402954aa552a9542a954aa552a9542a954aa15028140a8542a15028140a8542a15028140a8542a15028140a8542a15028010e0a061b171328242035312d3e3a4f4b47020f0b071c181429252136322e433f3b504c48035955100c081d19152a262237332f44403c514d49045a56110d091e1a162b27233834304541524e0501120e1f1b2c2839354642534f0602130f201c2d293a364743545007031410211d2e2a3b374844555108041511221e2f2b3c384945565209051612231f302c3d394a46",
+       "unit_m": 2000
+      }
+     },
+     "reports": 1,
+     "span_s": 86400,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    }
+   ],
+   "unique_id": "E6614C311B5B0000",
+   "uptime_s": 7200,
+   "versions": {
+    "esp32": "0.9.1-rc11",
+    "rp2040": "0.9.1-rc11"
+   }
+  },
+  {
+   "auto_update": true,
+   "bins_ignored": 5,
+   "check_position": true,
+   "product": "adsbee_1090",
+   "range_dropped": 0,
+   "range_withheld": "",
+   "rx_alt_m": 30.0,
+   "rx_lat": 37.1234,
+   "rx_lon": -122.1234,
+   "rx_source": "fixed",
+   "samples": [
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 5,
+     "es_valid": 500000,
+     "modes_valid": 1201000,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {
+      "mode_s": {
+       "map": "814aa552a15402954aa552a9542a954aa552a9542a954aa15028140a8542a15028140a8542a15028140a8542a15028140a8542a15028010e0a061b171328242035312d3e3a4f4b47020f0b071c181429252136322e433f3b504c48035955100c081d19152a262237332f44403c514d49045a56110d091e1a162b27233834304541524e0501120e1f1b2c2839354642534f0602130f201c2d293a364743545007031410211d2e2a3b374844555108041511221e2f2b3c384945565209051612231f302c3d394a46",
+       "unit_m": 2000
+      },
+      "remote_id": {
+       "map": "218410000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010e1b2835",
+       "unit_m": 50
+      },
+      "uat": {
+       "map": "010840000210800004200001084000021080000420000108400002108000042000010840000210800004200001084000021080000420010e1b2835424f020f1c2936435003101d2a37445104111e2b38455205121f2c3946530613202d3a",
+       "unit_m": 2000
+      }
+     },
+     "reports": 1,
+     "span_s": 3600,
+     "uat_adsb": 30000,
+     "uat_uplink": 8000
+    },
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 5,
+     "es_valid": 500000,
+     "modes_valid": 1201000,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {
+      "mode_s": {
+       "map": "814aa552a15402954aa552a9542a954aa552a9542a954aa15028140a8542a15028140a8542a15028140a8542a15028140a8542a15028010e0a061b171328242035312d3e3a4f4b47020f0b071c181429252136322e433f3b504c48035955100c081d19152a262237332f44403c514d49045a56110d091e1a162b27233834304541524e0501120e1f1b2c2839354642534f0602130f201c2d293a364743545007031410211d2e2a3b374844555108041511221e2f2b3c384945565209051612231f302c3d394a46",
+       "unit_m": 2000
+      },
+      "remote_id": {
+       "map": "218410000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010e1b2835",
+       "unit_m": 50
+      },
+      "uat": {
+       "map": "010840000210800004200001084000021080000420000108400002108000042000010840000210800004200001084000021080000420010e1b2835424f020f1c2936435003101d2a37445104111e2b38455205121f2c3946530613202d3a",
+       "unit_m": 2000
+      }
+     },
+     "reports": 1,
+     "span_s": 86400,
+     "uat_adsb": 30000,
+     "uat_uplink": 8000
+    }
+   ],
+   "unique_id": "E6614C311B5B0001",
+   "uptime_s": 7200,
+   "versions": {
+    "esp32": "0.9.1-rc11",
+    "rp2040": "0.9.1-rc11"
+   }
+  },
+  {
+   "auto_update": true,
+   "bins_ignored": 0,
+   "check_position": false,
+   "product": "adsbee_1090",
+   "range_dropped": 0,
+   "range_withheld": "",
+   "rx_alt_m": 30.0,
+   "rx_lat": 37.1234,
+   "rx_lon": -122.1234,
+   "rx_source": "fixed",
+   "samples": [
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 0,
+     "es_valid": 0,
+     "modes_valid": 0,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {
+      "uat": {
+       "map": "010840000210800004200001084000021080000420000108400002108000042000010840000210800004200001084000021080000420010e1b2835424f020f1c2936435003101d2a37445104111e2b38455205121f2c3946530613202d3a",
+       "unit_m": 2000
+      }
+     },
+     "reports": 1,
+     "span_s": 3600,
+     "uat_adsb": 30000,
+     "uat_uplink": 8000
+    },
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 0,
+     "es_valid": 0,
+     "modes_valid": 0,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {
+      "uat": {
+       "map": "010840000210800004200001084000021080000420000108400002108000042000010840000210800004200001084000021080000420010e1b2835424f020f1c2936435003101d2a37445104111e2b38455205121f2c3946530613202d3a",
+       "unit_m": 2000
+      }
+     },
+     "reports": 1,
+     "span_s": 86400,
+     "uat_adsb": 30000,
+     "uat_uplink": 8000
+    }
+   ],
+   "unique_id": "E6614C311B5B0002",
+   "uptime_s": 7200,
+   "versions": {
+    "esp32": "0.9.1-rc11",
+    "rp2040": "0.9.1-rc11"
+   }
+  },
+  {
+   "auto_update": true,
+   "bins_ignored": 0,
+   "check_position": true,
+   "product": "adsbee_1090",
+   "range_dropped": 0,
+   "range_withheld": "no_position",
+   "rx_alt_m": null,
+   "rx_lat": null,
+   "rx_lon": null,
+   "rx_source": "",
+   "samples": [
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 0,
+     "es_valid": 500000,
+     "modes_valid": 1200000,
+     "range_dropped": 0,
+     "range_withheld": "no_position",
+     "ranges": {},
+     "reports": 1,
+     "span_s": 3600,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    },
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 0,
+     "es_valid": 500000,
+     "modes_valid": 1200000,
+     "range_dropped": 0,
+     "range_withheld": "no_position",
+     "ranges": {},
+     "reports": 1,
+     "span_s": 86400,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    }
+   ],
+   "unique_id": "E6614C311B5B0003",
+   "uptime_s": 7200,
+   "versions": {
+    "esp32": "0.9.1-rc11",
+    "rp2040": "0.9.1-rc11"
+   }
+  },
+  {
+   "auto_update": true,
+   "bins_ignored": 0,
+   "check_position": false,
+   "product": "adsbee_1090",
+   "range_dropped": 0,
+   "range_withheld": "",
+   "rx_alt_m": 30.0,
+   "rx_lat": 37.1234,
+   "rx_lon": -122.1234,
+   "rx_source": "fixed",
+   "samples": [
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 0,
+     "es_valid": 0,
+     "modes_valid": 0,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {},
+     "reports": 1,
+     "span_s": 3600,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    },
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 0,
+     "es_valid": 0,
+     "modes_valid": 0,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {},
+     "reports": 1,
+     "span_s": 86400,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    }
+   ],
+   "unique_id": "E6614C311B5B0004",
+   "uptime_s": 7200,
+   "versions": {
+    "esp32": "0.9.1-rc11",
+    "rp2040": "0.9.1-rc11"
+   }
+  },
+  {
+   "auto_update": true,
+   "bins_ignored": 0,
+   "check_position": true,
+   "product": "adsbee_1090",
+   "range_dropped": 20,
+   "range_withheld": "implausible",
+   "rx_alt_m": 30.0,
+   "rx_lat": 37.1234,
+   "rx_lon": -122.1234,
+   "rx_source": "fixed",
+   "samples": [
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 0,
+     "es_valid": 500,
+     "modes_valid": 1000,
+     "range_dropped": 20,
+     "range_withheld": "implausible",
+     "ranges": {},
+     "reports": 1,
+     "span_s": 3600,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    },
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 0,
+     "es_valid": 500,
+     "modes_valid": 1000,
+     "range_dropped": 20,
+     "range_withheld": "implausible",
+     "ranges": {},
+     "reports": 1,
+     "span_s": 86400,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    }
+   ],
+   "unique_id": "E6614C311B5B0005",
+   "uptime_s": 7200,
+   "versions": {
+    "esp32": "0.9.1-rc11",
+    "rp2040": "0.9.1-rc11"
+   }
+  },
+  {
+   "auto_update": true,
+   "bins_ignored": 5,
+   "check_position": true,
+   "product": "adsbee_1090",
+   "range_dropped": 0,
+   "range_withheld": "",
+   "rx_alt_m": 30.0,
+   "rx_lat": 37.1234,
+   "rx_lon": -122.1234,
+   "rx_source": "fixed",
+   "samples": [
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 5,
+     "es_valid": 500000,
+     "modes_valid": 1200000,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {
+      "aircraft": {
+       "map": "814aa552a15402954aa552a9542a954aa552a9542a954aa15028140a8542a15028140a8542a15028140a8542a15028140a8542a15028010e0a061b171328242035312d3e3a4f4b47020f0b071c181429252136322e433f3b504c48035955100c081d19152a262237332f44403c514d49045a56110d091e1a162b27233834304541524e0501120e1f1b2c2839354642534f0602130f201c2d293a364743545007031410211d2e2a3b374844555108041511221e2f2b3c384945565209051612231f302c3d394a46",
+       "unit_m": 2000
+      }
+     },
+     "reports": 1,
+     "span_s": 3600,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    },
+    {
+     "aircraft_max": 40,
+     "aircraft_unique": 296,
+     "bins_ignored": 5,
+     "es_valid": 500000,
+     "modes_valid": 1200000,
+     "range_dropped": 0,
+     "range_withheld": "",
+     "ranges": {
+      "aircraft": {
+       "map": "814aa552a15402954aa552a9542a954aa552a9542a954aa15028140a8542a15028140a8542a15028140a8542a15028140a8542a15028010e0a061b171328242035312d3e3a4f4b47020f0b071c181429252136322e433f3b504c48035955100c081d19152a262237332f44403c514d49045a56110d091e1a162b27233834304541524e0501120e1f1b2c2839354642534f0602130f201c2d293a364743545007031410211d2e2a3b374844555108041511221e2f2b3c384945565209051612231f302c3d394a46",
+       "unit_m": 2000
+      }
+     },
+     "reports": 1,
+     "span_s": 86400,
+     "uat_adsb": 0,
+     "uat_uplink": 0
+    }
+   ],
+   "unique_id": "E6614C311B5BAAAA",
+   "uptime_s": 7200,
+   "versions": {
+    "esp32": "0.9.1-rc11",
+    "rp2040": "0.9.1-rc11"
+   }
+  }
+ ]
+}

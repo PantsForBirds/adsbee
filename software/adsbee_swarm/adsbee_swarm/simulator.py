@@ -6,7 +6,9 @@ Simulated bees posting realistic reports, for demos and tests. No Django needed 
 Range shapes: the radio horizon for each altitude band, 4.12 km * (sqrt(h_rx) + sqrt(h_aircraft)),
 trimmed per bee by a few terrain shadows and the traffic that happens to be up there. With
 `protocols`, a report carries Mode S, UAT (fewer, lower, shorter) and Remote ID (a few drones,
-up to a few km) maps in `ranges`; without, one mixed `range` as older firmware sends.
+up to a few km) maps in `ranges`; without, one mixed `range` as older firmware sends. With
+`listen`, as newer firmware: `listen_s` for those protocols, maps and stats only for them, and
+nothing heard on the ones in `quiet`.
 `manage.py swarm_simulate` stores weeks of history at once (no rate limits, past timestamps).
 """
 from __future__ import annotations
@@ -86,7 +88,7 @@ class Bee:
         return heard
 
     def report(self, period_s: int = 3600, rng: random.Random | None = None, unit_m: int = ranges.DEFAULT_UNIT_M,
-               protocols: bool = False) -> dict:
+               protocols: bool = False, listen: tuple[str, ...] | None = None, quiet: tuple[str, ...] = ()) -> dict:
         rng = rng or random.Random()
         start = self.uptime_s
         self.uptime_s += period_s
@@ -103,12 +105,16 @@ class Bee:
                    if i // ranges.SECTORS < 7 and rng.random() < .4}
             maps = {'mode_s': (heard, ranges.DEFAULT_UNIT_M), 'uat': (uat, ranges.DEFAULT_UNIT_M),
                     'remote_id': (self.drones_m(rng), ranges.PROTOCOLS['remote_id'].unit_m)}
+            if listen is not None:
+                maps = {name: (({}, m[1]) if name in quiet else m) for name, m in maps.items() if name in listen}
             range_fields = {'ranges': {name: _wire(values, unit) for name, (values, unit) in maps.items() if values}}
+            if listen is not None:
+                range_fields['listen_s'] = {name: period_s for name in listen}
         else:
             range_fields = {'range': _wire(heard, unit_m)}
         busy = rng.uniform(.3, 1.2)
         aircraft = int(rng.uniform(20, 90) * busy)
-        return {
+        body = {
             'v': 1, 'product': self.product, 'unique_id': self.unique_id, 'mac_address': '',
             'versions': {'rp2040': self.version, 'esp32': self.version},
             'auto_update': self.auto_update, 'uptime_s': self.uptime_s, 'seq': self.seq,
@@ -119,6 +125,14 @@ class Bee:
                       'aircraft_max': aircraft, 'aircraft_unique': int(aircraft * rng.uniform(2.5, 4))},
             **range_fields,
         }
+        if listen is not None:
+            for name, keys in (('mode_s', ('modes_valid', 'es_valid')), ('uat', ('uat_adsb', 'uat_uplink'))):
+                for key in keys:
+                    if name not in listen:
+                        body['stats'].pop(key)
+                    elif name in quiet:
+                        body['stats'][key] = 0
+        return body
 
 
 def _wire(values: dict, unit_m: int) -> dict:
