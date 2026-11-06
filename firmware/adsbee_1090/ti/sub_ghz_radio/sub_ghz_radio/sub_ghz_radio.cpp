@@ -271,13 +271,23 @@ void SubGHzRadio::StartSyncCapture() {
     config.source = RF_RatCaptureSourceRfcGpi0;
     config.captureMode = RF_RatCaptureModeRising;
     config.repeat = RF_RatCaptureRepeat;
-    if (RF_ratCapture(rf_handle_, &config, nullptr) == RF_ALLOC_ERROR) {
+    sync_capture_handle_ = RF_ratCapture(rf_handle_, &config, nullptr);
+    if (sync_capture_handle_ == RF_ALLOC_ERROR) {
         CONSOLE_ERROR("SubGHzRadio::StartSyncCapture", "No radio timer channel for the sync pulse capture.");
+    }
+}
+
+void SubGHzRadio::StopSyncCapture() {
+    // A repeating capture keeps the RF core powered, and RF_close() waits for it to power down: free the channel first.
+    if (sync_capture_handle_ != RF_ALLOC_ERROR) {
+        RF_ratDisableChannel(rf_handle_, sync_capture_handle_);
+        sync_capture_handle_ = RF_ALLOC_ERROR;
     }
 }
 
 bool SubGHzRadio::DeInit() {
     if (rf_handle_ != nullptr) {
+        StopSyncCapture();
         RF_close(rf_handle_);
         rf_handle_ = nullptr;
     }

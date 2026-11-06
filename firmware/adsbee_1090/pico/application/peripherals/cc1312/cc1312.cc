@@ -162,7 +162,9 @@ bool CC1312::Update() {
         }
 
     } else {
-        sync_pulse_allowed_ = false;  // The CC1312 may be resetting.
+        // The CC1312 may be resetting, which restarts its radio timer (and its epoch count, so it can't be relied on).
+        sync_pulse_allowed_ = false;
+        time_sync.Reset();
         if (!link_was_down) CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 status.");
         return false;
     }
