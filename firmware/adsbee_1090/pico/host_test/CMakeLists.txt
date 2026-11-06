@@ -27,6 +27,9 @@ target_compile_definitions(host_test_fpu PRIVATE SWARM_RECORDING)
 target_compile_definitions(host_test_fpu PRIVATE GEO_UTILS_SPLIT_MULTIPLY)
 target_compile_definitions(host_test PRIVATE SETTINGS_BLOBS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/settings_blobs")
 target_compile_definitions(host_test_fpu PRIVATE SETTINGS_BLOBS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/settings_blobs")
+# Swarm report bodies as main sent them before the protocol registry (cases A-F).
+target_compile_definitions(host_test PRIVATE SWARM_BODIES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/swarm_bodies")
+target_compile_definitions(host_test_fpu PRIVATE SWARM_BODIES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/swarm_bodies")
 # MAVLink send helpers need the firmware's comms_manager; tests only exercise message packing.
 target_compile_definitions(host_test PRIVATE MAVLINK_NO_CONVENIENCE_FUNCTIONS)
 target_compile_definitions(host_test_fpu PRIVATE MAVLINK_NO_CONVENIENCE_FUNCTIONS)

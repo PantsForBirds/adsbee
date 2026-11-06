@@ -17,6 +17,11 @@
 #include "mode_s_packet.hh"
 #include "range_map.hh"
 #include "remote_id_packet.hh"
+#ifdef SWARM_RECORDING
+#include "swarm_recorder.hh"
+#else
+class SwarmRecorder;
+#endif
 #include "uat_packet.hh"
 
 // #define ADSB_VERBOSE_PACKET_WARNINGS  // Uncomment to print warnings about unexpected packet formats / content.
@@ -1748,17 +1753,38 @@ class AircraftDictionary {
         }
     }
 
-    // Mode S, UAT and Remote ID positions go into one swarm range map each. Only builds that report swarm metrics (the
+    // Positions go into their protocol's swarm range map (kSwarmProtocols). Only builds that report swarm metrics (the
     // ESP32, host tests) define SWARM_RECORDING: elsewhere this compiles to nothing.
 #ifdef SWARM_RECORDING
     static constexpr bool kSwarmRecording = true;
+
+    template <typename T, size_t I = 0>
+    static constexpr size_t VariantIndex() {
+        if constexpr (I >= std::variant_size_v<AircraftEntry>) {
+            return I;
+        } else if constexpr (std::is_same_v<std::variant_alternative_t<I, AircraftEntry>, T>) {
+            return I;
+        } else {
+            return VariantIndex<T, I + 1>();
+        }
+    }
+    // The swarm protocol an aircraft type feeds, or kNoSwarmProtocol.
+    template <typename T>
+    static constexpr uint8_t ProtocolOf() {
+        return SwarmProtocolOfAircraftType(VariantIndex<T>());
+    }
+    template <typename T>
+    static constexpr bool kRecordsRange = ProtocolOf<T>() != kNoSwarmProtocol;
+    // Whether an entry's aircraft count towards aircraft_max and aircraft_unique.
+    static bool CountsAsAircraft(const AircraftEntry &entry) {
+        uint8_t protocol = SwarmProtocolOfAircraftType(entry.index());
+        return protocol != kNoSwarmProtocol && kSwarmProtocols[protocol].counts_as_aircraft;
+    }
 #else
     static constexpr bool kSwarmRecording = false;
-#endif
     template <typename T>
-    static constexpr bool kRecordsRange =
-        kSwarmRecording && (std::is_same_v<T, ModeSAircraft> || std::is_same_v<T, UATAircraft> ||
-                            std::is_same_v<T, RemoteIDAircraft>);
+    static constexpr bool kRecordsRange = false;
+#endif
 
     /**
      * Adds a freshly computed distance to the protocol's swarm range map, once the position is confirmed by a second
@@ -1767,19 +1793,19 @@ class AircraftDictionary {
      */
     template <typename T>
     inline void RecordRange(const T &aircraft) {
+#ifdef SWARM_RECORDING
         if constexpr (kRecordsRange<T>) {
             if (swarm_recorder_ == nullptr || aircraft.num_position_decodes < 2 ||
                 aircraft.distance_m == Aircraft::kDistanceUnknown) {
                 return;
             }
-            if constexpr (std::is_same_v<T, RemoteIDAircraft>) {
-                if (aircraft.HasBitFlag(T::kBitFlagGNSSAltitudeValid)) {
-                    swarm_recorder_->RecordDrone(aircraft.distance_m, aircraft.bearing_bam16, aircraft.gnss_altitude_ft,
-                                                 aircraft.GetUID());
-                }
+            constexpr uint8_t protocol = ProtocolOf<T>();
+            int32_t altitude_ft;
+            if constexpr (kSwarmProtocols[protocol].basis == SwarmBandBasis::kHeightAboveRx) {
+                if (!aircraft.HasBitFlag(T::kBitFlagGNSSAltitudeValid)) return;
+                altitude_ft = aircraft.gnss_altitude_ft;
             } else {
                 if (!IsDirectPosition(aircraft)) return;
-                int32_t altitude_ft;
                 if (aircraft.HasBitFlag(T::kBitFlagBaroAltitudeValid)) {
                     altitude_ft = aircraft.baro_altitude_ft;
                 } else if (aircraft.HasBitFlag(T::kBitFlagGNSSAltitudeValid)) {
@@ -1787,11 +1813,11 @@ class AircraftDictionary {
                 } else {
                     return;
                 }
-                swarm_recorder_->RecordPosition(
-                    std::is_same_v<T, ModeSAircraft> ? SwarmRecorder::kModeS : SwarmRecorder::kUAT,
-                    aircraft.distance_m, aircraft.bearing_bam16, altitude_ft, aircraft.GetUID());
             }
+            swarm_recorder_->RecordPosition(protocol, aircraft.distance_m, aircraft.bearing_bam16, altitude_ft,
+                                            aircraft.GetUID());
         }
+#endif
     }
 
     SwarmRecorder *swarm_recorder_ = nullptr;
