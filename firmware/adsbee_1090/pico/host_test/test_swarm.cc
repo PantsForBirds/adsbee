@@ -1194,7 +1194,7 @@ std::string JsonField(const std::string& json, const std::string& key) {
 TEST(SwarmRecorder, RegistryMatchesServerProtocolsJson) {
     std::string json = ReadFile(std::string(SWARM_BODIES_DIR) +
                                 "/../../../../../software/adsbee_swarm/adsbee_swarm/protocols.json");
-    if (json.empty()) GTEST_SKIP() << "No protocols.json in this tree yet.";
+    ASSERT_FALSE(json.empty()) << "protocols.json not found";
     EXPECT_EQ(JsonField(json, "sectors"), std::to_string(RangeMap::kNumSectors));
     EXPECT_EQ(JsonField(json, "bands"), std::to_string(RangeMap::kNumBands));
     std::vector<std::string> reported;
