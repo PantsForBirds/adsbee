@@ -1,0 +1,23 @@
+{
+  "_doc": "The swarm protocol registry (docs/swarm_api.md). One entry per range-map protocol, in picker order. reported: a bee may send it in ranges, listen_s and frames. aircraft: part of the `aircraft` union. stats: its legacy stats columns (Sample); a reported protocol without them sends `frames`. The device's tables (firmware/common/swarm/swarm_protocols.hh, swarm_recorder.hh) must match: a host test there checks name, unit_m, basis, aircraft, floors_ft, top_ft and stats of the reported entries, in order. Keep each entry a flat object.",
+  "sectors": 36,
+  "bands": 12,
+  "protocols": [
+    {"name": "mode_s", "reported": true, "unit_m": 2000, "basis": "altitude",
+     "floors_ft": [0, 1000, 2000, 4000, 6000, 10000, 15000, 20000, 25000, 30000, 35000, 40000], "top_ft": 60000,
+     "aircraft": true, "stats": ["modes_valid", "es_valid"],
+     "label": "Mode S", "symbol": "S", "icon": "plane", "tip": "Aircraft on 1090 MHz (ADS-B, Mode S)"},
+    {"name": "uat", "reported": true, "unit_m": 2000, "basis": "altitude",
+     "floors_ft": [0, 1000, 2000, 4000, 6000, 10000, 15000, 20000, 25000, 30000, 35000, 40000], "top_ft": 60000,
+     "aircraft": true, "stats": ["uat_adsb", "uat_uplink"],
+     "label": "UAT", "symbol": "UAT", "icon": "plane", "tip": "Aircraft on 978 MHz (UAT ADS-B)"},
+    {"name": "remote_id", "reported": true, "unit_m": 50, "basis": "height_above_rx",
+     "floors_ft": [0, 100, 200, 300, 400, 500, 700, 1000, 1500, 2000, 3000, 5000], "top_ft": 10000,
+     "aircraft": false, "stats": [],
+     "label": "Remote ID", "symbol": "RID", "icon": "drone", "tip": "Drones on 2.4 GHz Remote ID, by height above the bee"},
+    {"name": "aircraft", "reported": false, "unit_m": null, "basis": "altitude",
+     "floors_ft": [0, 1000, 2000, 4000, 6000, 10000, 15000, 20000, 25000, 30000, 35000, 40000], "top_ft": 60000,
+     "aircraft": true, "stats": [],
+     "label": "All aircraft", "symbol": "✈", "icon": "radar", "tip": "All aircraft: Mode S, UAT and older firmware's mixed maps"}
+  ]
+}

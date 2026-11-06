@@ -13,7 +13,7 @@ server = ["gunicorn>=23.0", "psycopg[binary]>=3.2"]
 
 [tool.poetry]
 packages = [{ include = "adsbee_swarm" }]
-include = ["adsbee_swarm/templates/**/*", "adsbee_swarm/static/**/*", "adsbee_swarm/openapi.yaml"]
+include = ["adsbee_swarm/templates/**/*", "adsbee_swarm/static/**/*", "adsbee_swarm/openapi.yaml", "adsbee_swarm/protocols.json"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"

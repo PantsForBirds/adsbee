@@ -128,6 +128,10 @@ class Device(models.Model):
     range_withheld = models.CharField(max_length=16, blank=True)
     range_dropped = models.PositiveIntegerField(default=0)
     bins_ignored = models.PositiveIntegerField(default=0)
+    #: Protocols in the last report that this server doesn't know (ranges, listen_s, frames): how
+    #: many and which. Their data was ignored; the server needs an update.
+    protocols_ignored = models.PositiveIntegerField(default=0)
+    ignored_protocols = models.CharField(max_length=200, blank=True)
 
     class Meta:
         ordering = ['label', 'unique_id']
@@ -160,6 +164,11 @@ class Device(models.Model):
         return bool(self.range_withheld or self.range_dropped or self.bins_ignored)
 
     @property
+    def check_protocols(self) -> bool:
+        """The last report carried protocols this server doesn't know: update the server."""
+        return self.protocols_ignored > 0
+
+    @property
     def version(self) -> str:
         from . import conf
 
@@ -170,8 +179,9 @@ class Device(models.Model):
 #: What a report's `stats` holds.
 REPORTED_STATS = ('modes_valid', 'es_valid', 'uat_adsb', 'uat_uplink', 'aircraft_max', 'aircraft_unique')
 #: Every count a sample keeps: the reported ones, positions the bee dropped as implausible
-#: (`range_dropped`) and bins past the horizon limit the server ignored (`bins_ignored`).
-STATS = (*REPORTED_STATS, 'range_dropped', 'bins_ignored')
+#: (`range_dropped`), bins past the horizon limit the server ignored (`bins_ignored`) and protocols
+#: it doesn't know (`protocols_ignored`).
+STATS = (*REPORTED_STATS, 'range_dropped', 'bins_ignored', 'protocols_ignored')
 #: Why a report sent no range, least to most severe; a sample keeps the most severe.
 WITHHELD = ('', 'no_position', 'implausible')
 #: Stats that are a peak, not a count: merged by max rather than summed.
@@ -193,6 +203,7 @@ class Sample(models.Model):
     aircraft_unique = models.IntegerField(default=0)
     range_dropped = models.BigIntegerField(default=0)
     bins_ignored = models.BigIntegerField(default=0)
+    protocols_ignored = models.BigIntegerField(default=0)
     range_withheld = models.CharField(max_length=16, blank=True)
 
     class Meta:
@@ -214,12 +225,19 @@ class Sample(models.Model):
 
 
 class SampleRange(models.Model):
-    """A sample's range map for one protocol (`ranges.PROTOCOLS`): max distance per bin."""
+    """A sample's range map for one protocol (`ranges.PROTOCOLS`): max distance per bin, and how
+    long the bee listened. A row with listen time and no bins: listened, heard nothing."""
     sample = models.ForeignKey(Sample, on_delete=models.CASCADE, related_name='range_rows')
     protocol = models.CharField(max_length=16)
     unit_m = models.PositiveIntegerField(default=ranges.DEFAULT_UNIT_M)
     #: `ranges.pack`: 54-byte bitmap, then one byte per present bin.
     range_map = models.BinaryField()
+    #: Bins with data (0: heard nothing).
+    bins = models.PositiveSmallIntegerField(default=0)
+    #: Seconds the receiver for it was on, summed; null: not reported (older firmware).
+    listen_s = models.PositiveIntegerField(null=True, blank=True)
+    #: Valid frames, summed, for protocols without legacy stats columns; null: not reported.
+    frames = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['sample', 'protocol'], name='swarm_sample_range_unique')]
@@ -230,6 +248,7 @@ class SampleRange(models.Model):
     def set_ranges(self, values: ranges.Map) -> None:
         """Store `values` in `unit_m` steps (rounded up)."""
         self.range_map = ranges.pack(values, self.unit_m)
+        self.bins = len(values)
 
 
 class Rollout(models.Model):

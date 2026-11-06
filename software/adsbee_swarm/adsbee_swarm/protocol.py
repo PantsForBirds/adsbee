@@ -5,8 +5,11 @@ Retries (the device keeps seq and period.start_uptime_s until a report is acknow
 same seq, start and len_s is a duplicate and is not stored; same seq and start with a longer len_s
 is the earlier report widened, so it replaces that report's stats and max-merges its range.
 
-Range maps: `ranges` holds one per protocol (mode_s, uat, remote_id); older firmware sends one
-`range` for every aircraft, stored as protocol `aircraft`.
+Range maps: `ranges` holds one per protocol (`ranges.REPORTED`); older firmware sends one `range`
+for every aircraft, stored as protocol `aircraft`. `listen_s` (seconds each receiver was on) and
+`frames` (valid frames of protocols without legacy stats) are optional: without `listen_s` the
+listen time is unknown. A protocol this server doesn't know is ignored and counted, never a 400, so
+newer firmware keeps reporting to an older server.
 """
 from __future__ import annotations
 
@@ -26,6 +29,10 @@ MAC = re.compile(r'^[0-9A-F]{2}(:[0-9A-F]{2}){5}$')
 VERSION = re.compile(r'^[0-9A-Za-z._+-]{0,64}$')
 SOURCE = re.compile(r'^[a-z0-9_]{0,16}$')
 MAX_COUNT = 2 ** 40
+MAX_LISTEN_S = 7 * 86400
+#: Most protocols one of `ranges`, `listen_s` or `frames` may hold, known or not.
+MAX_PROTOCOLS = 16
+PROTOCOL_NAME = re.compile(r'^[a-z0-9_]{1,16}$')
 
 
 class ReportError(ValueError):
@@ -49,6 +56,12 @@ class Report:
     maps: dict[str, tuple[int, ranges.Map]] = field(default_factory=dict)
     #: Why there is no range: '', 'no_position' or 'implausible' (the bee's, or ours).
     range_withheld: str = ''
+    #: {protocol: seconds listened, > 0}, or None when the report has no `listen_s` (unknown).
+    listen: dict[str, int] | None = None
+    #: {protocol: valid frames} for `ranges.FRAMES` protocols.
+    frames: dict[str, int] = field(default_factory=dict)
+    #: Protocol names this server doesn't know, sorted.
+    ignored: list[str] = field(default_factory=list)
 
 
 def _int(data: dict, key: str, low: int = 0, high: int = MAX_COUNT) -> int:
@@ -106,7 +119,16 @@ def parse(data) -> Report:
     report.range_withheld = withheld
     report.stats['range_dropped'] = _int(data, 'range_dropped') if 'range_dropped' in data else 0
     report.stats['bins_ignored'] = 0
-    maps = _maps(data)
+    ignored: set[str] = set()
+    maps = _maps(data, ignored)
+    listen = _counts(data, 'listen_s', MAX_LISTEN_S, ignored)
+    if listen is not None:
+        # Seconds past the period are rounding or a retry's sum: never more than the period.
+        report.listen = {name: min(value, report.len_s) for name, value in listen.items() if value > 0}
+    report.frames = {name: value for name, value in (_counts(data, 'frames', MAX_COUNT, ignored) or {}).items()
+                     if name in ranges.FRAMES}
+    report.ignored = sorted(ignored)
+    report.stats['protocols_ignored'] = len(ignored)
     if maps and report.rx_position is None:
         report.range_withheld = report.range_withheld or 'no_position'
     elif maps:
@@ -119,17 +141,45 @@ def parse(data) -> Report:
     return report
 
 
-def _maps(data: dict) -> dict[str, tuple[int, ranges.Map]]:
+def _protocols(data: dict, key: str, ignored: set[str]) -> dict | None:
+    """`data[key]` ({protocol: value}) with the protocols this server knows; the others go to
+    `ignored`. None when the key is absent."""
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ReportError(f'{key} must be an object')
+    if len(value) > MAX_PROTOCOLS:
+        raise ReportError(f'{key} has more than {MAX_PROTOCOLS} protocols')
+    known = {}
+    for name, item in value.items():
+        if not PROTOCOL_NAME.match(name):
+            raise ReportError(f'{key} protocol names are 1-16 of a-z, 0-9 and _')
+        if name in ranges.REPORTED:
+            known[name] = item
+        else:
+            ignored.add(name)
+    return known
+
+
+def _counts(data: dict, key: str, high: int, ignored: set[str]) -> dict[str, int] | None:
+    """`listen_s` or `frames`: {protocol: integer 0..high}."""
+    known = _protocols(data, key, ignored)
+    if known is None:
+        return None
+    try:
+        return {name: _int(known, name, 0, high) for name in known}
+    except ReportError as exc:
+        raise ReportError(f'{key}.{exc}') from exc
+
+
+def _maps(data: dict, ignored: set[str]) -> dict[str, tuple[int, ranges.Map]]:
     """`ranges` ({protocol: map}), else `range` as protocol `aircraft`."""
-    legacy, per_protocol = data.get('range'), data.get('ranges')
+    legacy = data.get('range')
+    per_protocol = _protocols(data, 'ranges', ignored)
     if per_protocol is not None:
         if legacy is not None:
             raise ReportError('send range or ranges, not both')
-        if not isinstance(per_protocol, dict):
-            raise ReportError('ranges must be an object')
-        unknown = sorted(set(per_protocol) - set(ranges.REPORTED))
-        if unknown:
-            raise ReportError(f"ranges has unknown protocol {unknown[0]!r}; known: {', '.join(ranges.REPORTED)}")
         return {protocol: _range(value, protocol) for protocol, value in per_protocol.items()}
     if legacy is not None:
         return {ranges.LEGACY: _range(legacy, ranges.LEGACY)}
@@ -178,29 +228,49 @@ def day_of(moment: datetime) -> datetime:
     return moment.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def _apply(sample: Sample, report: Report, replaced: dict) -> None:
-    """Add a report to an hourly or daily row. `replaced`: the stats of the report it widens,
-    taken back out first, so a widened retry counts once (its range is a superset: max-merge)."""
+def _replace(current: int | None, old: int, new: int) -> int:
+    """A sum with the widened report's value taken back out first."""
+    return max(0, (current or 0) - old) + new
+
+
+def _apply(sample: Sample, report: Report, replaced: dict | None) -> None:
+    """Add a report to an hourly or daily row. `replaced`: the last report (Device.last_report)
+    when this one widens it: its stats, listen time and frames are taken back out first, so a
+    widened retry counts once (its range is a superset: max-merge)."""
+    old = (replaced or {}).get('stats') or {}
     for name in STATS:
         if name in PEAK_STATS:
             setattr(sample, name, max(getattr(sample, name), report.stats[name]))
         else:
-            setattr(sample, name, max(0, getattr(sample, name) - replaced.get(name, 0)) + report.stats[name])
-    if not replaced:
+            setattr(sample, name, _replace(getattr(sample, name), old.get(name, 0), report.stats[name]))
+    if replaced is None:
         sample.reports += 1
     if WITHHELD.index(report.range_withheld) > WITHHELD.index(sample.range_withheld or ''):
         sample.range_withheld = report.range_withheld
     sample.save()
-    for protocol, (unit, values) in report.maps.items():
+    old_listen = (replaced or {}).get('listen_s') or {}
+    old_frames = (replaced or {}).get('frames') or {}
+    listen = report.listen or {}
+    for protocol in dict.fromkeys([*report.maps, *listen, *old_listen, *report.frames, *old_frames]):
         row = SampleRange.objects.select_for_update().filter(sample=sample, protocol=protocol).first()
-        if row is None:
-            row = SampleRange(sample=sample, protocol=protocol, unit_m=unit)
-            merged = dict(values)
-        else:
-            merged = ranges.merge(row.ranges(), values)
-            # Coarsen to the largest unit either came in.
-            row.unit_m = max(row.unit_m, unit)
-        row.set_ranges(merged)
+        if protocol in report.maps:
+            unit, values = report.maps[protocol]
+            if row is None:
+                row = SampleRange(sample=sample, protocol=protocol, unit_m=unit)
+                merged = dict(values)
+            else:
+                merged = ranges.merge(row.ranges(), values)
+                # Coarsen to the largest unit either came in.
+                row.unit_m = max(row.unit_m, unit)
+            row.set_ranges(merged)
+        elif row is None:
+            # Listened (or counted frames) and heard nothing.
+            row = SampleRange(sample=sample, protocol=protocol, unit_m=ranges.PROTOCOLS[protocol].unit_m)
+            row.set_ranges({})
+        if protocol in listen or protocol in old_listen:
+            row.listen_s = _replace(row.listen_s, old_listen.get(protocol, 0), listen.get(protocol, 0))
+        if protocol in report.frames or protocol in old_frames:
+            row.frames = _replace(row.frames, old_frames.get(protocol, 0), report.frames.get(protocol, 0))
         row.save()
 
 
@@ -222,9 +292,9 @@ def ingest(device: Device, report: Report, now: datetime | None = None) -> bool:
     if sample is None:
         sample, _ = Sample.objects.select_for_update().get_or_create(
             device=device, span_s=Sample.HOUR, start=hour_of(now))
-        replaced = {}
+        replaced = None
     else:
-        replaced = last.get('stats') or {}
+        replaced = last
     _apply(sample, report, replaced)
     # The bee's day, kept beside its hours from the first report: long windows read days.
     daily, _ = Sample.objects.select_for_update().get_or_create(
@@ -239,10 +309,13 @@ def ingest(device: Device, report: Report, now: datetime | None = None) -> bool:
     device.range_withheld = report.range_withheld
     device.range_dropped = report.stats['range_dropped']
     device.bins_ignored = report.stats['bins_ignored']
+    device.protocols_ignored = len(report.ignored)
+    device.ignored_protocols = ','.join(report.ignored)[:200]
     if report.rx_position is not None:
         device.rx_lat, device.rx_lon = report.rx_position['lat'], report.rx_position['lon']
         device.rx_alt_m, device.rx_source = report.rx_position['alt_m'], report.rx_position['source']
-    device.last_report = {'key': key, 'start': sample.start.isoformat(), 'stats': report.stats}
+    device.last_report = {'key': key, 'start': sample.start.isoformat(), 'stats': report.stats,
+                          'listen_s': report.listen or {}, 'frames': report.frames}
     device.save()
     return True
 
