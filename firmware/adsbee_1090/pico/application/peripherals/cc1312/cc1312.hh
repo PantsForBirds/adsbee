@@ -5,6 +5,7 @@
 #include "hardware/spi.h"
 #include "led_flasher.hh"
 #include "spi_coprocessor.hh"
+#include "sub_ghz_time_sync.hh"
 
 class CC1312 : public SPICoprocessorSlaveInterface {
    public:
@@ -511,6 +512,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
      * @param[in] enabled True to enable the CC1312, false to disable.
      */
     inline void SetEnableState(SettingsManager::EnableState enabled) {
+        BlockSyncPulses();  // Every reset and bootloader entry comes through here.
         if (enabled == SettingsManager::EnableState::kEnableStateExternal) {
             gpio_set_dir(config_.enable_pin, GPIO_IN);
             gpio_set_pulls(config_.enable_pin, true, false);  // Pull pin up.
@@ -558,7 +560,43 @@ class CC1312 : public SPICoprocessorSlaveInterface {
 
     ObjectDictionary::SubGHzDeviceStatus device_status;
 
+    /**
+     * Sync pulses put sub-GHz packet timestamps (CC1312 radio timer) on the RP2040's 48 MHz MLAT clock: about once a
+     * second the RP2040 raises the sync pin for ~1 us at a known MLAT count and the CC1312 captures the rising edge
+     * on its radio timer. The sync pin is also the CC1312 bootloader backdoor (high at reset = bootloader), so pulses
+     * run only after the CC1312 application has answered a status read, and stop before any reset, bootloader session,
+     * flashing or core 1 stop.
+     */
+    // Sends a requested pulse. Call from the core that owns the MLAT counter (see ADSBee::GetMLAT48MHzCounts()).
+    void ServiceSyncPulse();
+    // Stops pulses and returns once none is in flight. They resume after the next good status read.
+    void BlockSyncPulses();
+
+    SubGHzTimeSync time_sync;
+
    private:
+    static constexpr uint32_t kSyncPulseIntervalMs = 1000;
+    static constexpr uint32_t kSyncPulseTimeoutMs = 500;    // A pulse not captured by then is dropped.
+    static constexpr uint32_t kSyncPulseWidthCycles = 125;  // 1 us at 125 MHz.
+
+    // Requests pulses, pairs their MLAT counts with the CC1312's captures. Call after a good status read.
+    void UpdateTimeSync();
+    // Moves the timestamps of the sub-GHz packets in a CompositeArray from radio timer ticks to 48 MHz MLAT counts.
+    void ConvertSubGHzTimestamps(uint8_t* buf, uint16_t buf_len_bytes);
+
+    // Shared with the core that sends pulses.
+    volatile bool sync_pulse_allowed_ = false;
+    volatile bool sync_pulse_requested_ = false;
+    volatile bool sync_pulse_busy_ = false;
+    volatile uint32_t num_sync_pulses_sent_ = 0;
+    volatile uint64_t sync_pulse_mlat_48mhz_counts_ = 0;  // Of the last pulse sent; valid once its count is seen.
+    // Core 0 only.
+    bool sync_pulse_pending_ = false;
+    uint32_t sync_pulse_request_timestamp_ms_ = 0;
+    uint32_t num_sync_pulses_sent_at_request_ = 0;
+    uint16_t sync_capture_count_at_request_ = 0;
+    uint8_t rat_epoch_ = 0;
+
     CC1312Config config_;
     SettingsManager::EnableState enabled_ = SettingsManager::EnableState::kEnableStateDisabled;
     bool enable_is_external_ = false;

@@ -7,10 +7,20 @@
 #include "unit_conversions.hh"  // for CeilBitsToBytes
 
 extern "C" {
+#include "ti/devices/cc13x2_cc26x2/driverlib/ioc.h"              // For IOC_PORT_RFC_GPI0.
 #include "ti/devices/cc13x2_cc26x2/driverlib/rf_prop_mailbox.h"  // For status codes.
 }
 
 static const uint32_t kRxRestartTimeoutMs = 5000;
+
+// Records the radio timer at each rising edge of the RP2040's sync pulse, so the RP2040 can put sub-GHz packet
+// timestamps on its MLAT clock.
+static void rat_sync_capture_callback(RF_Handle h, RF_RatHandle rh, RF_EventMask e, uint32_t capture_time) {
+    if (e & RF_EventRatCh) {
+        object_dictionary.sync_capture_rat = capture_time;
+        object_dictionary.sync_capture_count = object_dictionary.sync_capture_count + 1;
+    }
+}
 
 static const uint16_t kNumPartialDataEntries = SubGHzRadio::kRxPacketQueueLen;
 static const uint16_t kPartialDataEntryHeaderSizeBytes = 12;
@@ -190,7 +200,25 @@ bool SubGHzRadio::Init() {
         return false;  // Failed to run command FS.
     }
 
+    StartSyncCapture();
     return StartPacketRx();
+}
+
+void SubGHzRadio::StartSyncCapture() {
+    // The RAT restarts with the RF client, so earlier captures no longer line up with new packet timestamps.
+    object_dictionary.rat_epoch = object_dictionary.rat_epoch + 1;
+    // The sync pin is the bootloader backdoor at reset; once running, route it to the RF core's GPI0 for RAT captures.
+    GPIO_setConfigAndMux(bsp.kSyncPin, GPIO_CFG_IN_NOPULL, IOC_PORT_RFC_GPI0);
+    RF_RatConfigCapture config;
+    RF_RatConfigCapture_init(&config);
+    config.callback = &rat_sync_capture_callback;
+    config.channel = RF_RatChannelAny;
+    config.source = RF_RatCaptureSourceRfcGpi0;
+    config.captureMode = RF_RatCaptureModeRising;
+    config.repeat = RF_RatCaptureRepeat;
+    if (RF_ratCapture(rf_handle_, &config, nullptr) == RF_ALLOC_ERROR) {
+        CONSOLE_ERROR("SubGHzRadio::StartSyncCapture", "No radio timer channel for the sync pulse capture.");
+    }
 }
 
 bool SubGHzRadio::DeInit() {

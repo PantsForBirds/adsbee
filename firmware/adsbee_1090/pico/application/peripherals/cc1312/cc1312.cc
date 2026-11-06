@@ -6,6 +6,8 @@
 #include "cpu_utils.hh"
 #include "crc.hh"  // For IEEE 802.3 CRC32 calculation.
 #include "hal.hh"
+#include "hardware/sync.h"  // save_and_disable_interrupts(), __dmb().
+#include "pico/platform.h"  // busy_wait_at_least_cycles().
 
 const CC1312::SPIPeripheralConfig kDefaultSPIPeripheralConfig;  // use defaults
 const CC1312::SPIPeripheralConfig kBootloaderSPIPeripheralConfig = {
@@ -130,8 +132,10 @@ bool CC1312::Update() {
             device_status.num_raw_uat_adsb_packets, device_status.num_valid_uat_adsb_packets,
             device_status.num_raw_uat_uplink_packets, device_status.num_valid_uat_uplink_packets);
 
+        UpdateTimeSync();
+
         // Read one array of packets from the queues. The CC1312 fills it with as many packets as fit.
-        uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+        alignas(4) uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
         if (!adsbee.subg_radio.Read(
                 ObjectDictionary::Address::kAddrCompositeArrayRawPackets, read_buf,
                 CompositeArray::RawPackets::ReadLenBytes(device_status.pending_raw_packets_len_bytes))) {
@@ -141,6 +145,7 @@ bool CC1312::Update() {
         more_raw_packets_pending_ = CompositeArray::RawPackets::MorePending(device_status.pending_raw_packets_len_bytes);
         raw_packets_arriving_ =
             device_status.pending_raw_packets_len_bytes > sizeof(CompositeArray::RawPackets::Header);
+        ConvertSubGHzTimestamps(read_buf, sizeof(read_buf));
         if (!CompositeArray::UnpackRawPacketsBufferToQueues(read_buf, sizeof(read_buf), nullptr,
                                                             &adsbee.raw_uat_adsb_packet_queue,
                                                             &adsbee.raw_uat_uplink_packet_queue)) {
@@ -149,12 +154,106 @@ bool CC1312::Update() {
         }
 
     } else {
+        sync_pulse_allowed_ = false;  // The CC1312 may be resetting.
         if (!link_was_down) CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 status.");
         return false;
     }
 
     last_update_timestamp_ms_ = get_time_since_boot_ms();
     return true;
+}
+
+void __time_critical_func(CC1312::ServiceSyncPulse)() {
+    if (!sync_pulse_requested_) {
+        return;
+    }
+    // Checked against BlockSyncPulses(): either this sees the pulse disallowed, or that sees the pulse busy and waits.
+    sync_pulse_busy_ = true;
+    __dmb();
+    if (sync_pulse_allowed_) {
+        // Runs from RAM with interrupts off so the time from the counter read to the edge is always the same.
+        uint32_t interrupts = save_and_disable_interrupts();
+        uint64_t mlat_48mhz_counts = adsbee.GetMLAT48MHzCounts();
+        gpio_put(config_.sync_pin, 1);
+        restore_interrupts(interrupts);
+        busy_wait_at_least_cycles(kSyncPulseWidthCycles);
+        gpio_put(config_.sync_pin, 0);
+        sync_pulse_mlat_48mhz_counts_ = mlat_48mhz_counts;
+        __dmb();
+        num_sync_pulses_sent_ = num_sync_pulses_sent_ + 1;
+    }
+    sync_pulse_requested_ = false;
+    __dmb();
+    sync_pulse_busy_ = false;
+}
+
+void CC1312::BlockSyncPulses() {
+    sync_pulse_allowed_ = false;
+    sync_pulse_requested_ = false;
+    __dmb();
+    while (sync_pulse_busy_) {
+        tight_loop_contents();
+    }
+    sync_pulse_pending_ = false;
+}
+
+void CC1312::UpdateTimeSync() {
+    if (device_status.rat_epoch != rat_epoch_) {
+        // The radio timer restarted (radio re-opened or CC1312 rebooted): earlier sync points no longer apply.
+        rat_epoch_ = device_status.rat_epoch;
+        time_sync.Reset();
+        sync_pulse_pending_ = false;
+    }
+    if (in_bootloader_ || !IsEnabled()) {
+        return;
+    }
+    sync_pulse_allowed_ = true;  // The application just answered a status read.
+
+    uint32_t timestamp_ms = get_time_since_boot_ms();
+    if (sync_pulse_pending_) {
+        if (num_sync_pulses_sent_ != num_sync_pulses_sent_at_request_) {
+            __dmb();
+            uint16_t num_captures = device_status.sync_capture_count - sync_capture_count_at_request_;
+            if (num_captures == 1) {
+                time_sync.AddSyncPoint(device_status.sync_capture_rat, sync_pulse_mlat_48mhz_counts_);
+                sync_pulse_pending_ = false;
+                return;
+            } else if (num_captures > 1) {
+                sync_pulse_pending_ = false;  // An edge that wasn't ours: skip this pulse.
+                return;
+            }
+        }
+        if (timestamp_ms - sync_pulse_request_timestamp_ms_ > kSyncPulseTimeoutMs) {
+            sync_pulse_requested_ = false;
+            sync_pulse_pending_ = false;
+        }
+        return;
+    }
+    if (timestamp_ms - sync_pulse_request_timestamp_ms_ >= kSyncPulseIntervalMs) {
+        sync_capture_count_at_request_ = device_status.sync_capture_count;
+        num_sync_pulses_sent_at_request_ = num_sync_pulses_sent_;
+        sync_pulse_request_timestamp_ms_ = timestamp_ms;
+        sync_pulse_pending_ = true;
+        __dmb();
+        sync_pulse_requested_ = true;
+    }
+}
+
+void CC1312::ConvertSubGHzTimestamps(uint8_t* buf, uint16_t buf_len_bytes) {
+    CompositeArray::RawPackets packets;
+    if (!CompositeArray::UnpackRawPacketsBuffer(packets, buf, buf_len_bytes)) {
+        return;  // Logged by the unpack that follows.
+    }
+    for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
+        RawUATADSBPacket& packet = packets.uat_adsb_packets[i];
+        packet.mlat_48mhz_64bit_counts =
+            time_sync.ToMLAT48MHzCounts(static_cast<uint32_t>(packet.mlat_48mhz_64bit_counts));
+    }
+    for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
+        RawUATUplinkPacket& packet = packets.uat_uplink_packets[i];
+        packet.mlat_48mhz_64bit_counts =
+            time_sync.ToMLAT48MHzCounts(static_cast<uint32_t>(packet.mlat_48mhz_64bit_counts));
+    }
 }
 
 bool CC1312::ApplicationIsUpToDate() {

@@ -69,7 +69,10 @@ class RawUATADSBPacket {
 
     int16_t sigs_dbm = INT16_MIN;          // Signal strength, in dBm.
     int16_t sigq_bits = INT16_MIN;         // Signal quality (num bits corrected by FEC, 0 = best).
-    uint64_t mlat_48mhz_64bit_counts = 0;  // High resolution MLAT counter.
+    // Receive time in 48 MHz MLAT counts, on the Mode S time base, or 0 (none: the receiver isn't synced yet). The
+    // sub-GHz radio stores its radio timer here first (32 bits, 4 MHz, at sync word detection); the receiver converts
+    // it with SubGHzTimeSync before ingesting or forwarding the packet.
+    uint64_t mlat_48mhz_64bit_counts = 0;
 };
 
 /**
@@ -385,7 +388,10 @@ class RawUATUplinkPacket {
 
     int16_t sigs_dbm = INT16_MIN;          // Signal strength, in dBm.
     int16_t sigq_bits = INT16_MIN;         // Signal quality (num bits corrected by FEC, 0 = best).
-    uint64_t mlat_48mhz_64bit_counts = 0;  // High resolution MLAT counter.
+    // Receive time in 48 MHz MLAT counts, on the Mode S time base, or 0 (none: the receiver isn't synced yet). The
+    // sub-GHz radio stores its radio timer here first (32 bits, 4 MHz, at sync word detection); the receiver converts
+    // it with SubGHzTimeSync before ingesting or forwarding the packet.
+    uint64_t mlat_48mhz_64bit_counts = 0;
 };
 
 class DecodedUATUplinkPacket {

@@ -56,6 +56,8 @@ class MlatTimebase {
 
     // 64-bit time of a counter value captured less than one counter period before the last update.
     uint64_t Extend(uint32_t counter) const { return ticks_ - ((counter_ - counter) & kCounterMask); }
+    // 64-bit time of a counter value read less than one counter period after the last update.
+    uint64_t ExtendForward(uint32_t counter) const { return ticks_ + ((counter - counter_) & kCounterMask); }
 
    private:
     uint32_t counter_ = 0;
