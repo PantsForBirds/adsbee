@@ -572,7 +572,8 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     // Stops pulses and returns once none is in flight. They resume after the next good status read.
     void BlockSyncPulses();
 
-    SubGHzTimeSync time_sync;
+    // Two crystals: timestamps start once the second sync point has measured the rate between them.
+    SubGHzTimeSync time_sync = SubGHzTimeSync(2);
 
    private:
     static constexpr uint32_t kSyncPulseIntervalMs = 1000;
@@ -596,6 +597,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     uint32_t num_sync_pulses_sent_at_request_ = 0;
     uint16_t sync_capture_count_at_request_ = 0;
     uint8_t rat_epoch_ = 0;
+    uint32_t rat_epoch_start_timestamp_ms_ = 0;  // When this Update() first saw the current radio timer epoch.
 
     CC1312Config config_;
     SettingsManager::EnableState enabled_ = SettingsManager::EnableState::kEnableStateDisabled;
