@@ -126,7 +126,7 @@ class SwarmRangeMaps {
     static constexpr uint8_t kNoSlot = 0xFF;
     static constexpr uint8_t kHeapSlot = 0xFE;
 
-    // Adds other's maps; returns nothing, a map the heap can't give is skipped (see SwarmRecorder::Merge).
+    // Copies other's maps; one the heap can't give is left out.
     void CopyFrom(const SwarmRangeMaps& other) {
         for (uint8_t p = 0; p < kNumSwarmProtocols; p++) {
             const RangeMap* from = other.Find(p);
