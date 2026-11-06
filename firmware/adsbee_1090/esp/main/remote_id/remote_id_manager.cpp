@@ -113,8 +113,9 @@ uint16_t RemoteIDManager::ServiceIngestQueue() {
     // out-queue from this path.
     if (ingest_queue_ == nullptr) return 0;  // No transport has started; nothing allocated.
     uint16_t num_processed = 0;
-    // READSBEE feeds get every packet, not the rate-limited copies; the server de-duplicates.
-    const bool to_feeds = SettingsManager::ProtocolInUse(settings_manager.settings, SettingsManager::kReadsbee);
+    // Feeds that confirmed Remote ID get every packet, not the rate-limited copies; the server de-duplicates. Packets
+    // received while no feed has confirmed are not kept for later.
+    const bool to_feeds = comms_manager.FeedsTakeRemoteID();
     if (to_feeds && feed_queue_ == nullptr) {
         feed_queue_ = new (std::nothrow) PFBQueue<RawRemoteIDPacket>({.buf_len_num_elements = kFeedQueueDepth,
                                                                       .buffer = nullptr,

@@ -51,6 +51,9 @@ static const uint32_t kFeedStallTimeoutMs = 10000;
 static const uint32_t kFeedDropLogIntervalMs = 10000;
 // Queue wait of IPWANTask while a feed backlog is waiting to be flushed.
 static const uint32_t kFeedBacklogFlushIntervalMs = 5;
+// Bytes a server sends back on a Beast feed are read in chunks of this size, a bounded number per pass.
+static const uint16_t kFeedRecvChunkBytes = 64;
+static const uint16_t kFeedRecvMaxChunksPerPass = 16;
 
 // #define ENABLE_TCP_SOCKET_RATE_LIMITING
 #ifdef ENABLE_TCP_SOCKET_RATE_LIMITING
@@ -514,9 +517,11 @@ void CommsManager::IPWANTask(void* pvParameters) {
         PublishMQTTMetrics();
         LogWANQueueOverflows();
 
-        uint16_t num_active_report_sinks = 0, num_readsbee_sinks = 0;
+        uint16_t num_active_report_sinks = 0, num_remote_id_sinks = 0;
         ReportSink active_report_sinks[SettingsManager::Settings::kMaxNumFeeds] = {0};
-        ReportSink readsbee_sinks[SettingsManager::Settings::kMaxNumFeeds] = {0};
+        uint16_t active_report_caps[SettingsManager::Settings::kMaxNumFeeds] = {0};
+        ReportSink remote_id_sinks[SettingsManager::Settings::kMaxNumFeeds] = {0};
+        uint16_t remote_id_caps[SettingsManager::Settings::kMaxNumFeeds] = {0};
         SettingsManager::ReportingProtocol active_reporting_protocols[SettingsManager::Settings::kMaxNumFeeds] = {
             SettingsManager::ReportingProtocol::kNoReports};
 
@@ -552,16 +557,22 @@ void CommsManager::IPWANTask(void* pvParameters) {
                     // Need to open the socket connection, but failed to do so.
                     continue;  // Failed to connect, try again later.
                 }
+                // Before this pass's frames: a capabilities answer switches the feed after its confirm.
+                ReceiveFeedSocket(i);
+                if (!feed_sock_is_connected_[i]) continue;
                 // Socket is connected, add to active sinks.
+                uint16_t caps = feed_caps_[i].bits();
                 active_report_sinks[num_active_report_sinks] = i;
-                SettingsManager::ReportingProtocol protocol = settings_manager.settings.feed_protocols[i];
-                if (protocol == SettingsManager::kReadsbee) {
-                    readsbee_sinks[num_readsbee_sinks++] = i;  // ReportReadsbee adds its own frames.
-                }
-                active_reporting_protocols[num_active_report_sinks] = SettingsManager::BeastFramesOf(protocol);
+                active_report_caps[num_active_report_sinks] = caps;
+                active_reporting_protocols[num_active_report_sinks] = settings_manager.settings.feed_protocols[i];
                 num_active_report_sinks++;
+                if (caps & BeastReporter::kBeastCapRemoteID) {
+                    remote_id_sinks[num_remote_id_sinks] = i;
+                    remote_id_caps[num_remote_id_sinks++] = caps;
+                }
             }
         }
+        feeds_take_remote_id_ = num_remote_id_sinks > 0;
 
         // Gather packet(s) to send.
         /**
@@ -589,11 +600,11 @@ void CommsManager::IPWANTask(void* pvParameters) {
 
         // Update feeds with raw and digested reports.
         if (!UpdateReporting(active_report_sinks, active_reporting_protocols, num_active_report_sinks,
-                             &reporting_composite_array)) {
+                             &reporting_composite_array, true, active_report_caps)) {
             CONSOLE_ERROR("CommsManager::IPWANTask", "Error during UpdateReporting for feeds.");
         }
-        if (!ReportReadsbee(readsbee_sinks, num_readsbee_sinks, reporting_composite_array)) {
-            CONSOLE_ERROR("CommsManager::IPWANTask", "Error during ReportReadsbee.");
+        if (!ReportRemoteID(remote_id_sinks, remote_id_caps, num_remote_id_sinks, reporting_composite_array)) {
+            CONSOLE_ERROR("CommsManager::IPWANTask", "Error during ReportRemoteID.");
         }
     }
 
@@ -626,6 +637,8 @@ void CommsManager::CloseFeedSocket(uint16_t feed_index) {
         close(feed_sock_[feed_index]);
     }
     feed_send_buffers_[feed_index].Close();
+    feed_caps_[feed_index].Reset();
+    feed_rx_open_[feed_index] = false;
     feed_sock_is_connected_[feed_index] = false;
     feed_sock_is_connecting_[feed_index] = false;
     CONSOLE_INFO("CommsManager::IPWANTask", "Closed socket for feed %d.", feed_index);
@@ -838,12 +851,15 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
     switch (settings_manager.settings.feed_protocols[feed_index]) {
         case SettingsManager::ReportingProtocol::kBeast:
         case SettingsManager::ReportingProtocol::kBeastNoUAT:
-        case SettingsManager::ReportingProtocol::kBeastNoUATUplink:
-        case SettingsManager::ReportingProtocol::kReadsbee: {
-            uint8_t beast_message_buf[2 * SettingsManager::Settings::kFeedReceiverIDNumBytes +
-                                      BeastReporter::kModeSBeastFrameMaxLenBytes];
+        case SettingsManager::ReportingProtocol::kBeastNoUATUplink: {
+            uint8_t beast_message_buf[2 /* 0x1a 0xe4 */ + BeastReporter::kUuidNumChars +
+                                      BeastReporter::kBeastCapsFrameLenBytes];
             uint16_t beast_message_len_bytes = BeastReporter::BuildFeedStartFrame(
                 beast_message_buf, settings_manager.settings.feed_receiver_ids[feed_index]);
+            // The capabilities query follows 0xe4 in the same write, so both go out in one TCP segment.
+            beast_message_len_bytes += feed_caps_[feed_index].Start(beast_message_buf + beast_message_len_bytes,
+                                                                    BeastCapsToOffer(), get_time_since_boot_ms());
+            feed_rx_open_[feed_index] = true;
             // The stream must start with this frame: if it can't be taken now, reconnect in the next interval.
             if (feed_send_heap_is_low_ ||
                 feed_send_buffers_[feed_index].Write(beast_message_buf, beast_message_len_bytes,
@@ -865,19 +881,82 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
     return true;
 }
 
-bool CommsManager::ReportReadsbee(const ReportSink* sinks, uint16_t num_sinks,
+uint16_t CommsManager::BeastCapsToOffer() {
+    uint16_t offer = BeastReporter::kBeastCapSignalDbm;
+    if (settings_manager.settings.remote_id_rx_enabled) offer |= BeastReporter::kBeastCapRemoteID;
+    return offer & BeastReporter::kBeastCapsSendable;
+}
+
+void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {
+    if (!feed_rx_open_[feed_index]) return;
+    BeastReporter::CapsSession& caps = feed_caps_[feed_index];
+    const bool was_waiting = caps.state() == BeastReporter::CapsSession::kWaiting;
+    uint32_t timestamp_ms = get_time_since_boot_ms();
+    uint8_t buf[kFeedRecvChunkBytes];
+    // Drain every pass, also after the check, so pings can't fill the receive window.
+    for (uint16_t chunk = 0; chunk < kFeedRecvMaxChunksPerPass; chunk++) {
+        int len = recv(feed_sock_[feed_index], buf, sizeof(buf), MSG_DONTWAIT);
+        if (len <= 0) {
+            if (len == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+                // The server closed its side or the socket failed: stop reading; sends report it as before.
+                feed_rx_open_[feed_index] = false;
+            }
+            break;
+        }
+        if (!caps.Receive(buf, len, timestamp_ms)) continue;
+        // Answer in time: the confirm goes into the send buffer before the next frame (it is FIFO).
+        uint8_t confirm[BeastReporter::kBeastCapsFrameLenBytes];
+        uint16_t confirm_len = caps.WriteConfirm(confirm);
+        FeedSendBuffer::Result result = feed_send_heap_is_low_
+                                            ? FeedSendBuffer::kDropped
+                                            : feed_send_buffers_[feed_index].Write(confirm, confirm_len, timestamp_ms);
+        if (result == FeedSendBuffer::kError) {
+            CONSOLE_ERROR("CommsManager::ReceiveFeedSocket", "Closing feed %d: socket error sending the confirm.",
+                          feed_index);
+            CloseFeedSocket(feed_index);
+            return;
+        }
+        if (result == FeedSendBuffer::kDropped) {
+            caps.Abandon();  // The server never saw the confirm, so it still reads plain Beast.
+            CONSOLE_WARNING("CommsManager::ReceiveFeedSocket", "Feed %d: no room for the confirm, staying plain Beast.",
+                            feed_index);
+        } else {
+            caps.Confirm();
+            CONSOLE_INFO("CommsManager::ReceiveFeedSocket", "Feed %d: server accepts capabilities 0x%x, using 0x%x.",
+                         feed_index, caps.offered(), caps.bits());
+        }
+    }
+    caps.Update(timestamp_ms);
+    if (!feed_rx_open_[feed_index] && caps.state() == BeastReporter::CapsSession::kWaiting) {
+        caps.Abandon();  // No answer can arrive any more.
+    }
+    if (was_waiting && caps.state() == BeastReporter::CapsSession::kPlain) {
+        CONSOLE_INFO("CommsManager::ReceiveFeedSocket", "Feed %d: no capabilities answer, plain Beast.", feed_index);
+    }
+}
+
+bool CommsManager::ReportRemoteID(const ReportSink* sinks, const uint16_t* sink_caps, uint16_t num_sinks,
                                   const CompositeArray::RawPackets& packets) {
     if (num_sinks == 0 || packets.header == nullptr || packets.header->num_remote_id_packets == 0) {
         return true;
     }
     // One IPWANTask, so one buffer; kept off its stack.
     static uint8_t frame_buf[BeastReporter::kRemoteIDBeastFrameMaxLenBytes];
+    static constexpr uint16_t kSignalFormats[] = {0, BeastReporter::kBeastCapSignalDbm};
     bool ret = true;
-    for (uint16_t i = 0; i < packets.header->num_remote_id_packets; i++) {
-        uint16_t frame_len = BeastReporter::BuildRemoteIDBeastFrame(frame_buf, packets.remote_id_packets[i]);
-        if (frame_len == 0) continue;  // Unknown transport or ODID bounds: nothing a decoder could bound.
-        for (uint16_t j = 0; j < num_sinks; j++) {
-            ret &= SendBuf(sinks[j], reinterpret_cast<const char*>(frame_buf), frame_len);
+    // One build per signal byte format in use.
+    for (uint16_t format : kSignalFormats) {
+        for (uint16_t i = 0; i < packets.header->num_remote_id_packets; i++) {
+            uint16_t frame_len = 0;
+            for (uint16_t j = 0; j < num_sinks; j++) {
+                if ((sink_caps[j] & BeastReporter::kBeastCapSignalDbm) != format) continue;
+                if (!feed_sock_is_connected_[sinks[j]]) continue;  // Closed by an earlier send.
+                if (frame_len == 0) {
+                    frame_len = BeastReporter::BuildRemoteIDBeastFrame(frame_buf, packets.remote_id_packets[i], format);
+                    if (frame_len == 0) break;  // Unknown transport or ODID bounds: nothing a decoder could bound.
+                }
+                ret &= SendBuf(sinks[j], reinterpret_cast<const char*>(frame_buf), frame_len);
+            }
         }
     }
     return ret;

@@ -133,7 +133,7 @@ static T (&ReportScratch()) [N] {
 
 bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManager::ReportingProtocol* sink_protocols,
                                    uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report,
-                                   bool report_locally_decoded) {
+                                   bool report_locally_decoded, const uint16_t* sink_beast_caps) {
     bool ret = true;
     uint32_t timestamp_ms = get_time_since_boot_ms();
 
@@ -147,9 +147,7 @@ bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManage
 
     // Build lists of sinks for each reporting protocol.
     ReportSink raw_sinks[SettingsManager::kMaxNumReportSinks];
-    ReportSink beast_sinks[SettingsManager::kMaxNumReportSinks];
-    ReportSink beast_no_uat_sinks[SettingsManager::kMaxNumReportSinks];
-    ReportSink beast_no_uat_uplink_sinks[SettingsManager::kMaxNumReportSinks];
+    ReportSink beast_group_sinks[SettingsManager::kMaxNumReportSinks];
     ReportSink csbee_sinks[SettingsManager::kMaxNumReportSinks];
     ReportSink mavlink1_sinks[SettingsManager::kMaxNumReportSinks];
     ReportSink mavlink2_sinks[SettingsManager::kMaxNumReportSinks];
@@ -159,8 +157,7 @@ bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManage
     ReportSink uat_uplink_json_sinks[SettingsManager::kMaxNumReportSinks];
     ReportSink asterix_sinks[SettingsManager::kMaxNumReportSinks];
 
-    uint16_t num_raw_sinks = 0, num_beast_sinks = 0, num_beast_no_uat_sinks = 0, num_beast_no_uat_uplink_sinks = 0,
-             num_csbee_sinks = 0, num_mavlink1_sinks = 0, num_mavlink2_sinks = 0, num_gdl90_sinks = 0,
+    uint16_t num_raw_sinks = 0, num_csbee_sinks = 0, num_mavlink1_sinks = 0, num_mavlink2_sinks = 0, num_gdl90_sinks = 0,
              num_gdl90_no_uat_uplink_sinks = 0, num_aircraftjson_sinks = 0, num_uat_uplink_json_sinks = 0,
              num_asterix_sinks = 0;
 
@@ -172,14 +169,9 @@ bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManage
                 raw_sinks[num_raw_sinks++] = sinks[i];
                 break;
             case SettingsManager::kBeast:
-                beast_sinks[num_beast_sinks++] = sinks[i];
-                break;
             case SettingsManager::kBeastNoUAT:
-                beast_no_uat_sinks[num_beast_no_uat_sinks++] = sinks[i];
-                break;
             case SettingsManager::kBeastNoUATUplink:
-                beast_no_uat_uplink_sinks[num_beast_no_uat_uplink_sinks++] = sinks[i];
-                break;
+                break;  // Grouped by frame format below.
             case SettingsManager::kCSBee:
                 csbee_sinks[num_csbee_sinks++] = sinks[i];
                 break;
@@ -235,22 +227,24 @@ bool CommsManager::UpdateReporting(const ReportSink* sinks, const SettingsManage
             CONSOLE_ERROR("CommsManager::UpdateReporting", "Error during ReportRaw.");
             ret = false;
         }
-        // Send all inclusive Beast reports.
-        if (!ReportBeast(beast_sinks, num_beast_sinks, *packets_to_report)) {
-            CONSOLE_ERROR("CommsManager::UpdateReporting", "Error during ReportBeast.");
-            ret = false;
-        }
-        // Send No UAT Beast reports.
-        if (!ReportBeast(beast_no_uat_sinks, num_beast_no_uat_sinks, *packets_to_report,
-                         SettingsManager::kBeastNoUAT)) {
-            CONSOLE_ERROR("CommsManager::UpdateReporting", "Error during ReportBeast with no UAT.");
-            ret = false;
-        }
-        // Send No UAT Uplink Beast reports.
-        if (!ReportBeast(beast_no_uat_uplink_sinks, num_beast_no_uat_uplink_sinks, *packets_to_report,
-                         SettingsManager::kBeastNoUATUplink)) {
-            CONSOLE_ERROR("CommsManager::UpdateReporting", "Error during ReportBeast with no UAT or Uplink.");
-            ret = false;
+        // Beast: one batch per protocol and frame format (plain, dBm, upper-case UAT, both). Without feeds that
+        // confirmed a capability, that's one batch per protocol, as before.
+        static constexpr SettingsManager::ReportingProtocol kBeastProtocols[] = {
+            SettingsManager::kBeast, SettingsManager::kBeastNoUAT, SettingsManager::kBeastNoUATUplink};
+        static constexpr uint16_t kBeastFrameFormats[] = {0, BeastReporter::kBeastCapSignalDbm,
+                                                          BeastReporter::kBeastCapUATModeSClock,
+                                                          BeastReporter::kBeastCapsFrameFormat};
+        for (SettingsManager::ReportingProtocol protocol : kBeastProtocols) {
+            for (uint16_t format : kBeastFrameFormats) {
+                uint16_t num_group_sinks = BeastReporter::SelectBeastGroup(
+                    sinks, sink_protocols, sink_beast_caps, num_sinks, protocol, format, beast_group_sinks);
+                if (num_group_sinks > 0 &&
+                    !ReportBeast(beast_group_sinks, num_group_sinks, *packets_to_report, protocol, format)) {
+                    CONSOLE_ERROR("CommsManager::UpdateReporting", "Error during ReportBeast (%s, caps 0x%x).",
+                                  SettingsManager::kReportingProtocolStrs[protocol], format);
+                    ret = false;
+                }
+            }
         }
         // Send GDL90 reports (UAT uplink only).
         if (!ReportGDL90Uplink(gdl90_sinks, num_gdl90_sinks, *packets_to_report)) {
@@ -485,7 +479,7 @@ bool CommsManager::ReportRaw(ReportSink* sinks, uint16_t num_sinks, const Compos
 }
 
 bool CommsManager::ReportBeast(ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets,
-                               SettingsManager::ReportingProtocol protocol) {
+                               SettingsManager::ReportingProtocol protocol, uint16_t caps) {
     if (num_sinks == 0) {
         return true;  // Nobody is listening; don't spend time building frames.
     }
@@ -521,20 +515,20 @@ bool CommsManager::ReportBeast(ReportSink* sinks, uint16_t num_sinks, const Comp
     } while (0)
 
     for (uint16_t i = 0; i < packets.header->num_mode_s_packets; i++) {
-        BUILD_BEAST_FRAME(BeastReporter::BuildModeSBeastFrame(beast_batch_buf + batch_len, packets.mode_s_packets[i]),
+        BUILD_BEAST_FRAME(BeastReporter::BuildModeSBeastFrame(beast_batch_buf + batch_len, packets.mode_s_packets[i], caps),
                           BeastReporter::kModeSBeastFrameMaxLenBytes);
     }
     if (protocol != SettingsManager::kBeastNoUAT) {
         for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
             BUILD_BEAST_FRAME(
-                BeastReporter::BuildUATADSBBeastFrame(beast_batch_buf + batch_len, packets.uat_adsb_packets[i]),
+                BeastReporter::BuildUATADSBBeastFrame(beast_batch_buf + batch_len, packets.uat_adsb_packets[i], caps),
                 BeastReporter::kUATADSBBeastFrameMaxLenBytes);
         }
     }
     if (protocol != SettingsManager::kBeastNoUATUplink && protocol != SettingsManager::kBeastNoUAT) {
         for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
             BUILD_BEAST_FRAME(
-                BeastReporter::BuildUATUplinkBeastFrame(beast_batch_buf + batch_len, packets.uat_uplink_packets[i]),
+                BeastReporter::BuildUATUplinkBeastFrame(beast_batch_buf + batch_len, packets.uat_uplink_packets[i], caps),
                 BeastReporter::kUATUplinkBeastFrameMaxLenBytes);
         }
     }
@@ -559,18 +553,18 @@ bool CommsManager::ReportBeast(ReportSink* sinks, uint16_t num_sinks, const Comp
 
     for (uint16_t i = 0; i < packets.header->num_mode_s_packets; i++) {
         uint8_t beast_frame_buf[BeastReporter::kModeSBeastFrameMaxLenBytes];
-        SEND_BEAST_FRAME(BeastReporter::BuildModeSBeastFrame(beast_frame_buf, packets.mode_s_packets[i]));
+        SEND_BEAST_FRAME(BeastReporter::BuildModeSBeastFrame(beast_frame_buf, packets.mode_s_packets[i], caps));
     }
     if (protocol != SettingsManager::kBeastNoUAT) {
         for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
             uint8_t beast_frame_buf[BeastReporter::kUATADSBBeastFrameMaxLenBytes];
-            SEND_BEAST_FRAME(BeastReporter::BuildUATADSBBeastFrame(beast_frame_buf, packets.uat_adsb_packets[i]));
+            SEND_BEAST_FRAME(BeastReporter::BuildUATADSBBeastFrame(beast_frame_buf, packets.uat_adsb_packets[i], caps));
         }
     }
     if (protocol != SettingsManager::kBeastNoUATUplink && protocol != SettingsManager::kBeastNoUAT) {
         for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
             uint8_t beast_frame_buf[BeastReporter::kUATUplinkBeastFrameMaxLenBytes];
-            SEND_BEAST_FRAME(BeastReporter::BuildUATUplinkBeastFrame(beast_frame_buf, packets.uat_uplink_packets[i]));
+            SEND_BEAST_FRAME(BeastReporter::BuildUATUplinkBeastFrame(beast_frame_buf, packets.uat_uplink_packets[i], caps));
         }
     }
 #undef SEND_BEAST_FRAME

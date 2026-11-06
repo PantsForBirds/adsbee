@@ -12,6 +12,7 @@
 #include "freertos/task.h"
 // #include "gdl90/gdl90_utils.hh"
 #include "aircraft_dictionary_config.hh"
+#include "beast_utils.hh"
 #include "composite_array.hh"
 #include "feed_send_buffer.hh"
 #include "lwip/sockets.h"  // For port definition.
@@ -295,6 +296,11 @@ class CommsManager {
     bool SendBuf(uint16_t iface, const char* buf, uint16_t buf_len, uint16_t num_msgs = 1);
 
     /**
+     * Whether a connected feed confirmed Remote ID frames. Read by the main task to queue Remote ID packets for feeds.
+     */
+    bool FeedsTakeRemoteID() const { return feeds_take_remote_id_; }
+
+    /**
      * Handles events of the MQTT client. Public so that the pass-through function can access it.
      */
     void MQTTEventHandler(int32_t event_id, esp_mqtt_event_handle_t event);
@@ -311,12 +317,23 @@ class CommsManager {
     void CloseFeedSocket(uint16_t feed_index);
 
     /**
-     * Sends the frames only READSBEE feeds get (Remote ID 0xef). Their Beast frames go out with the BEAST feeds.
-     * @param[in] sinks Feed indices with protocol kReadsbee.
+     * Sends Remote ID frames (0xef) to the feeds that confirmed kBeastCapRemoteID, after their Beast frames.
+     * @param[in] sinks Feed indices.
+     * @param[in] sink_caps Confirmed capability bits of each feed (signal byte format).
      * @param[in] packets Packets of this reporting round.
      * @retval False if a send failed.
      */
-    bool ReportReadsbee(const ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets);
+    bool ReportRemoteID(const ReportSink* sinks, const uint16_t* sink_caps, uint16_t num_sinks,
+                        const CompositeArray::RawPackets& packets);
+
+    /**
+     * Reads what the server sent on a TCP Beast feed without blocking: looks for the capabilities answer, sends the
+     * confirm, and drops the rest.
+     */
+    void ReceiveFeedSocket(uint16_t feed_index);
+
+    // Capability bits a Beast feed's query offers (kBeastCapsSendable, Remote ID only while receive is on).
+    uint16_t BeastCapsToOffer();
 
     // CRC of the settings a feed connects with, to reconnect it when they change.
     uint32_t FeedConfigCRC(uint16_t feed_index);
@@ -476,6 +493,10 @@ class CommsManager {
     uint32_t mqtt_metrics_last_publish_timestamp_ms_ = 0;
     // Each feed sends through its own buffer so that a slow or stalled feed only loses its own messages.
     FeedSendBuffer feed_send_buffers_[SettingsManager::Settings::kMaxNumFeeds];
+    // Capabilities check of each TCP Beast feed's connection, and whether its socket is still read.
+    BeastReporter::CapsSession feed_caps_[SettingsManager::Settings::kMaxNumFeeds];
+    bool feed_rx_open_[SettingsManager::Settings::kMaxNumFeeds] = {false};
+    volatile bool feeds_take_remote_id_ = false;  // Written by IPWANTask.
     uint32_t feed_num_dropped_msgs_[SettingsManager::Settings::kMaxNumFeeds] = {0};
     // Time IPWANTask may still spend waiting for room on each feed (see kFeedWaitBudgetMs).
     uint16_t feed_wait_budget_ms_[SettingsManager::Settings::kMaxNumFeeds] = {0};

@@ -19,7 +19,6 @@ inline uint16_t FrameLen(SettingsManager::ReportingProtocol protocol, const uint
         case SettingsManager::kBeast:
         case SettingsManager::kBeastNoUAT:
         case SettingsManager::kBeastNoUATUplink:
-        case SettingsManager::kReadsbee:
             // Frames start with 0x1A and a type byte; 0x1A in a frame is sent twice.
             for (uint16_t i = 1; i + 1 < len; i++) {
                 if (buf[i] != 0x1A) continue;

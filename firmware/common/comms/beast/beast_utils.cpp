@@ -5,6 +5,7 @@
 #include "macros.hh"
 #include "math.h"
 #include "stdio.h"
+#include "stdint.h"
 #include "string.h"
 
 // Mode S Beast Protocol Spec: https://github.com/firestuff/adsb-tools/blob/master/protocols/beast.md
@@ -84,20 +85,26 @@ uint16_t Write12MHzMLATTimestamp(uint8_t *buf, uint64_t mlat_12mhz_counter) {
                                                       BeastReporter::kBeastMLATTimestampNumBytes);
 }
 
-/**
- * Use lookup table to convert RSSI from dBm to Beast power level (sqrt of un-logged dBFS, mutliplied by 255).
- * @param[out] buf Pointer to output buffer.
- * @param[in] rssi_dbm RSSI value in dBm.
- * @retval Number of bytes written to the output buffer, including escapes.
- */
-uint16_t WriteRSSIdBmAsBeastPowerLevel(uint8_t *buf, int16_t rssi_dbm) {
-    // Convert RSSI from dBm to Beast power level (sqrt of un-logged dBFS, multiplied by 255).
-    uint16_t rssi_lut_index = MIN(MAX(rssi_dbm - kMinRSSIdBm, 0), static_cast<int>(sizeof(kRSSIdBmToRSSIdBFS) - 1));
-    uint8_t rssi_byte = static_cast<uint8_t>(kRSSIdBmToRSSIdBFS[rssi_lut_index]);
-    return BeastReporter::WriteBufferWithBeastEscapes(buf, &rssi_byte, 1);
+uint16_t BeastReporter::WriteRSSIdBmAsBeastPowerLevel(uint8_t *buf, int16_t rssi_dbm) {
+    uint8_t rssi_byte = kBeastNoLevelPowerByte;
+    if (rssi_dbm != INT16_MIN) {
+        uint16_t rssi_lut_index =
+            MIN(MAX(rssi_dbm - kMinRSSIdBm, 0), static_cast<int>(sizeof(kRSSIdBmToRSSIdBFS) - 1));
+        rssi_byte = static_cast<uint8_t>(kRSSIdBmToRSSIdBFS[rssi_lut_index]);
+    }
+    return WriteBufferWithBeastEscapes(buf, &rssi_byte, 1);
 }
 
-uint16_t BeastReporter::BuildModeSBeastFrame(uint8_t *beast_frame_buf, const DecodedModeSPacket &packet) {
+uint16_t BeastReporter::WriteRSSIdBmAsInt8(uint8_t *buf, int16_t rssi_dbm) {
+    uint8_t dbm_byte = kBeastNoLevelDbmByte;
+    if (rssi_dbm != INT16_MIN) {
+        dbm_byte = static_cast<uint8_t>(static_cast<int8_t>(MIN(MAX(rssi_dbm, -127), 127)));
+    }
+    return WriteBufferWithBeastEscapes(buf, &dbm_byte, 1);
+}
+
+uint16_t BeastReporter::BuildModeSBeastFrame(uint8_t *beast_frame_buf, const DecodedModeSPacket &packet,
+                                             uint16_t caps) {
     uint8_t packet_buf[DecodedModeSPacket::kMaxPacketLenWords32 * kBytesPerWord];
     uint16_t data_num_bytes = packet.DumpPacketBuffer(packet_buf);
 
@@ -118,7 +125,7 @@ uint16_t BeastReporter::BuildModeSBeastFrame(uint8_t *beast_frame_buf, const Dec
     uint16_t bytes_written = 2;
 
     bytes_written += Write12MHzMLATTimestamp(beast_frame_buf + bytes_written, packet.raw.GetMLAT12MHzCounter());
-    bytes_written += WriteRSSIdBmAsBeastPowerLevel(beast_frame_buf + bytes_written, packet.raw.sigs_dbm);
+    bytes_written += WriteSignalByte(beast_frame_buf + bytes_written, packet.raw.sigs_dbm, caps);
 
     // Write packet buffer with escape characters.
     bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, packet_buf, data_num_bytes);
@@ -156,16 +163,19 @@ uint16_t WriteBufferAsHexASCII(uint8_t *to_buf, const uint8_t *from_buf, uint16_
     return from_buf_num_bytes * 2;
 }
 
-uint16_t BeastReporter::BuildUATADSBBeastFrame(uint8_t *beast_frame_buf, const RawUATADSBPacket &packet) {
+uint16_t BeastReporter::BuildUATADSBBeastFrame(uint8_t *beast_frame_buf, const RawUATADSBPacket &packet,
+                                               uint16_t caps) {
     char uat_message_type_char = ' ';
     switch (packet.buffer_len_bytes) {
         case RawUATADSBPacket::kShortADSBMessageNumBytes:
             // Short UAT ADSB message.
-            uat_message_type_char = kUATMessageTypeADSBShort;
+            uat_message_type_char = (caps & kBeastCapUATModeSClock) ? kUATMessageTypeADSBShortModeSClock
+                                                                     : kUATMessageTypeADSBShort;
             break;
         case RawUATADSBPacket::kLongADSBMessageNumBytes:
             // Long UAT ADSB message.
-            uat_message_type_char = kUATMessageTypeADSBLong;
+            uat_message_type_char = (caps & kBeastCapUATModeSClock) ? kUATMessageTypeADSBLongModeSClock
+                                                                     : kUATMessageTypeADSBLong;
             break;
         default:
             CONSOLE_ERROR("BeastReporter::BuildUATADSBBeastFrame", "Invalid UAT ADSB message length %d bytes.",
@@ -179,7 +189,7 @@ uint16_t BeastReporter::BuildUATADSBBeastFrame(uint8_t *beast_frame_buf, const R
     beast_frame_buf[bytes_written++] = uat_message_type_char;
 
     bytes_written += Write12MHzMLATTimestamp(beast_frame_buf + bytes_written, packet.GetMLAT12MHzCounter());
-    bytes_written += WriteRSSIdBmAsBeastPowerLevel(beast_frame_buf + bytes_written, packet.sigs_dbm);
+    bytes_written += WriteSignalByte(beast_frame_buf + bytes_written, packet.sigs_dbm, caps);
 
     bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, packet.buffer,
                                                  packet.buffer_len_bytes);
@@ -187,7 +197,8 @@ uint16_t BeastReporter::BuildUATADSBBeastFrame(uint8_t *beast_frame_buf, const R
     return bytes_written;
 }
 
-uint16_t BeastReporter::BuildUATUplinkBeastFrame(uint8_t *beast_frame_buf, const RawUATUplinkPacket &packet) {
+uint16_t BeastReporter::BuildUATUplinkBeastFrame(uint8_t *beast_frame_buf, const RawUATUplinkPacket &packet,
+                                                 uint16_t caps) {
     if (packet.encoded_message_len_bytes != RawUATUplinkPacket::kUplinkMessageNumBytes) {
         CONSOLE_ERROR("BeastReporter::BuildUATUplinkBeastFrame", "Invalid UAT Uplink message length %d bytes.",
                       packet.encoded_message_len_bytes);
@@ -197,10 +208,11 @@ uint16_t BeastReporter::BuildUATUplinkBeastFrame(uint8_t *beast_frame_buf, const
     uint16_t bytes_written = 0;
     beast_frame_buf[bytes_written++] = kBeastEscapeChar;
     beast_frame_buf[bytes_written++] = BeastFrameType::kBeastFrameTypeUAT;
-    beast_frame_buf[bytes_written++] = kUATMessageTypeUplink;
+    beast_frame_buf[bytes_written++] =
+        (caps & kBeastCapUATModeSClock) ? kUATMessageTypeUplinkModeSClock : kUATMessageTypeUplink;
 
     bytes_written += Write12MHzMLATTimestamp(beast_frame_buf + bytes_written, packet.GetMLAT12MHzCounter());
-    bytes_written += WriteRSSIdBmAsBeastPowerLevel(beast_frame_buf + bytes_written, packet.sigs_dbm);
+    bytes_written += WriteSignalByte(beast_frame_buf + bytes_written, packet.sigs_dbm, caps);
 
     bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, packet.encoded_message,
                                                  packet.encoded_message_len_bytes);
@@ -222,25 +234,24 @@ uint16_t BeastReporter::RemoteIDODIDLenBytes(const uint8_t *odid, uint16_t len) 
     return odid_len <= len ? odid_len : 0;
 }
 
-uint16_t BeastReporter::WriteRemoteIDBeastFrame(uint8_t *beast_frame_buf, RemoteIDTransportChar transport,
-                                                int8_t rssi_dbm, const uint8_t mac[6], const uint8_t *odid,
-                                                uint16_t odid_len_bytes) {
+uint16_t BeastReporter::WriteRemoteIDBeastFrame(uint8_t *beast_frame_buf, char transport, uint64_t mlat_12mhz_counter,
+                                                int16_t rssi_dbm, const uint8_t mac[6], const uint8_t *odid,
+                                                uint16_t odid_len_bytes, uint16_t caps) {
     uint16_t odid_len = RemoteIDODIDLenBytes(odid, odid_len_bytes);
     if (odid_len == 0) return 0;
     uint16_t bytes_written = 0;
     beast_frame_buf[bytes_written++] = kBeastEscapeChar;
     beast_frame_buf[bytes_written++] = kBeastFrameTypeRemoteID;
     beast_frame_buf[bytes_written++] = transport;
-    // No Mode S clock on the ESP32: timestamp 0, the server stamps arrival time.
-    bytes_written += Write12MHzMLATTimestamp(beast_frame_buf + bytes_written, 0);
-    uint8_t dbm_byte = static_cast<uint8_t>(rssi_dbm);
-    bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, &dbm_byte, 1);
+    bytes_written += Write12MHzMLATTimestamp(beast_frame_buf + bytes_written, mlat_12mhz_counter);
+    bytes_written += WriteSignalByte(beast_frame_buf + bytes_written, rssi_dbm, caps);
     bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, mac, 6);
     bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, odid, odid_len);
     return bytes_written;
 }
 
-uint16_t BeastReporter::BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const RawRemoteIDPacket &packet) {
+uint16_t BeastReporter::BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const RawRemoteIDPacket &packet,
+                                                uint16_t caps) {
     RemoteIDTransportChar transport;
     uint8_t mac[6];
     switch (packet.transport) {
@@ -259,7 +270,108 @@ uint16_t BeastReporter::BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const 
             return 0;
     }
     // The receivers store 0 for an unknown level.
-    int8_t rssi_dbm = packet.rssi_dbm == 0 ? kBeastNoLevelDbm : packet.rssi_dbm;
-    return WriteRemoteIDBeastFrame(beast_frame_buf, transport, rssi_dbm, mac, packet.payload,
-                                   packet.payload_len_bytes);
+    int16_t rssi_dbm = packet.rssi_dbm == 0 ? INT16_MIN : packet.rssi_dbm;
+    // No Mode S clock on the ESP32 yet: timestamp 0 and a lower-case letter, so the server stamps arrival time. When
+    // the ESP32 gets the Mode S clock (t-1089), pass its 12 MHz count here with the upper-case letter.
+    const uint64_t mlat_12mhz_counter = 0;
+    return WriteRemoteIDBeastFrame(beast_frame_buf, transport, mlat_12mhz_counter, rssi_dbm, mac, packet.payload,
+                                   packet.payload_len_bytes, caps);
+}
+
+uint16_t BeastReporter::WriteADSLBeastFrame(uint8_t *beast_frame_buf, ADSLChannelChar channel,
+                                            uint64_t mlat_12mhz_counter, int16_t rssi_dbm, uint8_t repaired,
+                                            const uint8_t *onair, uint16_t onair_len_bytes, uint16_t caps) {
+    // The length byte bounds the frame for a decoder, so it must match the bytes sent.
+    if (onair_len_bytes < 2 || onair[0] < 1 || onair[0] > kADSLMaxOnAirLenBytes || onair_len_bytes != 1 + onair[0]) {
+        return 0;
+    }
+    uint16_t bytes_written = 0;
+    beast_frame_buf[bytes_written++] = kBeastEscapeChar;
+    beast_frame_buf[bytes_written++] = kBeastFrameTypeADSL;
+    beast_frame_buf[bytes_written++] = channel;
+    bytes_written += Write12MHzMLATTimestamp(beast_frame_buf + bytes_written, mlat_12mhz_counter);
+    bytes_written += WriteSignalByte(beast_frame_buf + bytes_written, rssi_dbm, caps);
+    bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, &repaired, 1);
+    bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, onair, onair_len_bytes);
+    return bytes_written;
+}
+
+uint16_t BeastReporter::WriteCapsFrame(uint8_t *buf, BeastCapsLetter letter, uint16_t bits) {
+    buf[0] = kBeastEscapeChar;
+    buf[1] = kBeastFrameTypeCapabilities;
+    buf[2] = letter;
+    buf[3] = 0x80 | kBeastCapsVersion;
+    buf[4] = 0x80 | (bits & 0x7f);
+    buf[5] = 0x80 | ((bits >> 7) & 0x7f);
+    return kBeastCapsFrameLenBytes;
+}
+
+bool BeastReporter::CapsAnswerScanner::Scan(const uint8_t *data, uint16_t len) {
+    for (uint16_t i = 0; i < len && !has_answer_; i++) {
+        uint8_t x = data[i];
+        switch (state_) {
+            case kFindEscape:
+                if (x == kBeastEscapeChar) state_ = kAfterEscape;
+                break;
+            case kAfterEscape:
+                // 0x1a 0x1a is an escaped byte inside another frame; any other type: skip to the next 0x1a.
+                if (x == kBeastFrameTypeCapabilities) {
+                    state_ = kCollecting;
+                    num_got_ = 0;
+                } else {
+                    state_ = kFindEscape;
+                }
+                break;
+            case kCollecting:
+                if (x == kBeastEscapeChar) {
+                    state_ = kAfterEscape;  // Caps bytes are never 0x1a: a new frame starts here.
+                    break;
+                }
+                got_[num_got_++] = x;
+                if (num_got_ < 4) break;
+                state_ = kFindEscape;
+                // Only an answer counts; a query (an echo) or a byte without the high bit is skipped.
+                if (got_[0] == kBeastCapsAnswer && (got_[1] & 0x80) && (got_[2] & 0x80) && (got_[3] & 0x80) &&
+                    (got_[1] & 0x7f) != 0) {
+                    has_answer_ = true;
+                    version_ = got_[1] & 0x7f;
+                    bits_ = (got_[2] & 0x7f) | ((got_[3] & 0x7f) << 7);
+                    return true;
+                }
+                break;
+        }
+    }
+    return false;
+}
+
+uint16_t BeastReporter::CapsSession::Start(uint8_t *buf, uint16_t offered, uint32_t timestamp_ms) {
+    Reset();
+    offered_ = offered & kBeastCapsKnown;
+    start_timestamp_ms_ = timestamp_ms;
+    state_ = kWaiting;
+    return WriteCapsFrame(buf, kBeastCapsQuery, offered_);
+}
+
+bool BeastReporter::CapsSession::Receive(const uint8_t *data, uint16_t len, uint32_t timestamp_ms) {
+    if (state_ != kWaiting) return false;  // After the answer or the timeout, bytes are only drained.
+    Update(timestamp_ms);
+    if (state_ != kWaiting || !scanner_.Scan(data, len)) return false;
+    pending_bits_ = offered_ & scanner_.bits() & kBeastCapsKnown;
+    state_ = kAnswered;
+    return true;
+}
+
+void BeastReporter::CapsSession::Update(uint32_t timestamp_ms) {
+    if (state_ == kWaiting && timestamp_ms - start_timestamp_ms_ >= kBeastCapsAnswerTimeoutMs) {
+        state_ = kPlain;
+    }
+}
+
+void BeastReporter::CapsSession::Confirm() {
+    if (state_ == kAnswered) state_ = kAgreed;
+}
+
+void BeastReporter::CapsSession::Abandon() {
+    state_ = kPlain;
+    pending_bits_ = 0;
 }

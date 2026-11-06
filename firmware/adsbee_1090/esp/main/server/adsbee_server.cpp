@@ -321,7 +321,7 @@ bool ADSBeeServer::Update() {
         CompositeArray::RawPackets raw_packets = CompositeArray::PackRawPacketsBuffer(
             raw_packets_buf_, CompositeArray::RawPackets::kMaxLenBytes, &(adsbee_server.raw_mode_s_packet_in_queue),
             &(adsbee_server.raw_uat_adsb_packet_in_queue), &(adsbee_server.raw_uat_uplink_packet_in_queue),
-            remote_id_manager.GetFeedQueue());  // Remote ID for READSBEE feeds; nullptr packs none.
+            remote_id_manager.GetFeedQueue());  // Remote ID for feeds; nullptr packs none.
 
         if (!raw_packets.IsValid()) {
             if (raw_packets.len_bytes > sizeof(CompositeArray::RawPackets::Header)) {

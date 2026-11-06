@@ -172,24 +172,3 @@ test('a refused AT command rejects with its reason, log lines do not', async () 
     ws.captureCallback('OK\r\n');
     await ok;
 });
-
-test('READSBEE is in the protocol list, on TCP, and saves like any feed', async () => {
-    const { FeedEditor, get, sent } = load(
-        { index: 1, uri: 'feed.example.net', port: 30005, active: 1, protocol: 'READSBEE', transport: 'TCP', receiver_id: '' });
-    await FeedEditor.open(1);
-    const protocol = get('feed-protocol');
-    assert.match(protocol.innerHTML, /<option value="READSBEE" selected>READSBEE<\/option>/);
-    assert.strictEqual(protocol.value, 'READSBEE');
-    // The firmware's protocol names: READSBEE is last (appended to the stored enum).
-    const strs = fs.readFileSync(path.join(__dirname, '../../../../../../common/settings/settings_strs.cpp'), 'utf8');
-    const names = /kReportingProtocolStrs[\s\S]*?\{([\s\S]*?)\};/.exec(strs)[1].match(/"[A-Z0-9_]+"/g).map(n => n.slice(1, -1));
-    assert.strictEqual(names[names.length - 1], 'READSBEE');
-    for (const p of FeedEditor.PROTOCOLS) assert.ok(names.includes(p), p);
-    protocol.value = 'BEAST';
-    protocol.onchange();
-    protocol.value = 'READSBEE';
-    protocol.onchange();
-    assert.strictEqual(get('feed-transport').value, 'TCP');
-    await FeedEditor.save();
-    assert.deepStrictEqual(sent, ['AT+FEED=1,feed.example.net,30005,1,READSBEE,TCP', 'AT+SETTINGS=SAVE']);
-});

@@ -71,11 +71,13 @@ bool SendBufToSinks(const ReportSink* sinks, uint16_t num_sinks, const char* buf
  * @param[in] packets_to_report Raw packets to report.
  * @param[in] report_locally_decoded Set to false to send only packets_to_report, leaving the aircraft dictionary
  * rounds for a later call. Lets a platform report raw packets on a different cadence than the dictionary.
+ * @param[in] sink_beast_caps Confirmed capability bits of each sink (BeastReporter::kBeastCap*), or nullptr for none.
+ * Beast sinks are grouped by protocol and the bits in BeastReporter::kBeastCapsFrameFormat, one batch per group.
  * @retval True if successful, false if something broke.
  */
 bool UpdateReporting(const ReportSink* sinks, const SettingsManager::ReportingProtocol* sink_protocols,
                      uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report = nullptr,
-                     bool report_locally_decoded = true);
+                     bool report_locally_decoded = true, const uint16_t* sink_beast_caps = nullptr);
 
 /**
  * Sends out RAW formatted transponder data on the selected serial interface.
@@ -96,10 +98,12 @@ bool ReportRaw(ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawP
  * @param[in] packets CompositeArray::RawPackets struct with counts and pointers to arrays of each kind of packet to
  * report.
  * @param[in] protocol Reporting protocol to use. Must be one of kBeast, kBeastNoUAT, or kBeastNoUATUplink.
+ * @param[in] caps Confirmed capability bits shared by all sinks (BeastReporter::kBeastCapsFrameFormat); 0 for plain
+ * Beast.
  * @retval True if successful, false if something broke.
  */
 bool ReportBeast(ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets,
-                 SettingsManager::ReportingProtocol protocol = SettingsManager::kBeast);
+                 SettingsManager::ReportingProtocol protocol = SettingsManager::kBeast, uint16_t caps = 0);
 
 /**
  * Sends out comma separated aircraft information for each aircraft in the aircraft dictionary.

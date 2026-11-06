@@ -13,8 +13,7 @@ const char
                                            [SettingsManager::kReportingProtocolStrMaxLen] = {
                                                "NONE",  "RAW",      "BEAST",    "BEAST_NO_UAT", "BEAST_NO_UAT_UPLINK",
                                                "CSBEE", "MAVLINK1", "MAVLINK2", "GDL90", "AIRCRAFT_JSON",
-                                               "GDL90_NO_UAT_UPLINK", "AIRCRAFT_JSON_UAT_UPLINK", "ASTERIX",
-                                               "READSBEE"};
+                                               "GDL90_NO_UAT_UPLINK", "AIRCRAFT_JSON_UAT_UPLINK", "ASTERIX"};
 
 const char SettingsManager::kFeedTransportStrs[SettingsManager::kNumFeedTransports]
                                               [SettingsManager::kFeedTransportStrMaxLen] = {"TCP", "UDP", "MQTT"};

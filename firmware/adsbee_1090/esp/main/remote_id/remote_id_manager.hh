@@ -49,7 +49,7 @@ class RemoteIDManager {
     // sustained rate is ~1 Hz/drone, and both queues are drained every main-loop / SPI iteration.
     static constexpr uint16_t kIngestQueueDepth = 8;  // BLE + WiFi producers -> main task.
     static constexpr uint16_t kOutQueueDepth = 8;     // main task -> RP2040 (SPI) pull.
-    static constexpr uint16_t kFeedQueueDepth = 8;    // main task -> READSBEE feeds, drained every 200 ms.
+    static constexpr uint16_t kFeedQueueDepth = 8;    // main task -> feeds that confirmed Remote ID, drained every 200 ms.
 
     // Per-source rate limiting for SPI forwarding to the RP2040. Local dictionary ingest is not rate limited.
     static constexpr uint32_t kLocationForwardIntervalMs = 1000;  // Location/Vector: at most 1 Hz per source.
@@ -113,8 +113,8 @@ class RemoteIDManager {
     PFBQueue<RawRemoteIDPacket>* GetOutQueue() { return out_queue_; }
 
     /**
-     * Returns the queue of every received Remote ID packet waiting for READSBEE feeds, or nullptr if no READSBEE feed
-     * has been active since boot. Produced and consumed on the main task (ADSBeeServer::Update).
+     * Returns the queue of every received Remote ID packet waiting for feeds, or nullptr if no feed has confirmed
+     * Remote ID frames since boot. Produced and consumed on the main task (ADSBeeServer::Update).
      */
     PFBQueue<RawRemoteIDPacket>* GetFeedQueue() { return feed_queue_; }
 
@@ -224,7 +224,7 @@ class RemoteIDManager {
     // Lazily heap-allocated (see EnsureBuffers). null until the first transport starts.
     PFBQueue<RawRemoteIDPacket>* ingest_queue_ = nullptr;  // BLE/WiFi producers -> main task.
     PFBQueue<RawRemoteIDPacket>* out_queue_ = nullptr;     // main task -> RP2040 (SPI) pull.
-    PFBQueue<RawRemoteIDPacket>* feed_queue_ = nullptr;    // main task -> READSBEE feeds, allocated on first use.
+    PFBQueue<RawRemoteIDPacket>* feed_queue_ = nullptr;    // main task -> feeds that confirmed Remote ID, allocated on first use.
 
     DedupEntry dedup_table_[kDedupTableNumEntries];
 };
