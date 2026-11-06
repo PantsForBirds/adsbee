@@ -5,7 +5,6 @@
 #include "hardware/spi.h"
 #include "led_flasher.hh"
 #include "spi_coprocessor.hh"
-#include "sub_ghz_time_sync.hh"
 
 class CC1312 : public SPICoprocessorSlaveInterface {
    public:
@@ -212,7 +211,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     bool Update();
     // Poll sooner than the default interval while UAT packets are arriving, so the CC1312 queues don't fill up.
     bool UpdateIsDue() override {
-        return more_raw_packets_pending_ ||
+        return more_raw_packets_pending_ || num_sync_pulses_sent_ != last_sync_pulse_.pulse_num ||
                (raw_packets_arriving_ &&
                 get_time_since_boot_ms() - last_update_timestamp_ms_ >= kRawPacketPollIntervalMs);
     }
@@ -513,7 +512,6 @@ class CC1312 : public SPICoprocessorSlaveInterface {
      */
     inline void SetEnableState(SettingsManager::EnableState enabled) {
         BlockSyncPulses();  // Every reset and bootloader entry comes through here.
-        time_sync.Reset();  // A reset restarts the radio timer.
         if (enabled == SettingsManager::EnableState::kEnableStateExternal) {
             gpio_set_dir(config_.enable_pin, GPIO_IN);
             gpio_set_pulls(config_.enable_pin, true, false);  // Pull pin up.
@@ -562,29 +560,28 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     ObjectDictionary::SubGHzDeviceStatus device_status;
 
     /**
-     * Sync pulses put sub-GHz packet timestamps (CC1312 radio timer) on the RP2040's 48 MHz MLAT clock: about once a
-     * second the RP2040 raises the sync pin for ~1 us at a known MLAT count and the CC1312 captures the rising edge
-     * on its radio timer. The sync pin is also the CC1312 bootloader backdoor (high at reset = bootloader), so pulses
-     * run only after the CC1312 application has answered a status read, and stop before any reset, bootloader session,
-     * flashing or core 1 stop.
+     * Sync pulses put coprocessor timestamps on the RP2040's 48 MHz MLAT clock. About once a second the RP2040 raises
+     * the shared SYNC line (CC1312 DIO5, ESP32 GPIO38) for ~1 us, then writes the MLAT count of that edge
+     * (ObjectDictionary::SyncPulse) to the CC1312 and the ESP32. Each captures the edge on its own clock, fits offset
+     * and rate, and sends packets already on the MLAT time base. The sync pin is also the CC1312 bootloader backdoor
+     * (high at reset = bootloader), so pulses run only after the CC1312 application has answered a status read, and
+     * stop before any reset, bootloader session, flashing or core 1 stop.
      */
     // Sends a requested pulse. Call from the core that owns the MLAT counter (see ADSBee::GetMLAT48MHzCounts()).
     void ServiceSyncPulse();
     // Stops pulses and returns once none is in flight. They resume after the next good status read.
     void BlockSyncPulses();
-
-    // Two crystals: timestamps start once the second sync point has measured the rate between them.
-    SubGHzTimeSync time_sync = SubGHzTimeSync(2);
+    // The last pulse sent, for the ESP32 (pulse_num 0: none yet).
+    const ObjectDictionary::SyncPulse& GetLastSyncPulse() const { return last_sync_pulse_; }
 
    private:
     static constexpr uint32_t kSyncPulseIntervalMs = 1000;
-    static constexpr uint32_t kSyncPulseTimeoutMs = 500;    // A pulse not captured by then is dropped.
+    static constexpr uint32_t kSyncPulseTimeoutMs = 500;    // A request not served by then is dropped.
     static constexpr uint32_t kSyncPulseWidthCycles = 125;  // 1 us at 125 MHz.
+    static_assert(ObjectDictionary::kSyncPulseMinIntervalMs > ObjectDictionary::kSyncPulseMaxAgeMs);
 
-    // Requests pulses, pairs their MLAT counts with the CC1312's captures. Call after a good status read.
+    // Requests pulses and reports sent ones to the CC1312. Call after a good status read.
     void UpdateTimeSync();
-    // Moves the timestamps of the sub-GHz packets in a CompositeArray from radio timer ticks to 48 MHz MLAT counts.
-    void ConvertSubGHzTimestamps(uint8_t* buf, uint16_t buf_len_bytes);
 
     // Shared with the core that sends pulses.
     volatile bool sync_pulse_allowed_ = false;
@@ -593,12 +590,9 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     volatile uint32_t num_sync_pulses_sent_ = 0;
     volatile uint64_t sync_pulse_mlat_48mhz_counts_ = 0;  // Of the last pulse sent; valid once its count is seen.
     // Core 0 only.
-    bool sync_pulse_pending_ = false;
     uint32_t sync_pulse_request_timestamp_ms_ = 0;
-    uint32_t num_sync_pulses_sent_at_request_ = 0;
-    uint16_t sync_capture_count_at_request_ = 0;
-    uint8_t rat_epoch_ = 0;
-    uint32_t rat_epoch_start_timestamp_ms_ = 0;  // When this Update() first saw the current radio timer epoch.
+    ObjectDictionary::SyncPulse last_sync_pulse_;
+    bool mlat_synced_ = false;  // Last reported by the CC1312.
 
     CC1312Config config_;
     SettingsManager::EnableState enabled_ = SettingsManager::EnableState::kEnableStateDisabled;

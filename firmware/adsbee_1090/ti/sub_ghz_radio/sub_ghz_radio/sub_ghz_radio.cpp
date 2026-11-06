@@ -1,5 +1,7 @@
 #include "sub_ghz_radio.hh"
 
+#include <ti/drivers/dpl/HwiP.h>
+
 #include "hal.hh"
 #include "macros.hh"
 #include "pico.hh"  // For LED blinks.
@@ -13,12 +15,10 @@ extern "C" {
 
 static const uint32_t kRxRestartTimeoutMs = 5000;
 
-// Records the radio timer at each rising edge of the RP2040's sync pulse, so the RP2040 can put sub-GHz packet
-// timestamps on its MLAT clock.
+// Records the radio timer at each rising edge of the RP2040's sync pulse.
 static void rat_sync_capture_callback(RF_Handle h, RF_RatHandle rh, RF_EventMask e, uint32_t capture_time) {
     if (e & RF_EventRatCh) {
-        object_dictionary.sync_capture_rat = capture_time;
-        object_dictionary.sync_capture_count = object_dictionary.sync_capture_count + 1;
+        subg_radio.HandleSyncCapture(capture_time);
     }
 }
 
@@ -205,8 +205,12 @@ bool SubGHzRadio::Init() {
 }
 
 void SubGHzRadio::StartSyncCapture() {
-    // The RAT restarts with the RF client, so earlier captures no longer line up with new packet timestamps.
-    object_dictionary.rat_epoch = object_dictionary.rat_epoch + 1;
+    // The RAT restarts with the RF client: keep the measured rate, wait for one pulse to fix the new offset.
+    uintptr_t key = HwiP_disable();
+    time_sync_.Restart();
+    sync_pulse_pairing_.SkipEdges(sync_capture_count_);
+    HwiP_restore(key);
+    rat_start_timestamp_ms_ = get_time_since_boot_ms();
     // The sync pin is the bootloader backdoor at reset; once running, route it to the RF core's GPI0 for RAT captures.
     GPIO_setConfigAndMux(bsp.kSyncPin, GPIO_CFG_IN_NOPULL, IOC_PORT_RFC_GPI0);
     RF_RatConfigCapture config;
@@ -228,6 +232,42 @@ void SubGHzRadio::StopSyncCapture() {
         RF_ratDisableChannel(rf_handle_, sync_capture_handle_);
         sync_capture_handle_ = RF_ALLOC_ERROR;
     }
+}
+
+void SubGHzRadio::HandleSyncPulse(const ObjectDictionary::SyncPulse& pulse) {
+    uintptr_t key = HwiP_disable();
+    uint32_t capture_rat = sync_capture_rat_;
+    uint16_t capture_count = sync_capture_count_;
+    HwiP_restore(key);
+    uint32_t capture_age_us = (RF_getCurrentTime() - capture_rat) / 4;  // RAT: 4 MHz.
+    if (!sync_pulse_pairing_.Pair(capture_count, pulse.pulse_num, capture_age_us,
+                                  ObjectDictionary::kSyncPulseMaxAgeMs * 1000) ||
+        sync_capture_handle_ == RF_ALLOC_ERROR) {
+        return;
+    }
+    key = HwiP_disable();
+    bool was_synced = time_sync_.IsSynced();
+    bool consistent = time_sync_.AddSyncPoint(capture_rat, pulse.mlat_48mhz_counts);
+    bool synced = time_sync_.IsSynced();
+    HwiP_restore(key);
+    uint32_t timestamp_ms = get_time_since_boot_ms();
+    last_sync_point_timestamp_ms_ = timestamp_ms;
+    if (!consistent) {
+        CONSOLE_WARNING("SubGHzRadio::HandleSyncPulse", "Sync pulse %lu doesn't fit the previous ones: re-syncing.",
+                        pulse.pulse_num);
+    } else if (synced && !was_synced) {
+        CONSOLE_INFO("SubGHzRadio::HandleSyncPulse",
+                     "Sub-GHz timestamps on the MLAT clock %lu ms after the radio timer started (%ld ppb).",
+                     timestamp_ms - rat_start_timestamp_ms_, static_cast<int32_t>(time_sync_.GetRateErrorPPB()));
+    }
+}
+
+uint8_t SubGHzRadio::GetMLATSyncFlags() const {
+    if (time_sync_.IsSynced()) {
+        return ObjectDictionary::kMLATSyncFlagSynced;
+    }
+    // One pulse makes progress right away when the rate is known or nothing is: ask for it.
+    return time_sync_.HasRate() || time_sync_.GetNumSyncPoints() == 0 ? ObjectDictionary::kMLATSyncFlagPulseWanted : 0;
 }
 
 bool SubGHzRadio::DeInit() {
@@ -273,7 +313,7 @@ bool SubGHzRadio::HandlePacketRx(rfc_dataEntryPartial_t* filled_entry) {
         case RawUATADSBPacket::kLongADSBMessageNumBytes: {
             RawUATADSBPacket raw_packet = RawUATADSBPacket(packet_data, packet_len_bytes);
             raw_packet.sigs_dbm = rssi_dbm;
-            raw_packet.mlat_48mhz_64bit_counts = timestamp;
+            raw_packet.mlat_48mhz_64bit_counts = time_sync_.ToMLAT48MHzCounts(timestamp);
 
             object_dictionary.metrics.num_raw_uat_adsb_packets++;
             uat_packet_decoder.raw_uat_adsb_packet_queue.Enqueue(raw_packet);
@@ -282,7 +322,7 @@ bool SubGHzRadio::HandlePacketRx(rfc_dataEntryPartial_t* filled_entry) {
         case RawUATUplinkPacket::kUplinkMessageNumBytes: {
             RawUATUplinkPacket raw_packet = RawUATUplinkPacket(packet_data, packet_len_bytes);
             raw_packet.sigs_dbm = rssi_dbm;
-            raw_packet.mlat_48mhz_64bit_counts = timestamp;
+            raw_packet.mlat_48mhz_64bit_counts = time_sync_.ToMLAT48MHzCounts(timestamp);
 
             object_dictionary.metrics.num_raw_uat_uplink_packets++;
             if (!uat_packet_decoder.raw_uat_uplink_packet_queue.Enqueue(raw_packet)) {
@@ -324,6 +364,14 @@ void SubGHzRadio::HandleRxCommandEnd() {
 }
 
 bool SubGHzRadio::Update() {
+    if (time_sync_.GetNumSyncPoints() > 0 &&
+        get_time_since_boot_ms() - last_sync_point_timestamp_ms_ > kSyncPointMaxAgeMs) {
+        CONSOLE_WARNING("SubGHzRadio::Update", "No sync pulse for %lu ms: sub-GHz timestamps stop until the next one.",
+                        kSyncPointMaxAgeMs);
+        uintptr_t key = HwiP_disable();
+        time_sync_.Restart();
+        HwiP_restore(key);
+    }
     if (!rx_enabled) {
         return true;
     }
