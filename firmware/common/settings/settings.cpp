@@ -180,6 +180,11 @@ bool SettingsManager::Sanitize() {
                           i, settings.reporting_protocols[i]);
             settings.reporting_protocols[i] = ReportingProtocol::kNoReports;
             changed = true;
+        } else if (settings.reporting_protocols[i] == ReportingProtocol::kReadsbee) {
+            // READSBEE is a feed protocol; a serial port gets the same frames as BEAST.
+            CONSOLE_ERROR("SettingsManager::Sanitize", "reporting_protocols[%u] is READSBEE (feeds only), using BEAST.", i);
+            settings.reporting_protocols[i] = ReportingProtocol::kBeast;
+            changed = true;
         }
     }
     for (uint16_t i = 0; i < Settings::kMaxNumFeeds; i++) {

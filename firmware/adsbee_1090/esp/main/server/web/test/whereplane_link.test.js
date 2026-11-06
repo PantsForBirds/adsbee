@@ -20,6 +20,7 @@ test('whereplaneMapUrl builds the uuid the feed sends', () => {
     assert.strictEqual(whereplaneMapUrl('feed.whereplane.xyz', 'BEAST', ID), MAP);
     assert.strictEqual(whereplaneMapUrl(' Feed.WherePlane.xyz ', 'BEAST_NO_UAT', ID.toUpperCase()), MAP);
     assert.strictEqual(whereplaneMapUrl('feed.whereplane.xyz', 'BEAST_NO_UAT_UPLINK', ID), MAP);
+    assert.strictEqual(whereplaneMapUrl('feed.whereplane.xyz', 'READSBEE', ID), MAP);  // Sends the same uuid.
 });
 
 test('whereplaneMapUrl is null for other feeds', () => {

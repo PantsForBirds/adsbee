@@ -568,7 +568,7 @@ class MetricsWebSocket {
 // device sends when a Beast feed connects (BeastReporter::BuildFeedStartFrame): MMMMMMMM-MMMM-MMMM-NNNN-NNNNNNNNNNNN,
 // where M and N are both the 16 hex digit receiver ID.
 const WHEREPLANE_FEED_HOST = 'feed.whereplane.xyz';
-const BEAST_FEED_PROTOCOLS = new Set(['BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK']);
+const BEAST_FEED_PROTOCOLS = new Set(['BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK', 'READSBEE']);
 
 /** Map URL for this receiver on whereplane.xyz, or null unless the feed is a Beast feed to feed.whereplane.xyz. */
 function whereplaneMapUrl(uri, protocol, receiverId) {
@@ -768,7 +768,7 @@ class ReceiverIdField {
 
 class FeedEditor {
     static PROTOCOLS = ['NONE', 'RAW', 'BEAST', 'BEAST_NO_UAT', 'BEAST_NO_UAT_UPLINK',
-        'CSBEE', 'MAVLINK1', 'MAVLINK2', 'GDL90', 'AIRCRAFT_JSON', 'AIRCRAFT_JSON_UAT_UPLINK', 'ASTERIX'];
+        'CSBEE', 'MAVLINK1', 'MAVLINK2', 'GDL90', 'AIRCRAFT_JSON', 'AIRCRAFT_JSON_UAT_UPLINK', 'ASTERIX', 'READSBEE'];
     static TRANSPORTS = ['TCP', 'UDP', 'MQTT'];
     // Transport a protocol's feeds usually take (the firmware's DefaultFeedTransport()).
     static DEFAULT_TRANSPORTS = {

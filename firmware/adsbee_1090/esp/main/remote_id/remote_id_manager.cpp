@@ -113,9 +113,20 @@ uint16_t RemoteIDManager::ServiceIngestQueue() {
     // out-queue from this path.
     if (ingest_queue_ == nullptr) return 0;  // No transport has started; nothing allocated.
     uint16_t num_processed = 0;
+    // READSBEE feeds get every packet, not the rate-limited copies; the server de-duplicates.
+    const bool to_feeds = SettingsManager::ProtocolInUse(settings_manager.settings, SettingsManager::kReadsbee);
+    if (to_feeds && feed_queue_ == nullptr) {
+        feed_queue_ = new (std::nothrow) PFBQueue<RawRemoteIDPacket>({.buf_len_num_elements = kFeedQueueDepth,
+                                                                      .buffer = nullptr,
+                                                                      .overwrite_when_full = true,
+                                                                      .is_thread_safe = false});
+    }
     RawRemoteIDPacket packet;
     while (ingest_queue_->Dequeue(packet)) {
         num_processed++;
+        if (to_feeds && feed_queue_ != nullptr) {
+            feed_queue_->Enqueue(packet);
+        }
         // Always ingest locally (cheap) — this drives the ESP32's network/web output.
         adsbee_server.aircraft_dictionary.IngestRawRemoteIDPacket(packet);
         // Forward a rate-limited copy up to the RP2040 for serial reporting.

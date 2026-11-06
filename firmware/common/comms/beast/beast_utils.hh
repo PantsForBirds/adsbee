@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mode_s_packet.hh"
+#include "remote_id_packet.hh"
 #include "uat_packet.hh"
 
 namespace BeastReporter {
@@ -38,6 +39,18 @@ constexpr uint16_t kUATUplinkBeastFrameMaxLenBytes = 1 /* Frame Type */ + 1 /* U
                                                      2 * 6 /* MLAT timestamp + escapes */ + 2 /* RSSI + escape */ +
                                                      2 * RawUATUplinkPacket::kUplinkMessageNumBytes;  // [Bytes]
 
+/**
+ * Remote ID Packet Format (readsbee feed spec v2, READSBEE feeds only)
+ *
+ * 0x1a | 0xef | transport letter (no escapes) | timestamp | signed dBm | source MAC | ODID message or pack
+ * The ODID bytes bound the frame: one 25-byte message, or a pack of 3 + 25 * n bytes (n = 1-9).
+ */
+constexpr uint16_t kRemoteIDBeastFrameMaxLenBytes =
+    1 /* 0x1a */ + 1 /* Frame Type */ + 1 /* Transport */ +
+    2 * (6 /* Timestamp */ + 1 /* dBm */ + 6 /* MAC */ + RawRemoteIDPacket::kMaxPayloadLenBytes);  // [Bytes]
+constexpr uint8_t kRemoteIDMaxMessagesInPack = 9;
+constexpr int8_t kBeastNoLevelDbm = -128;  // Signal byte of a frame that carries dBm: no level.
+
 constexpr uint16_t kUuidNumChars = 36;
 constexpr uint16_t kReceiverIDLenBytes = 8;
 
@@ -47,6 +60,7 @@ enum BeastFrameType {
     kBeastFrameTypeFeedId = 0xe4,    // Used by readsb for establishing a feed with a UUID.
     kBeastFrameTypeUAT =
         0xec,  // Used for encapsulated UAT ADSB short messages, UAT ADSB long messages, and UAT uplink messages.
+    kBeastFrameTypeRemoteID = 0xef,  // readsbee: Broadcast Remote ID (ASTM F3411) message or message pack.
     kBeastFrameTypeModeAC = 0x31,  // Note: This is not used, since I'm assuming it does NOT refer to DF 4,5.
     kBeastFrameTypeModeSShort = 0x32,
     kBeastFrameTypeModeSLong = 0x33
@@ -56,6 +70,15 @@ enum UATMessageTypeChar : char {
     kUATMessageTypeADSBShort = 's',
     kUATMessageTypeADSBLong = 'l',
     kUATMessageTypeUplink = 'u'
+};
+
+// Remote ID link, lower case: the timestamp is not on the Mode S clock.
+enum RemoteIDTransportChar : char {
+    kRemoteIDTransportBT4Legacy = 'b',
+    kRemoteIDTransportBT5Coded = 'c',
+    kRemoteIDTransportBT5Extended1M = 'e',
+    kRemoteIDTransportWiFiBeacon = 'w',
+    kRemoteIDTransportWiFiNaN = 'n'
 };
 
 /**
@@ -115,5 +138,29 @@ uint16_t BuildUATADSBBeastFrame(uint8_t *beast_frame_buf, const RawUATADSBPacket
  * @retval Number of bytes written to beast_frame_buf.
  */
 uint16_t BuildUATUplinkBeastFrame(uint8_t *beast_frame_buf, const RawUATUplinkPacket &packet);
+
+/**
+ * Length of an ODID message or pack from its first bytes, or 0 if it is out of bounds or longer than len.
+ */
+uint16_t RemoteIDODIDLenBytes(const uint8_t *odid, uint16_t len);
+
+/**
+ * Write a Remote ID frame (0xef) with a zero timestamp.
+ * @param[out] beast_frame_buf Buffer of at least kRemoteIDBeastFrameMaxLenBytes.
+ * @param[in] transport Transport letter (RemoteIDTransportChar).
+ * @param[in] rssi_dbm Signal level in dBm, kBeastNoLevelDbm if unknown.
+ * @param[in] mac Source address in display order (most significant byte first).
+ * @param[in] odid ODID message or pack; only the bytes its header bounds are sent.
+ * @param[in] odid_len_bytes Bytes available at odid.
+ * @retval Number of bytes written, or 0 if the ODID bytes are out of bounds.
+ */
+uint16_t WriteRemoteIDBeastFrame(uint8_t *beast_frame_buf, RemoteIDTransportChar transport, int8_t rssi_dbm,
+                                 const uint8_t mac[6], const uint8_t *odid, uint16_t odid_len_bytes);
+
+/**
+ * Write a Remote ID frame (0xef) from a received packet.
+ * @retval Number of bytes written, or 0 if the transport is unknown or the ODID bytes are out of bounds.
+ */
+uint16_t BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const RawRemoteIDPacket &packet);
 
 }  // namespace BeastReporter

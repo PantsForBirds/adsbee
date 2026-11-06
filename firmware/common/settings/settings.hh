@@ -50,6 +50,7 @@ class SettingsManager {
         kGDL90NoUATUplink,  // Appended (not next to kGDL90): values are flash-persisted, don't renumber.
         kAircraftJSONUATUplink,  // Aircraft JSON plus one line per UAT ground uplink.
         kASTERIX,                // EUROCONTROL ASTERIX CAT021 target reports and CAT023 status.
+        kReadsbee,  // Feeds only: Beast plus readsbee's extra frames (Remote ID 0xEF), for readsbee servers.
         kNumProtocols
     };
     static constexpr uint16_t kReportingProtocolStrMaxLen = 30;
@@ -83,6 +84,14 @@ class SettingsManager {
             default:
                 return kFeedTransportTCP;
         }
+    }
+
+    /**
+     * Protocol whose Beast frames a feed of this protocol carries: a READSBEE feed carries BEAST's byte for byte, then
+     * its own frames.
+     */
+    static constexpr ReportingProtocol BeastFramesOf(ReportingProtocol protocol) {
+        return protocol == kReadsbee ? kBeast : protocol;
     }
 
     // How the MQTT client reaches the broker. Values are flash-persisted: only append.

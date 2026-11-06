@@ -207,3 +207,59 @@ uint16_t BeastReporter::BuildUATUplinkBeastFrame(uint8_t *beast_frame_buf, const
 
     return bytes_written;
 }
+
+uint16_t BeastReporter::RemoteIDODIDLenBytes(const uint8_t *odid, uint16_t len) {
+    if (len < 1) return 0;
+    uint16_t odid_len = RawRemoteIDPacket::kSingleMessageLenBytes;
+    if ((odid[0] >> 4) == RawRemoteIDPacket::kMessageTypePacked) {
+        // Pack header: message type, message size, message count.
+        if (len < 3 || odid[1] != RawRemoteIDPacket::kSingleMessageLenBytes || odid[2] < 1 ||
+            odid[2] > kRemoteIDMaxMessagesInPack) {
+            return 0;
+        }
+        odid_len = 3 + odid[2] * RawRemoteIDPacket::kSingleMessageLenBytes;
+    }
+    return odid_len <= len ? odid_len : 0;
+}
+
+uint16_t BeastReporter::WriteRemoteIDBeastFrame(uint8_t *beast_frame_buf, RemoteIDTransportChar transport,
+                                                int8_t rssi_dbm, const uint8_t mac[6], const uint8_t *odid,
+                                                uint16_t odid_len_bytes) {
+    uint16_t odid_len = RemoteIDODIDLenBytes(odid, odid_len_bytes);
+    if (odid_len == 0) return 0;
+    uint16_t bytes_written = 0;
+    beast_frame_buf[bytes_written++] = kBeastEscapeChar;
+    beast_frame_buf[bytes_written++] = kBeastFrameTypeRemoteID;
+    beast_frame_buf[bytes_written++] = transport;
+    // No Mode S clock on the ESP32: timestamp 0, the server stamps arrival time.
+    bytes_written += Write12MHzMLATTimestamp(beast_frame_buf + bytes_written, 0);
+    uint8_t dbm_byte = static_cast<uint8_t>(rssi_dbm);
+    bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, &dbm_byte, 1);
+    bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, mac, 6);
+    bytes_written += WriteBufferWithBeastEscapes(beast_frame_buf + bytes_written, odid, odid_len);
+    return bytes_written;
+}
+
+uint16_t BeastReporter::BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const RawRemoteIDPacket &packet) {
+    RemoteIDTransportChar transport;
+    uint8_t mac[6];
+    switch (packet.transport) {
+        case RawRemoteIDPacket::kTransportBT4Legacy:
+        case RawRemoteIDPacket::kTransportBT5LongRange:
+            transport = packet.transport == RawRemoteIDPacket::kTransportBT4Legacy ? kRemoteIDTransportBT4Legacy
+                                                                                   : kRemoteIDTransportBT5Coded;
+            // BLE addresses are held least significant byte first.
+            for (uint16_t i = 0; i < 6; i++) mac[i] = packet.source_mac[5 - i];
+            break;
+        case RawRemoteIDPacket::kTransportWiFiBeacon:
+            transport = kRemoteIDTransportWiFiBeacon;
+            memcpy(mac, packet.source_mac, 6);  // As in the frame header.
+            break;
+        default:
+            return 0;
+    }
+    // The receivers store 0 for an unknown level.
+    int8_t rssi_dbm = packet.rssi_dbm == 0 ? kBeastNoLevelDbm : packet.rssi_dbm;
+    return WriteRemoteIDBeastFrame(beast_frame_buf, transport, rssi_dbm, mac, packet.payload,
+                                   packet.payload_len_bytes);
+}

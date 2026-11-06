@@ -310,6 +310,14 @@ class CommsManager {
     bool FinishFeedSocketConnect(uint16_t feed_index);
     void CloseFeedSocket(uint16_t feed_index);
 
+    /**
+     * Sends the frames only READSBEE feeds get (Remote ID 0xef). Their Beast frames go out with the BEAST feeds.
+     * @param[in] sinks Feed indices with protocol kReadsbee.
+     * @param[in] packets Packets of this reporting round.
+     * @retval False if a send failed.
+     */
+    bool ReportReadsbee(const ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets);
+
     // CRC of the settings a feed connects with, to reconnect it when they change.
     uint32_t FeedConfigCRC(uint16_t feed_index);
 

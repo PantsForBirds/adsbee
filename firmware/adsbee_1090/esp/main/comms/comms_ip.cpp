@@ -514,8 +514,9 @@ void CommsManager::IPWANTask(void* pvParameters) {
         PublishMQTTMetrics();
         LogWANQueueOverflows();
 
-        uint16_t num_active_report_sinks = 0;
+        uint16_t num_active_report_sinks = 0, num_readsbee_sinks = 0;
         ReportSink active_report_sinks[SettingsManager::Settings::kMaxNumFeeds] = {0};
+        ReportSink readsbee_sinks[SettingsManager::Settings::kMaxNumFeeds] = {0};
         SettingsManager::ReportingProtocol active_reporting_protocols[SettingsManager::Settings::kMaxNumFeeds] = {
             SettingsManager::ReportingProtocol::kNoReports};
 
@@ -553,7 +554,11 @@ void CommsManager::IPWANTask(void* pvParameters) {
                 }
                 // Socket is connected, add to active sinks.
                 active_report_sinks[num_active_report_sinks] = i;
-                active_reporting_protocols[num_active_report_sinks] = settings_manager.settings.feed_protocols[i];
+                SettingsManager::ReportingProtocol protocol = settings_manager.settings.feed_protocols[i];
+                if (protocol == SettingsManager::kReadsbee) {
+                    readsbee_sinks[num_readsbee_sinks++] = i;  // ReportReadsbee adds its own frames.
+                }
+                active_reporting_protocols[num_active_report_sinks] = SettingsManager::BeastFramesOf(protocol);
                 num_active_report_sinks++;
             }
         }
@@ -586,6 +591,9 @@ void CommsManager::IPWANTask(void* pvParameters) {
         if (!UpdateReporting(active_report_sinks, active_reporting_protocols, num_active_report_sinks,
                              &reporting_composite_array)) {
             CONSOLE_ERROR("CommsManager::IPWANTask", "Error during UpdateReporting for feeds.");
+        }
+        if (!ReportReadsbee(readsbee_sinks, num_readsbee_sinks, reporting_composite_array)) {
+            CONSOLE_ERROR("CommsManager::IPWANTask", "Error during ReportReadsbee.");
         }
     }
 
@@ -830,7 +838,8 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
     switch (settings_manager.settings.feed_protocols[feed_index]) {
         case SettingsManager::ReportingProtocol::kBeast:
         case SettingsManager::ReportingProtocol::kBeastNoUAT:
-        case SettingsManager::ReportingProtocol::kBeastNoUATUplink: {
+        case SettingsManager::ReportingProtocol::kBeastNoUATUplink:
+        case SettingsManager::ReportingProtocol::kReadsbee: {
             uint8_t beast_message_buf[2 * SettingsManager::Settings::kFeedReceiverIDNumBytes +
                                       BeastReporter::kModeSBeastFrameMaxLenBytes];
             uint16_t beast_message_len_bytes = BeastReporter::BuildFeedStartFrame(
@@ -854,6 +863,24 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
             break;
     }
     return true;
+}
+
+bool CommsManager::ReportReadsbee(const ReportSink* sinks, uint16_t num_sinks,
+                                  const CompositeArray::RawPackets& packets) {
+    if (num_sinks == 0 || packets.header == nullptr || packets.header->num_remote_id_packets == 0) {
+        return true;
+    }
+    // One IPWANTask, so one buffer; kept off its stack.
+    static uint8_t frame_buf[BeastReporter::kRemoteIDBeastFrameMaxLenBytes];
+    bool ret = true;
+    for (uint16_t i = 0; i < packets.header->num_remote_id_packets; i++) {
+        uint16_t frame_len = BeastReporter::BuildRemoteIDBeastFrame(frame_buf, packets.remote_id_packets[i]);
+        if (frame_len == 0) continue;  // Unknown transport or ODID bounds: nothing a decoder could bound.
+        for (uint16_t j = 0; j < num_sinks; j++) {
+            ret &= SendBuf(sinks[j], reinterpret_cast<const char*>(frame_buf), frame_len);
+        }
+    }
+    return ret;
 }
 
 bool CommsManager::SendBuf(uint16_t iface, const char* buf, uint16_t buf_len, uint16_t num_msgs) {

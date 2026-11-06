@@ -1878,6 +1878,9 @@ CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
             if (selected_protocol == SettingsManager::kNumProtocols) {
                 CPP_AT_ERROR("Invalid reporting protocol %s.", args[1].data());
             }
+            if (selected_protocol == SettingsManager::kReadsbee) {
+                CPP_AT_ERROR("READSBEE is for feeds only (AT+FEED). Use BEAST on a serial interface.");
+            }
 
             // Assign the selected protocol to the selected interface.
             settings_manager.settings.reporting_protocols[selected_iface] = selected_protocol;
@@ -1896,6 +1899,7 @@ CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
     }
     CPP_AT_PRINTF("\r\n\t<protocol> = ");
     for (uint16_t protocol = 0; protocol < SettingsManager::kNumProtocols; protocol++) {
+        if (protocol == SettingsManager::kReadsbee) continue;  // Feeds only.
         CPP_AT_PRINTF("\r\n\t\t%s ", SettingsManager::kReportingProtocolStrs[protocol]);
     }
     CPP_AT_PRINTF("\r\n\tQuery the reporting protocol used on all interfaces:\r\n");
