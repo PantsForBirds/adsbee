@@ -234,18 +234,55 @@ TEST(ESP32ClockMath, WiFiRxClockRemovesTheCallbackLatency) {
     for (int i = 0; i < 2000; i++) {
         int64_t frame_us = 5'000'000 + i * 10'240;  // ~100 beacons/s.
         uint32_t rx_timestamp = static_cast<uint32_t>(frame_us + kMacMinusEspTimerUs);
-        int64_t out_us = clock.ToEspTimerUs(rx_timestamp, frame_us + latency_us(rng));
+        int64_t out_us = clock.ToEspTimerUs(rx_timestamp, frame_us + 2400 + latency_us(rng), 2400);
         if (i < 256) continue;  // Let the shortest latency show up.
         worst_error = std::max<int64_t>(worst_error, std::abs(out_us - (frame_us + 40)));
     }
     EXPECT_LE(worst_error, 5);
 }
 
+TEST(ESP32ClockMath, LegacyPSDUAirTime) {
+    using esp32_clock_math::LegacyPSDUAirTimeUs;
+    EXPECT_EQ(LegacyPSDUAirTimeUs(0x00, 300), 2400u);  // 1 Mbps.
+    EXPECT_EQ(LegacyPSDUAirTimeUs(0x03, 100), 73u);    // 11 Mbps, rounded up.
+    EXPECT_EQ(LegacyPSDUAirTimeUs(0x0B, 100), 140u);   // 6 Mbps: 35 OFDM symbols (16 + 800 + 6 bits).
+    EXPECT_EQ(LegacyPSDUAirTimeUs(0x0C, 100), 16u);    // 54 Mbps: 4 symbols of 216 bits.
+    EXPECT_EQ(LegacyPSDUAirTimeUs(0x04, 100), 0u);     // Not a rate.
+    EXPECT_EQ(LegacyPSDUAirTimeUs(0x1F, 100), 0u);
+}
+
+TEST(ESP32ClockMath, WiFiRxClockIgnoresFrameLength) {
+    // Beacons of many APs at 1 Mbps, 60 to 400 bytes: the callback runs after the frame, but the offset mustn't follow
+    // whichever frame is shortest at the moment (on the bench it moved by up to 1.8 ms after channel hops).
+    esp32_clock_math::WiFiRxClock clock;
+    std::mt19937 rng(5);
+    std::uniform_int_distribution<int> len(60, 400), latency_us(30, 33), pick(0, 3);
+    int64_t worst_error = 0;
+    for (int i = 0; i < 5000; i++) {
+        int64_t frame_us = 1'000'000 + i * 2'000;
+        uint16_t frame_len = (i / 300) % 2 ? 60 + pick(rng) : len(rng);  // Stretches of short-frame-only channels.
+        uint32_t air_us = esp32_clock_math::LegacyPSDUAirTimeUs(0x00, frame_len);
+        int64_t out_us = clock.ToEspTimerUs(static_cast<uint32_t>(frame_us + 12345), frame_us + air_us + latency_us(rng),
+                                            air_us);
+        if (i > 300) worst_error = std::max<int64_t>(worst_error, std::abs(out_us - (frame_us + 30)));
+    }
+    EXPECT_LE(worst_error, 3);
+}
+
+TEST(ESP32ClockMath, WiFiRxClockConvertsHTFramesWithoutLearningFromThem) {
+    esp32_clock_math::WiFiRxClock clock;
+    EXPECT_EQ(clock.ToEspTimerUs(5000, 77'000, 0), 77'000);  // Nothing learned yet: callback time.
+    clock.ToEspTimerUs(1000, 1'000'000 + 500 + 40, 500);    // Offset: 999'000 + 40.
+    // An HT frame with a long callback delay: converted with the learned offset, offset unchanged.
+    EXPECT_EQ(clock.ToEspTimerUs(2000, 1'001'000 + 9'000, 0), 1'001'040);
+    EXPECT_EQ(clock.ToEspTimerUs(3000, 1'002'000 + 100 + 40, 100), 1'002'040);
+}
+
 TEST(ESP32ClockMath, WiFiRxClockFollowsMACClockSteps) {
     esp32_clock_math::WiFiRxClock clock;
     int64_t offset_us = 1000;
     auto frame = [&](int64_t frame_us, uint32_t latency_us) {
-        return clock.ToEspTimerUs(static_cast<uint32_t>(frame_us + offset_us), frame_us + latency_us);
+        return clock.ToEspTimerUs(static_cast<uint32_t>(frame_us + offset_us), frame_us + 300 + latency_us, 300);
     };
     for (int i = 0; i < 100; i++) EXPECT_EQ(frame(1'000'000 + i * 1000, 50 + i % 7), 1'000'000 + i * 1000 + 50);
     // The MAC clock jumps 5 ms ahead: frames look earlier, taken at once (the first one with its own latency).
@@ -290,8 +327,8 @@ TEST(ESP32ClockMath, RemoteIDTimestampsEndToEnd) {
         for (int f = 0; f < 10; f++) {
             double frame_us = edge_us + 50'000 + f * 90'000;
             uint32_t mac_us = static_cast<uint32_t>(systimer_at(frame_us) / 16 + 777);
-            int64_t now_us = static_cast<int64_t>(systimer_at(frame_us + 35 + f % 3) / 16);
-            int64_t rx_us = wifi.ToEspTimerUs(mac_us, now_us);
+            int64_t now_us = static_cast<int64_t>(systimer_at(frame_us + 300 + 35 + f % 3) / 16);  // 300 us on air.
+            int64_t rx_us = wifi.ToEspTimerUs(mac_us, now_us, 300);
             uint64_t mlat = sync.ToMLAT48MHzCounts(static_cast<uint32_t>(static_cast<uint64_t>(rx_us) * 16));
             if (pulse > 10) worst_error = std::max(worst_error, AbsError(mlat, mlat_at(frame_us + 35)));
         }

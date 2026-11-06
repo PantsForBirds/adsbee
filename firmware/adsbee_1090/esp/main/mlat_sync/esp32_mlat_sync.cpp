@@ -152,7 +152,8 @@ uint64_t ESP32MLATSync::SystimerToMLAT48MHzCounts(uint64_t systimer_ticks) {
     return mlat_48mhz_counts;
 }
 
-uint64_t ESP32MLATSync::WiFiRxToMLAT48MHzCounts(uint32_t rx_timestamp_us) {
-    int64_t rx_us = wifi_rx_clock_.ToEspTimerUs(rx_timestamp_us, esp_timer_get_time());
+uint64_t ESP32MLATSync::WiFiRxToMLAT48MHzCounts(uint32_t rx_timestamp_us, uint8_t rate, uint16_t len_bytes) {
+    int64_t rx_us = wifi_rx_clock_.ToEspTimerUs(rx_timestamp_us, esp_timer_get_time(),
+                                                esp32_clock_math::LegacyPSDUAirTimeUs(rate, len_bytes));
     return SystimerToMLAT48MHzCounts(static_cast<uint64_t>(rx_us) * esp32_clock_math::kSystimerTicksPerUs);
 }

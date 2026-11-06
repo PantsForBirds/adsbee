@@ -37,7 +37,8 @@ void PromiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_MGMT) return;
     const wifi_promiscuous_pkt_t* pkt = static_cast<const wifi_promiscuous_pkt_t*>(buf);
     // Every frame keeps the MAC clock offset current.
-    uint64_t mlat_48mhz_counts = esp32_mlat_sync.WiFiRxToMLAT48MHzCounts(pkt->rx_ctrl.timestamp);
+    uint64_t mlat_48mhz_counts = esp32_mlat_sync.WiFiRxToMLAT48MHzCounts(
+        pkt->rx_ctrl.timestamp, pkt->rx_ctrl.sig_mode == 0 ? pkt->rx_ctrl.rate : 0xFF, pkt->rx_ctrl.sig_len);
     const uint8_t* frame = pkt->payload;
     uint16_t frame_len = pkt->rx_ctrl.sig_len;
     if (frame_len < kBeaconTaggedParamsOffset) return;

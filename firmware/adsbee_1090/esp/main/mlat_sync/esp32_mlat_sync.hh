@@ -41,9 +41,9 @@ class ESP32MLATSync {
 
     /**
      * 48 MHz MLAT counts of a received WiFi frame, or 0 if not synced. Call from the promiscuous callback for every
-     * frame (it also keeps the MAC clock offset), in order.
+     * frame (it also keeps the MAC clock offset), in order. rate: rx_ctrl.rate for a non-HT frame, else 0xFF.
      */
-    uint64_t WiFiRxToMLAT48MHzCounts(uint32_t rx_timestamp_us);
+    uint64_t WiFiRxToMLAT48MHzCounts(uint32_t rx_timestamp_us, uint8_t rate, uint16_t len_bytes);
 
     // Called from the capture interrupts.
     void HandleEdgeCapture(uint32_t capture);
