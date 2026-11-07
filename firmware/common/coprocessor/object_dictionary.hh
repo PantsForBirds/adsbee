@@ -140,11 +140,14 @@ class ObjectDictionary {
     static constexpr uint32_t kSyncPulseMaxAgeMs = 250;
     static constexpr uint32_t kSyncPulseMinIntervalMs = 300;
 
-    // MLAT time sync state of a coprocessor (SubGHzDeviceStatus, ESP32DeviceStatus).
+    // MLAT time sync state of a coprocessor (mlat_sync_flags in SubGHzDeviceStatus and ESP32DeviceStatus).
     enum MLATSyncFlag : uint8_t {
         kMLATSyncFlagSynced = 1 << 0,       // Packet timestamps are on the MLAT time base.
-        kMLATSyncFlagPulseWanted = 1 << 1,  // The local clock restarted: one pulse now re-syncs it.
+        kMLATSyncFlagPulseWanted = 1 << 1,  // Not synced, and one pulse now makes progress: send it early.
     };
+    static constexpr uint8_t MLATSyncFlags(bool synced, bool pulse_wanted) {
+        return (synced ? kMLATSyncFlagSynced : 0) | (pulse_wanted ? kMLATSyncFlagPulseWanted : 0);
+    }
 
     struct __attribute__((packed)) RP2040DeviceStatus {
         uint32_t timestamp_ms = 0;

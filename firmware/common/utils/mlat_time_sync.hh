@@ -85,6 +85,8 @@ class MLATTimeSync {
     }
 
     bool IsSynced() const { return num_points_ > 0 && num_points_ >= points_needed_; }
+    // True if one more point makes progress right away (the rate is known, or nothing is): worth an early pulse.
+    bool WantsPoint() const { return !IsSynced() && (rate_valid_ || num_points_ == 0); }
     uint16_t GetNumSyncPoints() const { return num_points_; }
     bool HasRate() const { return rate_valid_; }
     int64_t GetRateErrorPPB() const { return rate_error_ppb_; }

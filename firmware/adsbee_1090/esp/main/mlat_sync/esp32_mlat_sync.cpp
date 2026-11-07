@@ -135,7 +135,7 @@ uint8_t ESP32MLATSync::GetMLATSyncFlags() {
         systimer_now - last_sync_point_systimer_ > kSyncPointMaxAgeUs * esp32_clock_math::kSystimerTicksPerUs) {
         time_sync_.Restart();  // Pulses stopped (CC1312 reset or flashing, RP2040 restart).
     }
-    uint8_t flags = time_sync_.IsSynced() ? ObjectDictionary::kMLATSyncFlagSynced : 0;
+    uint8_t flags = ObjectDictionary::MLATSyncFlags(time_sync_.IsSynced(), time_sync_.WantsPoint());
     portEXIT_CRITICAL(&lock_);
     return flags;
 }

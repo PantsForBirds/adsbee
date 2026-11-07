@@ -57,6 +57,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_cpu_utils.cc
         test_crc.cc
         test_mlat_time_sync.cc
+        test_sync_pulse_service.cc
         test_data_structures.cc
         test_decode_utils.cc
         test_fixedmath.cc
@@ -115,6 +116,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         ${CMAKE_SOURCE_DIR}/application/peripherals/gnss
         ${CMAKE_SOURCE_DIR}/../esp/main/remote_id # ble_adv_watchdog.hh, ble_scan_watchdog.hh
         ${CMAKE_SOURCE_DIR}/../esp/main/mlat_sync # esp32_clock_math.hh
+        ${CMAKE_SOURCE_DIR}/application/peripherals # sync_pulse_service.hh
         .
         mocks
     )

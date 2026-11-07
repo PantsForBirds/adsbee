@@ -6,8 +6,6 @@
 #include "cpu_utils.hh"
 #include "crc.hh"  // For IEEE 802.3 CRC32 calculation.
 #include "hal.hh"
-#include "hardware/sync.h"  // save_and_disable_interrupts(), __dmb().
-#include "pico/platform.h"  // busy_wait_at_least_cycles().
 
 const CC1312::SPIPeripheralConfig kDefaultSPIPeripheralConfig;  // use defaults
 const CC1312::SPIPeripheralConfig kBootloaderSPIPeripheralConfig = {
@@ -132,7 +130,15 @@ bool CC1312::Update() {
             device_status.num_raw_uat_adsb_packets, device_status.num_valid_uat_adsb_packets,
             device_status.num_raw_uat_uplink_packets, device_status.num_valid_uat_uplink_packets);
 
-        UpdateTimeSync();
+        adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberCC1312, device_status.mlat_sync_flags);
+        if (!in_bootloader_ && IsEnabled()) {
+            adsbee.sync_pulse_service.Allow();  // The application just answered a status read.
+        }
+        // A lost write only costs this sync point.
+        ObjectDictionary::SyncPulse pulse;
+        if (adsbee.sync_pulse_service.TakeNewPulse(SyncPulseService::kSubscriberCC1312, pulse)) {
+            adsbee.subg_radio.Write(ObjectDictionary::Address::kAddrSyncPulse, pulse);
+        }
 
         // Read one array of packets from the queues. The CC1312 fills it with as many packets as fit.
         uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
@@ -153,7 +159,7 @@ bool CC1312::Update() {
         }
 
     } else {
-        sync_pulse_allowed_ = false;  // The CC1312 may be resetting.
+        BlockSyncPulses();  // The CC1312 may be resetting.
         if (!link_was_down) CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 status.");
         return false;
     }
@@ -162,75 +168,18 @@ bool CC1312::Update() {
     return true;
 }
 
-void __time_critical_func(CC1312::ServiceSyncPulse)() {
-    if (!sync_pulse_requested_) {
-        return;
-    }
-    // Checked against BlockSyncPulses(): either this sees the pulse disallowed, or that sees the pulse busy and waits.
-    sync_pulse_busy_ = true;
-    __dmb();
-    if (sync_pulse_allowed_) {
-        // Runs from RAM with interrupts off so the time from the counter read to the edge is always the same.
-        uint32_t interrupts = save_and_disable_interrupts();
-        uint64_t mlat_48mhz_counts = adsbee.GetMLAT48MHzCounts();
-        gpio_put(config_.sync_pin, 1);
-        restore_interrupts(interrupts);
-        busy_wait_at_least_cycles(kSyncPulseWidthCycles);
-        gpio_put(config_.sync_pin, 0);
-        sync_pulse_mlat_48mhz_counts_ = mlat_48mhz_counts;
-        __dmb();
-        num_sync_pulses_sent_ = num_sync_pulses_sent_ + 1;
-    }
-    sync_pulse_requested_ = false;
-    __dmb();
-    sync_pulse_busy_ = false;
-}
-
 void CC1312::BlockSyncPulses() {
-    sync_pulse_allowed_ = false;
-    sync_pulse_requested_ = false;
-    __dmb();
-    while (sync_pulse_busy_) {
-        tight_loop_contents();
+    adsbee.sync_pulse_service.Block();
+    adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberCC1312, 0);
+}
+
+void CC1312::AllowSyncPulsesInReset() {
+    if (enabled_ == SettingsManager::EnableState::kEnableStateDisabled) {
+        adsbee.sync_pulse_service.Allow();
     }
 }
 
-void CC1312::UpdateTimeSync() {
-    uint32_t timestamp_ms = get_time_since_boot_ms();
-    uint32_t num_sync_pulses_sent = num_sync_pulses_sent_;
-    if (num_sync_pulses_sent != last_sync_pulse_.pulse_num) {
-        __dmb();
-        last_sync_pulse_ = {.mlat_48mhz_counts = sync_pulse_mlat_48mhz_counts_, .pulse_num = num_sync_pulses_sent};
-        // A lost write only costs this sync point. The ESP32 gets it from ESP32::Update().
-        adsbee.subg_radio.Write(ObjectDictionary::Address::kAddrSyncPulse, last_sync_pulse_);
-    }
-    bool synced = device_status.mlat_sync_flags & ObjectDictionary::kMLATSyncFlagSynced;
-    if (synced != mlat_synced_) {
-        CONSOLE_INFO("CC1312::UpdateTimeSync", "Sub-GHz timestamps %s.",
-                     synced ? "on the MLAT clock" : "stopped until the next sync pulses");
-        mlat_synced_ = synced;
-    }
-    if (in_bootloader_ || !IsEnabled()) {
-        return;
-    }
-    sync_pulse_allowed_ = true;  // The application just answered a status read.
-
-    uint32_t ms_since_request = timestamp_ms - sync_pulse_request_timestamp_ms_;
-    if (sync_pulse_requested_) {
-        if (ms_since_request > kSyncPulseTimeoutMs) {
-            sync_pulse_requested_ = false;
-        }
-        return;
-    }
-    // A coprocessor whose clock restarted is back on the MLAT clock after one pulse: send it soon.
-    bool pulse_wanted = device_status.mlat_sync_flags & ObjectDictionary::kMLATSyncFlagPulseWanted;
-    if (ms_since_request >= kSyncPulseIntervalMs ||
-        (pulse_wanted && ms_since_request >= ObjectDictionary::kSyncPulseMinIntervalMs)) {
-        sync_pulse_request_timestamp_ms_ = timestamp_ms;
-        __dmb();
-        sync_pulse_requested_ = true;
-    }
-}
+bool CC1312::SyncPulseDue() const { return adsbee.sync_pulse_service.HasNewPulse(SyncPulseService::kSubscriberCC1312); }
 
 bool CC1312::ApplicationIsUpToDate() {
     // Verify application binary.
