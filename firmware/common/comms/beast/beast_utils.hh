@@ -371,4 +371,27 @@ bool ReportRemoteIDFrames(const SinkInfo *sinks, uint16_t num_sinks, const RawRe
     return ret;
 }
 
+/**
+ * The Remote ID part of a Beast reporting round (CommsManager::ReportBeast on the ESP32). Touches packets only when a
+ * sink agreed on kBeastCapRemoteID, and then only once they pass the same check as the Beast batch.
+ * @param[in] packets CompositeArray::RawPackets (.header, .remote_id_packets, IsValid()).
+ * @param[in] validated True if the Beast batch already checked packets this round.
+ * @param[out] error_msg If packets are invalid, the reason (at least Packets::kErrorMessageMaxLen bytes), or nullptr.
+ * Other parameters as ReportRemoteIDFrames().
+ * @retval False if packets are invalid, a send failed or buf is too small; true if there was nothing to send.
+ */
+template <typename SinkInfo, typename Packets, typename Sink, typename Send>
+bool ReportRemoteIDRound(const SinkInfo *sinks, uint16_t num_sinks, const Packets &packets, bool validated,
+                         uint8_t *buf, uint16_t buf_size, Sink *selected, Send send, uint16_t &num_build_failures,
+                         char *error_msg = nullptr) {
+    bool any_sink = false;
+    for (uint16_t i = 0; i < num_sinks && !any_sink; i++) any_sink = (sinks[i].beast_caps & kBeastCapRemoteID) != 0;
+    if (!any_sink) return true;
+    if (!validated && !packets.IsValid(error_msg)) return false;
+    if (packets.header == nullptr) return false;  // IsValid() catches this; kept so no caller can skip it.
+    if (packets.header->num_remote_id_packets == 0) return true;
+    return ReportRemoteIDFrames(sinks, num_sinks, packets.remote_id_packets, packets.header->num_remote_id_packets, buf,
+                                buf_size, selected, send, num_build_failures);
+}
+
 }  // namespace BeastReporter

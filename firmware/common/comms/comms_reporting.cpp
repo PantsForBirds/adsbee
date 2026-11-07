@@ -582,13 +582,10 @@ bool CommsManager::ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks,
 
 #ifdef ON_ESP32
     // Remote ID (0xef) after the round's Beast frames, to the feeds that agreed on it. Only the ESP32 receives Remote
-    // ID: on the RP2040 and the 1421 the count is always 0, so they leave this out (about 1 kB of code).
-    if (packets.header->num_remote_id_packets > 0) {
-        char error_msg[CompositeArray::RawPackets::kErrorMessageMaxLen] = {0};
-        if (!validated && !packets.IsValid(error_msg)) {
-            CONSOLE_ERROR("CommsManager::ReportBeast", "Invalid CompositeArray::RawPackets: %s", error_msg);
-            return false;
-        }
+    // ID: on the RP2040 and the 1421 the count is always 0, so they leave this out (about 1 kB of code). The packets
+    // are read only if such a feed exists, and only after the Beast batch's validity check (run here if no Beast sink
+    // took this round).
+    {
 #if COMMS_REPORTING_BATCH_SENDS
         uint8_t (&remote_id_buf)[kReportScratchMaxBytes] = ReportScratch<uint8_t, kReportScratchMaxBytes>();
 #else
@@ -597,10 +594,16 @@ bool CommsManager::ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks,
         auto send = [&](const ReportSink* to, uint16_t num_to, const uint8_t* buf, uint16_t len, uint16_t num_frames) {
             return SendBufToSinks(to, num_to, reinterpret_cast<const char*>(buf), len, beast_tally, num_frames);
         };
-        ret &= BeastReporter::ReportRemoteIDFrames(sinks, num_sinks, packets.remote_id_packets,
-                                                   packets.header->num_remote_id_packets, remote_id_buf,
-                                                   sizeof(remote_id_buf), selected, send,
-                                                   beast_tally.num_build_failures);
+        char error_msg[CompositeArray::RawPackets::kErrorMessageMaxLen] = {0};
+        if (!BeastReporter::ReportRemoteIDRound(sinks, num_sinks, packets, validated, remote_id_buf,
+                                                sizeof(remote_id_buf), selected, send, beast_tally.num_build_failures,
+                                                error_msg)) {
+            if (error_msg[0] != '\0') {
+                CONSOLE_ERROR("CommsManager::ReportBeast", "Invalid CompositeArray::RawPackets: %s", error_msg);
+                return false;
+            }
+            ret = false;
+        }
     }
 #endif
     FLUSH_REPORT_TALLY_RATE_LIMITED("CommsManager::ReportBeast", beast_tally);

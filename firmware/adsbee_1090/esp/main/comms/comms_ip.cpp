@@ -562,7 +562,7 @@ void CommsManager::IPWANTask(void* pvParameters) {
                 feeds_take_remote_id |= (sink.beast_caps & BeastReporter::kBeastCapRemoteID) != 0;
             }
         }
-        feeds_take_remote_id_ = feeds_take_remote_id;
+        feeds_take_remote_id_.store(feeds_take_remote_id, std::memory_order_relaxed);
 
         // Gather packet(s) to send.
         /**

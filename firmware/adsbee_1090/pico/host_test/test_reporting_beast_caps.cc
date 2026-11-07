@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "beast_utils.hh"
+#include "composite_array.hh"
 #include "gtest/gtest.h"
 #include "mode_s_packet.hh"
 #include "settings.hh"
@@ -721,4 +722,91 @@ TEST(BeastCapsRemoteID, SplitsABatchThatDoesNotFit) {
     sent = ReportRemoteID(sinks, packets, kRemoteIDBeastFrameMaxLenBytes - 1, &ok);
     EXPECT_FALSE(ok);
     EXPECT_TRUE(sent.empty());
+}
+
+namespace {
+// A CompositeArray::RawPackets that holds only Remote ID packets, laid out as on the SPI bus.
+struct RemoteIDArray {
+    alignas(4) uint8_t buf[sizeof(CompositeArray::RawPackets::Header) + 4 * sizeof(RawRemoteIDPacket)] = {0};
+    CompositeArray::RawPackets packets;
+    explicit RemoteIDArray(const std::vector<RawRemoteIDPacket>& rid) {
+        packets.header = reinterpret_cast<CompositeArray::RawPackets::Header*>(buf);
+        packets.header->num_remote_id_packets = rid.size();
+        packets.remote_id_packets = reinterpret_cast<RawRemoteIDPacket*>(buf + sizeof(*packets.header));
+        for (size_t i = 0; i < rid.size(); i++) packets.remote_id_packets[i] = rid[i];
+        packets.len_bytes = sizeof(*packets.header) + rid.size() * sizeof(RawRemoteIDPacket);
+    }
+};
+
+std::vector<SentTo> ReportRound(const std::vector<Info>& sinks, const CompositeArray::RawPackets& packets,
+                                bool validated, bool* ret, std::string* error = nullptr) {
+    std::vector<SentTo> sent;
+    uint8_t buf[kRemoteIDBeastFrameMaxLenBytes * 4];
+    std::vector<uint16_t> selected(sinks.size() + 1);
+    uint16_t num_build_failures = 0;
+    char error_msg[CompositeArray::RawPackets::kErrorMessageMaxLen] = {0};
+    *ret = ReportRemoteIDRound(
+        sinks.data(), sinks.size(), packets, validated, buf, sizeof(buf), selected.data(),
+        [&](const uint16_t* to, uint16_t num_to, const uint8_t* b, uint16_t len, uint16_t num_frames) {
+            for (uint16_t i = 0; i < num_to; i++) sent.push_back({to[i], ToHex(b, len), num_frames});
+            return true;
+        },
+        num_build_failures, error_msg);
+    if (error) *error = error_msg;
+    return sent;
+}
+}  // namespace
+
+// The Remote ID part of ReportBeast reads the packets only when a feed agreed on bit 2, and only once they pass the
+// Beast batch's check: a null header, or a round nobody takes, must neither crash nor send.
+TEST(BeastCapsRemoteID, RoundChecksThePacketsOnlyWhenSomeoneTakesThem) {
+    typedef SettingsManager S;
+    const std::vector<Info> rid_sinks = {{1, S::kBeast, kBeastCapRemoteID}, {2, S::kBeastNoUAT, 0}};
+    const std::vector<Info> no_rid_sinks = {{1, S::kBeast, 0}, {2, S::kBeast, kBeastCapADSL}, {3, S::kRaw, 0}};
+    std::vector<RawRemoteIDPacket> rid = {
+        RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x1a), -72, kTs << 2)};
+    bool ok = false;
+    std::string error;
+
+    // Null header, never validated: no bit 2 sink means it is never looked at.
+    CompositeArray::RawPackets null_header;
+    null_header.header = nullptr;
+    null_header.len_bytes = 0;
+    for (bool validated : {false, true}) {
+        EXPECT_TRUE(ReportRound(no_rid_sinks, null_header, validated, &ok).empty());
+        EXPECT_TRUE(ok);
+        EXPECT_TRUE(ReportRound({}, null_header, validated, &ok).empty());
+        EXPECT_TRUE(ok);
+    }
+    // Null header with a bit 2 sink: refused with the reason, nothing sent, even if the caller claims it validated.
+    EXPECT_TRUE(ReportRound(rid_sinks, null_header, false, &ok, &error).empty());
+    EXPECT_FALSE(ok);
+    EXPECT_NE(error.find("null header"), std::string::npos);
+    EXPECT_TRUE(ReportRound(rid_sinks, null_header, true, &ok).empty());
+    EXPECT_FALSE(ok);
+
+    // A header with Remote ID packets but no bit 2 sink: nothing sent.
+    RemoteIDArray array(rid);
+    EXPECT_TRUE(ReportRound(no_rid_sinks, array.packets, false, &ok).empty());
+    EXPECT_TRUE(ok);
+
+    // A header that claims more packets than the array holds: refused before any packet is read.
+    RemoteIDArray short_array(rid);
+    short_array.packets.header->num_remote_id_packets = 3;
+    EXPECT_TRUE(ReportRound(rid_sinks, short_array.packets, false, &ok, &error).empty());
+    EXPECT_FALSE(ok);
+    EXPECT_NE(error.find("insufficient length"), std::string::npos);
+
+    // Valid, with a bit 2 sink: the frame goes to that sink only.
+    std::vector<SentTo> sent = ReportRound(rid_sinks, array.packets, false, &ok, &error);
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(error.empty());
+    ASSERT_EQ(sent.size(), 1u);
+    EXPECT_EQ(sent[0].sink, 1);
+    EXPECT_EQ(sent[0].hex, Build(rid[0]));
+
+    // Valid with no Remote ID packets: nothing sent.
+    RemoteIDArray empty({});
+    EXPECT_TRUE(ReportRound(rid_sinks, empty.packets, false, &ok).empty());
+    EXPECT_TRUE(ok);
 }
