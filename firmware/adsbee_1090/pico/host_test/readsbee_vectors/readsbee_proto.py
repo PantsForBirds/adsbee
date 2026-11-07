@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""readsbee feed protocol v3.2: reference encoder/decoder.
+"""ADSBee Beast extensions (2026-11-06): reference encoder/decoder.
 
 Spec: FEED-PROTOCOL.md. Golden vectors: vectors.json.
   python3 readsbee_proto.py           check against vectors.json -> "vectors ok"
@@ -9,15 +9,14 @@ Wire rules (all frames): 0x1a <type> [<msg type letter>] <body>. Every 0x1a in <
 twice. The type byte and the msg type letter are never escaped (and never 0x1a).
 Integers are big-endian.
 
-v3 adds the capabilities check (0xE5, FEED-PROTOCOL.md section 7): the feeder sends a query
+Capabilities check (0xE5, FEED-PROTOCOL.md section 7): the feeder sends a query
 'Q' right after 0xE4, a readsbee server answers 'A' on the same socket. Every byte after the
 type is >= 0x80 or an ASCII letter, so the frame never contains 0x1a and is never escaped.
 
-v3.1 adds capability bit 0 (signal level as signed int8 dBm on 0x31/0x32/0x33/0xEC) and the
-confirm frame 'C' (feeder -> server): the feeder sends it once, after the answer, right before
-the first frame that uses the agreed bits. A decoder switches the signal byte's meaning there.
+Capability bit 0 is the signal level as signed int8 dBm. The confirm frame 'C' (feeder ->
+server) is sent once, after the answer, right before the first frame that uses the agreed bits. A decoder switches the signal byte's meaning there.
 
-v3.2: bit 0 decides the signal byte of every frame type, 0xED and 0xEF included. Without it (or
+Bit 0 decides the signal byte of every frame type, 0xED and 0xEF included. Without it (or
 before 'C') all signal bytes are Beast power bytes (0 = no level); with it, int8 dBm (0x80 = no
 level). Decoder(sig_dbm=True) starts in dBm mode (used by vectors that show one frame as it
 looks after 'C').
@@ -40,16 +39,16 @@ T_MODE_S_LONG = 0x33
 T_INGEST_ID = 0xE3       # readsb: 8-byte receiver id
 T_UUID = 0xE4            # readsb: 36 ASCII chars
 T_UAT = 0xEC             # ADSBee/readsb: UAT
-T_ADSL = 0xED            # v2: ADS-L
-T_RID = 0xEF             # v2: Remote ID (ODID)
-T_CAPS = 0xE5            # v3: capabilities query / answer
+T_ADSL = 0xED            # ADS-L
+T_RID = 0xEF             # Remote ID (ODID)
+T_CAPS = 0xE5            # capabilities query / answer / confirm
 T_PING = 0x50            # readsb -> feeder: '1a P' + 3 bytes (escaped), only from a server
 
-# ---- capabilities check (v3) ---------------------------------------------------------------
+# ---- capabilities check -------------------------------------------------------------------
 CAPS_QUERY, CAPS_ANSWER, CAPS_CONFIRM = "Q", "A", "C"
 CAPS_LETTERS = (CAPS_QUERY, CAPS_ANSWER, CAPS_CONFIRM)
 CAPS_VERSION = 1
-# v3.2 order (admin): the signal-level capability first, then the protocols.
+# Bit order (admin): the signal-level capability first, then the protocols.
 CAP_SIG_DBM = 1 << 0            # signal byte of every frame type is int8 dBm (else Beast power byte)
 CAP_ADSL = 1 << 1               # 0xED ADS-L
 CAP_RID = 1 << 2                # 0xEF Remote ID
@@ -94,7 +93,7 @@ def _hdr_dbm(ts: int, dbm: int) -> bytes:
     return ts.to_bytes(6, "big") + struct.pack("b", max(-128, min(127, dbm)))
 
 
-# ---- signal level: Beast power byte <-> dBm (v3.1) ----------------------------------------
+# ---- signal level: Beast power byte <-> dBm ----------------------------------------------
 # Firmware table (firmware/common/comms/beast/generate_beast_tables.py -> beast_tables.hh):
 # dBm clamped to -100..-40, dBFS = 0.75 * (dBm + 40), byte = round(255 * 10^(dBFS / 20)).
 FW_MIN_DBM, FW_MAX_DBM, FW_DBFS_PER_DB = -100, -40, 45 / 60
@@ -120,7 +119,7 @@ def power_to_dbm(b: int):
 
 
 def dbm_byte(dbm) -> int:
-    """v3.1 signal byte: signed int8 dBm, clamped to -127..+127, None -> 0x80."""
+    """dBm signal byte: signed int8 dBm, clamped to -127..+127, None -> 0x80."""
     if dbm is None:
         return 0x80
     return max(SIG_DBM_MIN, min(SIG_DBM_MAX, round(dbm))) & 0xFF
@@ -147,7 +146,7 @@ def _sig(rssi, dbm) -> int:
 
 # ---- encoders ------------------------------------------------------------------------------
 def enc_mode_s(msg: bytes, ts: int, rssi: int = None, dbm=None) -> bytes:
-    """rssi = Beast power byte (default); dbm = v3.1 int8 dBm ("none" = no level)."""
+    """rssi = Beast power byte (default); dbm = int8 dBm ("none" = no level)."""
     t = {2: T_MODE_AC, 7: T_MODE_S_SHORT, 14: T_MODE_S_LONG}[len(msg)]
     return bytes([ESC, t]) + escape(_hdr(ts, _sig(rssi, dbm)) + msg)
 
@@ -167,7 +166,7 @@ def enc_uat(kind: str, ts: int, rssi, payload: bytes, modes_clock: bool, dbm=Non
 
 
 def _sig_any(dbm, rssi) -> bytes:
-    """v3.2 signal byte for 0xED/0xEF: rssi = power byte (bit 0 not agreed), else int8 dBm."""
+    """Signal byte for 0xED/0xEF: rssi = power byte (bit 0 not agreed), else int8 dBm."""
     if rssi is not None:
         if dbm is not None:
             raise ValueError("give rssi (power byte) or dbm, not both")
@@ -303,7 +302,7 @@ class Decoder:
         self.buf = bytearray()
         self.skipped = 0
         self.unknown = 0
-        self.sig_dbm = sig_dbm       # v3.1/3.2: set by a 'C' frame with bit 0, for the rest of the stream
+        self.sig_dbm = sig_dbm       # set by a 'C' frame with bit 0, for the rest of the stream
 
     def _take(self, i: int, n: int):
         """n unescaped bytes from buf[i:] -> (bytes, next_i); None = incomplete; False = a
@@ -454,7 +453,7 @@ def parse_fields(t: int, k: str, body: bytes, sig_dbm: bool = False) -> dict:
                 "features": cap_names(bits)}
     ts, rssi, p = int.from_bytes(body[:6], "big"), body[6], body[7:]
     common = {"ts": ts, "rssi": rssi}
-    if sig_dbm:                      # v3.2: every frame type follows bit 0, 0xED/0xEF included
+    if sig_dbm:                      # every frame type follows bit 0, 0xED/0xEF included
         common = {"ts": ts, "dbm": dbm_from_byte(rssi)}
     if t in MODE_LEN:
         return {"kind": {0x31: "mode_ac", 0x32: "mode_s_short", 0x33: "mode_s_long"}[t], **common, "msg": p.hex()}
@@ -500,7 +499,7 @@ def build_vectors() -> list[dict]:
              "decoded": [dict(type=f.type, **f.fields) for f in frames],
              "skipped": d.skipped, "unknown": d.unknown}
         if mode:
-            e["signal_mode"] = mode      # v3.2: decode as after 'C' with bit 0
+            e["signal_mode"] = mode      # decode as after 'C' with bit 0
         v.append(e)
 
     add("uuid", enc_uuid("0123abcd-0123-4567-89ab-0123456789ab"))
@@ -531,17 +530,17 @@ def build_vectors() -> list[dict]:
     mixed = b"".join(bytes.fromhex(x["hex"]) for x in v) + enc_mode_s(bytes(7), 1, 1)
     add("mixed_stream", mixed, "all of the above back to back, then a short Mode S frame")
 
-    # ---- v3: capabilities check, feeder -> server (appended; the v2 vectors above are unchanged)
+    # ---- capabilities check, feeder -> server (appended; the frame vectors above are unchanged)
     q = enc_caps(CAPS_QUERY, CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK)
     add("caps_query", q, "feeder -> server, right after 0xE4: can send ADS-L, Remote ID, upper-case UAT")
     add("caps_query_none", enc_caps(CAPS_QUERY, 0), "feeder that has nothing extra to send (still allowed)")
-    add("feed_start_v3", enc_uuid("0bee0003-8172-d18c-0bee-00038172d18c") + q
+    add("feed_start_query", enc_uuid("0bee0003-8172-d18c-0bee-00038172d18c") + q
         + enc_mode_s(bytes.fromhex("8d4840d6202cc371c32ce0576098"), ts, 0x1A),
-        "start of every v3 TCP Beast feed: 0xE4, 0xE5 Q, then today's Beast")
+        "start of every TCP Beast feed: 0xE4, 0xE5 Q, then today's Beast")
     add("caps_bad_byte", bytes([ESC, T_CAPS, ord("Q"), 0x81, 0x07, 0x80]) + tail,
         "feature byte without the high bit: malformed, skipped like an unknown frame")
 
-    # ---- v3: server -> feeder, what AnswerScanner must find (or not)
+    # ---- server -> feeder, what AnswerScanner must find (or not)
     def scan(name, wire, note=""):
         sc = AnswerScanner()
         a = sc.feed(wire)
@@ -564,13 +563,13 @@ def build_vectors() -> list[dict]:
          "a 1a inside the caps bytes starts a new frame: the second, complete answer counts")
     scan("stock_readsb_silence", ping_esc * 3, "stock readsb: pings only, no answer -> timeout -> plain Beast")
 
-    # ---- v3.1: signal level in dBm (bit 0) and the confirm frame
-    all31 = CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK | CAP_SIG_DBM
-    conf = enc_caps(CAPS_CONFIRM, all31)
-    add("caps_query_v31", enc_caps(CAPS_QUERY, all31), "v3.1 feeder: can also send dBm levels (bit 0)")
-    scan("answer_v31_all", enc_caps(CAPS_ANSWER, all31), "readsbee v3.1 accepts bits 0-3")
-    scan("answer_v3_server", enc_caps(CAPS_ANSWER, CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK),
-         "v3 server without bit 0: the feeder keeps the power byte")
+    # ---- signal level in dBm (bit 0) and the confirm frame
+    all_bits = CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK | CAP_SIG_DBM
+    conf = enc_caps(CAPS_CONFIRM, all_bits)
+    add("caps_query_dbm", enc_caps(CAPS_QUERY, all_bits), "feeder that can also send dBm levels (bit 0)")
+    scan("answer_all_dbm", enc_caps(CAPS_ANSWER, all_bits), "readsbee accepts bits 0-3")
+    scan("answer_no_dbm", enc_caps(CAPS_ANSWER, CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK),
+         "server without bit 0: the feeder keeps the power byte")
     add("caps_confirm_dbm", conf, "feeder -> server after the answer: bits 0-3 in effect from the next frame")
     ds, dl = bytes.fromhex("5d4840d6abcdef"), bytes.fromhex("8d4840d6202cc371c32ce0576098")
     uat_s, uat_u = bytes(range(0x10, 0x10 + 30)), bytes((i * 7) & 0xFF for i in range(552))
@@ -596,14 +595,14 @@ def build_vectors() -> list[dict]:
         "bits 0 and 3: upper case and dBm together")
     add("uat_U_power_m70", enc_uat("u", ts, dbm_to_power(-70), uat_u, modes_clock=True), "uplink, power byte")
     add("uat_U_dbm_m70", conf + enc_uat("u", ts, None, uat_u, modes_clock=True, dbm=-70), "uplink, dBm")
-    add("v31_feed_start", enc_uuid("0bee0003-8172-d18c-0bee-00038172d18c") + enc_caps(CAPS_QUERY, all31)
+    add("stream_feed_start_dbm", enc_uuid("0bee0003-8172-d18c-0bee-00038172d18c") + enc_caps(CAPS_QUERY, all_bits)
         + enc_mode_s(ds, 1, dbm_to_power(-87)) + conf + enc_mode_s(ds, 2, dbm=-87)
         + enc_rid(_odid_msg(1, 0x33), 0, -70, "b", mac),
         "E4, query, a frame with the power byte (sent before the answer arrived), confirm, then dBm")
 
-    # ---- v3.2: 0xED / 0xEF follow bit 0 too. Without it: Beast power byte (0 = no level).
-    v3caps = CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK
-    conf3 = enc_caps(CAPS_CONFIRM, v3caps)
+    # ---- 0xED / 0xEF follow bit 0 too. Without it: Beast power byte (0 = no level).
+    no_dbm_bits = CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK
+    conf3 = enc_caps(CAPS_CONFIRM, no_dbm_bits)
     add("adsl_868_4_power", enc_adsl(adsl, ts, None, "b", repaired=2, rssi=dbm_to_power(-87)),
         "bit 0 not agreed: -87 dBm as power byte 4 (cf. adsl_868_4, dBm a9)")
     add("adsl_868_2_power_floor", enc_adsl(adsl, 0, None, "a", repaired=0, rssi=dbm_to_power(-108)),
@@ -618,11 +617,11 @@ def build_vectors() -> list[dict]:
                                               rssi=dbm_to_power(-60)), "pack, -60 dBm as power byte 45")
     add("rid_bt4_dbm_after_confirm", conf + enc_rid(_odid_msg(1, 0x1A), 0, -72, "b", mac),
         "bits 0-3 confirmed: Remote ID level in dBm (b8)")
-    add("v32_stream_no_dbm", conf3 + enc_mode_s(ds, 3, dbm_to_power(-87))
+    add("stream_no_dbm", conf3 + enc_mode_s(ds, 3, dbm_to_power(-87))
         + enc_adsl(adsl, ts, None, "a", repaired=1, rssi=dbm_to_power(-87))
         + enc_rid(_odid_msg(1, 0x33), 0, None, "b", mac, rssi=dbm_to_power(-87)),
         "readsbee answered bits 1–3 only: C 8e, then Mode S, ADS-L, Remote ID all with power byte 4")
-    add("v32_stream_dbm", conf + enc_mode_s(ds, 3, dbm=-87)
+    add("stream_dbm", conf + enc_mode_s(ds, 3, dbm=-87)
         + enc_adsl(adsl, ts, -87, "a", repaired=1) + enc_rid(_odid_msg(1, 0x33), 0, -87, "b", mac),
         "bits 0-3 confirmed: C 8f, then the same three frames, all with dBm a9")
     return v

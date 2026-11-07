@@ -40,7 +40,7 @@ constexpr uint16_t kUATUplinkBeastFrameMaxLenBytes = 1 /* Frame Type */ + 1 /* U
                                                      2 * RawUATUplinkPacket::kUplinkMessageNumBytes;  // [Bytes]
 
 /**
- * Remote ID Packet Format (readsbee feed spec v3.2, feeds that confirmed kBeastCapRemoteID)
+ * Remote ID Packet Format (ADSBee Beast extensions (2026-11-06), feeds that confirmed kBeastCapRemoteID)
  *
  * 0x1a | 0xef | transport letter (no escapes) | timestamp | signal | source MAC | ODID message or pack
  * The ODID bytes bound the frame: one 25-byte message, or a pack of 3 + 25 * n bytes (n = 1-9).
@@ -51,7 +51,7 @@ constexpr uint16_t kRemoteIDBeastFrameMaxLenBytes =
 constexpr uint8_t kRemoteIDMaxMessagesInPack = 9;
 
 /**
- * ADS-L Packet Format (readsbee feed spec v3.2, feeds that confirmed kBeastCapADSL)
+ * ADS-L Packet Format (ADSBee Beast extensions (2026-11-06), feeds that confirmed kBeastCapADSL)
  *
  * 0x1a | 0xed | channel letter (no escapes) | timestamp | signal | repaired erasures | L | L on-air bytes
  * The on-air bytes follow the sync word: length byte L (1-31), then header, data and CRC.
@@ -67,7 +67,7 @@ constexpr uint8_t kBeastNoLevelPowerByte = 0x00;
 constexpr uint8_t kBeastNoLevelDbmByte = 0x80;
 
 /**
- * Capabilities check (readsbee feed spec v3.2, 0xe5). Every TCP Beast feed sends a query right after 0xe4. A server
+ * Capabilities check (ADSBee Beast extensions (2026-11-06), 0xe5). Every TCP Beast feed sends a query right after 0xe4. A server
  * that answers within kBeastCapsAnswerTimeoutMs gets a confirm, then the agreed frames; any other server gets plain
  * Beast.
  *
@@ -83,6 +83,7 @@ constexpr uint16_t kBeastCapsKnown = kBeastCapSignalDbm | kBeastCapADSL | kBeast
 constexpr uint16_t kBeastCapsSendable = kBeastCapSignalDbm | kBeastCapRemoteID;
 // Bits that change the bytes of frames every Beast feed gets. Feeds are grouped by these, one batch per group.
 constexpr uint16_t kBeastCapsFrameFormat = kBeastCapSignalDbm | kBeastCapUATModeSClock;
+// The version byte of the 0xe5 frame: a field of the wire format, not a document version.
 constexpr uint8_t kBeastCapsVersion = 1;
 constexpr uint16_t kBeastCapsFrameLenBytes = 6;
 constexpr uint32_t kBeastCapsAnswerTimeoutMs = 5000;

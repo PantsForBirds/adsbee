@@ -442,8 +442,8 @@
   "unknown": 0
  },
  {
-  "name": "feed_start_v3",
-  "note": "start of every v3 TCP Beast feed: 0xE4, 0xE5 Q, then today's Beast",
+  "name": "feed_start_query",
+  "note": "start of every TCP Beast feed: 0xE4, 0xE5 Q, then today's Beast",
   "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818e801a330123451a1a67891a1a8d4840d6202cc371c32ce0576098",
   "decoded": [
    {
@@ -593,8 +593,8 @@
   "answer": null
  },
  {
-  "name": "caps_query_v31",
-  "note": "v3.1 feeder: can also send dBm levels (bit 0)",
+  "name": "caps_query_dbm",
+  "note": "feeder that can also send dBm levels (bit 0)",
   "hex": "1ae551818f80",
   "decoded": [
    {
@@ -614,8 +614,8 @@
   "unknown": 0
  },
  {
-  "name": "answer_v31_all",
-  "note": "readsbee v3.1 accepts bits 0-3",
+  "name": "answer_all_dbm",
+  "note": "readsbee accepts bits 0-3",
   "direction": "server_to_feeder",
   "hex": "1ae541818f80",
   "answer": {
@@ -630,8 +630,8 @@
   }
  },
  {
-  "name": "answer_v3_server",
-  "note": "v3 server without bit 0: the feeder keeps the power byte",
+  "name": "answer_no_dbm",
+  "note": "server without bit 0: the feeder keeps the power byte",
   "direction": "server_to_feeder",
   "hex": "1ae541818e80",
   "answer": {
@@ -1079,7 +1079,7 @@
   "unknown": 0
  },
  {
-  "name": "v31_feed_start",
+  "name": "stream_feed_start_dbm",
   "note": "E4, query, a frame with the power byte (sent before the answer arrived), confirm, then dBm",
   "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818f801a32000000000001045d4840d6abcdef1ae543818f801a32000000000002a95d4840d6abcdef1aef62000000000000bac0ffee1a1a000112333333333333333333333333333333333333333333333333",
   "decoded": [
@@ -1303,7 +1303,7 @@
   "unknown": 0
  },
  {
-  "name": "v32_stream_no_dbm",
+  "name": "stream_no_dbm",
   "note": "readsbee answered bits 1\u20133 only: C 8e, then Mode S, ADS-L, Remote ID all with power byte 4",
   "hex": "1ae543818e801a32000000000003045d4840d6abcdef1aed410123451a1a678904011a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c31aef6200000000000004c0ffee1a1a000112333333333333333333333333333333333333333333333333",
   "decoded": [
@@ -1353,7 +1353,7 @@
   "unknown": 0
  },
  {
-  "name": "v32_stream_dbm",
+  "name": "stream_dbm",
   "note": "bits 0-3 confirmed: C 8f, then the same three frames, all with dBm a9",
   "hex": "1ae543818f801a32000000000003a95d4840d6abcdef1aed410123451a1a6789a9011a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c31aef62000000000000a9c0ffee1a1a000112333333333333333333333333333333333333333333333333",
   "decoded": [

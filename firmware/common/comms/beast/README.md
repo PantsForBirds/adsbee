@@ -10,7 +10,7 @@
 
 ## Capabilities check
 
-Every TCP Beast feed asks the server what else it accepts (readsbee feed protocol v3.2):
+Every TCP Beast feed asks the server what else it accepts (the ADSBee Beast extensions (2026-11-06), which readsbee implements):
 
 - Right after the feed UUID (`0xe4`), the ADSBee sends a 6-byte query (`0xe5 'Q'`).
 - A readsbee server answers (`0xe5 'A'`). The ADSBee then sends a confirm (`0xe5 'C'`) and, from there on, only what
@@ -36,7 +36,7 @@ Every frame starts with `0x1a` and a type byte. A `0x1a` after those is sent twi
 | Type | Frame | After the type byte | Sent |
 |---|---|---|---|
 | `0xe4` | Feed UUID, sent once on connect | 36 ASCII characters | TCP Beast feeds |
-| `0xe5` | Capabilities | `Q` / `A` / `C`, version, 2 bytes of feature bits | TCP Beast feeds |
+| `0xe5` | Capabilities | `Q` / `A` / `C`, version (1), 2 bytes of feature bits | TCP Beast feeds |
 | `0x32` / `0x33` | Mode S short / long | timestamp (6), signal (1), 7 / 14 bytes | all Beast |
 | `0xec` | UAT | `s` / `l` / `u`, timestamp (6), signal (1), 30 / 48 / 552 bytes | not on `BEAST_NO_UAT` (`u` not on `BEAST_NO_UAT_UPLINK`) |
 | `0xef` | Remote ID | link, timestamp (6), signal (1), MAC (6), ODID message or pack | bit 2 agreed |

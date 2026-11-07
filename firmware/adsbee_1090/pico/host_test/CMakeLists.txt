@@ -27,7 +27,7 @@ target_compile_definitions(host_test_fpu PRIVATE SWARM_RECORDING)
 target_compile_definitions(host_test_fpu PRIVATE GEO_UTILS_SPLIT_MULTIPLY)
 target_compile_definitions(host_test PRIVATE SETTINGS_BLOBS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/settings_blobs")
 target_compile_definitions(host_test_fpu PRIVATE SETTINGS_BLOBS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/settings_blobs")
-# readsbee feed protocol v3.2 golden vectors (readsbee_vectors/readsbee_proto.py checks and regenerates them).
+# ADSBee Beast extensions (2026-11-06) golden vectors (readsbee_vectors/readsbee_proto.py checks and regenerates them).
 foreach(_test_tgt IN ITEMS host_test host_test_fpu)
     target_compile_definitions(${_test_tgt} PRIVATE READSBEE_VECTORS_JSON="${CMAKE_CURRENT_SOURCE_DIR}/readsbee_vectors/vectors.json")
 endforeach()

@@ -1,5 +1,5 @@
-// Beast capabilities check and the frames it enables (readsbee feed protocol v3.2). Expected bytes are read from the
-// spec's golden vectors, readsbee_vectors/vectors.json (checked by readsbee_vectors/readsbee_proto.py).
+// Beast capabilities check and the frames it enables (ADSBee Beast extensions (2026-11-06)). Expected bytes are read from
+// their golden vectors, readsbee_vectors/vectors.json (checked by readsbee_vectors/readsbee_proto.py).
 #include <climits>
 #include <fstream>
 #include <random>
@@ -73,7 +73,7 @@ const uint8_t kMAC[6] = {0xc0, 0xff, 0xee, 0x1a, 0x00, 0x01};
 const uint8_t kPackMAC[6] = {0x6a, 0x1a, 0x2b, 0x3c, 0x4d, 0x5e};
 const uint8_t kFeedId[8] = {0x0b, 0xee, 0x00, 0x03, 0x81, 0x72, 0xd1, 0x8c};
 const uint16_t kAllBits = kBeastCapsKnown;  // 0x0f: the confirm frame of the dBm vectors.
-const uint16_t kV3Bits = kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;  // 0x0e.
+const uint16_t kNoDbmBits = kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;  // 0x0e.
 
 std::vector<uint8_t> ADSLOnAir() {
     std::vector<uint8_t> body = Hex("0002" "1a" "3c4d5e6f" "1a1a" "00112233445566778899aabb" "0102" "a1b2c3");
@@ -150,9 +150,9 @@ TEST(BeastCapsVectors, FileIsThere) {
 }
 
 TEST(BeastCapsVectors, CapabilitiesFrames) {
-    EXPECT_EQ(Caps(kBeastCapsQuery, kV3Bits), VectorHex("caps_query"));
+    EXPECT_EQ(Caps(kBeastCapsQuery, kNoDbmBits), VectorHex("caps_query"));
     EXPECT_EQ(Caps(kBeastCapsQuery, 0), VectorHex("caps_query_none"));
-    EXPECT_EQ(Caps(kBeastCapsQuery, kAllBits), VectorHex("caps_query_v31"));
+    EXPECT_EQ(Caps(kBeastCapsQuery, kAllBits), VectorHex("caps_query_dbm"));
     EXPECT_EQ(Caps(kBeastCapsConfirm, kAllBits), VectorHex("caps_confirm_dbm"));
     // What this firmware offers: dBm, plus Remote ID while receive is on. Never 0x1a.
     EXPECT_EQ(Caps(kBeastCapsQuery, kBeastCapsSendable), "1ae551818580");
@@ -221,7 +221,7 @@ TEST(BeastCapsVectors, ADSLRefusesOnAirBytesADecoderCouldNotBound) {
                                        kBeastCapSignalDbm);
     EXPECT_EQ(len, 3 + 2 * 6 + 2 + 2 + 1 + 2 * 31);
     EXPECT_LE(len, kADSLBeastFrameMaxLenBytes);
-    EXPECT_EQ(kADSLBeastFrameMaxLenBytes, 83);  // Spec section 2.
+    EXPECT_EQ(kADSLBeastFrameMaxLenBytes, 83);  // FEED-PROTOCOL.md section 2.
 }
 
 TEST(BeastCapsVectors, RemoteID) {
@@ -247,15 +247,15 @@ TEST(BeastCapsVectors, Streams) {
     EXPECT_EQ(FeedStart() + query + ModeS(kShortMsg, 1, -87, 0) + Caps(kBeastCapsConfirm, kAllBits) +
                   ModeS(kShortMsg, 2, -87, kAllBits) +
                   RemoteID(kRemoteIDTransportBT4Legacy, -70, kMAC, ODIDMessage(1, 0x33), kAllBits),
-              VectorHex("v31_feed_start"));
-    EXPECT_EQ(Caps(kBeastCapsConfirm, kV3Bits) + ModeS(kShortMsg, 3, -87, kV3Bits) +
-                  ADSL(kADSLChannel868_2, kTs, -87, 1, kV3Bits) +
-                  RemoteID(kRemoteIDTransportBT4Legacy, -87, kMAC, ODIDMessage(1, 0x33), kV3Bits),
-              VectorHex("v32_stream_no_dbm"));
+              VectorHex("stream_feed_start_dbm"));
+    EXPECT_EQ(Caps(kBeastCapsConfirm, kNoDbmBits) + ModeS(kShortMsg, 3, -87, kNoDbmBits) +
+                  ADSL(kADSLChannel868_2, kTs, -87, 1, kNoDbmBits) +
+                  RemoteID(kRemoteIDTransportBT4Legacy, -87, kMAC, ODIDMessage(1, 0x33), kNoDbmBits),
+              VectorHex("stream_no_dbm"));
     EXPECT_EQ(Caps(kBeastCapsConfirm, kAllBits) + ModeS(kShortMsg, 3, -87, kAllBits) +
                   ADSL(kADSLChannel868_2, kTs, -87, 1, kAllBits) +
                   RemoteID(kRemoteIDTransportBT4Legacy, -87, kMAC, ODIDMessage(1, 0x33), kAllBits),
-              VectorHex("v32_stream_dbm"));
+              VectorHex("stream_dbm"));
 }
 
 // A server that never answers gets today's main output plus the 6 query bytes, and the query is the only addition.
@@ -282,7 +282,7 @@ TEST(BeastCapsPlain, StreamIsMainPlusTheQuery) {
     EXPECT_EQ(FeedStart(), "1ae430626565303030332d383137322d643138632d306265652d303030333831373264313863");
 }
 
-// The fix that goes with the spec: no level is power byte 0 (main sent 1, the first table entry).
+// The fix that goes with the Beast extensions: no level is power byte 0 (main sent 1, the first table entry).
 TEST(BeastCapsPlain, SignalBytes) {
     uint8_t buf[2];
     auto power = [&](int16_t dbm) { return WriteRSSIdBmAsBeastPowerLevel(buf, dbm) == 1 ? buf[0] : 0x1ff; };
@@ -310,7 +310,7 @@ TEST(BeastCapsPlain, SignalBytes) {
 TEST(BeastCapsScanner, MatchesTheVectors) {
     const char* names[] = {"answer_all",          "answer_none",       "answer_rid_only",  "answer_after_pings",
                            "answer_future",       "echo_of_query",     "answer_malformed", "answer_cut_by_frame",
-                           "stock_readsb_silence", "answer_v31_all",   "answer_v3_server"};
+                           "stock_readsb_silence", "answer_all_dbm",   "answer_no_dbm"};
     for (const char* name : names) {
         std::string block = VectorBlock(name);
         ASSERT_NE(block.find("server_to_feeder"), std::string::npos) << name;
@@ -378,7 +378,7 @@ TEST(BeastCapsSession, AnswerInTimeThenConfirm) {
     EXPECT_EQ(ToHex(buf, session.Start(buf, kBeastCapsSendable, 1000)), "1ae551818580");
     EXPECT_EQ(session.state(), CapsSession::kWaiting);
     EXPECT_EQ(session.bits(), 0);
-    std::vector<uint8_t> answer = Hex(VectorHex("answer_v31_all"));  // Server accepts bits 0-3.
+    std::vector<uint8_t> answer = Hex(VectorHex("answer_all_dbm"));  // Server accepts bits 0-3.
     EXPECT_TRUE(session.Receive(answer.data(), answer.size(), 1000 + kBeastCapsAnswerTimeoutMs - 1));
     EXPECT_EQ(session.state(), CapsSession::kAnswered);
     EXPECT_EQ(session.bits(), 0);  // Frames stay plain until the confirm is queued.
@@ -412,7 +412,7 @@ TEST(BeastCapsSession, KnownBitsOnlyAndEmptyAnswers) {
 
     // A v3 server (no bit 0): power bytes stay.
     session.Start(buf, kBeastCapsSendable, 0);
-    std::vector<uint8_t> v3 = Hex(VectorHex("answer_v3_server"));
+    std::vector<uint8_t> v3 = Hex(VectorHex("answer_no_dbm"));
     ASSERT_TRUE(session.Receive(v3.data(), v3.size(), 10));
     session.Confirm();
     EXPECT_EQ(session.bits(), kBeastCapRemoteID);
@@ -420,7 +420,7 @@ TEST(BeastCapsSession, KnownBitsOnlyAndEmptyAnswers) {
 
 TEST(BeastCapsSession, FiveSecondTimeout) {
     uint8_t buf[kBeastCapsFrameLenBytes];
-    std::vector<uint8_t> answer = Hex(VectorHex("answer_v31_all"));
+    std::vector<uint8_t> answer = Hex(VectorHex("answer_all_dbm"));
     CapsSession session;
     const uint32_t t0 = UINT32_MAX - 1000;  // Across the millisecond counter's wrap.
     session.Start(buf, kBeastCapsSendable, t0);
@@ -438,7 +438,7 @@ TEST(BeastCapsSession, FiveSecondTimeout) {
 
 TEST(BeastCapsSession, AbandonAndReconnect) {
     uint8_t buf[kBeastCapsFrameLenBytes];
-    std::vector<uint8_t> answer = Hex(VectorHex("answer_v31_all"));
+    std::vector<uint8_t> answer = Hex(VectorHex("answer_all_dbm"));
     CapsSession session;
     session.Start(buf, kBeastCapsSendable, 0);
     ASSERT_TRUE(session.Receive(answer.data(), answer.size(), 10));
@@ -547,7 +547,7 @@ TEST(BeastCapsRemoteID, OtherLettersAndTheLargestFrame) {
     uint16_t len = WriteRemoteIDBeastFrame(buf, kRemoteIDTransportBT4Legacy, 0, 26, all_escapes, pack.data(),
                                            pack.size(), kBeastCapSignalDbm);
     EXPECT_EQ(len, 3 + 6 + 2 + 12 + 3 + 9 * (1 + 2 * 24));
-    EXPECT_GE(kRemoteIDBeastFrameMaxLenBytes, 485);  // Spec section 2.
+    EXPECT_GE(kRemoteIDBeastFrameMaxLenBytes, 485);  // FEED-PROTOCOL.md section 2.
     EXPECT_LE(len, kRemoteIDBeastFrameMaxLenBytes);
 }
 
