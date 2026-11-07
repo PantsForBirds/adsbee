@@ -7,6 +7,7 @@
 #include <ti/drivers/GPIO.h>
 #include <ti/drivers/Power.h>
 #include <ti/drivers/dpl/ClockP.h>
+#include <ti/drivers/dpl/HwiP.h>
 #include <ti/drivers/power/PowerCC26XX.h>
 
 #include "buffer_utils.hh"
@@ -17,6 +18,7 @@
 #include "mlat/mlat_clear_dma.hh"
 #include "packet_decoder.hh"
 #include "sub_ghz_radio.hh"
+#include "mlat_time_sync.hh"
 #include "uat_packet_decoder.hh"
 
 ADSBee::ADSBee(ADSBeeConfig config) : lr2021(config.lr2021_config), config_(config) {
@@ -701,12 +703,29 @@ void ADSBee::IngestAndForwardPackets() {
         }
     }
 
+    // Sub-GHz packets carry radio timer ticks; move them to the Mode S time base. The radio timer and the MLAT timer
+    // both run from the 48 MHz crystal, so one pair of readings fixes the offset.
+    uint16_t num_decoded_uat_adsb = uat_packet_decoder.decoded_uat_adsb_packet_out_queue.Length();
+    uint16_t num_decoded_uat_uplink = uat_packet_decoder.decoded_uat_uplink_packet_out_queue.Length();
+    MLATTimeSync sub_ghz_time_sync(MLATTimeSync::kMLATTicksPerRATTick);
+    if (num_decoded_uat_adsb > 0 || num_decoded_uat_uplink > 0) {
+        uintptr_t key = HwiP_disable();
+        uint32_t rat_now = RF_getCurrentTime();
+        uint32_t mlat_counter_now = mlat_active_ ? mlat_capture::Counter() : 0;
+        uint64_t timestamp_us = get_time_since_boot_us();
+        HwiP_restore(key);
+        // PollMlat() runs every main loop pass, well within one counter period.
+        sub_ghz_time_sync.AddSyncPoint(rat_now, mlat_active_ ? mlat_timebase_.ExtendForward(mlat_counter_now)
+                                                             : timestamp_us * MlatTimebase::kTicksPerUs);
+    }
+
     // Ingest decoded UAT ADS-B packets.
     DecodedUATADSBPacket decoded_uat_adsb_packet;
-    uint16_t num_decoded_uat_adsb = uat_packet_decoder.decoded_uat_adsb_packet_out_queue.Length();
     for (uint16_t i = 0; i < num_decoded_uat_adsb &&
                          uat_packet_decoder.decoded_uat_adsb_packet_out_queue.Dequeue(decoded_uat_adsb_packet);
          i++) {
+        decoded_uat_adsb_packet.raw.mlat_48mhz_64bit_counts = sub_ghz_time_sync.ToMLAT48MHzCounts(
+            static_cast<uint32_t>(decoded_uat_adsb_packet.raw.mlat_48mhz_64bit_counts));
         aircraft_dictionary.IngestDecodedUATADSBPacket(decoded_uat_adsb_packet);
         aircraft_dictionary.RecordSubGHzMetrics(0, 1, 0, 0);
         if (!comms_manager.uat_adsb_packet_reporting_queue.Enqueue(decoded_uat_adsb_packet.raw)) {
@@ -717,10 +736,11 @@ void ADSBee::IngestAndForwardPackets() {
     // Ingest decoded UAT uplink packets. The raw packet has already been FEC-corrected in place by the
     // decoder, so downstream reporters (e.g. GDL90) can re-decode it without another correction pass.
     DecodedUATUplinkPacket decoded_uat_uplink_packet;
-    uint16_t num_decoded_uat_uplink = uat_packet_decoder.decoded_uat_uplink_packet_out_queue.Length();
     for (uint16_t i = 0; i < num_decoded_uat_uplink &&
                          uat_packet_decoder.decoded_uat_uplink_packet_out_queue.Dequeue(decoded_uat_uplink_packet);
          i++) {
+        decoded_uat_uplink_packet.raw.mlat_48mhz_64bit_counts = sub_ghz_time_sync.ToMLAT48MHzCounts(
+            static_cast<uint32_t>(decoded_uat_uplink_packet.raw.mlat_48mhz_64bit_counts));
         aircraft_dictionary.RecordSubGHzMetrics(0, 0, 0, 1);
         if (!comms_manager.uat_uplink_packet_reporting_queue.Enqueue(decoded_uat_uplink_packet.raw)) {
             comms_manager.uat_report_queue_ovf_count++;  // Counted, not logged (see the Mode S queue above).

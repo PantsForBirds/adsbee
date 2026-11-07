@@ -17,6 +17,7 @@
 #include "r1090_rssi.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
+#include "sync_pulse_service.hh"
 #include "stdint.h"
 #include "tl_learner.hh"
 
@@ -411,6 +412,7 @@ class ADSBee {
     inline void SetSubGRadioEnable(SettingsManager::EnableState is_enabled) {
         SettingsManager::EnableState old_enabled = subg_radio_ll.IsEnabledState();
         subg_radio_ll.SetEnableState(is_enabled);
+        subg_radio_ll.AllowSyncPulsesInReset();  // Held in reset: Remote ID still gets sync pulses.
         if ((old_enabled == SettingsManager::EnableState::kEnableStateDisabled ||
              old_enabled == SettingsManager::EnableState::kEnableStateExternal) &&
             subg_radio_ll.IsEnabled()) {
@@ -420,6 +422,7 @@ class ADSBee {
                 CONSOLE_ERROR("ADSBee::SetSubGRadioEnable",
                               "Failed to initialize sub-GHz radio after enabling. Disabling sub-GHz radio.");
                 subg_radio_ll.SetEnableState(SettingsManager::EnableState::kEnableStateDisabled);
+                subg_radio_ll.AllowSyncPulsesInReset();
             }
         }
     }
@@ -489,6 +492,7 @@ class ADSBee {
 
     AircraftDictionary aircraft_dictionary;
     CC1312 subg_radio_ll = CC1312({});
+    SyncPulseService sync_pulse_service;  // Gated by subg_radio_ll (SYNC is the CC1312 bootloader backdoor).
     SPICoprocessor subg_radio = SPICoprocessor({.interface = subg_radio_ll, .tag_str = "CC1312"});
 
     SettingsManager::RxPosition rx_position;
