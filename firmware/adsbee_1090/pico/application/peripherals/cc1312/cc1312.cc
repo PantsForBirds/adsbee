@@ -143,7 +143,7 @@ bool CC1312::Update() {
         UpdateTimeSync();
 
         // Read one array of packets from the queues. The CC1312 fills it with as many packets as fit.
-        alignas(4) uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+        uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
         if (!adsbee.subg_radio.Read(
                 ObjectDictionary::Address::kAddrCompositeArrayRawPackets, read_buf,
                 CompositeArray::RawPackets::ReadLenBytes(device_status.pending_raw_packets_len_bytes))) {
@@ -153,7 +153,6 @@ bool CC1312::Update() {
         more_raw_packets_pending_ = CompositeArray::RawPackets::MorePending(device_status.pending_raw_packets_len_bytes);
         raw_packets_arriving_ =
             device_status.pending_raw_packets_len_bytes > sizeof(CompositeArray::RawPackets::Header);
-        ConvertSubGHzTimestamps(read_buf, sizeof(read_buf));
         if (!CompositeArray::UnpackRawPacketsBufferToQueues(read_buf, sizeof(read_buf), nullptr,
                                                             &adsbee.raw_uat_adsb_packet_queue,
                                                             &adsbee.raw_uat_uplink_packet_queue)) {
@@ -162,9 +161,7 @@ bool CC1312::Update() {
         }
 
     } else {
-        // The CC1312 may be resetting, which restarts its radio timer (and its epoch count, so it can't be relied on).
-        sync_pulse_allowed_ = false;
-        time_sync.Reset();
+        sync_pulse_allowed_ = false;  // The CC1312 may be resetting.
         if (!link_was_down) CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 status.");
         return false;
     }
@@ -204,78 +201,42 @@ void CC1312::BlockSyncPulses() {
     while (sync_pulse_busy_) {
         tight_loop_contents();
     }
-    sync_pulse_pending_ = false;
 }
 
 void CC1312::UpdateTimeSync() {
     uint32_t timestamp_ms = get_time_since_boot_ms();
-    if (device_status.rat_epoch != rat_epoch_) {
-        // The radio timer restarted (radio re-opened or CC1312 rebooted): earlier sync points no longer apply. Pulse
-        // right away instead of waiting out the interval.
-        CONSOLE_INFO("CC1312::UpdateTimeSync", "Radio timer epoch %u -> %u: sub-GHz timestamps restart.", rat_epoch_,
-                     device_status.rat_epoch);
-        rat_epoch_ = device_status.rat_epoch;
-        rat_epoch_start_timestamp_ms_ = timestamp_ms;
-        time_sync.Reset();
-        sync_pulse_pending_ = false;
-        sync_pulse_requested_ = false;
-        sync_pulse_request_timestamp_ms_ = timestamp_ms - kSyncPulseIntervalMs;
+    uint32_t num_sync_pulses_sent = num_sync_pulses_sent_;
+    if (num_sync_pulses_sent != last_sync_pulse_.pulse_num) {
+        __dmb();
+        last_sync_pulse_ = {.mlat_48mhz_counts = sync_pulse_mlat_48mhz_counts_, .pulse_num = num_sync_pulses_sent};
+        // A lost write only costs this sync point. The ESP32 gets it from ESP32::Update().
+        adsbee.subg_radio.Write(ObjectDictionary::Address::kAddrSyncPulse, last_sync_pulse_);
+    }
+    bool synced = device_status.mlat_sync_flags & ObjectDictionary::kMLATSyncFlagSynced;
+    if (synced != mlat_synced_) {
+        CONSOLE_INFO("CC1312::UpdateTimeSync", "Sub-GHz timestamps %s.",
+                     synced ? "on the MLAT clock" : "stopped until the next sync pulses");
+        mlat_synced_ = synced;
     }
     if (in_bootloader_ || !IsEnabled()) {
         return;
     }
     sync_pulse_allowed_ = true;  // The application just answered a status read.
 
-    if (sync_pulse_pending_) {
-        if (num_sync_pulses_sent_ != num_sync_pulses_sent_at_request_) {
-            __dmb();
-            uint16_t num_captures = device_status.sync_capture_count - sync_capture_count_at_request_;
-            if (num_captures == 1) {
-                bool was_synced = time_sync.IsSynced();
-                time_sync.AddSyncPoint(device_status.sync_capture_rat, sync_pulse_mlat_48mhz_counts_);
-                sync_pulse_pending_ = false;
-                if (time_sync.IsSynced() != was_synced) {
-                    CONSOLE_INFO("CC1312::UpdateTimeSync",
-                                 "Sub-GHz timestamps on the MLAT clock %lu ms after the radio timer started (%ld ppb).",
-                                 timestamp_ms - rat_epoch_start_timestamp_ms_,
-                                 static_cast<int32_t>(time_sync.GetRateErrorPPB()));
-                }
-                return;
-            } else if (num_captures > 1) {
-                sync_pulse_pending_ = false;  // An edge that wasn't ours: skip this pulse.
-                return;
-            }
-        }
-        if (timestamp_ms - sync_pulse_request_timestamp_ms_ > kSyncPulseTimeoutMs) {
+    uint32_t ms_since_request = timestamp_ms - sync_pulse_request_timestamp_ms_;
+    if (sync_pulse_requested_) {
+        if (ms_since_request > kSyncPulseTimeoutMs) {
             sync_pulse_requested_ = false;
-            sync_pulse_pending_ = false;
         }
         return;
     }
-    if (timestamp_ms - sync_pulse_request_timestamp_ms_ >= kSyncPulseIntervalMs) {
-        sync_capture_count_at_request_ = device_status.sync_capture_count;
-        num_sync_pulses_sent_at_request_ = num_sync_pulses_sent_;
+    // A coprocessor whose clock restarted is back on the MLAT clock after one pulse: send it soon.
+    bool pulse_wanted = device_status.mlat_sync_flags & ObjectDictionary::kMLATSyncFlagPulseWanted;
+    if (ms_since_request >= kSyncPulseIntervalMs ||
+        (pulse_wanted && ms_since_request >= ObjectDictionary::kSyncPulseMinIntervalMs)) {
         sync_pulse_request_timestamp_ms_ = timestamp_ms;
-        sync_pulse_pending_ = true;
         __dmb();
         sync_pulse_requested_ = true;
-    }
-}
-
-void CC1312::ConvertSubGHzTimestamps(uint8_t* buf, uint16_t buf_len_bytes) {
-    CompositeArray::RawPackets packets;
-    if (!CompositeArray::UnpackRawPacketsBuffer(packets, buf, buf_len_bytes)) {
-        return;  // Logged by the unpack that follows.
-    }
-    for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
-        RawUATADSBPacket& packet = packets.uat_adsb_packets[i];
-        packet.mlat_48mhz_64bit_counts =
-            time_sync.ToMLAT48MHzCounts(static_cast<uint32_t>(packet.mlat_48mhz_64bit_counts));
-    }
-    for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
-        RawUATUplinkPacket& packet = packets.uat_uplink_packets[i];
-        packet.mlat_48mhz_64bit_counts =
-            time_sync.ToMLAT48MHzCounts(static_cast<uint32_t>(packet.mlat_48mhz_64bit_counts));
     }
 }
 

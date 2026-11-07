@@ -76,6 +76,7 @@ class ObjectDictionary {
         kAddrLEDBlink = 0x13,  // Force-blink the slave's LED: uint32_t duration_ms, bypasses led_enabled.
         kAddrDeviceIdentity = 0x14,  // SettingsManager::DeviceIdentity, RP2040 to ESP32 on request.
         kAddrESP32FirmwareHash = 0x15,  // SHA-256 of the running ESP32 application (see ESP32FirmwareCheck).
+        kAddrSyncPulse = 0x16,          // SyncPulse, RP2040 to CC1312 and ESP32 after each sync pulse.
         kNumAddrs
     };
 
@@ -125,6 +126,24 @@ class ObjectDictionary {
     struct SCCommandRequestWithCallback {
         SCCommandRequest request;
         std::function<void()> complete_callback = nullptr;
+    };
+
+    /**
+     * The RP2040 pulses the shared SYNC line about once a second, then writes this to the CC1312 and the ESP32. Each
+     * pairs it with the edge it captured on its own clock to put its packet timestamps on the MLAT time base.
+     */
+    struct __attribute__((__packed__)) SyncPulse {
+        uint64_t mlat_48mhz_counts = 0;  // RP2040 MLAT counter at the rising edge.
+        uint32_t pulse_num = 0;          // Counts pulses sent since the RP2040 booted.
+    };
+    // Age limit for pairing a captured edge with its SyncPulse. Pulses are at least kSyncPulseMinIntervalMs apart.
+    static constexpr uint32_t kSyncPulseMaxAgeMs = 250;
+    static constexpr uint32_t kSyncPulseMinIntervalMs = 300;
+
+    // MLAT time sync state of a coprocessor (SubGHzDeviceStatus, ESP32DeviceStatus).
+    enum MLATSyncFlag : uint8_t {
+        kMLATSyncFlagSynced = 1 << 0,       // Packet timestamps are on the MLAT time base.
+        kMLATSyncFlagPulseWanted = 1 << 1,  // The local clock restarted: one pulse now re-syncs it.
     };
 
     struct __attribute__((packed)) RP2040DeviceStatus {
@@ -188,6 +207,8 @@ class ObjectDictionary {
         // UTC from SNTP, valid while an output uses ASTERIX and the ESP32 has synced. Holds UTC at timestamp_ms.
         bool network_utc_time_valid = false;
         uint32_t network_utc_ms_of_day = 0;
+
+        uint8_t mlat_sync_flags = 0;  // MLATSyncFlag bits, for Remote ID timestamps.
     };
 
     enum ESP32HardwareCapability : uint8_t {
@@ -279,11 +300,7 @@ class ObjectDictionary {
         uint16_t num_raw_uat_uplink_packets = 0;
         uint16_t num_valid_uat_uplink_packets = 0;
 
-        // Radio timer (RAT) value captured on the last rising edge of the RP2040's sync pulse, the number of edges
-        // captured, and a count that changes whenever the RAT restarts (radio re-opened), which voids older captures.
-        uint32_t sync_capture_rat = 0;
-        uint16_t sync_capture_count = 0;
-        uint8_t rat_epoch = 0;
+        uint8_t mlat_sync_flags = 0;  // MLATSyncFlag bits, for sub-GHz packet timestamps.
     };
 
     /**
@@ -460,11 +477,6 @@ class ObjectDictionary {
     };
     SubGHzRadioMetrics metrics = {0};
     SubGHzDeviceStatus device_status = {};
-
-    // Written by the radio's RAT capture callback and Init(); see SubGHzDeviceStatus.
-    volatile uint32_t sync_capture_rat = 0;
-    volatile uint16_t sync_capture_count = 0;
-    volatile uint8_t rat_epoch = 0;
 #endif
 
    private:

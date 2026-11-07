@@ -51,7 +51,7 @@ void UATPacketDecoder::DecodeADSBPackets() {
             CONSOLE_INFO(
                 "UATPacketDecoder::Update", "-[%dFIXD     ] mdb_tc=%d icao=0x%06x len=%d buf=%s rssi=%d ts=%lu",
                 decoded_packet.raw.sigq_bits, decoded_packet.header.mdb_type_code, decoded_packet.header.icao_address,
-                packet_len_bytes, raw_packet_buffer, packet.sigs_dbm, packet.mlat_48mhz_64bit_counts);
+                packet_len_bytes, raw_packet_buffer, packet.sigs_dbm, static_cast<unsigned long>(packet.mlat_48mhz_64bit_counts));
             key = HwiP_disable();
             bool enqueued = object_dictionary.raw_uat_adsb_packet_queue.Enqueue(decoded_packet.raw);
             HwiP_restore(key);
@@ -60,7 +60,7 @@ void UATPacketDecoder::DecodeADSBPackets() {
             }
         } else {
             CONSOLE_INFO("UATPacketDecoder::Update", "-[     INVLD] len=%d buf=%s rssi=%d ts=%lu", packet_len_bytes,
-                         raw_packet_buffer, packet.sigs_dbm, packet.mlat_48mhz_64bit_counts);
+                         raw_packet_buffer, packet.sigs_dbm, static_cast<unsigned long>(packet.mlat_48mhz_64bit_counts));
         }
     }
 }
@@ -102,7 +102,7 @@ void UATPacketDecoder::DecodeUplinkPacket() {
         pico_ll.BlinkSubGLED();
         object_dictionary.metrics.num_valid_uat_uplink_packets++;
         CONSOLE_INFO("UATPacketDecoder::Update", "+[%02dFIXD     ] len=%d rssi=%d ts=%lu", decoded_packet.raw.sigq_bits,
-                     RawUATUplinkPacket::kUplinkMessageNumBytes, packet.sigs_dbm, packet.mlat_48mhz_64bit_counts);
+                     RawUATUplinkPacket::kUplinkMessageNumBytes, packet.sigs_dbm, static_cast<unsigned long>(packet.mlat_48mhz_64bit_counts));
         key = HwiP_disable();
         bool enqueued = object_dictionary.raw_uat_uplink_packet_queue.Enqueue(decoded_packet.raw);
         HwiP_restore(key);
@@ -111,6 +111,6 @@ void UATPacketDecoder::DecodeUplinkPacket() {
         }
     } else {
         CONSOLE_INFO("UATPacketDecoder::Update", "+[     INVLD] len=%d rssi=%d ts=%lu",
-                     RawUATUplinkPacket::kUplinkMessageNumBytes, packet.sigs_dbm, packet.mlat_48mhz_64bit_counts);
+                     RawUATUplinkPacket::kUplinkMessageNumBytes, packet.sigs_dbm, static_cast<unsigned long>(packet.mlat_48mhz_64bit_counts));
     }
 }

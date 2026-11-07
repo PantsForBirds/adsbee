@@ -39,6 +39,8 @@ class ESP32 : public SPICoprocessorSlaveInterface {
      * @retval True if successful, false if there was an error.
      */
     bool Update();
+    // Update at once when a sync pulse went out, so the ESP32 gets its MLAT count while the edge is recent.
+    bool UpdateIsDue() override;
 
     inline bool IsEnabled() { return bsp.has_esp32 && enabled_; }
     inline void SetEnable(bool enabled) {
@@ -88,8 +90,13 @@ class ESP32 : public SPICoprocessorSlaveInterface {
     uint32_t last_network_console_rx_timestamp_ms_ = 0;
 
    private:
+    // Sends the last sync pulse's MLAT count if the ESP32 hasn't had it.
+    void ForwardSyncPulse();
+
     ESP32Config config_;
     bool enabled_ = false;
+    uint32_t last_sync_pulse_num_forwarded_ = 0;
+    bool mlat_synced_ = false;  // Last reported by the ESP32.
 };
 
 extern ESP32 esp32_ll;

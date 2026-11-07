@@ -24,6 +24,7 @@
 #include "ble_adv_watchdog.hh"
 #include "ble_scan_watchdog.hh"
 #include "comms.hh"  // Logging.
+#include "esp32_mlat_sync.hh"
 #include "hal.hh"    // get_time_since_boot_ms.
 #include "host/ble_gap.h"
 #include "host/ble_hs.h"
@@ -236,7 +237,7 @@ void StartRequestedAdvertising() {
 // Extract the ODID payload from an advertisement's AD structures and hand it to the manager. Returns true if a Remote ID
 // service data element was found and forwarded.
 bool ParseAndForward(const uint8_t* adv_data, uint8_t adv_len, const uint8_t* mac, int8_t rssi,
-                     RawRemoteIDPacket::Transport transport) {
+                     RawRemoteIDPacket::Transport transport, uint64_t mlat_48mhz_counts) {
     uint8_t i = 0;
     while (i + 1 < adv_len) {
         uint8_t elem_len = adv_data[i];
@@ -252,6 +253,7 @@ bool ParseAndForward(const uint8_t* adv_data, uint8_t adv_len, const uint8_t* ma
                 uint8_t odid_len = elem_data_len - kODIDPayloadOffsetInSvcData;
                 if (odid_len > 0 && odid_len <= RawRemoteIDPacket::kMaxPayloadLenBytes) {
                     RawRemoteIDPacket packet;
+                    packet.mlat_48mhz_64bit_counts = mlat_48mhz_counts;
                     packet.received_timestamp_ms = get_time_since_boot_ms();
                     memcpy(packet.source_mac, mac, 6);
                     packet.rssi_dbm = rssi;
@@ -271,13 +273,15 @@ bool ParseAndForward(const uint8_t* adv_data, uint8_t adv_len, const uint8_t* ma
 int GapEventHandler(struct ble_gap_event* event, void* arg) {
     switch (event->type) {
         case BLE_GAP_EVENT_EXT_DISC: {
+            // NimBLE gives no receive time: stamp on arrival, about 1 ms after the air time.
+            uint64_t mlat_48mhz_counts = esp32_mlat_sync.NowToMLAT48MHzCounts();
             s_num_scan_reports++;
             const struct ble_gap_ext_disc_desc* d = &event->ext_disc;
             // Coded PHY (secondary) indicates a BT5 Long Range advertisement.
             RawRemoteIDPacket::Transport transport = (d->sec_phy == BLE_HCI_LE_PHY_CODED)
                                                          ? RawRemoteIDPacket::kTransportBT5LongRange
                                                          : RawRemoteIDPacket::kTransportBT4Legacy;
-            ParseAndForward(d->data, d->length_data, d->addr.val, d->rssi, transport);
+            ParseAndForward(d->data, d->length_data, d->addr.val, d->rssi, transport, mlat_48mhz_counts);
             return 0;
         }
         default:

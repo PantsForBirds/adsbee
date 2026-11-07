@@ -18,7 +18,7 @@
 #include "mlat/mlat_clear_dma.hh"
 #include "packet_decoder.hh"
 #include "sub_ghz_radio.hh"
-#include "sub_ghz_time_sync.hh"
+#include "mlat_time_sync.hh"
 #include "uat_packet_decoder.hh"
 
 ADSBee::ADSBee(ADSBeeConfig config) : lr2021(config.lr2021_config), config_(config) {
@@ -707,7 +707,7 @@ void ADSBee::IngestAndForwardPackets() {
     // both run from the 48 MHz crystal, so one pair of readings fixes the offset.
     uint16_t num_decoded_uat_adsb = uat_packet_decoder.decoded_uat_adsb_packet_out_queue.Length();
     uint16_t num_decoded_uat_uplink = uat_packet_decoder.decoded_uat_uplink_packet_out_queue.Length();
-    SubGHzTimeSync sub_ghz_time_sync;
+    MLATTimeSync sub_ghz_time_sync(MLATTimeSync::kMLATTicksPerRATTick);
     if (num_decoded_uat_adsb > 0 || num_decoded_uat_uplink > 0) {
         uintptr_t key = HwiP_disable();
         uint32_t rat_now = RF_getCurrentTime();
