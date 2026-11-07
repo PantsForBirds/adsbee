@@ -28,6 +28,17 @@ static constexpr uint16_t kMaxReportUIDs = kAircraftDictionaryMaxNumAircraft;
  */
 typedef uint16_t ReportSink;
 
+/**
+ * A sink as UpdateReporting takes it: where reports go, in which protocol and, for a Beast feed, the capabilities its
+ * server confirmed. Only the Beast reporters read beast_caps. The reporting functions of each protocol take plain
+ * ReportSinks, since that is what SendBuf and the MAVLink channel cast take.
+ */
+struct ReportSinkInfo {
+    ReportSink sink = 0;
+    SettingsManager::ReportingProtocol protocol = SettingsManager::kNoReports;
+    uint16_t beast_caps = 0;  // BeastReporter::kBeastCap* bits; 0 for plain Beast and for every other protocol.
+};
+
 // Minimum gap between failure summaries on the raw packet path, which runs at up to 20Hz and has no
 // round boundary to flush on.
 static constexpr uint32_t kSendFailureLogIntervalMs = 1000;
@@ -65,19 +76,15 @@ bool SendBufToSinks(const ReportSink* sinks, uint16_t num_sinks, const char* buf
  * Sends packets_to_report on every sink with a raw packet protocol (RAW, Beast, GDL90 and Aircraft JSON uplink
  * pass-through) and, if report_locally_decoded is set, drives the reporting rounds of the aircraft dictionary
  * protocols (CSBee, MAVLINK, GDL90, Aircraft JSON).
- * @param[in] sinks Array of ReportSinks to report on.
- * @param[in] sink_protocols Reporting protocol of each sink.
- * @param[in] num_sinks Number of ReportSinks in the sinks array.
+ * @param[in] sinks Sinks to report on, each with its protocol.
+ * @param[in] num_sinks Number of sinks in the sinks array.
  * @param[in] packets_to_report Raw packets to report.
  * @param[in] report_locally_decoded Set to false to send only packets_to_report, leaving the aircraft dictionary
  * rounds for a later call. Lets a platform report raw packets on a different cadence than the dictionary.
- * @param[in] sink_beast_caps Confirmed capability bits of each sink (BeastReporter::kBeastCap*), or nullptr for none.
- * Beast sinks are grouped by protocol and the bits in BeastReporter::kBeastCapsFrameFormat, one batch per group.
  * @retval True if successful, false if something broke.
  */
-bool UpdateReporting(const ReportSink* sinks, const SettingsManager::ReportingProtocol* sink_protocols,
-                     uint16_t num_sinks, const CompositeArray::RawPackets* packets_to_report = nullptr,
-                     bool report_locally_decoded = true, const uint16_t* sink_beast_caps = nullptr);
+bool UpdateReporting(const ReportSinkInfo* sinks, uint16_t num_sinks,
+                     const CompositeArray::RawPackets* packets_to_report = nullptr, bool report_locally_decoded = true);
 
 /**
  * Sends out RAW formatted transponder data on the selected serial interface.
@@ -90,20 +97,19 @@ bool UpdateReporting(const ReportSink* sinks, const SettingsManager::ReportingPr
 bool ReportRaw(ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets);
 
 /**
- * Sends out Mode S Beast formatted transponder data on the selected serial interface. Reports all transponder
- * packets in the provided packets_to_report array, which is used to allow printing arbitrary blocks of transponder
- * packets received via the CommsManager's built-in transponder_packet_reporting_queue_.
- * @param[in] sinks Array of ReportSinks to broadcast Mode S Beast messages on.
- * @param[in] num_sinks Number of ReportSinks in the sinks array.
+ * Sends out Mode S Beast formatted transponder data. Reports all transponder packets in packets, which is used to
+ * allow printing arbitrary blocks of transponder packets received via the CommsManager's built-in
+ * transponder_packet_reporting_queue_.
+ * Each sink gets the frames of its protocol (kBeast, kBeastNoUAT or kBeastNoUATUplink) in the frame format of its
+ * beast_caps. Frames are built once per protocol and UAT letter case: with dBm signal bytes if a sink takes them, then
+ * rewritten in place to power bytes for the sinks that don't (BeastReporter::ConvertSignalDbmToPowerByte).
+ * @param[in] sinks Beast sinks; descriptors with any other protocol are skipped.
+ * @param[in] num_sinks Number of sinks in the sinks array.
  * @param[in] packets CompositeArray::RawPackets struct with counts and pointers to arrays of each kind of packet to
  * report.
- * @param[in] protocol Reporting protocol to use. Must be one of kBeast, kBeastNoUAT, or kBeastNoUATUplink.
- * @param[in] caps Confirmed capability bits shared by all sinks (BeastReporter::kBeastCapsFrameFormat); 0 for plain
- * Beast.
  * @retval True if successful, false if something broke.
  */
-bool ReportBeast(ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets,
-                 SettingsManager::ReportingProtocol protocol = SettingsManager::kBeast, uint16_t caps = 0);
+bool ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets);
 
 /**
  * Sends out comma separated aircraft information for each aircraft in the aircraft dictionary.

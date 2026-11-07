@@ -462,34 +462,132 @@ TEST(BeastCapsSession, AbandonAndReconnect) {
 // Feeds are grouped by protocol and the bits that change frame bytes (0 and 3); Remote ID doesn't split a group.
 TEST(BeastCapsGroups, ByProtocolAndFrameFormat) {
     typedef SettingsManager S;
-    const uint16_t sinks[] = {0, 1, 2, 3, 4, 5};
-    const S::ReportingProtocol protocols[] = {S::kBeast, S::kBeast, S::kBeast, S::kBeastNoUAT, S::kBeast, S::kCSBee};
-    const uint16_t caps[] = {0, kBeastCapSignalDbm | kBeastCapRemoteID, kBeastCapRemoteID, kBeastCapSignalDbm,
-                             kBeastCapSignalDbm, kBeastCapSignalDbm};
+    struct Info {  // Same members as CommsManager::ReportSinkInfo.
+        uint16_t sink;
+        S::ReportingProtocol protocol;
+        uint16_t beast_caps;
+    };
+    const Info sinks[] = {{0, S::kBeast, 0},
+                          {1, S::kBeast, kBeastCapSignalDbm | kBeastCapRemoteID},
+                          {2, S::kBeast, kBeastCapRemoteID},
+                          {3, S::kBeastNoUAT, kBeastCapSignalDbm},
+                          {4, S::kBeast, kBeastCapSignalDbm},
+                          {5, S::kCSBee, kBeastCapSignalDbm}};
     uint16_t selected[6];
-    ASSERT_EQ(SelectBeastGroup(sinks, protocols, caps, 6, S::kBeast, uint16_t(0), selected), 2);
+    ASSERT_EQ(SelectBeastGroup(sinks, 6, S::kBeast, uint16_t(0), selected), 2);
     EXPECT_EQ(selected[0], 0);
     EXPECT_EQ(selected[1], 2);
-    ASSERT_EQ(SelectBeastGroup(sinks, protocols, caps, 6, S::kBeast, kBeastCapSignalDbm, selected), 2);
+    ASSERT_EQ(SelectBeastGroup(sinks, 6, S::kBeast, kBeastCapSignalDbm, selected), 2);
     EXPECT_EQ(selected[0], 1);
     EXPECT_EQ(selected[1], 4);
-    ASSERT_EQ(SelectBeastGroup(sinks, protocols, caps, 6, S::kBeastNoUAT, kBeastCapSignalDbm, selected), 1);
+    ASSERT_EQ(SelectBeastGroup(sinks, 6, S::kBeastNoUAT, kBeastCapSignalDbm, selected), 1);
     EXPECT_EQ(selected[0], 3);
-    EXPECT_EQ(SelectBeastGroup(sinks, protocols, caps, 6, S::kBeast, kBeastCapUATModeSClock, selected), 0);
-    EXPECT_EQ(SelectBeastGroup(sinks, protocols, caps, 6, S::kBeastNoUATUplink, uint16_t(0), selected), 0);
-    // No caps array (serial interfaces, other platforms): one plain group per protocol, as before.
-    EXPECT_EQ(SelectBeastGroup(sinks, protocols, static_cast<const uint16_t*>(nullptr), 6, S::kBeast, uint16_t(0),
-                               selected),
-              4);
-    EXPECT_EQ(SelectBeastGroup(sinks, protocols, static_cast<const uint16_t*>(nullptr), 6, S::kBeast,
-                               kBeastCapSignalDbm, selected),
-              0);
+    EXPECT_EQ(SelectBeastGroup(sinks, 6, S::kBeast, kBeastCapUATModeSClock, selected), 0);
+    EXPECT_EQ(SelectBeastGroup(sinks, 6, S::kBeastNoUATUplink, uint16_t(0), selected), 0);
     // Every sink lands in exactly one of the four formats.
     int total = 0;
     for (uint16_t format : {uint16_t(0), kBeastCapSignalDbm, kBeastCapUATModeSClock, kBeastCapsFrameFormat}) {
-        total += SelectBeastGroup(sinks, protocols, caps, 6, S::kBeast, format, selected);
+        total += SelectBeastGroup(sinks, 6, S::kBeast, format, selected);
     }
     EXPECT_EQ(total, 4);
+}
+
+// Frames are built once in dBm, then their signal bytes are rewritten for the power byte feeds.
+TEST(BeastCapsSignalSwap, PowerByteFromDbmByteMatchesTheBuilders) {
+    uint8_t buf[2];
+    for (int rssi = -300; rssi <= 300; rssi++) {
+        WriteRSSIdBmAsBeastPowerLevel(buf, rssi);
+        uint8_t power = buf[0];
+        WriteRSSIdBmAsInt8(buf, rssi);
+        EXPECT_EQ(PowerByteFromDbmByte(buf[0]), power) << rssi;
+    }
+    EXPECT_EQ(PowerByteFromDbmByte(kBeastNoLevelDbmByte), kBeastNoLevelPowerByte);
+    // No power byte is 0x1a, so the rewrite never grows a frame; -66 dBm, the nearest, is 0x1b.
+    for (int rssi = -101; rssi <= -39; rssi++) {
+        EXPECT_EQ(WriteRSSIdBmAsBeastPowerLevel(buf, rssi), 1) << rssi;
+    }
+    WriteRSSIdBmAsBeastPowerLevel(buf, -66);
+    EXPECT_EQ(buf[0], 0x1b);
+}
+
+namespace {
+// The frames of one batch, built with these caps.
+std::string MixedBatch(const std::vector<int16_t>& levels, uint16_t caps) {
+    std::vector<uint8_t> uat_l(RawUATADSBPacket::kLongADSBMessageNumBytes, 0x1a);
+    std::vector<uint8_t> uat_s(RawUATADSBPacket::kShortADSBMessageNumBytes, 0x2b);
+    std::string out;
+    for (size_t i = 0; i < levels.size(); i++) {
+        int16_t dbm = levels[i];
+        switch (i % 6) {
+            case 0: out += ModeS(kLongMsg, kTs, dbm, caps); break;
+            case 1: out += ModeS("8d495066587f469bb826d21ad767", 0xABABFF1AFFFFFF1A, dbm, caps); break;
+            case 2: out += UATADSB(i & 8 ? uat_l : uat_s, 0x1a3456, dbm, caps); break;
+            case 3: out += UATUplink(kTs, dbm, caps); break;
+            case 4: out += RemoteID(kRemoteIDTransportBT4Legacy, dbm, kMAC, VectorPack(), caps); break;
+            case 5: out += ADSL(kADSLChannel868_2, kTs, dbm, 0x1a, caps); break;
+        }
+    }
+    return out;
+}
+
+std::string Rewrite(std::string hex, size_t slack, uint8_t (*map)(uint8_t)) {
+    std::vector<uint8_t> buf = Hex(hex);
+    size_t len = buf.size();
+    buf.resize(len + slack, 0xee);
+    uint16_t new_len = RewriteSignalBytes(buf.data(), len, buf.size(), map);
+    return new_len == 0 ? "refused" : ToHex(buf.data(), new_len);
+}
+
+std::string ToPower(std::string hex, size_t slack = 0) { return Rewrite(hex, slack, PowerByteFromDbmByte); }
+}  // namespace
+
+TEST(BeastCapsSignalSwap, ABatchEqualsThePowerByteBuild) {
+    // Every frame type, levels across the table and past it, no level, and +26 dBm: a dBm byte of 0x1a, escaped,
+    // whose power byte isn't, so the rest of the batch moves up a byte.
+    std::vector<int16_t> levels = {-87, INT16_MIN, 26, -66, -100, -40, -120, 0, 26, -74, -52, 127, -128, 26};
+    for (size_t n = 1; n <= levels.size(); n++) {
+        std::vector<int16_t> some(levels.begin(), levels.begin() + n);
+        EXPECT_EQ(ToPower(MixedBatch(some, kBeastCapSignalDbm)), MixedBatch(some, 0)) << n;
+        EXPECT_EQ(ToPower(MixedBatch(some, kBeastCapsFrameFormat)), MixedBatch(some, kBeastCapUATModeSClock)) << n;
+    }
+    // Random levels.
+    std::mt19937 rng(1111);
+    std::uniform_int_distribution<int> level(-130, 40);
+    for (int round = 0; round < 300; round++) {
+        std::vector<int16_t> some(1 + rng() % 40);
+        for (auto& l : some) l = rng() % 10 == 0 ? INT16_MIN : level(rng);
+        ASSERT_EQ(ToPower(MixedBatch(some, kBeastCapSignalDbm)), MixedBatch(some, 0)) << round;
+    }
+}
+
+// The patch is in place unless a signal byte changes length; then the rest is parked in the slack and copied back.
+TEST(BeastCapsSignalSwap, AnEscapedSignalByteMovesTheRest) {
+    // A 0x1a signal byte written where there was none (a power byte of 0x1a, if the table ever had one): each takes
+    // one byte of slack.
+    auto to_1a = +[](uint8_t b) -> uint8_t { return b == 0xa9 ? 0x1a : b; };  // -87 dBm -> 0x1a.
+    auto from_1a = +[](uint8_t b) -> uint8_t { return b == 0x1a ? 0xa9 : b; };
+    std::string plain = MixedBatch({-87, -60, -87, -87, -50, -87}, kBeastCapSignalDbm);
+    std::string escaped = MixedBatch({26, -60, 26, 26, -50, 26}, kBeastCapSignalDbm);
+    ASSERT_EQ(Hex(escaped).size(), Hex(plain).size() + 4);
+    EXPECT_EQ(Rewrite(plain, 4, to_1a), escaped);
+    EXPECT_EQ(Rewrite(plain, 100, to_1a), escaped);
+    EXPECT_EQ(Rewrite(plain, 3, to_1a), "refused");  // Not enough slack: the caller builds the frames again.
+    EXPECT_EQ(Rewrite(escaped, 0, from_1a), plain);  // Shrinking needs none.
+    // Both in one batch: shrinks first, then grows.
+    std::string mixed = MixedBatch({26, -87, -60}, kBeastCapSignalDbm);
+    auto swap = +[](uint8_t b) -> uint8_t { return b == 0x1a ? 0xa9 : (b == 0xa9 ? 0x1a : b); };
+    EXPECT_EQ(Rewrite(mixed, 0, swap), MixedBatch({-87, 26, -60}, kBeastCapSignalDbm));
+    // Nothing changes length: same bytes in place.
+    EXPECT_EQ(Rewrite(plain, 0, +[](uint8_t b) -> uint8_t { return b; }), plain);
+}
+
+TEST(BeastCapsSignalSwap, RefusesWhatIsNotABatchOfFrames) {
+    EXPECT_EQ(ToPower("1ae551818580"), "refused");               // A capabilities frame has no signal byte.
+    EXPECT_EQ(ToPower("331a"), "refused");                       // No frame start.
+    EXPECT_EQ(ToPower(ModeS(kShortMsg, kTs, -87, kBeastCapSignalDbm).substr(0, 12)), "refused");  // Cut short.
+    EXPECT_EQ(ToPower(ModeS(kShortMsg, kTs, -87, kBeastCapSignalDbm) + "1a"), "refused");  // A lone 0x1a at the end.
+    uint8_t buf[4] = {0};
+    EXPECT_EQ(RewriteSignalBytes(buf, 5, 4, PowerByteFromDbmByte), 0);  // len > buf_size.
 }
 
 // Remote ID frames from received packets (MAC order, unknown level, transports, bounds).

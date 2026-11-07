@@ -518,12 +518,8 @@ void CommsManager::IPWANTask(void* pvParameters) {
         LogWANQueueOverflows();
 
         uint16_t num_active_report_sinks = 0, num_remote_id_sinks = 0;
-        ReportSink active_report_sinks[SettingsManager::Settings::kMaxNumFeeds] = {0};
-        uint16_t active_report_caps[SettingsManager::Settings::kMaxNumFeeds] = {0};
-        ReportSink remote_id_sinks[SettingsManager::Settings::kMaxNumFeeds] = {0};
-        uint16_t remote_id_caps[SettingsManager::Settings::kMaxNumFeeds] = {0};
-        SettingsManager::ReportingProtocol active_reporting_protocols[SettingsManager::Settings::kMaxNumFeeds] = {
-            SettingsManager::ReportingProtocol::kNoReports};
+        ReportSinkInfo active_report_sinks[SettingsManager::Settings::kMaxNumFeeds];
+        ReportSinkInfo remote_id_sinks[SettingsManager::Settings::kMaxNumFeeds];
 
         // Maintain socket connections and build list of acive report sinks.
         for (uint16_t i = 0; i < SettingsManager::Settings::kMaxNumFeeds; i++) {
@@ -561,15 +557,9 @@ void CommsManager::IPWANTask(void* pvParameters) {
                 ReceiveFeedSocket(i);
                 if (!feed_sock_is_connected_[i]) continue;
                 // Socket is connected, add to active sinks.
-                uint16_t caps = feed_caps_[i].bits();
-                active_report_sinks[num_active_report_sinks] = i;
-                active_report_caps[num_active_report_sinks] = caps;
-                active_reporting_protocols[num_active_report_sinks] = settings_manager.settings.feed_protocols[i];
-                num_active_report_sinks++;
-                if (caps & BeastReporter::kBeastCapRemoteID) {
-                    remote_id_sinks[num_remote_id_sinks] = i;
-                    remote_id_caps[num_remote_id_sinks++] = caps;
-                }
+                ReportSinkInfo& sink = active_report_sinks[num_active_report_sinks++];
+                sink = {i, settings_manager.settings.feed_protocols[i], feed_caps_[i].bits()};
+                if (sink.beast_caps & BeastReporter::kBeastCapRemoteID) remote_id_sinks[num_remote_id_sinks++] = sink;
             }
         }
         feeds_take_remote_id_ = num_remote_id_sinks > 0;
@@ -599,11 +589,10 @@ void CommsManager::IPWANTask(void* pvParameters) {
         }
 
         // Update feeds with raw and digested reports.
-        if (!UpdateReporting(active_report_sinks, active_reporting_protocols, num_active_report_sinks,
-                             &reporting_composite_array, true, active_report_caps)) {
+        if (!UpdateReporting(active_report_sinks, num_active_report_sinks, &reporting_composite_array)) {
             CONSOLE_ERROR("CommsManager::IPWANTask", "Error during UpdateReporting for feeds.");
         }
-        if (!ReportRemoteID(remote_id_sinks, remote_id_caps, num_remote_id_sinks, reporting_composite_array)) {
+        if (!ReportRemoteID(remote_id_sinks, num_remote_id_sinks, reporting_composite_array)) {
             CONSOLE_ERROR("CommsManager::IPWANTask", "Error during ReportRemoteID.");
         }
     }
@@ -935,27 +924,36 @@ void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {
     }
 }
 
-bool CommsManager::ReportRemoteID(const ReportSink* sinks, const uint16_t* sink_caps, uint16_t num_sinks,
+bool CommsManager::ReportRemoteID(const ReportSinkInfo* sinks, uint16_t num_sinks,
                                   const CompositeArray::RawPackets& packets) {
     if (num_sinks == 0 || packets.header == nullptr || packets.header->num_remote_id_packets == 0) {
         return true;
     }
+    uint16_t num_dbm_sinks = 0;
+    for (uint16_t j = 0; j < num_sinks; j++) {
+        if (sinks[j].beast_caps & BeastReporter::kBeastCapSignalDbm) num_dbm_sinks++;
+    }
+    const bool any_power_sinks = num_dbm_sinks < num_sinks;
+    // Build in dBm if anyone takes it; the power byte feeds get the same frame with its signal byte rewritten.
+    const uint16_t caps = num_dbm_sinks > 0 ? BeastReporter::kBeastCapSignalDbm : 0;
     // One IPWANTask, so one buffer; kept off its stack.
     static uint8_t frame_buf[BeastReporter::kRemoteIDBeastFrameMaxLenBytes];
-    static constexpr uint16_t kSignalFormats[] = {0, BeastReporter::kBeastCapSignalDbm};
     bool ret = true;
-    // One build per signal byte format in use.
-    for (uint16_t format : kSignalFormats) {
-        for (uint16_t i = 0; i < packets.header->num_remote_id_packets; i++) {
-            uint16_t frame_len = 0;
+    for (uint16_t i = 0; i < packets.header->num_remote_id_packets; i++) {
+        uint16_t frame_len = BeastReporter::BuildRemoteIDBeastFrame(frame_buf, packets.remote_id_packets[i], caps);
+        if (frame_len == 0) continue;  // Unknown transport or ODID bounds: nothing a decoder could bound.
+        // Two passes over the feeds: the dBm ones while the frame holds dBm, then the rest.
+        for (uint16_t pass = 0; pass < 2; pass++) {
+            const bool dbm_pass = pass == 0;
+            if (dbm_pass ? num_dbm_sinks == 0 : !any_power_sinks) continue;
+            if (!dbm_pass && caps) {
+                frame_len = BeastReporter::ConvertSignalDbmToPowerByte(frame_buf, frame_len, sizeof(frame_buf));
+                if (frame_len == 0) break;  // Can't happen: the buffer holds the largest frame.
+            }
             for (uint16_t j = 0; j < num_sinks; j++) {
-                if ((sink_caps[j] & BeastReporter::kBeastCapSignalDbm) != format) continue;
-                if (!feed_sock_is_connected_[sinks[j]]) continue;  // Closed by an earlier send.
-                if (frame_len == 0) {
-                    frame_len = BeastReporter::BuildRemoteIDBeastFrame(frame_buf, packets.remote_id_packets[i], format);
-                    if (frame_len == 0) break;  // Unknown transport or ODID bounds: nothing a decoder could bound.
-                }
-                ret &= SendBuf(sinks[j], reinterpret_cast<const char*>(frame_buf), frame_len);
+                if (((sinks[j].beast_caps & BeastReporter::kBeastCapSignalDbm) != 0) != dbm_pass) continue;
+                if (!feed_sock_is_connected_[sinks[j].sink]) continue;  // Closed by an earlier send.
+                ret &= SendBuf(sinks[j].sink, reinterpret_cast<const char*>(frame_buf), frame_len);
             }
         }
     }

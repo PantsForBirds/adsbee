@@ -169,6 +169,30 @@ inline uint16_t WriteSignalByte(uint8_t *buf, int16_t rssi_dbm, uint16_t caps) {
 }
 
 /**
+ * Power byte for an int8 dBm signal byte: the byte the builders write without kBeastCapSignalDbm for the same level.
+ * Exact, since the dBm byte holds every level the 61-entry table tells apart.
+ */
+uint8_t PowerByteFromDbmByte(uint8_t dbm_byte);
+
+/**
+ * Rewrites the signal byte of every frame in a run of Beast frames (0x32, 0x33, 0xec, 0xed, 0xef) in place, so that
+ * frames built once for one signal format can be sent in the other. When a new byte takes a different number of bytes
+ * escaped, the rest of the run is moved to the end of buf and copied back behind it, so buf_size - len bytes of slack
+ * must cover any growth.
+ * @param[in,out] buf Frames.
+ * @param[in] len Bytes of frames in buf.
+ * @param[in] buf_size Size of buf.
+ * @param[in] new_signal_byte Maps a signal byte to the new one.
+ * @retval New length, or 0 if buf holds anything else or the growth doesn't fit: then build the frames again.
+ */
+uint16_t RewriteSignalBytes(uint8_t *buf, uint16_t len, uint16_t buf_size, uint8_t (*new_signal_byte)(uint8_t));
+
+// Turns frames built with kBeastCapSignalDbm into the frames the builders write without it. See RewriteSignalBytes.
+inline uint16_t ConvertSignalDbmToPowerByte(uint8_t *buf, uint16_t len, uint16_t buf_size) {
+    return RewriteSignalBytes(buf, len, buf_size, PowerByteFromDbmByte);
+}
+
+/**
  * Converts a DecodedModeSPacket payload to a data buffer in Mode S Beast output format.
  * @param[out] beast_frame_buf Pointer to byte buffer to fill with payload.
  * @param[in] packet Reference to DecodedModeSPacket to convert.
@@ -341,17 +365,18 @@ class CapsSession {
 
 /**
  * Picks the sinks of one Beast group: those with this protocol and these frame format bits (kBeastCapsFrameFormat).
- * @param[in] sink_caps Confirmed bits per sink, or nullptr if no sink has any.
- * @param[out] selected At least num_sinks entries.
+ * @param[in] sinks Sink descriptors with .sink, .protocol and .beast_caps (CommsManager::ReportSinkInfo).
+ * @param[out] selected The .sink of each selected descriptor; at least num_sinks entries.
  * @retval Number of sinks selected.
  */
-template <typename Protocol, typename Sink>
-uint16_t SelectBeastGroup(const Sink *sinks, const Protocol *protocols, const uint16_t *sink_caps, uint16_t num_sinks,
-                          Protocol protocol, uint16_t frame_format, Sink *selected) {
+template <typename SinkInfo, typename Protocol, typename Sink>
+uint16_t SelectBeastGroup(const SinkInfo *sinks, uint16_t num_sinks, Protocol protocol, uint16_t frame_format,
+                          Sink *selected) {
     uint16_t num_selected = 0;
     for (uint16_t i = 0; i < num_sinks; i++) {
-        uint16_t format = sink_caps ? (sink_caps[i] & kBeastCapsFrameFormat) : 0;
-        if (protocols[i] == protocol && format == frame_format) selected[num_selected++] = sinks[i];
+        if (sinks[i].protocol == protocol && (sinks[i].beast_caps & kBeastCapsFrameFormat) == frame_format) {
+            selected[num_selected++] = sinks[i].sink;
+        }
     }
     return num_selected;
 }

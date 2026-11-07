@@ -103,6 +103,107 @@ uint16_t BeastReporter::WriteRSSIdBmAsInt8(uint8_t *buf, int16_t rssi_dbm) {
     return WriteBufferWithBeastEscapes(buf, &dbm_byte, 1);
 }
 
+uint8_t BeastReporter::PowerByteFromDbmByte(uint8_t dbm_byte) {
+    if (dbm_byte == kBeastNoLevelDbmByte) return kBeastNoLevelPowerByte;
+    uint8_t power_byte[2];
+    WriteRSSIdBmAsBeastPowerLevel(power_byte, static_cast<int8_t>(dbm_byte));
+    return power_byte[0];
+}
+
+static constexpr uint16_t kNoSignalByte = UINT16_MAX;
+
+/**
+ * Finds the signal byte of the frame that starts at buf[r]: after 0x1a, the type, a letter for 0xec / 0xed / 0xef,
+ * and 6 timestamp bytes.
+ * @retval Offset of the signal byte (its first byte if escaped), or kNoSignalByte if no such frame starts at r.
+ */
+static uint16_t FindSignalByte(const uint8_t *buf, uint16_t r, uint16_t end) {
+    using namespace BeastReporter;
+    if (end - r < 2 || buf[r] != kBeastEscapeChar) return kNoSignalByte;
+    switch (buf[r + 1]) {
+        case kBeastFrameTypeModeSShort:
+        case kBeastFrameTypeModeSLong:
+            r += 2;
+            break;
+        case kBeastFrameTypeUAT:
+        case kBeastFrameTypeADSL:
+        case kBeastFrameTypeRemoteID:
+            r += 3;
+            break;
+        default:
+            return kNoSignalByte;
+    }
+    for (uint16_t i = 0; i <= kBeastMLATTimestampNumBytes; i++) {  // 6 timestamp bytes, then the signal byte.
+        if (r >= end) return kNoSignalByte;
+        if (buf[r] == kBeastEscapeChar) {
+            if (r + 1 >= end || buf[r + 1] != kBeastEscapeChar) return kNoSignalByte;
+            if (i == kBeastMLATTimestampNumBytes) return r;
+            r += 2;
+        } else {
+            if (i == kBeastMLATTimestampNumBytes) return r;
+            r++;
+        }
+    }
+    return kNoSignalByte;
+}
+
+// Offset of the next 0x1a from r that isn't an escaped pair (the next frame, or a stray 0x1a), or end.
+static uint16_t FindNextFrame(const uint8_t *buf, uint16_t r, uint16_t end) {
+    while (r < end) {
+        const uint8_t *escape = static_cast<const uint8_t *>(memchr(buf + r, BeastReporter::kBeastEscapeChar, end - r));
+        if (escape == nullptr) return end;
+        r = escape - buf;
+        if (r + 1 >= end || buf[r + 1] != BeastReporter::kBeastEscapeChar) return r;
+        r += 2;
+    }
+    return end;
+}
+
+uint16_t BeastReporter::RewriteSignalBytes(uint8_t *buf, uint16_t len, uint16_t buf_size,
+                                           uint8_t (*new_signal_byte)(uint8_t)) {
+    if (len > buf_size) return 0;
+    // In place, frame by frame, while no signal byte changes length.
+    uint16_t r = 0, signal = 0, old_len = 0, new_len = 0;
+    uint8_t new_byte = 0;
+    while (true) {
+        if (r >= len) return len;
+        signal = FindSignalByte(buf, r, len);
+        if (signal == kNoSignalByte) return 0;
+        old_len = buf[signal] == kBeastEscapeChar ? 2 : 1;
+        new_byte = new_signal_byte(buf[signal]);
+        new_len = new_byte == kBeastEscapeChar ? 2 : 1;
+        if (new_len != old_len) break;
+        buf[signal] = new_byte;
+        if (old_len == 2) buf[signal + 1] = new_byte;
+        r = FindNextFrame(buf, signal + old_len, len);
+    }
+    // From this signal byte on, the bytes move: park the rest at the end of buf and copy it back behind the new bytes.
+    uint16_t w = signal;
+    uint16_t rest = len - (signal + old_len);
+    r = buf_size - rest;
+    memmove(buf + r, buf + signal + old_len, rest);
+    while (true) {
+        if (w + new_len > r) return 0;  // More growth than slack.
+        buf[w++] = new_byte;
+        if (new_len == 2) buf[w++] = new_byte;
+        // The rest of this frame, then the next one's header and timestamp.
+        uint16_t next = FindNextFrame(buf, r, buf_size);
+        if (next < buf_size) {
+            signal = FindSignalByte(buf, next, buf_size);
+            if (signal == kNoSignalByte) return 0;
+        } else {
+            signal = buf_size;
+        }
+        memmove(buf + w, buf + r, signal - r);
+        w += signal - r;
+        if (signal == buf_size) return w;
+        old_len = buf[signal] == kBeastEscapeChar ? 2 : 1;
+        new_byte = new_signal_byte(buf[signal]);
+        new_len = new_byte == kBeastEscapeChar ? 2 : 1;
+        r = signal + old_len;
+    }
+}
+
 uint16_t BeastReporter::BuildModeSBeastFrame(uint8_t *beast_frame_buf, const DecodedModeSPacket &packet,
                                              uint16_t caps) {
     uint8_t packet_buf[DecodedModeSPacket::kMaxPacketLenWords32 * kBytesPerWord];
