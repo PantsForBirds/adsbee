@@ -147,3 +147,26 @@ TEST(ADSLAircraft, RawFrameFromTheSharedSubGHzSlot) {
     ASSERT_EQ(len, BuildRawUATADSBFrame(uat, uat_line));
     EXPECT_EQ(std::string(shared_line, 6), "#UAT*-");
 }
+
+TEST(ADSLAircraft, NotInTheSwarmRegistry) {
+    static_assert(AircraftDictionary::ProtocolOf<ADSLAircraft>() == kNoSwarmProtocol);
+    set_time_since_boot_ms(1000);
+    AircraftDictionary dict;
+    SwarmRecorder recorder;
+    dict.SetSwarmRecorder(&recorder);
+    dict.SetReferencePosition(37.4f, -122.0f);
+    for (int i = 0; i < 3; i++) {
+        inc_time_since_boot_ms(500);
+        ASSERT_TRUE(dict.IngestADSLPacket(Packet("traffic_v0_k0")));
+        dict.Update(get_time_since_boot_ms());
+    }
+    ADSLAircraft* ac = dict.GetAircraftPtr<ADSLAircraft>(
+        ADSLAircraft::AddressToUID(0xBEE000, DecodedADSLPacket::kAddressMappingICAO), false);
+    ASSERT_NE(ac, nullptr);
+    EXPECT_NE(ac->distance_m, Aircraft::kDistanceUnknown);  // Would be recorded if ADS-L had a registry entry.
+    EXPECT_EQ(dict.metrics.num_adsl_aircraft, 1);
+    EXPECT_TRUE(recorder.RangeEmpty());
+    EXPECT_EQ(recorder.stats.aircraft_max, 0);
+    EXPECT_EQ(recorder.UniqueAircraft(), 0);
+    dict.SetSwarmRecorder(nullptr);
+}
