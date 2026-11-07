@@ -8,6 +8,7 @@
 #include "device_info.hh"
 #include "esp32_firmware_check.hh"
 #include "esp_app_desc.h"
+#include "esp32_mlat_sync.hh"
 #include "esp_system.h"
 #include "network_time.hh"
 #include "pico.hh"               // pico_ll.ForceBlinkNetworkLED() for kAddrLEDBlink.
@@ -19,7 +20,8 @@
 #endif
 #elif defined(ON_TI)
 #include "cpu_utils.hh"
-#include "pico.hh"  // pico_ll.BlinkSubGLED() for kAddrLEDBlink.
+#include "pico.hh"           // pico_ll.BlinkSubGLED() for kAddrLEDBlink.
+#include "sub_ghz_radio.hh"  // subg_radio for kAddrSyncPulse.
 #endif
 
 #include "comms.hh"
@@ -52,6 +54,16 @@ static bool CheckObjectBounds(const char* tag, const char* object_name, uint16_t
                       object_name);
         return false;
     }
+    return true;
+}
+
+static bool ReadSyncPulse(const uint8_t* buf, uint16_t buf_len, uint16_t offset, ObjectDictionary::SyncPulse& pulse) {
+    if (buf_len != sizeof(pulse) || offset != 0) {
+        CONSOLE_ERROR("ObjectDictionary::SetBytes", "Buffer length %d and offset %d for writing SyncPulse must be %d and 0.",
+                      buf_len, offset, sizeof(pulse));
+        return false;
+    }
+    memcpy(&pulse, buf, sizeof(pulse));
     return true;
 }
 
@@ -221,7 +233,19 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
             }
             break;
         }
+        case kAddrSyncPulse: {
+            SyncPulse pulse;
+            if (!ReadSyncPulse(buf, buf_len, offset, pulse)) return false;
+            esp32_mlat_sync.HandleSyncPulse(pulse.mlat_48mhz_counts, pulse.pulse_num);
+            break;
+        }
 #elif defined(ON_TI)
+        case kAddrSyncPulse: {
+            SyncPulse pulse;
+            if (!ReadSyncPulse(buf, buf_len, offset, pulse)) return false;
+            subg_radio.HandleSyncPulse(pulse);
+            break;
+        }
         case kAddrLEDBlink: {
             if (buf_len != sizeof(uint32_t) || offset != 0) {
                 CONSOLE_ERROR("ObjectDictionary::SetBytes",
@@ -628,6 +652,7 @@ void ObjectDictionary::UpdateDeviceStatus() {
     // Bring UTC back to timestamp_ms.
     device_status.network_utc_ms_of_day =
         (utc_ms_of_day + kMsPerDay - (utc_local_ms - device_status.timestamp_ms)) % kMsPerDay;
+    device_status.mlat_sync_flags = esp32_mlat_sync.GetMLATSyncFlags();
 #elif defined(ON_TI)
     device_status = {
         .timestamp_ms = get_time_since_boot_ms(),
@@ -644,6 +669,7 @@ void ObjectDictionary::UpdateDeviceStatus() {
         .num_valid_uat_adsb_packets = metrics.num_valid_uat_adsb_packets,
         .num_raw_uat_uplink_packets = metrics.num_raw_uat_uplink_packets,
         .num_valid_uat_uplink_packets = metrics.num_valid_uat_uplink_packets};
+    device_status.mlat_sync_flags = subg_radio.GetMLATSyncFlags();
     // Reset metrics after reading.
     metrics = {0};
 #endif

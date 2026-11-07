@@ -211,7 +211,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     bool Update();
     // Poll sooner than the default interval while UAT packets are arriving, so the CC1312 queues don't fill up.
     bool UpdateIsDue() override {
-        return more_raw_packets_pending_ ||
+        return more_raw_packets_pending_ || SyncPulseDue() ||
                (raw_packets_arriving_ &&
                 get_time_since_boot_ms() - last_update_timestamp_ms_ >= kRawPacketPollIntervalMs);
     }
@@ -511,6 +511,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
      * @param[in] enabled True to enable the CC1312, false to disable.
      */
     inline void SetEnableState(SettingsManager::EnableState enabled) {
+        BlockSyncPulses();  // Every reset and bootloader entry comes through here.
         if (enabled == SettingsManager::EnableState::kEnableStateExternal) {
             gpio_set_dir(config_.enable_pin, GPIO_IN);
             gpio_set_pulls(config_.enable_pin, true, false);  // Pull pin up.
@@ -558,7 +559,24 @@ class CC1312 : public SPICoprocessorSlaveInterface {
 
     ObjectDictionary::SubGHzDeviceStatus device_status;
 
+    /**
+     * SYNC (DIO5) is also the CC1312 bootloader backdoor (high at reset = bootloader), so this driver gates
+     * ADSBee::sync_pulse_service: pulses run once the application has answered a status read, or while the CC1312 is
+     * held disabled (AllowSyncPulsesInReset()), and are blocked before any reset release, bootloader session or flash
+     * and after a failed status read. Every reset and bootloader entry comes through SetEnableState(), which blocks
+     * first.
+     */
+    // Stops pulses and returns once none is in flight.
+    void BlockSyncPulses();
+    // Allows pulses if the CC1312 is held in reset (disabled): its ROM samples the backdoor only after reset release,
+    // and every release goes through SetEnableState(), which blocks pulses first. Call only where it stays disabled:
+    // EnterBootloader() passes through the disabled state with SYNC held high as the backdoor.
+    void AllowSyncPulsesInReset();
+
    private:
+    // True if a sync pulse went out that the CC1312 hasn't been told about.
+    bool SyncPulseDue() const;
+
     CC1312Config config_;
     SettingsManager::EnableState enabled_ = SettingsManager::EnableState::kEnableStateDisabled;
     bool enable_is_external_ = false;

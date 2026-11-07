@@ -69,7 +69,10 @@ class RawUATADSBPacket {
 
     int16_t sigs_dbm = INT16_MIN;          // Signal strength, in dBm.
     int16_t sigq_bits = INT16_MIN;         // Signal quality (num bits corrected by FEC, 0 = best).
-    uint64_t mlat_48mhz_64bit_counts = 0;  // High resolution MLAT counter.
+    // Receive time (sync word detection) in 48 MHz MLAT counts, on the Mode S time base, or 0 (none: the sub-GHz radio
+    // isn't synced yet). The radio timer is converted with MLATTimeSync on the receiving chip (CC1312 at receive, m1421
+    // at ingest).
+    uint64_t mlat_48mhz_64bit_counts = 0;
 };
 
 /**
@@ -385,7 +388,10 @@ class RawUATUplinkPacket {
 
     int16_t sigs_dbm = INT16_MIN;          // Signal strength, in dBm.
     int16_t sigq_bits = INT16_MIN;         // Signal quality (num bits corrected by FEC, 0 = best).
-    uint64_t mlat_48mhz_64bit_counts = 0;  // High resolution MLAT counter.
+    // Receive time (sync word detection) in 48 MHz MLAT counts, on the Mode S time base, or 0 (none: the sub-GHz radio
+    // isn't synced yet). The radio timer is converted with MLATTimeSync on the receiving chip (CC1312 at receive, m1421
+    // at ingest).
+    uint64_t mlat_48mhz_64bit_counts = 0;
 };
 
 class DecodedUATUplinkPacket {

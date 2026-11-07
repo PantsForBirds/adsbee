@@ -45,6 +45,9 @@ class RawRemoteIDPacket {
         return (payload[0] >> 4) == kMessageTypePacked;
     }
 
+    // Receive time in 48 MHz MLAT counts, on the Mode S time base, or 0 (none: the ESP32 isn't synced yet). WiFi: from
+    // the frame's receive timestamp. BLE: when the scan callback ran, about 1 ms after the air time.
+    uint64_t mlat_48mhz_64bit_counts = 0;
     uint32_t received_timestamp_ms = 0;  // Local receiver timestamp when the advertisement was received.
     uint8_t source_mac[6] = {0};         // Transmitter MAC / BLE address. Used as the de-dup key and provisional UID.
     int8_t rssi_dbm = 0;                 // Received signal strength, in dBm (0 if unknown).

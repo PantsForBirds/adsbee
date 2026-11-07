@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "comms.hh"  // Logging.
+#include "esp32_mlat_sync.hh"
 #include "esp_wifi.h"
 #include "hal.hh"  // get_time_since_boot_ms.
 #include "remote_id_tx.hh"
@@ -35,6 +36,9 @@ bool s_sniffer_running = false;
 void PromiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_MGMT) return;
     const wifi_promiscuous_pkt_t* pkt = static_cast<const wifi_promiscuous_pkt_t*>(buf);
+    // Every frame keeps the MAC clock offset current.
+    uint64_t mlat_48mhz_counts = esp32_mlat_sync.WiFiRxToMLAT48MHzCounts(
+        pkt->rx_ctrl.timestamp, pkt->rx_ctrl.sig_mode == 0 ? pkt->rx_ctrl.rate : 0xFF, pkt->rx_ctrl.sig_len);
     const uint8_t* frame = pkt->payload;
     uint16_t frame_len = pkt->rx_ctrl.sig_len;
     if (frame_len < kBeaconTaggedParamsOffset) return;
@@ -57,6 +61,7 @@ void PromiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
             uint8_t odid_len = ie_len - kODIDPayloadOffsetInIE;
             if (odid_len > 0 && odid_len <= RawRemoteIDPacket::kMaxPayloadLenBytes) {
                 RawRemoteIDPacket packet;
+                packet.mlat_48mhz_64bit_counts = mlat_48mhz_counts;
                 packet.received_timestamp_ms = get_time_since_boot_ms();
                 memcpy(packet.source_mac, sa, 6);
                 packet.rssi_dbm = pkt->rx_ctrl.rssi;
