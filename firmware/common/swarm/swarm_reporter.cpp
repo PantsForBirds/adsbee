@@ -67,7 +67,7 @@ class Writer {
 
 }  // namespace
 
-// Reads {"next_report_s": N, "firmware": {"tag": "..", "channel": ".."} | null}.
+// Reads {"next_report_s": N, "firmware": {"tag": "..", "channel": ".."} | null, "protocols": ["mode_s", ..]}.
 class SwarmReporter::ResponseReader : public AutoUpdatePlatform::BodySink, public JsonScanner::Handler {
    public:
     bool OnBody(int status, const uint8_t* data, size_t len) override {
@@ -77,26 +77,38 @@ class SwarmReporter::ResponseReader : public AutoUpdatePlatform::BodySink, publi
     void OnValue(const char* key, const char* value, bool is_string, uint8_t depth) override {
         if (depth == 1 && strcmp(key, "next_report_s") == 0 && !is_string) {
             next_report_s = strtoul(value, nullptr, 10);
+        } else if (depth == 2 && in_protocols_ && is_string) {
+            uint8_t p = SwarmProtocolIndex(value);
+            if (p != kNoSwarmProtocol) protocols |= 1u << p;  // Names this firmware doesn't know are skipped.
         } else if (depth == 2 && in_firmware_ && is_string) {
             if (strcmp(key, "tag") == 0) CopyStr(tag, sizeof(tag), value);
             if (strcmp(key, "channel") == 0) CopyStr(channel, sizeof(channel), value);
         }
     }
     void OnOpen(char bracket, const char* key, uint8_t depth) override {
-        if (depth == 2) in_firmware_ = bracket == '{' && strcmp(key, "firmware") == 0;
+        if (depth != 2) return;
+        in_firmware_ = bracket == '{' && strcmp(key, "firmware") == 0;
+        in_protocols_ = bracket == '[' && strcmp(key, "protocols") == 0;
+        if (in_protocols_) {
+            has_protocols = true;
+            protocols = 0;
+        }
     }
     void OnClose(char bracket, uint8_t depth) override {
-        if (depth == 2) in_firmware_ = false;
+        if (depth == 2) in_firmware_ = in_protocols_ = false;
     }
     bool complete() const { return scanner_.complete(); }
 
     uint32_t next_report_s = 0;
     char tag[AutoUpdatePlatform::kVersionMaxLen + 16] = {0};
     char channel[16] = {0};
+    bool has_protocols = false;
+    uint32_t protocols = 0;
 
    private:
     JsonScanner scanner_{*this};
     bool in_firmware_ = false;
+    bool in_protocols_ = false;
 };
 
 SwarmReporter::SwarmReporter(SwarmPlatform& platform, const char* version, const Config& config, uint32_t first_seq)
@@ -166,7 +178,7 @@ void SwarmReporter::Restart(SwarmRecorder& live, uint32_t now_ms) {
 void SwarmReporter::TakePeriod(SwarmRecorder& live, uint32_t now_ms, const DeviceState& state) {
     bool range_valid = state.range_valid;
     if (!have_pending_) {
-        pending_ = live;
+        pending_ = static_cast<SwarmRecorder&&>(live);  // Takes live's heap maps; Restart() clears live.
         pending_start_s_ = live_start_s_;
         have_pending_ = true;
     } else {
@@ -212,29 +224,59 @@ size_t SwarmReporter::BuildBody(char* buf, size_t buf_size, const AutoUpdatePlat
         w.Safe(state_.rx_position_source);
         w.Printf("\"},");
     }
-    const SwarmRecorder::Stats& stats = pending_.stats;
-    w.Printf(
-        "\"stats\":{\"modes_valid\":%lu,\"es_valid\":%lu,\"uat_adsb\":%lu,\"uat_uplink\":%lu,\"aircraft_max\":%u,"
-        "\"aircraft_unique\":%u}",
-        (unsigned long)stats.modes_valid, (unsigned long)stats.es_valid, (unsigned long)stats.uat_adsb,
-        (unsigned long)stats.uat_uplink, (unsigned)stats.aircraft_max, (unsigned)pending_.UniqueAircraft());
+    // Without listen time (it was never sampled) every v1 stats key goes, as in v1. With it, only protocols listened
+    // to or heard: "listen_s" seconds, v1 "stats" keys, "frames" for the rest (Mode S's one total included).
+    const bool listen_known = pending_.listen_known;
+    bool first = true;
+    if (listen_known) {
+        w.Printf("\"listen_s\":{");
+        for (uint8_t p = 0; p < kNumSwarmProtocols; p++) {
+            if (pending_.listen_s[p] == 0) continue;
+            w.Printf("%s\"%s\":%lu", first ? "" : ",", kSwarmProtocols[p].name, (unsigned long)pending_.listen_s[p]);
+            first = false;
+        }
+        w.Printf("},");
+    }
+    w.Printf("\"stats\":{");
+    for (uint8_t p = 0; p < kNumSwarmProtocols; p++) {
+        if (listen_known && !pending_.Reported(p)) continue;
+        for (const SwarmProtocol::V1Stat& v1 : kSwarmProtocols[p].v1_stats) {
+            if (v1.key) w.Printf("\"%s\":%lu,", v1.key, (unsigned long)(pending_.stats.*v1.field));
+        }
+    }
+    w.Printf("\"aircraft_max\":%u,\"aircraft_unique\":%u}", (unsigned)pending_.stats.aircraft_max,
+             (unsigned)pending_.UniqueAircraft());
+    // "frames": protocols counted without v1 keys. Without listen time, the v1 ones (Mode S) always, as v1 sent them.
+    first = true;
+    for (uint8_t p = 0; p < kNumSwarmProtocols; p++) {
+        const SwarmProtocol& info = kSwarmProtocols[p];
+        if (info.v1_stats[0].key || !info.counts_frames) continue;
+        if (listen_known ? !pending_.Reported(p) : !(kSwarmV1ProtocolMask & (1u << p))) continue;
+        w.Printf("%s\"%s\":%lu", first ? ",\"frames\":{" : ",", info.name, (unsigned long)pending_.frames[p]);
+        first = false;
+    }
+    if (!first) w.Printf("}");
     // Range only from a fixed or GNSS position that every merged period had, and not when too much was dropped.
     if (!state_.rx_position_valid || !state_.range_valid) {
         w.Printf(",\"range_withheld\":\"no_position\"");
     } else if (pending_.RangeImplausible()) {
-        w.Printf(",\"range_withheld\":\"implausible\",\"range_dropped\":%lu", (unsigned long)pending_.guard.num_dropped);
+        w.Printf(",\"range_withheld\":\"implausible\",\"range_dropped\":%lu",
+                 (unsigned long)(pending_.guard.num_dropped + pending_.guard.num_no_map));
     } else {
-        w.Printf(",\"range_dropped\":%lu,\"ranges\":{", (unsigned long)pending_.guard.num_dropped);
-        // One map per protocol with data; none at all gives an empty object.
+        w.Printf(",\"range_dropped\":%lu,\"ranges\":{",
+                 (unsigned long)(pending_.guard.num_dropped + pending_.guard.num_no_map));
+        // One map per protocol with data that the server takes; none at all gives an empty object.
         uint8_t bitmap[RangeMap::kBitmapLenBytes];
         uint8_t values[RangeMap::kNumBins];
-        bool first = true;
-        for (uint8_t p = 0; p < SwarmRecorder::kNumProtocols; p++) {
-            uint16_t num_values = pending_.ranges[p].Encode(bitmap, values);
+        first = true;
+        for (uint8_t p = 0; p < kNumSwarmProtocols; p++) {
+            const RangeMap* map = pending_.ranges.Find(p);
+            if (map == nullptr || !(accepted_protocols_ & (1u << p))) continue;
+            uint16_t num_values = map->Encode(bitmap, values);
             if (num_values == 0) continue;
             w.Printf("%s\"%s\":{\"sectors\":%u,\"bands\":%u,\"unit_m\":%lu,\"changed\":\"", first ? "" : ",",
-                     SwarmRecorder::kProtocolNames[p], RangeMap::kNumSectors, RangeMap::kNumBands,
-                     (unsigned long)SwarmRecorder::kProtocolUnitMeters[p]);
+                     kSwarmProtocols[p].name, RangeMap::kNumSectors, RangeMap::kNumBands,
+                     (unsigned long)kSwarmProtocols[p].unit_m);
             first = false;
             w.Base64(bitmap, sizeof(bitmap));
             w.Printf("\",\"max\":\"");
@@ -319,6 +361,7 @@ uint32_t SwarmReporter::Send(const char* server, const char* token) {
             uint32_t s = reader->next_report_s ? reader->next_report_s : config_.period_s;
             period_s_ = s < config_.min_period_s ? config_.min_period_s : s > config_.max_period_s ? config_.max_period_s : s;
             platform_.SetFirmwareTarget(reader->tag[0] ? reader->tag : nullptr, reader->channel);
+            accepted_protocols_ = reader->has_protocols ? reader->protocols : kSwarmV1ProtocolMask;
             have_pending_ = false;
             seq_++;
             num_failures_ = 0;
