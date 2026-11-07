@@ -40,7 +40,7 @@ constexpr uint16_t kUATUplinkBeastFrameMaxLenBytes = 1 /* Frame Type */ + 1 /* U
                                                      2 * RawUATUplinkPacket::kUplinkMessageNumBytes;  // [Bytes]
 
 /**
- * Remote ID Packet Format (ADSBee Beast extensions (2026-11-06), feeds that confirmed kBeastCapRemoteID)
+ * Remote ID Packet Format (ADSBee Beast extensions (2026-11-06), feeds that agreed on kBeastCapRemoteID)
  *
  * 0x1a | 0xef | transport letter (no escapes) | timestamp | signal | source MAC | ODID message or pack
  * The ODID bytes bound the frame: one 25-byte message, or a pack of 3 + 25 * n bytes (n = 1-9).
@@ -51,7 +51,7 @@ constexpr uint16_t kRemoteIDBeastFrameMaxLenBytes =
 constexpr uint8_t kRemoteIDMaxMessagesInPack = 9;
 
 /**
- * ADS-L Packet Format (ADSBee Beast extensions (2026-11-06), feeds that confirmed kBeastCapADSL)
+ * ADS-L Packet Format (ADSBee Beast extensions (2026-11-06), feeds that agreed on kBeastCapADSL)
  *
  * 0x1a | 0xed | channel letter (no escapes) | timestamp | signal | repaired erasures | L | L on-air bytes
  * The on-air bytes follow the sync word: length byte L (1-31), then header, data and CRC.
@@ -62,27 +62,27 @@ constexpr uint16_t kADSLBeastFrameMaxLenBytes = 1 /* 0x1a */ + 1 /* Frame Type *
                                                      1 /* L */ + kADSLMaxOnAirLenBytes);  // [Bytes]
 constexpr uint8_t kADSLRepairedUnknown = 0xff;
 
-// Signal byte with no level: power byte mode, and int8 dBm mode (kBeastCapSignalDbm).
+// Signal byte with no level. The signal byte of every frame type is the Beast power byte.
 constexpr uint8_t kBeastNoLevelPowerByte = 0x00;
-constexpr uint8_t kBeastNoLevelDbmByte = 0x80;
 
 /**
- * Capabilities check (ADSBee Beast extensions (2026-11-06), 0xe5). Every TCP Beast feed sends a query right after 0xe4. A server
- * that answers within kBeastCapsAnswerTimeoutMs gets a confirm, then the agreed frames; any other server gets plain
- * Beast.
+ * Capabilities check (ADSBee Beast extensions (2026-11-06), 0xe5). Every TCP Beast feed sends a query right after 0xe4.
+ * A server that answers within kBeastCapsAnswerTimeoutMs gets the agreed frames (query bits AND answer bits) from the
+ * moment the answer is read; any other server gets plain Beast.
  *
- * 0x1a | 0xe5 | 'Q' / 'A' / 'C' | 0x80 | version | 0x80 | bits 0-6 | 0x80 | bits 7-13. Never contains 0x1a.
+ * 0x1a | 0xe5 | 'Q' / 'A' | 0x80 | version | 0x80 | bits 0-6 | 0x80 | bits 7-13. Never contains 0x1a.
+ * Bit 0 is reserved (was dBm signal levels): never set, ignored in an answer.
  */
-constexpr uint16_t kBeastCapSignalDbm = 1 << 0;      // Signal byte of every frame is int8 dBm.
 constexpr uint16_t kBeastCapADSL = 1 << 1;           // 0xed ADS-L frames.
 constexpr uint16_t kBeastCapRemoteID = 1 << 2;       // 0xef Remote ID frames.
 constexpr uint16_t kBeastCapUATModeSClock = 1 << 3;  // 0xec with upper-case S / L / U: timestamp on the Mode S clock.
-constexpr uint16_t kBeastCapsKnown = kBeastCapSignalDbm | kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;
+constexpr uint16_t kBeastCapsKnown = kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;
 // Bits this firmware may put in a query. kBeastCapADSL waits for ADS-L receive (#409), kBeastCapUATModeSClock for UAT
 // timestamps on the Mode S clock (#428); their writers are ready.
-constexpr uint16_t kBeastCapsSendable = kBeastCapSignalDbm | kBeastCapRemoteID;
-// Bits that change the bytes of frames every Beast feed gets. Feeds are grouped by these, one batch per group.
-constexpr uint16_t kBeastCapsFrameFormat = kBeastCapSignalDbm | kBeastCapUATModeSClock;
+constexpr uint16_t kBeastCapsSendable = kBeastCapRemoteID;
+// Every feed of one protocol gets the same Beast frames, built once. Upper-case UAT would change them per feed.
+static_assert(!(kBeastCapsSendable & kBeastCapUATModeSClock),
+              "Offering upper-case UAT needs its own Beast batch for the feeds that agree on it (ReportBeast).");
 // The version byte of the 0xe5 frame: a field of the wire format, not a document version.
 constexpr uint8_t kBeastCapsVersion = 1;
 constexpr uint16_t kBeastCapsFrameLenBytes = 6;
@@ -97,7 +97,7 @@ enum BeastFrameType {
     kBeastFrameTypeFeedId = 0xe4,    // Used by readsb for establishing a feed with a UUID.
     kBeastFrameTypeUAT =
         0xec,  // Used for encapsulated UAT ADSB short messages, UAT ADSB long messages, and UAT uplink messages.
-    kBeastFrameTypeCapabilities = 0xe5,  // readsbee: capabilities query, answer and confirm.
+    kBeastFrameTypeCapabilities = 0xe5,  // readsbee: capabilities query and answer.
     kBeastFrameTypeADSL = 0xed,          // readsbee: ADS-L packet.
     kBeastFrameTypeRemoteID = 0xef,      // readsbee: Broadcast Remote ID (ASTM F3411) message or message pack.
     kBeastFrameTypeModeAC = 0x31,  // Note: This is not used, since I'm assuming it does NOT refer to DF 4,5.
@@ -118,7 +118,8 @@ enum UATMessageTypeChar : char {
 // ADS-L channel. Always upper case: the timestamp is on the Mode S clock, 0 = not synced yet.
 enum ADSLChannelChar : char { kADSLChannel868_2 = 'A', kADSLChannel868_4 = 'B', kADSLChannelUnknown = 'X' };
 
-enum BeastCapsLetter : char { kBeastCapsQuery = 'Q', kBeastCapsAnswer = 'A', kBeastCapsConfirm = 'C' };
+// 'C' is reserved (was the confirm frame).
+enum BeastCapsLetter : char { kBeastCapsQuery = 'Q', kBeastCapsAnswer = 'A' };
 
 // Remote ID link, lower case: the timestamp is not on the Mode S clock (0). Upper case (letter & ~0x20): it is.
 enum RemoteIDTransportChar : char {
@@ -155,51 +156,12 @@ uint16_t BuildFeedStartFrame(uint8_t *beast_frame_buf, uint8_t *receiver_id);
 uint16_t WriteRSSIdBmAsBeastPowerLevel(uint8_t *buf, int16_t rssi_dbm);
 
 /**
- * Writes a level as int8 dBm (kBeastCapSignalDbm): clamped to -127 to +127, INT16_MIN (no level) as 0x80.
- * @retval Number of bytes written, including the escape.
- */
-uint16_t WriteRSSIdBmAsInt8(uint8_t *buf, int16_t rssi_dbm);
-
-/**
- * Writes the signal byte of any frame type: int8 dBm if caps has kBeastCapSignalDbm, else the power byte.
- * @retval Number of bytes written, including the escape.
- */
-inline uint16_t WriteSignalByte(uint8_t *buf, int16_t rssi_dbm, uint16_t caps) {
-    return (caps & kBeastCapSignalDbm) ? WriteRSSIdBmAsInt8(buf, rssi_dbm) : WriteRSSIdBmAsBeastPowerLevel(buf, rssi_dbm);
-}
-
-/**
- * Power byte for an int8 dBm signal byte: the byte the builders write without kBeastCapSignalDbm for the same level.
- * Exact, since the dBm byte holds every level the 61-entry table tells apart.
- */
-uint8_t PowerByteFromDbmByte(uint8_t dbm_byte);
-
-/**
- * Rewrites the signal byte of every frame in a run of Beast frames (0x32, 0x33, 0xec, 0xed, 0xef) in place, so that
- * frames built once for one signal format can be sent in the other. When a new byte takes a different number of bytes
- * escaped, the rest of the run is moved to the end of buf and copied back behind it, so buf_size - len bytes of slack
- * must cover any growth.
- * @param[in,out] buf Frames.
- * @param[in] len Bytes of frames in buf.
- * @param[in] buf_size Size of buf.
- * @param[in] new_signal_byte Maps a signal byte to the new one.
- * @retval New length, or 0 if buf holds anything else or the growth doesn't fit: then build the frames again.
- */
-uint16_t RewriteSignalBytes(uint8_t *buf, uint16_t len, uint16_t buf_size, uint8_t (*new_signal_byte)(uint8_t));
-
-// Turns frames built with kBeastCapSignalDbm into the frames the builders write without it. See RewriteSignalBytes.
-inline uint16_t ConvertSignalDbmToPowerByte(uint8_t *buf, uint16_t len, uint16_t buf_size) {
-    return RewriteSignalBytes(buf, len, buf_size, PowerByteFromDbmByte);
-}
-
-/**
  * Converts a DecodedModeSPacket payload to a data buffer in Mode S Beast output format.
  * @param[out] beast_frame_buf Pointer to byte buffer to fill with payload.
  * @param[in] packet Reference to DecodedModeSPacket to convert.
- * @param[in] caps Confirmed capability bits of the feed (kBeastCapSignalDbm); 0 for plain Beast.
  * @retval Number of bytes written to beast_frame_buf.
  */
-uint16_t BuildModeSBeastFrame(uint8_t *beast_frame_buf, const DecodedModeSPacket &packet, uint16_t caps = 0);
+uint16_t BuildModeSBeastFrame(uint8_t *beast_frame_buf, const DecodedModeSPacket &packet);
 
 /**
  * Sends an Ingest Beast frame (0xe3) with a 16-Byte receiver ID prepended. This type of frame is used by readsb when
@@ -218,8 +180,8 @@ uint16_t BuildModeSIngestBeastFrame(uint8_t *beast_frame_buf, const DecodedModeS
  * @param[in] packet Reference to RawUATADSBPacket to write to the buffer. Takes the raw packet (not the decoded one) so
  * that callers holding raw packets don't trigger an implicit DecodedUATADSBPacket construction (a full RS decode on
  * FEC-capable platforms) just to build a frame.
- * @param[in] caps Confirmed capability bits of the feed (kBeastCapSignalDbm, kBeastCapUATModeSClock); 0 for plain
- * Beast. kBeastCapUATModeSClock only changes the letter: set it only when the packet's timestamp is on the Mode S clock.
+ * @param[in] caps Agreed capability bits of the feed; 0 for plain Beast. kBeastCapUATModeSClock only changes the letter:
+ * set it only when the packet's timestamp is on the Mode S clock.
  * @retval Number of bytes written to beast_frame_buf.
  */
 uint16_t BuildUATADSBBeastFrame(uint8_t *beast_frame_buf, const RawUATADSBPacket &packet, uint16_t caps = 0);
@@ -244,12 +206,10 @@ uint16_t BuildUATUplinkBeastFrame(uint8_t *beast_frame_buf, const RawUATUplinkPa
  * @param[in] repaired Manchester erasures repaired against the CRC, kADSLRepairedUnknown if unknown.
  * @param[in] onair Bytes after the sync word: length byte L (1-31), then L bytes through the CRC.
  * @param[in] onair_len_bytes Bytes at onair; must be 1 + L.
- * @param[in] caps Confirmed capability bits of the feed (kBeastCapSignalDbm).
  * @retval Number of bytes written, or 0 if the on-air bytes are out of bounds.
  */
 uint16_t WriteADSLBeastFrame(uint8_t *beast_frame_buf, ADSLChannelChar channel, uint64_t mlat_12mhz_counter,
-                             int16_t rssi_dbm, uint8_t repaired, const uint8_t *onair, uint16_t onair_len_bytes,
-                             uint16_t caps);
+                             int16_t rssi_dbm, uint8_t repaired, const uint8_t *onair, uint16_t onair_len_bytes);
 
 /**
  * Length of an ODID message or pack from its first bytes, or 0 if it is out of bounds or longer than len.
@@ -265,25 +225,22 @@ uint16_t RemoteIDODIDLenBytes(const uint8_t *odid, uint16_t len);
  * @param[in] mac Source address in display order (most significant byte first).
  * @param[in] odid ODID message or pack; only the bytes its header bounds are sent.
  * @param[in] odid_len_bytes Bytes available at odid.
- * @param[in] caps Confirmed capability bits of the feed (kBeastCapSignalDbm).
  * @retval Number of bytes written, or 0 if the ODID bytes are out of bounds.
  */
 uint16_t WriteRemoteIDBeastFrame(uint8_t *beast_frame_buf, char transport, uint64_t mlat_12mhz_counter,
-                                 int16_t rssi_dbm, const uint8_t mac[6], const uint8_t *odid, uint16_t odid_len_bytes,
-                                 uint16_t caps);
+                                 int16_t rssi_dbm, const uint8_t mac[6], const uint8_t *odid, uint16_t odid_len_bytes);
 
 /**
  * Write a Remote ID frame (0xef) from a received packet. With a timestamp (mlat_48mhz_64bit_counts, ESP32 synced to
  * the MLAT clock) the letter is upper case and ts6 the 12 MHz Mode S counter; without one, lower case and ts6 = 0.
- * @param[in] caps Confirmed capability bits of the feed (kBeastCapSignalDbm).
  * @retval Number of bytes written, or 0 if the transport is unknown or the ODID bytes are out of bounds.
  */
-uint16_t BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const RawRemoteIDPacket &packet, uint16_t caps = 0);
+uint16_t BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const RawRemoteIDPacket &packet);
 
 /**
  * Write a capabilities frame (0xe5). Never escaped: every byte after the letter has the high bit set.
  * @param[out] buf Buffer of at least kBeastCapsFrameLenBytes.
- * @param[in] letter Query, answer or confirm.
+ * @param[in] letter Query or answer.
  * @param[in] bits Feature bits 0-13.
  * @retval kBeastCapsFrameLenBytes.
  */
@@ -316,16 +273,15 @@ class CapsAnswerScanner {
 
 /**
  * Capabilities check of one feed connection. Start() on connect, Receive() with what the server sends, Update() every
- * pass. After Receive() returns true, the caller queues WriteConfirm() before the next frame and calls Confirm(), or
- * Abandon() if it couldn't. Nothing is kept across connections.
+ * pass. An answer in time agrees on the query bits AND the answer bits, for the next frame on. Nothing is kept across
+ * connections.
  */
 class CapsSession {
    public:
     enum State : uint8_t {
-        kPlain,     // Not checked, no answer in time, or the confirm couldn't be sent: plain Beast.
-        kWaiting,   // Query sent, plain Beast until the answer.
-        kAnswered,  // Answer in time: the confirm must go out before the next frame.
-        kAgreed     // Confirm sent: frames use bits().
+        kPlain,    // Not checked, or no answer in time: plain Beast.
+        kWaiting,  // Query sent, plain Beast until the answer.
+        kAgreed    // Answer in time: frames use bits().
     };
 
     /**
@@ -338,86 +294,71 @@ class CapsSession {
 
     /**
      * Scans bytes from the server. An answer after kBeastCapsAnswerTimeoutMs is ignored.
-     * @retval True once, when an answer arrived in time.
+     * @retval True once, when an answer arrived in time: bits() apply from the next frame on.
      */
     bool Receive(const uint8_t *data, uint16_t len, uint32_t timestamp_ms);
 
     // Ends the wait after kBeastCapsAnswerTimeoutMs without an answer.
     void Update(uint32_t timestamp_ms);
 
-    // Writes the confirm (kAnswered): the query bits AND the answer bits.
-    uint16_t WriteConfirm(uint8_t *buf) const { return WriteCapsFrame(buf, kBeastCapsConfirm, pending_bits_); }
-    void Confirm();
-    void Abandon();
     void Reset() { *this = CapsSession(); }
 
     State state() const { return state_; }
     uint16_t offered() const { return offered_; }
     // Bits in effect for this connection's frames; 0 unless kAgreed.
-    uint16_t bits() const { return state_ == kAgreed ? pending_bits_ : 0; }
+    uint16_t bits() const { return bits_; }
 
    private:
     State state_ = kPlain;
     uint16_t offered_ = 0;
-    uint16_t pending_bits_ = 0;
+    uint16_t bits_ = 0;
     uint32_t start_timestamp_ms_ = 0;
     CapsAnswerScanner scanner_;
 };
 
 /**
- * Picks the sinks of one Beast group: those with this protocol and these frame format bits (kBeastCapsFrameFormat).
- * @param[in] sinks Sink descriptors with .sink, .protocol and .beast_caps (CommsManager::ReportSinkInfo).
+ * Picks the sinks of one Beast protocol.
+ * @param[in] sinks Sink descriptors with .sink and .protocol (CommsManager::ReportSinkInfo).
  * @param[out] selected The .sink of each selected descriptor; at least num_sinks entries.
  * @retval Number of sinks selected.
  */
 template <typename SinkInfo, typename Protocol, typename Sink>
-uint16_t SelectBeastGroup(const SinkInfo *sinks, uint16_t num_sinks, Protocol protocol, uint16_t frame_format,
-                          Sink *selected) {
+uint16_t SelectBeastSinks(const SinkInfo *sinks, uint16_t num_sinks, Protocol protocol, Sink *selected) {
     uint16_t num_selected = 0;
     for (uint16_t i = 0; i < num_sinks; i++) {
-        if (sinks[i].protocol == protocol && (sinks[i].beast_caps & kBeastCapsFrameFormat) == frame_format) {
-            selected[num_selected++] = sinks[i].sink;
-        }
+        if (sinks[i].protocol == protocol) selected[num_selected++] = sinks[i].sink;
     }
     return num_selected;
 }
 
 /**
- * Sends the Remote ID frames (0xef) of a reporting round to the sinks that confirmed kBeastCapRemoteID (only Beast
- * feeds have beast_caps). The frames are built once, in dBm if a sink takes dBm, batched into buf, and their signal
- * bytes rewritten for the power byte sinks (ConvertSignalDbmToPowerByte). A batch that would overflow buf is sent and
- * buf refilled.
+ * Sends the Remote ID frames (0xef) of a reporting round to the sinks that agreed on kBeastCapRemoteID (only Beast
+ * feeds have beast_caps). The frames are built once into buf; a batch that would overflow buf is sent and buf refilled.
  * @param[in] sinks Sink descriptors with .sink and .beast_caps (CommsManager::ReportSinkInfo).
  * @param[in] buf Scratch for the frames, at least kRemoteIDBeastFrameMaxLenBytes.
- * @param[out] dbm_sinks, power_sinks Scratch, at least num_sinks entries each.
+ * @param[out] selected Scratch, at least num_sinks entries.
  * @param[in] send bool(const Sink *sinks, uint16_t num_sinks, const uint8_t *buf, uint16_t len, uint16_t num_frames).
  * @param[in,out] num_build_failures Frames dropped (unknown transport, ODID out of bounds) are added here.
  * @retval False if a send failed or buf is too small.
  */
 template <typename SinkInfo, typename Sink, typename Send>
-bool ReportRemoteIDFrames(const SinkInfo* sinks, uint16_t num_sinks, const RawRemoteIDPacket* packets,
-                          uint16_t num_packets, uint8_t* buf, uint16_t buf_size, Sink* dbm_sinks, Sink* power_sinks,
-                          Send send, uint16_t& num_build_failures) {
+bool ReportRemoteIDFrames(const SinkInfo *sinks, uint16_t num_sinks, const RawRemoteIDPacket *packets,
+                          uint16_t num_packets, uint8_t *buf, uint16_t buf_size, Sink *selected, Send send,
+                          uint16_t &num_build_failures) {
     if (num_packets == 0) return true;
     if (buf_size < kRemoteIDBeastFrameMaxLenBytes) return false;
-    uint16_t num_dbm_sinks = 0, num_power_sinks = 0;
+    uint16_t num_selected = 0;
     for (uint16_t i = 0; i < num_sinks; i++) {
-        if (!(sinks[i].beast_caps & kBeastCapRemoteID)) continue;
-        if (sinks[i].beast_caps & kBeastCapSignalDbm) {
-            dbm_sinks[num_dbm_sinks++] = sinks[i].sink;
-        } else {
-            power_sinks[num_power_sinks++] = sinks[i].sink;
-        }
+        if (sinks[i].beast_caps & kBeastCapRemoteID) selected[num_selected++] = sinks[i].sink;
     }
-    if (num_dbm_sinks == 0 && num_power_sinks == 0) return true;
-    const uint16_t caps = num_dbm_sinks > 0 ? kBeastCapSignalDbm : 0;
+    if (num_selected == 0) return true;
     bool ret = true;
     uint16_t i = 0;
     while (i < num_packets) {
         uint16_t len = 0, num_frames = 0;
         // The builder writes without a bound, so only start a frame that is sure to fit.
         for (; i < num_packets && len + kRemoteIDBeastFrameMaxLenBytes <= buf_size; i++) {
-            uint16_t frame_len = BuildRemoteIDBeastFrame(buf + len, packets[i], caps);
+            uint16_t frame_len = BuildRemoteIDBeastFrame(buf + len, packets[i]);
             if (frame_len == 0) {
                 num_build_failures++;
                 continue;
@@ -425,18 +366,7 @@ bool ReportRemoteIDFrames(const SinkInfo* sinks, uint16_t num_sinks, const RawRe
             len += frame_len;
             num_frames++;
         }
-        if (len == 0) continue;
-        if (num_dbm_sinks > 0) {
-            ret &= send(dbm_sinks, num_dbm_sinks, buf, len, num_frames);
-            if (num_power_sinks == 0) continue;
-            // Never 0 for frames this builder wrote: no power byte is 0x1a, so nothing grows.
-            len = ConvertSignalDbmToPowerByte(buf, len, buf_size);
-            if (len == 0) {
-                num_build_failures += num_frames;
-                continue;
-            }
-        }
-        ret &= send(power_sinks, num_power_sinks, buf, len, num_frames);
+        if (len > 0) ret &= send(selected, num_selected, buf, len, num_frames);
     }
     return ret;
 }

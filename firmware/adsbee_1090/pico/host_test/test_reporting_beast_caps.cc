@@ -72,8 +72,7 @@ const char* kLongMsg = "8d4840d6202cc371c32ce0576098";
 const uint8_t kMAC[6] = {0xc0, 0xff, 0xee, 0x1a, 0x00, 0x01};
 const uint8_t kPackMAC[6] = {0x6a, 0x1a, 0x2b, 0x3c, 0x4d, 0x5e};
 const uint8_t kFeedId[8] = {0x0b, 0xee, 0x00, 0x03, 0x81, 0x72, 0xd1, 0x8c};
-const uint16_t kAllBits = kBeastCapsKnown;  // 0x0f: the confirm frame of the dBm vectors.
-const uint16_t kNoDbmBits = kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;  // 0x0e.
+const uint16_t kAllBits = kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;  // 0x0e; bit 0 is reserved.
 
 std::vector<uint8_t> ADSLOnAir() {
     std::vector<uint8_t> body = Hex("0002" "1a" "3c4d5e6f" "1a1a" "00112233445566778899aabb" "0102" "a1b2c3");
@@ -95,12 +94,13 @@ std::vector<uint8_t> ODIDPack(const std::vector<std::vector<uint8_t>>& messages)
 
 std::vector<uint8_t> VectorPack() { return ODIDPack({ODIDMessage(0, 0x1a), ODIDMessage(1, 0x11), ODIDMessage(4, 0x44)}); }
 
-std::string ModeS(const char* msg, uint64_t ts, int16_t dbm, uint16_t caps) {
+std::string ModeS(const char* msg, uint64_t ts, int16_t dbm) {
     uint8_t buf[kModeSBeastFrameMaxLenBytes];
     DecodedModeSPacket packet(msg, 0, dbm, 50, ts << 2);
-    return ToHex(buf, BuildModeSBeastFrame(buf, packet, caps));
+    return ToHex(buf, BuildModeSBeastFrame(buf, packet));
 }
 
+// caps: kBeastCapUATModeSClock gives the upper-case letter; any other bit changes nothing.
 std::string UATADSB(const std::vector<uint8_t>& payload, uint64_t ts, int16_t dbm, uint16_t caps) {
     uint8_t buf[kUATADSBBeastFrameMaxLenBytes];
     std::vector<uint8_t> copy = payload;
@@ -116,16 +116,15 @@ std::string UATUplink(uint64_t ts, int16_t dbm, uint16_t caps) {
     return ToHex(buf, BuildUATUplinkBeastFrame(buf, packet, caps));
 }
 
-std::string ADSL(ADSLChannelChar channel, uint64_t ts, int16_t dbm, uint8_t repaired, uint16_t caps) {
+std::string ADSL(ADSLChannelChar channel, uint64_t ts, int16_t dbm, uint8_t repaired) {
     uint8_t buf[kADSLBeastFrameMaxLenBytes];
     std::vector<uint8_t> onair = ADSLOnAir();
-    return ToHex(buf, WriteADSLBeastFrame(buf, channel, ts, dbm, repaired, onair.data(), onair.size(), caps));
+    return ToHex(buf, WriteADSLBeastFrame(buf, channel, ts, dbm, repaired, onair.data(), onair.size()));
 }
 
-std::string RemoteID(char transport, int16_t dbm, const uint8_t mac[6], const std::vector<uint8_t>& odid,
-                     uint16_t caps) {
+std::string RemoteID(char transport, int16_t dbm, const uint8_t mac[6], const std::vector<uint8_t>& odid) {
     uint8_t buf[kRemoteIDBeastFrameMaxLenBytes];
-    return ToHex(buf, WriteRemoteIDBeastFrame(buf, transport, 0, dbm, mac, odid.data(), odid.size(), caps));
+    return ToHex(buf, WriteRemoteIDBeastFrame(buf, transport, 0, dbm, mac, odid.data(), odid.size()));
 }
 
 std::string Caps(BeastCapsLetter letter, uint16_t bits) {
@@ -140,130 +139,123 @@ std::string FeedStart() {
     return ToHex(buf, BuildFeedStartFrame(buf, id));
 }
 
-const std::string kConfirmHex = "1ae543818f80";
+// The hex of each step of an exchange vector (query -> answer -> frames), in order.
+std::vector<std::string> ExchangeHex(const std::string& name) {
+    std::string block = VectorBlock(name);
+    std::vector<std::string> steps;
+    size_t at = block.find("\"exchange\": [");
+    while (at != std::string::npos && (at = block.find("\"hex\": \"", at)) != std::string::npos) {
+        at += strlen("\"hex\": \"");
+        steps.push_back(block.substr(at, block.find('"', at) - at));
+    }
+    return steps;
+}
 
 }  // namespace
 
 TEST(BeastCapsVectors, FileIsThere) {
     ASSERT_FALSE(VectorsJSON().empty()) << READSBEE_VECTORS_JSON;
-    EXPECT_EQ(VectorHex("caps_confirm_dbm"), kConfirmHex);
+    EXPECT_EQ(VectorHex("caps_query"), "1ae551818e80");
+    // dBm and the confirm frame are gone from the spec (2026-11-07).
+    EXPECT_EQ(VectorBlock("caps_confirm_dbm"), "");
+    EXPECT_EQ(VectorsJSON().find("\"dbm\""), std::string::npos);
 }
 
 TEST(BeastCapsVectors, CapabilitiesFrames) {
-    EXPECT_EQ(Caps(kBeastCapsQuery, kNoDbmBits), VectorHex("caps_query"));
+    EXPECT_EQ(Caps(kBeastCapsQuery, kAllBits), VectorHex("caps_query"));
     EXPECT_EQ(Caps(kBeastCapsQuery, 0), VectorHex("caps_query_none"));
-    EXPECT_EQ(Caps(kBeastCapsQuery, kAllBits), VectorHex("caps_query_dbm"));
-    EXPECT_EQ(Caps(kBeastCapsConfirm, kAllBits), VectorHex("caps_confirm_dbm"));
-    // What this firmware offers: dBm, plus Remote ID while receive is on. Never 0x1a.
-    EXPECT_EQ(Caps(kBeastCapsQuery, kBeastCapsSendable), "1ae551818580");
-    EXPECT_EQ(Caps(kBeastCapsQuery, kBeastCapSignalDbm), "1ae551818180");
+    // What this firmware offers: Remote ID while receive is on. Never 0x1a.
+    EXPECT_EQ(Caps(kBeastCapsQuery, kBeastCapsSendable), "1ae551818480");
     EXPECT_EQ(Caps(kBeastCapsAnswer, 1 << 13 | 1), "1ae54181" "81c0");
 }
 
-// Bits 1 and 3 wait for ADS-L (#409) and sub-GHz Mode S timestamps (#428) on main.
+// Bit 0 is reserved; bits 1 and 3 wait for ADS-L (#409) and sub-GHz Mode S timestamps (#428) on main.
 TEST(BeastCapsVectors, OnlyImplementedBitsAreOffered) {
-    EXPECT_EQ(kBeastCapsSendable, kBeastCapSignalDbm | kBeastCapRemoteID);
+    EXPECT_EQ(kBeastCapsKnown, 0x0e);
+    EXPECT_EQ(kBeastCapsSendable, kBeastCapRemoteID);
     EXPECT_EQ(kBeastCapsSendable & (kBeastCapADSL | kBeastCapUATModeSClock), 0);
 }
 
 TEST(BeastCapsVectors, ModeSPowerByte) {
-    EXPECT_EQ(ModeS(kShortMsg, 0x1234, -87, 0), VectorHex("mode_s_short_power_m87"));
-    EXPECT_EQ(ModeS(kShortMsg, 0x1234, -105, 0), VectorHex("mode_s_short_power_m105"));
-    EXPECT_EQ(ModeS(kShortMsg, 0x1234, -20, 0), VectorHex("mode_s_short_power_m20"));
-    EXPECT_EQ(ModeS(kShortMsg, 0x1234, INT16_MIN, 0), VectorHex("mode_s_short_power_none"));
-    EXPECT_EQ(ModeS(kLongMsg, kTs, -60, 0), VectorHex("mode_s_long_power_m60"));
-}
-
-TEST(BeastCapsVectors, ModeSDbm) {
-    EXPECT_EQ(kConfirmHex + ModeS(kShortMsg, 0x1234, -87, kAllBits), VectorHex("mode_s_short_dbm_m87"));
-    EXPECT_EQ(kConfirmHex + ModeS(kShortMsg, 0x1234, -105, kAllBits), VectorHex("mode_s_short_dbm_m105"));
-    EXPECT_EQ(kConfirmHex + ModeS(kShortMsg, 0x1234, -20, kAllBits), VectorHex("mode_s_short_dbm_m20"));
-    EXPECT_EQ(kConfirmHex + ModeS(kShortMsg, 0x1234, INT16_MIN, kAllBits), VectorHex("mode_s_short_dbm_none"));
-    EXPECT_EQ(kConfirmHex + ModeS(kLongMsg, kTs, -60, kAllBits), VectorHex("mode_s_long_dbm_m60"));
-    EXPECT_EQ(kConfirmHex + ModeS(kShortMsg, 0x1234, 26, kAllBits), VectorHex("mode_s_dbm_plus26_escaped"));
+    EXPECT_EQ(ModeS(kShortMsg, 0x1234, -87), VectorHex("mode_s_short_power_m87"));
+    EXPECT_EQ(ModeS(kShortMsg, 0x1234, -105), VectorHex("mode_s_short_power_m105"));
+    EXPECT_EQ(ModeS(kShortMsg, 0x1234, -20), VectorHex("mode_s_short_power_m20"));
+    EXPECT_EQ(ModeS(kShortMsg, 0x1234, INT16_MIN), VectorHex("mode_s_short_power_none"));
+    EXPECT_EQ(ModeS(kLongMsg, kTs, -60), VectorHex("mode_s_long_power_m60"));
 }
 
 TEST(BeastCapsVectors, UAT) {
     std::vector<uint8_t> uat_s;
     for (uint8_t i = 0x10; i < 0x10 + 30; i++) uat_s.push_back(i);
     EXPECT_EQ(UATADSB(uat_s, 0x55, -95, 0), VectorHex("uat_s_power_m95"));
-    EXPECT_EQ(kConfirmHex + UATADSB(uat_s, 0x55, -95, kBeastCapSignalDbm), VectorHex("uat_s_dbm_m95"));
-    EXPECT_EQ(kConfirmHex + UATADSB(uat_s, kTs, -95, kBeastCapsFrameFormat), VectorHex("uat_S_dbm_m95"));
     EXPECT_EQ(UATUplink(kTs, -70, kBeastCapUATModeSClock), VectorHex("uat_U_power_m70"));
-    EXPECT_EQ(kConfirmHex + UATUplink(kTs, -70, kBeastCapsFrameFormat), VectorHex("uat_U_dbm_m70"));
     EXPECT_EQ(UATUplink(kTs, -52, kBeastCapUATModeSClock), VectorHex("uat_U_uplink"));  // Power byte 90.
-    // Bit 3 alone changes only the letter.
+    // Bit 3 alone changes only the letter; the other bits change nothing.
     std::string lower = UATADSB(uat_s, kTs, -95, 0), upper = UATADSB(uat_s, kTs, -95, kBeastCapUATModeSClock);
     EXPECT_EQ(lower.substr(0, 4) + "53" + lower.substr(6), upper);
+    EXPECT_EQ(UATADSB(uat_s, kTs, -95, kBeastCapADSL | kBeastCapRemoteID | 1), lower);
 }
 
 TEST(BeastCapsVectors, ADSL) {
-    EXPECT_EQ(ADSL(kADSLChannel868_4, kTs, -87, 2, kBeastCapSignalDbm), VectorHex("adsl_868_4"));
-    EXPECT_EQ(ADSL(kADSLChannel868_2, 0, -108, 0, kBeastCapSignalDbm), VectorHex("adsl_868_2_unsynced"));
-    EXPECT_EQ(ADSL(kADSLChannelUnknown, kTs, INT16_MIN, kADSLRepairedUnknown, kBeastCapSignalDbm),
-              VectorHex("adsl_channel_unknown"));
-    EXPECT_EQ(ADSL(kADSLChannel868_4, kTs, -87, 2, 0), VectorHex("adsl_868_4_power"));
-    EXPECT_EQ(ADSL(kADSLChannel868_2, 0, -108, 0, 0), VectorHex("adsl_868_2_power_floor"));
-    EXPECT_EQ(ADSL(kADSLChannelUnknown, kTs, INT16_MIN, kADSLRepairedUnknown, 0), VectorHex("adsl_power_none"));
+    EXPECT_EQ(ADSL(kADSLChannel868_4, kTs, -87, 2), VectorHex("adsl_868_4_power"));
+    EXPECT_EQ(ADSL(kADSLChannel868_2, 0, -108, 0), VectorHex("adsl_868_2_power_floor"));
+    EXPECT_EQ(ADSL(kADSLChannelUnknown, kTs, INT16_MIN, kADSLRepairedUnknown), VectorHex("adsl_power_none"));
 }
 
 TEST(BeastCapsVectors, ADSLRefusesOnAirBytesADecoderCouldNotBound) {
     uint8_t buf[kADSLBeastFrameMaxLenBytes];
     std::vector<uint8_t> onair = ADSLOnAir();
-    EXPECT_EQ(WriteADSLBeastFrame(buf, kADSLChannel868_2, 0, -80, 0, onair.data(), onair.size() - 1, 0), 0);
+    EXPECT_EQ(WriteADSLBeastFrame(buf, kADSLChannel868_2, 0, -80, 0, onair.data(), onair.size() - 1), 0);
     std::vector<uint8_t> too_long(33, 0x1a);
     too_long[0] = 32;
-    EXPECT_EQ(WriteADSLBeastFrame(buf, kADSLChannel868_2, 0, -80, 0, too_long.data(), too_long.size(), 0), 0);
-    // Worst case: L = 31, every byte 0x1a.
+    EXPECT_EQ(WriteADSLBeastFrame(buf, kADSLChannel868_2, 0, -80, 0, too_long.data(), too_long.size()), 0);
+    // Worst case: L = 31, every byte 0x1a (the power byte never is).
     std::vector<uint8_t> worst(32, 0x1a);
     worst[0] = 31;
-    uint16_t len = WriteADSLBeastFrame(buf, kADSLChannelUnknown, 0x1a1a1a1a1a1a, 26, 0x1a, worst.data(), worst.size(),
-                                       kBeastCapSignalDbm);
-    EXPECT_EQ(len, 3 + 2 * 6 + 2 + 2 + 1 + 2 * 31);
+    uint16_t len = WriteADSLBeastFrame(buf, kADSLChannelUnknown, 0x1a1a1a1a1a1a, -66, 0x1a, worst.data(), worst.size());
+    EXPECT_EQ(len, 3 + 2 * 6 + 1 + 2 + 1 + 2 * 31);
     EXPECT_LE(len, kADSLBeastFrameMaxLenBytes);
     EXPECT_EQ(kADSLBeastFrameMaxLenBytes, 83);  // FEED-PROTOCOL.md section 2.
 }
 
 TEST(BeastCapsVectors, RemoteID) {
-    EXPECT_EQ(RemoteID(kRemoteIDTransportBT4Legacy, -72, kMAC, ODIDMessage(1, 0x1a), kBeastCapSignalDbm),
-              VectorHex("rid_bt4_single"));
-    EXPECT_EQ(RemoteID(kRemoteIDTransportWiFiBeacon, -60, kPackMAC, VectorPack(), kBeastCapSignalDbm),
-              VectorHex("rid_wifi_beacon_pack"));
-    EXPECT_EQ(RemoteID(kRemoteIDTransportBT5Coded, -95, kMAC, ODIDMessage(0, 0x22), kBeastCapSignalDbm),
-              VectorHex("rid_bt5_coded"));
-    EXPECT_EQ(RemoteID(kRemoteIDTransportBT4Legacy, -72, kMAC, ODIDMessage(1, 0x1a), 0),
-              VectorHex("rid_bt4_single_power"));
-    EXPECT_EQ(RemoteID(kRemoteIDTransportBT4Legacy, -34, kMAC, ODIDMessage(1, 0x1a), 0),
+    EXPECT_EQ(RemoteID(kRemoteIDTransportBT4Legacy, -72, kMAC, ODIDMessage(1, 0x1a)), VectorHex("rid_bt4_single_power"));
+    EXPECT_EQ(RemoteID(kRemoteIDTransportBT4Legacy, -34, kMAC, ODIDMessage(1, 0x1a)),
               VectorHex("rid_bt4_power_saturated"));
-    EXPECT_EQ(RemoteID(kRemoteIDTransportWiFiBeacon, -60, kPackMAC, VectorPack(), 0),
+    EXPECT_EQ(RemoteID(kRemoteIDTransportWiFiBeacon, -60, kPackMAC, VectorPack()),
               VectorHex("rid_wifi_beacon_pack_power"));
-    EXPECT_EQ(kConfirmHex + RemoteID(kRemoteIDTransportBT4Legacy, -72, kMAC, ODIDMessage(1, 0x1a), kAllBits),
-              VectorHex("rid_bt4_dbm_after_confirm"));
+    EXPECT_EQ(RemoteID(kRemoteIDTransportBT5Coded, -95, kMAC, ODIDMessage(0, 0x22)), VectorHex("rid_bt5_coded_power"));
 }
 
-// Whole streams: what a feed sends from connect on.
+// Whole feeds, both directions: query, answer, then the agreed frames from the moment the answer is read.
 TEST(BeastCapsVectors, Streams) {
-    std::string query = Caps(kBeastCapsQuery, kAllBits);
-    EXPECT_EQ(FeedStart() + query + ModeS(kShortMsg, 1, -87, 0) + Caps(kBeastCapsConfirm, kAllBits) +
-                  ModeS(kShortMsg, 2, -87, kAllBits) +
-                  RemoteID(kRemoteIDTransportBT4Legacy, -70, kMAC, ODIDMessage(1, 0x33), kAllBits),
-              VectorHex("stream_feed_start_dbm"));
-    EXPECT_EQ(Caps(kBeastCapsConfirm, kNoDbmBits) + ModeS(kShortMsg, 3, -87, kNoDbmBits) +
-                  ADSL(kADSLChannel868_2, kTs, -87, 1, kNoDbmBits) +
-                  RemoteID(kRemoteIDTransportBT4Legacy, -87, kMAC, ODIDMessage(1, 0x33), kNoDbmBits),
-              VectorHex("stream_no_dbm"));
-    EXPECT_EQ(Caps(kBeastCapsConfirm, kAllBits) + ModeS(kShortMsg, 3, -87, kAllBits) +
-                  ADSL(kADSLChannel868_2, kTs, -87, 1, kAllBits) +
-                  RemoteID(kRemoteIDTransportBT4Legacy, -87, kMAC, ODIDMessage(1, 0x33), kAllBits),
-              VectorHex("stream_dbm"));
+    std::vector<uint8_t> uat_s;
+    for (uint8_t i = 0x10; i < 0x10 + 30; i++) uat_s.push_back(i);
+    for (const char* name : {"stream_query_answer", "stream_query_answer_rid_only"}) {
+        std::vector<std::string> steps = ExchangeHex(name);
+        ASSERT_EQ(steps.size(), 3u) << name;
+        uint8_t query[kBeastCapsFrameLenBytes];
+        CapsSession session;
+        std::string before = FeedStart() + ToHex(query, session.Start(query, kAllBits, 0)) + ModeS(kShortMsg, 1, -87);
+        EXPECT_EQ(before, steps[0]) << name;
+        std::vector<uint8_t> answer = Hex(steps[1]);
+        ASSERT_TRUE(session.Receive(answer.data(), answer.size(), 100)) << name;
+        const uint16_t bits = session.bits();
+        std::string after = ModeS(kShortMsg, 3, -87);
+        if (bits & kBeastCapADSL) after += ADSL(kADSLChannel868_2, kTs, -87, 1);
+        if (bits & kBeastCapRemoteID) after += RemoteID(kRemoteIDTransportBT4Legacy, -87, kMAC, ODIDMessage(1, 0x33));
+        after += UATADSB(uat_s, kTs, -87, bits);
+        EXPECT_EQ(after, steps[2]) << name;
+        EXPECT_EQ(before + after, VectorHex(name)) << name;
+    }
 }
 
 // A server that never answers gets today's main output plus the 6 query bytes, and the query is the only addition.
 TEST(BeastCapsPlain, StreamIsMainPlusTheQuery) {
     std::vector<uint8_t> payload =
         Hex("00a66ef135445d525a0c05191190212048006cb82bc4d53a5b2bb0a8ec6e");
-    std::string frames = ModeS("8d495066587f469bb826d21ad767", 0xABABFF1AFFFFFF1A, -80, 0) +
-                         ModeS("5d4840d6abcdef", 0x0000001A2B3C, -55, 0) + UATADSB(payload, 0x1a3456, -60, 0);
+    std::string frames = ModeS("8d495066587f469bb826d21ad767", 0xABABFF1AFFFFFF1A, -80) +
+                         ModeS("5d4840d6abcdef", 0x0000001A2B3C, -55) + UATADSB(payload, 0x1a3456, -60, 0);
     // Main's bytes for these packets (main's BuildModeSBeastFrame / BuildUATADSBBeastFrame).
     const std::string main_frames =
         "1a33ff1a1affffff1a1a088d495066587f469bb826d21a1ad7671a320000001a1a2b3c465d4840d6abcdef1aec730000001a1a34"
@@ -275,10 +267,9 @@ TEST(BeastCapsPlain, StreamIsMainPlusTheQuery) {
     session.Receive(Hex("1a50001a1a05").data(), 6, 1000);  // A readsb ping.
     session.Update(kBeastCapsAnswerTimeoutMs);
     ASSERT_EQ(session.bits(), 0);
-    stream += ModeS("8d495066587f469bb826d21ad767", 0xABABFF1AFFFFFF1A, -80, session.bits()) +
-              ModeS("5d4840d6abcdef", 0x0000001A2B3C, -55, session.bits()) +
-              UATADSB(payload, 0x1a3456, -60, session.bits());
-    EXPECT_EQ(stream, FeedStart() + "1ae551818580" + main_frames);
+    stream += ModeS("8d495066587f469bb826d21ad767", 0xABABFF1AFFFFFF1A, -80) +
+              ModeS("5d4840d6abcdef", 0x0000001A2B3C, -55) + UATADSB(payload, 0x1a3456, -60, session.bits());
+    EXPECT_EQ(stream, FeedStart() + "1ae551818480" + main_frames);
     EXPECT_EQ(FeedStart(), "1ae430626565303030332d383137322d643138632d306265652d303030333831373264313863");
 }
 
@@ -286,31 +277,21 @@ TEST(BeastCapsPlain, StreamIsMainPlusTheQuery) {
 TEST(BeastCapsPlain, SignalBytes) {
     uint8_t buf[2];
     auto power = [&](int16_t dbm) { return WriteRSSIdBmAsBeastPowerLevel(buf, dbm) == 1 ? buf[0] : 0x1ff; };
-    auto dbm = [&](int16_t dbm) { return WriteRSSIdBmAsInt8(buf, dbm) == 1 ? buf[0] : 0x1ff; };
     EXPECT_EQ(power(INT16_MIN), 0);
     EXPECT_EQ(power(-100), 1);
     EXPECT_EQ(power(-130), 1);
     EXPECT_EQ(power(-40), 255);
     EXPECT_EQ(power(0), 255);
     EXPECT_EQ(power(-87), 4);
-    EXPECT_EQ(dbm(INT16_MIN), 0x80);
-    EXPECT_EQ(dbm(-127), 0x81);
-    EXPECT_EQ(dbm(-200), 0x81);
-    EXPECT_EQ(dbm(200), 0x7f);
-    EXPECT_EQ(dbm(-87), 0xa9);
-    EXPECT_EQ(dbm(0), 0x00);
-    EXPECT_EQ(WriteRSSIdBmAsInt8(buf, 26), 2);  // 0x1a is escaped.
-    EXPECT_EQ(WriteSignalByte(buf, -87, kBeastCapSignalDbm), 1);
-    EXPECT_EQ(buf[0], 0xa9);
-    EXPECT_EQ(WriteSignalByte(buf, -87, kBeastCapRemoteID), 1);  // Bits other than 0 keep the power byte.
-    EXPECT_EQ(buf[0], 4);
+    EXPECT_EQ(power(-66), 0x1b);  // The nearest to 0x1a: no power byte is 0x1a, so it is never escaped.
+    for (int rssi = -300; rssi <= 300; rssi++) EXPECT_EQ(WriteRSSIdBmAsBeastPowerLevel(buf, rssi), 1) << rssi;
 }
 
 // vectors.json server_to_feeder: what the scanner finds, all at once and one byte at a time.
 TEST(BeastCapsScanner, MatchesTheVectors) {
     const char* names[] = {"answer_all",          "answer_none",       "answer_rid_only",  "answer_after_pings",
                            "answer_future",       "echo_of_query",     "answer_malformed", "answer_cut_by_frame",
-                           "stock_readsb_silence", "answer_all_dbm",   "answer_no_dbm"};
+                           "stock_readsb_silence", "answer_bit0_set"};
     for (const char* name : names) {
         std::string block = VectorBlock(name);
         ASSERT_NE(block.find("server_to_feeder"), std::string::npos) << name;
@@ -330,9 +311,9 @@ TEST(BeastCapsScanner, MatchesTheVectors) {
 
 TEST(BeastCapsScanner, FindsTheAnswerInPingsHeartbeatsAndGarbage) {
     std::mt19937 rng(1095);
-    std::vector<uint8_t> answer = Hex("1ae541818580");
+    std::vector<uint8_t> answer = Hex("1ae541818480");
     const std::vector<uint8_t> ping = Hex("1a50001a1a05"), heartbeat = Hex("1a31000000000000000000"),
-                               echo = Hex("1ae551818580"), unknown = Hex("1af5711a1a33000000");
+                               echo = Hex("1ae551818480"), unknown = Hex("1af5711a1a33000000");
     for (int run = 0; run < 200; run++) {
         std::vector<uint8_t> wire;
         int parts = rng() % 20;
@@ -371,25 +352,21 @@ TEST(BeastCapsScanner, FindsTheAnswerInPingsHeartbeatsAndGarbage) {
 
 TEST(BeastCapsScanner, HoldsOnlyAFewBytes) { EXPECT_LE(sizeof(CapsAnswerScanner), 12u); }
 
-TEST(BeastCapsSession, AnswerInTimeThenConfirm) {
+TEST(BeastCapsSession, AnswerInTimeAgreesAtOnce) {
     uint8_t buf[kBeastCapsFrameLenBytes];
     CapsSession session;
     EXPECT_EQ(session.state(), CapsSession::kPlain);
-    EXPECT_EQ(ToHex(buf, session.Start(buf, kBeastCapsSendable, 1000)), "1ae551818580");
+    EXPECT_EQ(ToHex(buf, session.Start(buf, kBeastCapsSendable, 1000)), "1ae551818480");
     EXPECT_EQ(session.state(), CapsSession::kWaiting);
     EXPECT_EQ(session.bits(), 0);
-    std::vector<uint8_t> answer = Hex(VectorHex("answer_all_dbm"));  // Server accepts bits 0-3.
+    std::vector<uint8_t> answer = Hex(VectorHex("answer_all"));  // Server accepts bits 1-3.
     EXPECT_TRUE(session.Receive(answer.data(), answer.size(), 1000 + kBeastCapsAnswerTimeoutMs - 1));
-    EXPECT_EQ(session.state(), CapsSession::kAnswered);
-    EXPECT_EQ(session.bits(), 0);  // Frames stay plain until the confirm is queued.
-    EXPECT_EQ(ToHex(buf, session.WriteConfirm(buf)), "1ae543818580");  // Query bits AND answer bits.
-    session.Confirm();
     EXPECT_EQ(session.state(), CapsSession::kAgreed);
-    EXPECT_EQ(session.bits(), kBeastCapSignalDbm | kBeastCapRemoteID);
+    EXPECT_EQ(session.bits(), kBeastCapRemoteID);  // Query bits AND answer bits, for the next frame on.
     // One answer per connection.
     EXPECT_FALSE(session.Receive(answer.data(), answer.size(), 2000));
     session.Update(1000000);
-    EXPECT_EQ(session.bits(), kBeastCapSignalDbm | kBeastCapRemoteID);
+    EXPECT_EQ(session.bits(), kBeastCapRemoteID);
 }
 
 TEST(BeastCapsSession, KnownBitsOnlyAndEmptyAnswers) {
@@ -398,29 +375,28 @@ TEST(BeastCapsSession, KnownBitsOnlyAndEmptyAnswers) {
     session.Start(buf, kBeastCapsSendable, 0);
     std::vector<uint8_t> future = Hex(VectorHex("answer_future"));  // Version 2, Remote ID and unknown bit 9.
     ASSERT_TRUE(session.Receive(future.data(), future.size(), 10));
-    EXPECT_EQ(ToHex(buf, session.WriteConfirm(buf)), "1ae543818480");
-    session.Confirm();
     EXPECT_EQ(session.bits(), kBeastCapRemoteID);
 
     session.Start(buf, kBeastCapsSendable, 0);
     std::vector<uint8_t> none = Hex(VectorHex("answer_none"));
     ASSERT_TRUE(session.Receive(none.data(), none.size(), 10));
-    EXPECT_EQ(ToHex(buf, session.WriteConfirm(buf)), "1ae543818080");  // Confirm is sent for 0 too.
-    session.Confirm();
     EXPECT_EQ(session.state(), CapsSession::kAgreed);
     EXPECT_EQ(session.bits(), 0);
 
-    // A v3 server (no bit 0): power bytes stay.
-    session.Start(buf, kBeastCapsSendable, 0);
-    std::vector<uint8_t> v3 = Hex(VectorHex("answer_no_dbm"));
-    ASSERT_TRUE(session.Receive(v3.data(), v3.size(), 10));
-    session.Confirm();
+    // Reserved bit 0 (readsbee before 2026-11-07 answered 8f): never offered, never used.
+    session.Start(buf, kBeastCapsSendable | 1, 0);
+    EXPECT_EQ(session.offered(), kBeastCapsSendable);
+    std::vector<uint8_t> bit0 = Hex(VectorHex("answer_bit0_set"));
+    ASSERT_TRUE(session.Receive(bit0.data(), bit0.size(), 10));
     EXPECT_EQ(session.bits(), kBeastCapRemoteID);
+    session.Start(buf, kAllBits, 0);
+    ASSERT_TRUE(session.Receive(bit0.data(), bit0.size(), 10));
+    EXPECT_EQ(session.bits(), kAllBits);
 }
 
 TEST(BeastCapsSession, FiveSecondTimeout) {
     uint8_t buf[kBeastCapsFrameLenBytes];
-    std::vector<uint8_t> answer = Hex(VectorHex("answer_all_dbm"));
+    std::vector<uint8_t> answer = Hex(VectorHex("answer_all"));
     CapsSession session;
     const uint32_t t0 = UINT32_MAX - 1000;  // Across the millisecond counter's wrap.
     session.Start(buf, kBeastCapsSendable, t0);
@@ -436,31 +412,26 @@ TEST(BeastCapsSession, FiveSecondTimeout) {
     EXPECT_EQ(session.bits(), 0);
 }
 
-TEST(BeastCapsSession, AbandonAndReconnect) {
+TEST(BeastCapsSession, Reconnect) {
     uint8_t buf[kBeastCapsFrameLenBytes];
-    std::vector<uint8_t> answer = Hex(VectorHex("answer_all_dbm"));
+    std::vector<uint8_t> answer = Hex(VectorHex("answer_all"));
     CapsSession session;
     session.Start(buf, kBeastCapsSendable, 0);
     ASSERT_TRUE(session.Receive(answer.data(), answer.size(), 10));
-    session.Abandon();  // The confirm couldn't be queued.
-    EXPECT_EQ(session.state(), CapsSession::kPlain);
-    EXPECT_EQ(session.bits(), 0);
-    session.Confirm();  // No effect after Abandon.
-    EXPECT_EQ(session.bits(), 0);
+    EXPECT_EQ(session.bits(), kBeastCapRemoteID);
     // A new connection asks again; nothing is cached.
-    session.Start(buf, kBeastCapSignalDbm, 100);
+    session.Start(buf, kBeastCapsSendable, 100);
     EXPECT_EQ(session.state(), CapsSession::kWaiting);
     EXPECT_EQ(session.bits(), 0);
     ASSERT_TRUE(session.Receive(answer.data(), answer.size(), 200));
-    session.Confirm();
-    EXPECT_EQ(session.bits(), kBeastCapSignalDbm);
+    EXPECT_EQ(session.bits(), kBeastCapRemoteID);
     session.Reset();
     EXPECT_EQ(session.state(), CapsSession::kPlain);
     EXPECT_EQ(session.bits(), 0);
 }
 
-// Feeds are grouped by protocol and the bits that change frame bytes (0 and 3); Remote ID doesn't split a group.
-TEST(BeastCapsGroups, ByProtocolAndFrameFormat) {
+// Every sink of a Beast protocol gets that protocol's one batch, whatever its capabilities.
+TEST(BeastCapsGroups, ByProtocolOnly) {
     typedef SettingsManager S;
     struct Info {  // Same members as CommsManager::ReportSinkInfo.
         uint16_t sink;
@@ -468,126 +439,18 @@ TEST(BeastCapsGroups, ByProtocolAndFrameFormat) {
         uint16_t beast_caps;
     };
     const Info sinks[] = {{0, S::kBeast, 0},
-                          {1, S::kBeast, kBeastCapSignalDbm | kBeastCapRemoteID},
-                          {2, S::kBeast, kBeastCapRemoteID},
-                          {3, S::kBeastNoUAT, kBeastCapSignalDbm},
-                          {4, S::kBeast, kBeastCapSignalDbm},
-                          {5, S::kCSBee, kBeastCapSignalDbm}};
-    uint16_t selected[6];
-    ASSERT_EQ(SelectBeastGroup(sinks, 6, S::kBeast, uint16_t(0), selected), 2);
+                          {1, S::kBeast, kBeastCapRemoteID},
+                          {2, S::kBeastNoUAT, kBeastCapRemoteID},
+                          {3, S::kBeast, kAllBits},
+                          {4, S::kCSBee, kBeastCapRemoteID}};
+    uint16_t selected[5];
+    ASSERT_EQ(SelectBeastSinks(sinks, 5, S::kBeast, selected), 3);
     EXPECT_EQ(selected[0], 0);
-    EXPECT_EQ(selected[1], 2);
-    ASSERT_EQ(SelectBeastGroup(sinks, 6, S::kBeast, kBeastCapSignalDbm, selected), 2);
-    EXPECT_EQ(selected[0], 1);
-    EXPECT_EQ(selected[1], 4);
-    ASSERT_EQ(SelectBeastGroup(sinks, 6, S::kBeastNoUAT, kBeastCapSignalDbm, selected), 1);
-    EXPECT_EQ(selected[0], 3);
-    EXPECT_EQ(SelectBeastGroup(sinks, 6, S::kBeast, kBeastCapUATModeSClock, selected), 0);
-    EXPECT_EQ(SelectBeastGroup(sinks, 6, S::kBeastNoUATUplink, uint16_t(0), selected), 0);
-    // Every sink lands in exactly one of the four formats.
-    int total = 0;
-    for (uint16_t format : {uint16_t(0), kBeastCapSignalDbm, kBeastCapUATModeSClock, kBeastCapsFrameFormat}) {
-        total += SelectBeastGroup(sinks, 6, S::kBeast, format, selected);
-    }
-    EXPECT_EQ(total, 4);
-}
-
-// Frames are built once in dBm, then their signal bytes are rewritten for the power byte feeds.
-TEST(BeastCapsSignalSwap, PowerByteFromDbmByteMatchesTheBuilders) {
-    uint8_t buf[2];
-    for (int rssi = -300; rssi <= 300; rssi++) {
-        WriteRSSIdBmAsBeastPowerLevel(buf, rssi);
-        uint8_t power = buf[0];
-        WriteRSSIdBmAsInt8(buf, rssi);
-        EXPECT_EQ(PowerByteFromDbmByte(buf[0]), power) << rssi;
-    }
-    EXPECT_EQ(PowerByteFromDbmByte(kBeastNoLevelDbmByte), kBeastNoLevelPowerByte);
-    // No power byte is 0x1a, so the rewrite never grows a frame; -66 dBm, the nearest, is 0x1b.
-    for (int rssi = -101; rssi <= -39; rssi++) {
-        EXPECT_EQ(WriteRSSIdBmAsBeastPowerLevel(buf, rssi), 1) << rssi;
-    }
-    WriteRSSIdBmAsBeastPowerLevel(buf, -66);
-    EXPECT_EQ(buf[0], 0x1b);
-}
-
-namespace {
-// The frames of one batch, built with these caps.
-std::string MixedBatch(const std::vector<int16_t>& levels, uint16_t caps) {
-    std::vector<uint8_t> uat_l(RawUATADSBPacket::kLongADSBMessageNumBytes, 0x1a);
-    std::vector<uint8_t> uat_s(RawUATADSBPacket::kShortADSBMessageNumBytes, 0x2b);
-    std::string out;
-    for (size_t i = 0; i < levels.size(); i++) {
-        int16_t dbm = levels[i];
-        switch (i % 6) {
-            case 0: out += ModeS(kLongMsg, kTs, dbm, caps); break;
-            case 1: out += ModeS("8d495066587f469bb826d21ad767", 0xABABFF1AFFFFFF1A, dbm, caps); break;
-            case 2: out += UATADSB(i & 8 ? uat_l : uat_s, 0x1a3456, dbm, caps); break;
-            case 3: out += UATUplink(kTs, dbm, caps); break;
-            case 4: out += RemoteID(kRemoteIDTransportBT4Legacy, dbm, kMAC, VectorPack(), caps); break;
-            case 5: out += ADSL(kADSLChannel868_2, kTs, dbm, 0x1a, caps); break;
-        }
-    }
-    return out;
-}
-
-std::string Rewrite(std::string hex, size_t slack, uint8_t (*map)(uint8_t)) {
-    std::vector<uint8_t> buf = Hex(hex);
-    size_t len = buf.size();
-    buf.resize(len + slack, 0xee);
-    uint16_t new_len = RewriteSignalBytes(buf.data(), len, buf.size(), map);
-    return new_len == 0 ? "refused" : ToHex(buf.data(), new_len);
-}
-
-std::string ToPower(std::string hex, size_t slack = 0) { return Rewrite(hex, slack, PowerByteFromDbmByte); }
-}  // namespace
-
-TEST(BeastCapsSignalSwap, ABatchEqualsThePowerByteBuild) {
-    // Every frame type, levels across the table and past it, no level, and +26 dBm: a dBm byte of 0x1a, escaped,
-    // whose power byte isn't, so the rest of the batch moves up a byte.
-    std::vector<int16_t> levels = {-87, INT16_MIN, 26, -66, -100, -40, -120, 0, 26, -74, -52, 127, -128, 26};
-    for (size_t n = 1; n <= levels.size(); n++) {
-        std::vector<int16_t> some(levels.begin(), levels.begin() + n);
-        EXPECT_EQ(ToPower(MixedBatch(some, kBeastCapSignalDbm)), MixedBatch(some, 0)) << n;
-        EXPECT_EQ(ToPower(MixedBatch(some, kBeastCapsFrameFormat)), MixedBatch(some, kBeastCapUATModeSClock)) << n;
-    }
-    // Random levels.
-    std::mt19937 rng(1111);
-    std::uniform_int_distribution<int> level(-130, 40);
-    for (int round = 0; round < 300; round++) {
-        std::vector<int16_t> some(1 + rng() % 40);
-        for (auto& l : some) l = rng() % 10 == 0 ? INT16_MIN : level(rng);
-        ASSERT_EQ(ToPower(MixedBatch(some, kBeastCapSignalDbm)), MixedBatch(some, 0)) << round;
-    }
-}
-
-// The patch is in place unless a signal byte changes length; then the rest is parked in the slack and copied back.
-TEST(BeastCapsSignalSwap, AnEscapedSignalByteMovesTheRest) {
-    // A 0x1a signal byte written where there was none (a power byte of 0x1a, if the table ever had one): each takes
-    // one byte of slack.
-    auto to_1a = +[](uint8_t b) -> uint8_t { return b == 0xa9 ? 0x1a : b; };  // -87 dBm -> 0x1a.
-    auto from_1a = +[](uint8_t b) -> uint8_t { return b == 0x1a ? 0xa9 : b; };
-    std::string plain = MixedBatch({-87, -60, -87, -87, -50, -87}, kBeastCapSignalDbm);
-    std::string escaped = MixedBatch({26, -60, 26, 26, -50, 26}, kBeastCapSignalDbm);
-    ASSERT_EQ(Hex(escaped).size(), Hex(plain).size() + 4);
-    EXPECT_EQ(Rewrite(plain, 4, to_1a), escaped);
-    EXPECT_EQ(Rewrite(plain, 100, to_1a), escaped);
-    EXPECT_EQ(Rewrite(plain, 3, to_1a), "refused");  // Not enough slack: the caller builds the frames again.
-    EXPECT_EQ(Rewrite(escaped, 0, from_1a), plain);  // Shrinking needs none.
-    // Both in one batch: shrinks first, then grows.
-    std::string mixed = MixedBatch({26, -87, -60}, kBeastCapSignalDbm);
-    auto swap = +[](uint8_t b) -> uint8_t { return b == 0x1a ? 0xa9 : (b == 0xa9 ? 0x1a : b); };
-    EXPECT_EQ(Rewrite(mixed, 0, swap), MixedBatch({-87, 26, -60}, kBeastCapSignalDbm));
-    // Nothing changes length: same bytes in place.
-    EXPECT_EQ(Rewrite(plain, 0, +[](uint8_t b) -> uint8_t { return b; }), plain);
-}
-
-TEST(BeastCapsSignalSwap, RefusesWhatIsNotABatchOfFrames) {
-    EXPECT_EQ(ToPower("1ae551818580"), "refused");               // A capabilities frame has no signal byte.
-    EXPECT_EQ(ToPower("331a"), "refused");                       // No frame start.
-    EXPECT_EQ(ToPower(ModeS(kShortMsg, kTs, -87, kBeastCapSignalDbm).substr(0, 12)), "refused");  // Cut short.
-    EXPECT_EQ(ToPower(ModeS(kShortMsg, kTs, -87, kBeastCapSignalDbm) + "1a"), "refused");  // A lone 0x1a at the end.
-    uint8_t buf[4] = {0};
-    EXPECT_EQ(RewriteSignalBytes(buf, 5, 4, PowerByteFromDbmByte), 0);  // len > buf_size.
+    EXPECT_EQ(selected[1], 1);
+    EXPECT_EQ(selected[2], 3);
+    ASSERT_EQ(SelectBeastSinks(sinks, 5, S::kBeastNoUAT, selected), 1);
+    EXPECT_EQ(selected[0], 2);
+    EXPECT_EQ(SelectBeastSinks(sinks, 5, S::kBeastNoUATUplink, selected), 0);
 }
 
 // Remote ID frames from received packets (MAC order, unknown level, transports, bounds).
@@ -601,7 +464,6 @@ TEST(BeastCapsRemoteID, BuildsFromAReceivedPacket) {
     // NimBLE holds BLE addresses least significant byte first; the frame carries display order.
     for (int i = 0; i < 6; i++) packet.source_mac[i] = kMAC[5 - i];
     packet.transport = RawRemoteIDPacket::kTransportBT4Legacy;
-    EXPECT_EQ(ToHex(buf, BuildRemoteIDBeastFrame(buf, packet, kBeastCapSignalDbm)), VectorHex("rid_bt4_single"));
     EXPECT_EQ(ToHex(buf, BuildRemoteIDBeastFrame(buf, packet)), VectorHex("rid_bt4_single_power"));
 
     packet.transport = RawRemoteIDPacket::kTransportBT5LongRange;
@@ -613,11 +475,10 @@ TEST(BeastCapsRemoteID, BuildsFromAReceivedPacket) {
     memcpy(packet.source_mac, kMAC, 6);
     packet.transport = RawRemoteIDPacket::kTransportWiFiBeacon;
     packet.rssi_dbm = 0;
-    std::string wifi = ToHex(buf, BuildRemoteIDBeastFrame(buf, packet, kBeastCapSignalDbm));
+    std::string wifi = ToHex(buf, BuildRemoteIDBeastFrame(buf, packet));
     EXPECT_EQ(wifi.substr(0, 6), "1aef77");
-    EXPECT_EQ(wifi.substr(18, 2), "80");
+    EXPECT_EQ(wifi.substr(18, 2), "00");  // No level: power byte 0.
     EXPECT_EQ(wifi.substr(20, 14), "c0ffee1a1a0001");
-    EXPECT_EQ(ToHex(buf, BuildRemoteIDBeastFrame(buf, packet)).substr(18, 2), "00");
 
     packet.transport = RawRemoteIDPacket::kTransportInvalid;
     EXPECT_EQ(BuildRemoteIDBeastFrame(buf, packet), 0);
@@ -629,22 +490,22 @@ TEST(BeastCapsRemoteID, BuildsFromAReceivedPacket) {
 TEST(BeastCapsRemoteID, OtherLettersAndTheLargestFrame) {
     std::vector<std::vector<uint8_t>> nine;
     for (int i = 0; i < 9; i++) nine.push_back(ODIDMessage(i % 6, i == 4 ? 0x1a : 0x30 + i));
-    // readsbee_proto.enc_rid(pack9, 0, None, "e", mac) and enc_rid(msg, 0, 26, "n", 1a x 6).
-    EXPECT_EQ(RemoteID(kRemoteIDTransportBT5Extended1M, INT16_MIN, kMAC, ODIDPack(nine), kBeastCapSignalDbm),
-              "1aef6500000000000080c0ffee1a1a0001f2190902303030303030303030303030303030303030303030303030123131313131"
+    // readsbee_proto.enc_rid(pack9, 0, 0, "e", mac) and enc_rid(msg, 0, 255, "n", 1a x 6).
+    EXPECT_EQ(RemoteID(kRemoteIDTransportBT5Extended1M, INT16_MIN, kMAC, ODIDPack(nine)),
+              "1aef6500000000000000c0ffee1a1a0001f2190902303030303030303030303030303030303030303030303030123131313131"
               "313131313131313131313131313131313131312232323232323232323232323232323232323232323232323232333333333333"
               "333333333333333333333333333333333333421a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
               "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a52353535353535353535353535353535353535353535353535023636363636363636"
               "363636363636363636363636363636361237373737373737373737373737373737373737373737373722383838383838383838"
               "383838383838383838383838383838");
     const uint8_t all_escapes[6] = {0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a};
-    EXPECT_EQ(RemoteID(kRemoteIDTransportWiFiNaN, 26, all_escapes, ODIDMessage(2, 0x55), kBeastCapSignalDbm),
-              "1aef6e0000000000001a1a1a1a1a1a1a1a1a1a1a1a1a1a22555555555555555555555555555555555555555555555555");
+    EXPECT_EQ(RemoteID(kRemoteIDTransportWiFiNaN, 26, all_escapes, ODIDMessage(2, 0x55)),
+              "1aef6e000000000000ff1a1a1a1a1a1a1a1a1a1a1a1a22555555555555555555555555555555555555555555555555");
     std::vector<uint8_t> pack = ODIDPack(std::vector<std::vector<uint8_t>>(9, ODIDMessage(1, 0x1a)));
     uint8_t buf[kRemoteIDBeastFrameMaxLenBytes];
-    uint16_t len = WriteRemoteIDBeastFrame(buf, kRemoteIDTransportBT4Legacy, 0, 26, all_escapes, pack.data(),
-                                           pack.size(), kBeastCapSignalDbm);
-    EXPECT_EQ(len, 3 + 6 + 2 + 12 + 3 + 9 * (1 + 2 * 24));
+    uint16_t len = WriteRemoteIDBeastFrame(buf, kRemoteIDTransportBT4Legacy, 0x1a1a1a1a1a1a, -66, all_escapes,
+                                           pack.data(), pack.size());
+    EXPECT_EQ(len, 3 + 12 + 1 + 12 + 3 + 9 * (1 + 2 * 24));
     EXPECT_GE(kRemoteIDBeastFrameMaxLenBytes, 485);  // FEED-PROTOCOL.md section 2.
     EXPECT_LE(len, kRemoteIDBeastFrameMaxLenBytes);
 }
@@ -695,9 +556,9 @@ RawRemoteIDPacket RemoteIDPacket(RawRemoteIDPacket::Transport transport, const u
     return packet;
 }
 
-std::string Build(const RawRemoteIDPacket& packet, uint16_t caps) {
+std::string Build(const RawRemoteIDPacket& packet) {
     uint8_t buf[kRemoteIDBeastFrameMaxLenBytes];
-    return ToHex(buf, BuildRemoteIDBeastFrame(buf, packet, caps));
+    return ToHex(buf, BuildRemoteIDBeastFrame(buf, packet));
 }
 }  // namespace
 
@@ -705,22 +566,19 @@ std::string Build(const RawRemoteIDPacket& packet, uint16_t caps) {
 TEST(BeastCapsRemoteID, TimestampOnTheModeSClock) {
     const auto kBT4 = RawRemoteIDPacket::kTransportBT4Legacy;
     const auto kWiFi = RawRemoteIDPacket::kTransportWiFiBeacon;
-    EXPECT_EQ(Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x1a), -72, kTs << 2), kBeastCapSignalDbm),
-              VectorHex("rid_bt4_modes_clock"));
-    EXPECT_EQ(Build(RemoteIDPacket(kWiFi, kPackMAC, VectorPack(), -60, kTs << 2), 0),
+    EXPECT_EQ(Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x1a), -72, kTs << 2)),
+              VectorHex("rid_bt4_modes_clock_power"));
+    EXPECT_EQ(Build(RemoteIDPacket(kWiFi, kPackMAC, VectorPack(), -60, kTs << 2)),
               VectorHex("rid_wifi_beacon_pack_modes_clock"));
-    EXPECT_EQ(Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x1a), -72, 0), kBeastCapSignalDbm),
-              VectorHex("rid_bt4_single"));
-    EXPECT_EQ(Build(RemoteIDPacket(kWiFi, kPackMAC, VectorPack(), -60, 0), 0), VectorHex("rid_wifi_beacon_pack_power"));
+    EXPECT_EQ(Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x1a), -72, 0)), VectorHex("rid_bt4_single_power"));
+    EXPECT_EQ(Build(RemoteIDPacket(kWiFi, kPackMAC, VectorPack(), -60, 0)), VectorHex("rid_wifi_beacon_pack_power"));
     // The other letters go upper case the same way.
     EXPECT_EQ(
-        Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT5LongRange, kMAC, ODIDMessage(0, 0x22), -95, kTs << 2),
-              kBeastCapSignalDbm)
+        Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT5LongRange, kMAC, ODIDMessage(0, 0x22), -95, kTs << 2))
             .substr(0, 6),
         "1aef43");
-    EXPECT_EQ(Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT5LongRange, kMAC, ODIDMessage(0, 0x22), -95, 0),
-                    kBeastCapSignalDbm),
-              VectorHex("rid_bt5_coded"));
+    EXPECT_EQ(Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT5LongRange, kMAC, ODIDMessage(0, 0x22), -95, 0)),
+              VectorHex("rid_bt5_coded_power"));
 }
 
 // 48 MHz -> 12 MHz exactly as Mode S frames do it (GetMLAT12MHzCounter): counts / 4, low 48 bits.
@@ -736,11 +594,10 @@ TEST(BeastCapsRemoteID, TimestampConversionMatchesModeS) {
                                123456789ull * 48};
     for (uint64_t c : counts) {
         std::string rid =
-            Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x33), -70, c),
-                  kBeastCapSignalDbm);
+            Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x33), -70, c));
         uint8_t buf[kModeSBeastFrameMaxLenBytes];
         DecodedModeSPacket mode_s(kShortMsg, 0, -70, 50, c);
-        std::string ms = ToHex(buf, BuildModeSBeastFrame(buf, mode_s, kBeastCapSignalDbm));
+        std::string ms = ToHex(buf, BuildModeSBeastFrame(buf, mode_s));
         // Both escape the same 6 timestamp bytes: same hex from after the letter (Mode S has none) to the signal byte.
         size_t ts_hex_len = ms.size() - 4 - 2 - 2 * 7;  // 1a 32, signal byte, 7-byte message (no 1a in kShortMsg).
         EXPECT_EQ(rid.substr(6, ts_hex_len), ms.substr(4, ts_hex_len)) << std::hex << c;
@@ -749,20 +606,17 @@ TEST(BeastCapsRemoteID, TimestampConversionMatchesModeS) {
     // Counts below 4 are 0 at 12 MHz: lower case, so an upper-case frame never says "not synced".
     for (uint64_t c : {1ull, 3ull, 1ull << 50}) {
         std::string rid =
-            Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x1a), -72, c),
-                  kBeastCapSignalDbm);
-        EXPECT_EQ(rid, VectorHex("rid_bt4_single")) << c;
+            Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x1a), -72, c));
+        EXPECT_EQ(rid, VectorHex("rid_bt4_single_power")) << c;
     }
 }
 
 // The 12 MHz counter wraps at 48 bits like the Mode S frames': ffffffffffff, then 000000000002.
 TEST(BeastCapsRemoteID, TimestampWrapsAt48Bits) {
     const auto kBT4 = RawRemoteIDPacket::kTransportBT4Legacy;
-    std::string before =
-        Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x33), -70, 0xFFFFFFFFFFFFull << 2 | 3), kBeastCapSignalDbm);
-    std::string after =
-        Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x33), -70, (1ull << 50) + (2 << 2)), kBeastCapSignalDbm);
-    EXPECT_EQ(before + after, VectorHex("rid_bt4_modes_clock_wrap"));
+    std::string before = Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x33), -70, 0xFFFFFFFFFFFFull << 2 | 3));
+    std::string after = Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x33), -70, (1ull << 50) + (2 << 2)));
+    EXPECT_EQ(before + after, VectorHex("rid_bt4_modes_clock_wrap_power"));
 }
 
 namespace {
@@ -782,10 +636,10 @@ std::vector<SentTo> ReportRemoteID(const std::vector<Info>& sinks, const std::ve
                                    uint16_t buf_size, bool* ret = nullptr, uint16_t* failures = nullptr) {
     std::vector<SentTo> sent;
     std::vector<uint8_t> buf(buf_size);
-    std::vector<uint16_t> dbm(sinks.size() + 1), power(sinks.size() + 1);
+    std::vector<uint16_t> selected(sinks.size() + 1);
     uint16_t num_build_failures = 0;
     bool ok = ReportRemoteIDFrames(
-        sinks.data(), sinks.size(), packets.data(), packets.size(), buf.data(), buf_size, dbm.data(), power.data(),
+        sinks.data(), sinks.size(), packets.data(), packets.size(), buf.data(), buf_size, selected.data(),
         [&](const uint16_t* to, uint16_t num_to, const uint8_t* b, uint16_t len, uint16_t num_frames) {
             for (uint16_t i = 0; i < num_to; i++) sent.push_back({to[i], ToHex(b, len), num_frames});
             return true;
@@ -797,43 +651,36 @@ std::vector<SentTo> ReportRemoteID(const std::vector<Info>& sinks, const std::ve
 }
 }  // namespace
 
-// Remote ID frames go only to the feeds that confirmed bit 2, in each one's signal format, after the Beast batch.
-TEST(BeastCapsRemoteID, OnlyToFeedsThatConfirmedBit2) {
+// Remote ID frames go only to the feeds that agreed on bit 2, after the Beast batch, built once.
+TEST(BeastCapsRemoteID, OnlyToFeedsThatAgreedOnBit2) {
     typedef SettingsManager S;
     const std::vector<Info> sinks = {{0, S::kBeast, 0},
-                                     {1, S::kBeast, kBeastCapSignalDbm | kBeastCapRemoteID},
+                                     {1, S::kBeast, kBeastCapRemoteID},
                                      {2, S::kBeastNoUAT, kBeastCapRemoteID},
-                                     {3, S::kBeast, kBeastCapSignalDbm},
-                                     {4, S::kBeast, kBeastCapsFrameFormat | kBeastCapADSL},
+                                     {3, S::kBeast, kBeastCapADSL},
+                                     {4, S::kBeast, kBeastCapUATModeSClock | kBeastCapADSL},
                                      {5, S::kRaw, 0},
                                      {6, S::kBeastNoUATUplink, kBeastCapsKnown}};
     std::vector<RawRemoteIDPacket> packets = {
         RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x1a), -72, kTs << 2),
         RemoteIDPacket(RawRemoteIDPacket::kTransportWiFiBeacon, kPackMAC, VectorPack(), -60, kTs << 2)};
-    std::string dbm_batch = Build(packets[0], kBeastCapSignalDbm) + Build(packets[1], kBeastCapSignalDbm);
-    std::string power_batch = Build(packets[0], 0) + Build(packets[1], 0);
-    ASSERT_EQ(Build(packets[0], kBeastCapSignalDbm), VectorHex("rid_bt4_modes_clock"));
-    ASSERT_EQ(Build(packets[1], 0), VectorHex("rid_wifi_beacon_pack_modes_clock"));
+    ASSERT_EQ(Build(packets[0]), VectorHex("rid_bt4_modes_clock_power"));
+    ASSERT_EQ(Build(packets[1]), VectorHex("rid_wifi_beacon_pack_modes_clock"));
+    std::string batch = Build(packets[0]) + Build(packets[1]);
 
     bool ok = false;
     std::vector<SentTo> sent = ReportRemoteID(sinks, packets, kRemoteIDBeastFrameMaxLenBytes * 4, &ok);
     EXPECT_TRUE(ok);
-    ASSERT_EQ(sent.size(), 3u);  // Sinks 1 and 6 (dBm), then 2 (power byte); never 0, 3, 4 or 5.
+    ASSERT_EQ(sent.size(), 3u);  // Sinks 1, 2 and 6, one send of the same batch; never 0, 3, 4 or 5.
     EXPECT_EQ(sent[0].sink, 1);
-    EXPECT_EQ(sent[1].sink, 6);
-    EXPECT_EQ(sent[2].sink, 2);
-    EXPECT_EQ(sent[0].hex, dbm_batch);
-    EXPECT_EQ(sent[1].hex, dbm_batch);
-    EXPECT_EQ(sent[2].hex, power_batch);
-    for (const SentTo& s : sent) EXPECT_EQ(s.num_frames, 2);
+    EXPECT_EQ(sent[1].sink, 2);
+    EXPECT_EQ(sent[2].sink, 6);
+    for (const SentTo& s : sent) {
+        EXPECT_EQ(s.hex, batch);
+        EXPECT_EQ(s.num_frames, 2);
+    }
 
-    // Power byte feeds only: built in power bytes directly.
-    sent = ReportRemoteID({sinks[0], sinks[2], sinks[3]}, packets, kRemoteIDBeastFrameMaxLenBytes * 4);
-    ASSERT_EQ(sent.size(), 1u);
-    EXPECT_EQ(sent[0].sink, 2);
-    EXPECT_EQ(sent[0].hex, power_batch);
-
-    // Nobody confirmed bit 2, or no packets (the RP2040 and the 1421): nothing is sent.
+    // Nobody agreed on bit 2, or no packets (the RP2040 and the 1421): nothing is sent.
     EXPECT_TRUE(ReportRemoteID({sinks[0], sinks[3], sinks[4], sinks[5]}, packets, 2048).empty());
     EXPECT_TRUE(ReportRemoteID(sinks, {}, 2048).empty());
 }
@@ -841,8 +688,7 @@ TEST(BeastCapsRemoteID, OnlyToFeedsThatConfirmedBit2) {
 // A buffer too small for the round: sent in parts, each holding whole frames; too small for one frame: refused.
 TEST(BeastCapsRemoteID, SplitsABatchThatDoesNotFit) {
     typedef SettingsManager S;
-    const std::vector<Info> sinks = {{7, S::kBeast, kBeastCapSignalDbm | kBeastCapRemoteID},
-                                     {8, S::kBeast, kBeastCapRemoteID}};
+    const std::vector<Info> sinks = {{7, S::kBeast, kBeastCapRemoteID}, {8, S::kBeastNoUAT, kBeastCapRemoteID}};
     std::vector<RawRemoteIDPacket> packets;
     for (int i = 0; i < 5; i++) {
         packets.push_back(
@@ -854,26 +700,23 @@ TEST(BeastCapsRemoteID, SplitsABatchThatDoesNotFit) {
     uint16_t failures = 0;
     bool ok = false;
     // Room for exactly two of these frames per send: a frame starts only where a worst-case one would fit.
-    const uint16_t frame_len = Build(packets[0], kBeastCapSignalDbm).size() / 2;
+    const uint16_t frame_len = Build(packets[0]).size() / 2;
     std::vector<SentTo> sent =
         ReportRemoteID(sinks, packets, kRemoteIDBeastFrameMaxLenBytes + frame_len, &ok, &failures);
     EXPECT_TRUE(ok);
     EXPECT_EQ(failures, 1);
-    std::string dbm_all, power_all;
+    std::string all_7, all_8;
     uint16_t frames_7 = 0;
     for (const SentTo& s : sent) {
-        (s.sink == 7 ? dbm_all : power_all) += s.hex;
+        (s.sink == 7 ? all_7 : all_8) += s.hex;
         if (s.sink == 7) frames_7 += s.num_frames;
     }
-    std::string want_dbm, want_power;
-    for (const RawRemoteIDPacket& p : packets) {
-        want_dbm += Build(p, kBeastCapSignalDbm);
-        want_power += Build(p, 0);
-    }
+    std::string want;
+    for (const RawRemoteIDPacket& p : packets) want += Build(p);
     EXPECT_EQ(sent.size(), 6u);  // Three sends, to two sinks each.
     EXPECT_EQ(frames_7, 5);
-    EXPECT_EQ(dbm_all, want_dbm);
-    EXPECT_EQ(power_all, want_power);
+    EXPECT_EQ(all_7, want);
+    EXPECT_EQ(all_8, want);
 
     sent = ReportRemoteID(sinks, packets, kRemoteIDBeastFrameMaxLenBytes - 1, &ok);
     EXPECT_FALSE(ok);

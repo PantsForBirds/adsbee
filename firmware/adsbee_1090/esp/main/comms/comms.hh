@@ -296,7 +296,7 @@ class CommsManager {
     bool SendBuf(uint16_t iface, const char* buf, uint16_t buf_len, uint16_t num_msgs = 1);
 
     /**
-     * Whether a connected feed confirmed Remote ID frames. Read by the main task to queue Remote ID packets for feeds.
+     * Whether a connected feed agreed on Remote ID frames. Read by the main task to queue Remote ID packets for feeds.
      */
     bool FeedsTakeRemoteID() const { return feeds_take_remote_id_; }
 
@@ -317,8 +317,8 @@ class CommsManager {
     void CloseFeedSocket(uint16_t feed_index);
 
     /**
-     * Reads what the server sent on a TCP Beast feed without blocking: looks for the capabilities answer, sends the
-     * confirm, and drops the rest.
+     * Reads what the server sent on a TCP Beast feed without blocking: looks for the capabilities answer and drops the
+     * rest.
      */
     void ReceiveFeedSocket(uint16_t feed_index);
 

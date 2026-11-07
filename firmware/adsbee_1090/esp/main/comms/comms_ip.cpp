@@ -519,7 +519,7 @@ void CommsManager::IPWANTask(void* pvParameters) {
 
         uint16_t num_active_report_sinks = 0;
         ReportSinkInfo active_report_sinks[SettingsManager::Settings::kMaxNumFeeds];
-        // Whether RemoteIDManager queues packets for the feeds; ReportBeast sends them to the feeds that confirmed it.
+        // Whether RemoteIDManager queues packets for the feeds; ReportBeast sends them to the feeds that agreed on it.
         bool feeds_take_remote_id = false;
 
         // Maintain socket connections and build list of acive report sinks.
@@ -554,9 +554,8 @@ void CommsManager::IPWANTask(void* pvParameters) {
                     // Need to open the socket connection, but failed to do so.
                     continue;  // Failed to connect, try again later.
                 }
-                // Before this pass's frames: a capabilities answer switches the feed after its confirm.
+                // Before this pass's frames: a capabilities answer takes effect from them on.
                 ReceiveFeedSocket(i);
-                if (!feed_sock_is_connected_[i]) continue;
                 // Socket is connected, add to active sinks.
                 ReportSinkInfo& sink = active_report_sinks[num_active_report_sinks++];
                 sink = {i, settings_manager.settings.feed_protocols[i], feed_caps_[i].bits()};
@@ -869,7 +868,7 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
 }
 
 uint16_t CommsManager::BeastCapsToOffer() {
-    uint16_t offer = BeastReporter::kBeastCapSignalDbm;
+    uint16_t offer = 0;
     if (settings_manager.settings.remote_id_rx_enabled) offer |= BeastReporter::kBeastCapRemoteID;
     return offer & BeastReporter::kBeastCapsSendable;
 }
@@ -890,32 +889,15 @@ void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {
             }
             break;
         }
-        if (!caps.Receive(buf, len, timestamp_ms)) continue;
-        // Answer in time: the confirm goes into the send buffer before the next frame (it is FIFO).
-        uint8_t confirm[BeastReporter::kBeastCapsFrameLenBytes];
-        uint16_t confirm_len = caps.WriteConfirm(confirm);
-        FeedSendBuffer::Result result = feed_send_heap_is_low_
-                                            ? FeedSendBuffer::kDropped
-                                            : feed_send_buffers_[feed_index].Write(confirm, confirm_len, timestamp_ms);
-        if (result == FeedSendBuffer::kError) {
-            CONSOLE_ERROR("CommsManager::ReceiveFeedSocket", "Closing feed %d: socket error sending the confirm.",
-                          feed_index);
-            CloseFeedSocket(feed_index);
-            return;
-        }
-        if (result == FeedSendBuffer::kDropped) {
-            caps.Abandon();  // The server never saw the confirm, so it still reads plain Beast.
-            CONSOLE_WARNING("CommsManager::ReceiveFeedSocket", "Feed %d: no room for the confirm, staying plain Beast.",
-                            feed_index);
-        } else {
-            caps.Confirm();
-            CONSOLE_INFO("CommsManager::ReceiveFeedSocket", "Feed %d: server accepts capabilities 0x%x, using 0x%x.",
+        if (caps.Receive(buf, len, timestamp_ms)) {
+            // Answer in time: this pass's frames already use the agreed bits.
+            CONSOLE_INFO("CommsManager::ReceiveFeedSocket", "Feed %d: offered capabilities 0x%x, using 0x%x.",
                          feed_index, caps.offered(), caps.bits());
         }
     }
     caps.Update(timestamp_ms);
     if (!feed_rx_open_[feed_index] && caps.state() == BeastReporter::CapsSession::kWaiting) {
-        caps.Abandon();  // No answer can arrive any more.
+        caps.Reset();  // No answer can arrive any more: plain Beast.
     }
     if (was_waiting && caps.state() == BeastReporter::CapsSession::kPlain) {
         CONSOLE_INFO("CommsManager::ReceiveFeedSocket", "Feed %d: no capabilities answer, plain Beast.", feed_index);

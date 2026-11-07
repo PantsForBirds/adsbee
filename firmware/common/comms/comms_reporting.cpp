@@ -466,49 +466,47 @@ bool CommsManager::ReportRaw(ReportSink* sinks, uint16_t num_sinks, const Compos
 #if COMMS_REPORTING_BATCH_SENDS
 /**
  * Builds the Beast frames of one protocol into buf.
- * @param[in] caps Frame format bits (BeastReporter::kBeastCapsFrameFormat).
  * @param[out] num_frames Frames built.
- * @param[in,out] num_build_failures Frames dropped are added here, or nullptr to not count them (a rebuild).
+ * @param[in,out] num_build_failures Frames dropped are added here.
  * @retval Bytes in buf.
  */
 static uint16_t BuildBeastBatch(uint8_t* buf, size_t buf_size, const CompositeArray::RawPackets& packets,
-                                SettingsManager::ReportingProtocol protocol, uint16_t caps, uint16_t& num_frames,
-                                uint16_t* num_build_failures) {
+                                SettingsManager::ReportingProtocol protocol, uint16_t& num_frames,
+                                uint16_t& num_build_failures) {
     uint16_t batch_len = 0;
     num_frames = 0;
     // The Beast builders return 0 on an invalid packet length and take no output buffer bound, so they
     // write blind. BuildUATADSBBeastFrame and BuildUATUplinkBeastFrame log the reason themselves;
     // BuildModeSBeastFrame fails silently, which is why the drop is tallied here for all three. The
     // remaining-space check guards the batch buffer, whose size bound is derived rather than enforced.
-#define BUILD_BEAST_FRAME(build_call, frame_max_len_bytes)                                 \
-    do {                                                                                  \
-        uint16_t frame_len = 0;                                                           \
-        if (static_cast<size_t>(batch_len) + (frame_max_len_bytes) <= buf_size) {         \
-            frame_len = (build_call);                                                     \
-        }                                                                                 \
-        if (frame_len == 0) {                                                             \
-            if (num_build_failures) (*num_build_failures)++;                              \
-            break;                                                                        \
-        }                                                                                 \
-        batch_len += frame_len;                                                           \
-        num_frames++;                                                                     \
+#define BUILD_BEAST_FRAME(build_call, frame_max_len_bytes)                         \
+    do {                                                                          \
+        uint16_t frame_len = 0;                                                   \
+        if (static_cast<size_t>(batch_len) + (frame_max_len_bytes) <= buf_size) { \
+            frame_len = (build_call);                                             \
+        }                                                                         \
+        if (frame_len == 0) {                                                     \
+            num_build_failures++;                                                 \
+            break;                                                                \
+        }                                                                         \
+        batch_len += frame_len;                                                   \
+        num_frames++;                                                             \
     } while (0)
 
     for (uint16_t i = 0; i < packets.header->num_mode_s_packets; i++) {
-        BUILD_BEAST_FRAME(BeastReporter::BuildModeSBeastFrame(buf + batch_len, packets.mode_s_packets[i], caps),
+        BUILD_BEAST_FRAME(BeastReporter::BuildModeSBeastFrame(buf + batch_len, packets.mode_s_packets[i]),
                           BeastReporter::kModeSBeastFrameMaxLenBytes);
     }
     if (protocol != SettingsManager::kBeastNoUAT) {
         for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
-            BUILD_BEAST_FRAME(BeastReporter::BuildUATADSBBeastFrame(buf + batch_len, packets.uat_adsb_packets[i], caps),
+            BUILD_BEAST_FRAME(BeastReporter::BuildUATADSBBeastFrame(buf + batch_len, packets.uat_adsb_packets[i]),
                               BeastReporter::kUATADSBBeastFrameMaxLenBytes);
         }
     }
     if (protocol != SettingsManager::kBeastNoUATUplink && protocol != SettingsManager::kBeastNoUAT) {
         for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
-            BUILD_BEAST_FRAME(
-                BeastReporter::BuildUATUplinkBeastFrame(buf + batch_len, packets.uat_uplink_packets[i], caps),
-                BeastReporter::kUATUplinkBeastFrameMaxLenBytes);
+            BUILD_BEAST_FRAME(BeastReporter::BuildUATUplinkBeastFrame(buf + batch_len, packets.uat_uplink_packets[i]),
+                              BeastReporter::kUATUplinkBeastFrameMaxLenBytes);
         }
     }
 #undef BUILD_BEAST_FRAME
@@ -519,105 +517,71 @@ static uint16_t BuildBeastBatch(uint8_t* buf, size_t buf_size, const CompositeAr
 bool CommsManager::ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks,
                                const CompositeArray::RawPackets& packets) {
     if (num_sinks > SettingsManager::kMaxNumReportSinks) num_sinks = SettingsManager::kMaxNumReportSinks;
-    // Sinks of one protocol and UAT letter case, by signal byte format.
-    ReportSink dbm_sinks[SettingsManager::kMaxNumReportSinks];
-    ReportSink power_sinks[SettingsManager::kMaxNumReportSinks];
+    ReportSink selected[SettingsManager::kMaxNumReportSinks];
     static constexpr SettingsManager::ReportingProtocol kBeastProtocols[] = {
         SettingsManager::kBeast, SettingsManager::kBeastNoUAT, SettingsManager::kBeastNoUATUplink};
-    static constexpr uint16_t kUATLetterFormats[] = {0, BeastReporter::kBeastCapUATModeSClock};
 
     bool validated = false;
     bool ret = true;
+    // One build per protocol, sent to every sink of that protocol: the frames are the same for all of them.
     for (SettingsManager::ReportingProtocol protocol : kBeastProtocols) {
-        for (uint16_t uat_format : kUATLetterFormats) {
-            uint16_t num_dbm_sinks = BeastReporter::SelectBeastGroup(
-                sinks, num_sinks, protocol, uat_format | BeastReporter::kBeastCapSignalDbm, dbm_sinks);
-            uint16_t num_power_sinks =
-                BeastReporter::SelectBeastGroup(sinks, num_sinks, protocol, uat_format, power_sinks);
-            if (num_dbm_sinks == 0 && num_power_sinks == 0) {
-                continue;  // Nobody is listening; don't spend time building frames.
+        uint16_t num_selected = BeastReporter::SelectBeastSinks(sinks, num_sinks, protocol, selected);
+        if (num_selected == 0) {
+            continue;  // Nobody is listening; don't spend time building frames.
+        }
+        if (!validated) {
+            char error_msg[CompositeArray::RawPackets::kErrorMessageMaxLen] = {0};
+            if (!packets.IsValid(error_msg)) {
+                CONSOLE_ERROR("CommsManager::ReportBeast", "Invalid CompositeArray::RawPackets: %s", error_msg);
+                return false;
             }
-            if (!validated) {
-                char error_msg[CompositeArray::RawPackets::kErrorMessageMaxLen] = {0};
-                if (!packets.IsValid(error_msg)) {
-                    CONSOLE_ERROR("CommsManager::ReportBeast", "Invalid CompositeArray::RawPackets: %s", error_msg);
-                    return false;
-                }
-                validated = true;
-            }
-            // Build in dBm if anyone takes it; the power byte sinks get the same frames with their signal bytes
-            // rewritten.
-            uint16_t caps = uat_format | (num_dbm_sinks > 0 ? BeastReporter::kBeastCapSignalDbm : 0);
+            validated = true;
+        }
 
 #if COMMS_REPORTING_BATCH_SENDS
-            // Batch all frames into one buffer, then do a single send per sink to minimize lwIP IPC round-trips.
-            uint8_t (&beast_batch_buf)[kBeastBatchBufMaxBytes] = ReportScratch<uint8_t, kBeastBatchBufMaxBytes>();
-            uint16_t num_frames = 0;
-            uint16_t batch_len = BuildBeastBatch(beast_batch_buf, sizeof(beast_batch_buf), packets, protocol, caps,
-                                                 num_frames, &beast_tally.num_build_failures);
-            if (batch_len == 0) continue;
-            if (num_dbm_sinks > 0) {
-                ret &= SendBufToSinks(dbm_sinks, num_dbm_sinks, (char*)beast_batch_buf, batch_len, beast_tally,
-                                      num_frames);
-                if (num_power_sinks == 0) continue;
-                uint16_t power_len =
-                    BeastReporter::ConvertSignalDbmToPowerByte(beast_batch_buf, batch_len, sizeof(beast_batch_buf));
-                // Never 0 for frames these builders wrote (no power byte is 0x1a, so nothing grows); if it were,
-                // build them again.
-                batch_len = power_len > 0 ? power_len
-                                          : BuildBeastBatch(beast_batch_buf, sizeof(beast_batch_buf), packets,
-                                                            protocol, uat_format, num_frames, nullptr);
-            }
-            ret &= SendBufToSinks(power_sinks, num_power_sinks, (char*)beast_batch_buf, batch_len, beast_tally,
-                                  num_frames);
+        // Batch all frames into one buffer, then do a single send per sink to minimize lwIP IPC round-trips.
+        uint8_t (&beast_batch_buf)[kBeastBatchBufMaxBytes] = ReportScratch<uint8_t, kBeastBatchBufMaxBytes>();
+        uint16_t num_frames = 0;
+        uint16_t batch_len = BuildBeastBatch(beast_batch_buf, sizeof(beast_batch_buf), packets, protocol, num_frames,
+                                             beast_tally.num_build_failures);
+        if (batch_len > 0) {
+            ret &= SendBufToSinks(selected, num_selected, (char*)beast_batch_buf, batch_len, beast_tally, num_frames);
+        }
 #else
-            // Per-frame sends, for debugging: each frame is built once and rewritten for the power byte sinks.
-#define SEND_BEAST_FRAME(build_call, frame_max_len_bytes)                                                         \
-    do {                                                                                                          \
-        uint8_t beast_frame_buf[frame_max_len_bytes];                                                             \
-        uint16_t num_bytes_in_frame = (build_call);                                                               \
-        if (num_bytes_in_frame == 0) {                                                                            \
-            beast_tally.num_build_failures++;                                                                     \
-            break;                                                                                                \
-        }                                                                                                         \
-        if (num_dbm_sinks > 0) {                                                                                  \
-            ret &= SendBufToSinks(dbm_sinks, num_dbm_sinks, (char*)beast_frame_buf, num_bytes_in_frame,           \
-                                  beast_tally);                                                                   \
-            if (num_power_sinks == 0) break;                                                                      \
-            num_bytes_in_frame =                                                                                  \
-                BeastReporter::ConvertSignalDbmToPowerByte(beast_frame_buf, num_bytes_in_frame, frame_max_len_bytes); \
-        }                                                                                                         \
-        if (num_bytes_in_frame > 0) {                                                                             \
-            ret &= SendBufToSinks(power_sinks, num_power_sinks, (char*)beast_frame_buf, num_bytes_in_frame,       \
-                                  beast_tally);                                                                   \
-        }                                                                                                         \
+#define SEND_BEAST_FRAME(build_call, frame_max_len_bytes)                                                           \
+    do {                                                                                                            \
+        uint8_t beast_frame_buf[frame_max_len_bytes];                                                               \
+        uint16_t num_bytes_in_frame = (build_call);                                                                 \
+        if (num_bytes_in_frame == 0) {                                                                              \
+            beast_tally.num_build_failures++;                                                                       \
+            break;                                                                                                  \
+        }                                                                                                           \
+        ret &= SendBufToSinks(selected, num_selected, (char*)beast_frame_buf, num_bytes_in_frame, beast_tally);     \
     } while (0)
 
-            for (uint16_t i = 0; i < packets.header->num_mode_s_packets; i++) {
-                SEND_BEAST_FRAME(BeastReporter::BuildModeSBeastFrame(beast_frame_buf, packets.mode_s_packets[i], caps),
-                                 BeastReporter::kModeSBeastFrameMaxLenBytes);
+        for (uint16_t i = 0; i < packets.header->num_mode_s_packets; i++) {
+            SEND_BEAST_FRAME(BeastReporter::BuildModeSBeastFrame(beast_frame_buf, packets.mode_s_packets[i]),
+                             BeastReporter::kModeSBeastFrameMaxLenBytes);
+        }
+        if (protocol != SettingsManager::kBeastNoUAT) {
+            for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
+                SEND_BEAST_FRAME(BeastReporter::BuildUATADSBBeastFrame(beast_frame_buf, packets.uat_adsb_packets[i]),
+                                 BeastReporter::kUATADSBBeastFrameMaxLenBytes);
             }
-            if (protocol != SettingsManager::kBeastNoUAT) {
-                for (uint16_t i = 0; i < packets.header->num_uat_adsb_packets; i++) {
-                    SEND_BEAST_FRAME(
-                        BeastReporter::BuildUATADSBBeastFrame(beast_frame_buf, packets.uat_adsb_packets[i], caps),
-                        BeastReporter::kUATADSBBeastFrameMaxLenBytes);
-                }
+        }
+        if (protocol != SettingsManager::kBeastNoUATUplink && protocol != SettingsManager::kBeastNoUAT) {
+            for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
+                SEND_BEAST_FRAME(
+                    BeastReporter::BuildUATUplinkBeastFrame(beast_frame_buf, packets.uat_uplink_packets[i]),
+                    BeastReporter::kUATUplinkBeastFrameMaxLenBytes);
             }
-            if (protocol != SettingsManager::kBeastNoUATUplink && protocol != SettingsManager::kBeastNoUAT) {
-                for (uint16_t i = 0; i < packets.header->num_uat_uplink_packets; i++) {
-                    SEND_BEAST_FRAME(
-                        BeastReporter::BuildUATUplinkBeastFrame(beast_frame_buf, packets.uat_uplink_packets[i], caps),
-                        BeastReporter::kUATUplinkBeastFrameMaxLenBytes);
-                }
-            }
+        }
 #undef SEND_BEAST_FRAME
 #endif
-        }
     }
 
 #ifdef ON_ESP32
-    // Remote ID (0xef) after the round's Beast frames, to the feeds that confirmed it. Only the ESP32 receives Remote
+    // Remote ID (0xef) after the round's Beast frames, to the feeds that agreed on it. Only the ESP32 receives Remote
     // ID: on the RP2040 and the 1421 the count is always 0, so they leave this out (about 1 kB of code).
     if (packets.header->num_remote_id_packets > 0) {
         char error_msg[CompositeArray::RawPackets::kErrorMessageMaxLen] = {0};
@@ -633,9 +597,10 @@ bool CommsManager::ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks,
         auto send = [&](const ReportSink* to, uint16_t num_to, const uint8_t* buf, uint16_t len, uint16_t num_frames) {
             return SendBufToSinks(to, num_to, reinterpret_cast<const char*>(buf), len, beast_tally, num_frames);
         };
-        ret &= BeastReporter::ReportRemoteIDFrames(
-            sinks, num_sinks, packets.remote_id_packets, packets.header->num_remote_id_packets, remote_id_buf,
-            sizeof(remote_id_buf), dbm_sinks, power_sinks, send, beast_tally.num_build_failures);
+        ret &= BeastReporter::ReportRemoteIDFrames(sinks, num_sinks, packets.remote_id_packets,
+                                                   packets.header->num_remote_id_packets, remote_id_buf,
+                                                   sizeof(remote_id_buf), selected, send,
+                                                   beast_tally.num_build_failures);
     }
 #endif
     FLUSH_REPORT_TALLY_RATE_LIMITED("CommsManager::ReportBeast", beast_tally);

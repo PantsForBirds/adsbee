@@ -29,8 +29,8 @@ static constexpr uint16_t kMaxReportUIDs = kAircraftDictionaryMaxNumAircraft;
 typedef uint16_t ReportSink;
 
 /**
- * A sink as UpdateReporting takes it: where reports go, in which protocol and, for a Beast feed, the capabilities its
- * server confirmed. Only the Beast reporters read beast_caps. The reporting functions of each protocol take plain
+ * A sink as UpdateReporting takes it: where reports go, in which protocol and, for a Beast feed, the capabilities it
+ * agreed on with its server. Only the Beast reporters read beast_caps. The reporting functions of each protocol take plain
  * ReportSinks, since that is what SendBuf and the MAVLink channel cast take.
  */
 struct ReportSinkInfo {
@@ -100,11 +100,9 @@ bool ReportRaw(ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawP
  * Sends out Mode S Beast formatted transponder data. Reports all transponder packets in packets, which is used to
  * allow printing arbitrary blocks of transponder packets received via the CommsManager's built-in
  * transponder_packet_reporting_queue_.
- * Each sink gets the frames of its protocol (kBeast, kBeastNoUAT or kBeastNoUATUplink) in the frame format of its
- * beast_caps. Frames are built once per protocol and UAT letter case: with dBm signal bytes if a sink takes them, then
- * rewritten in place to power bytes for the sinks that don't (BeastReporter::ConvertSignalDbmToPowerByte). Remote ID
- * frames (0xef) follow, the same way, to every sink that confirmed kBeastCapRemoteID
- * (BeastReporter::ReportRemoteIDFrames).
+ * Each sink gets the frames of its protocol (kBeast, kBeastNoUAT or kBeastNoUATUplink), built once per protocol. The
+ * signal byte is the Beast power byte on every frame. Remote ID frames (0xef) follow, to every sink whose beast_caps
+ * has kBeastCapRemoteID (BeastReporter::ReportRemoteIDFrames).
  * @param[in] sinks Beast sinks; descriptors with any other protocol are skipped.
  * @param[in] num_sinks Number of sinks in the sinks array.
  * @param[in] packets CompositeArray::RawPackets struct with counts and pointers to arrays of each kind of packet to
