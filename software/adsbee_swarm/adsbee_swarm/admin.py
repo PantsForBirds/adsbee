@@ -1,5 +1,6 @@
 from django.contrib import admin
 
+from . import queries
 from .models import Account, ApiToken, Device, EnrollToken, Rollout, Sample, SampleRange
 
 
@@ -45,13 +46,21 @@ class RolloutAdmin(admin.ModelAdmin):
 
 class SampleRangeInline(admin.TabularInline):
     model = SampleRange
-    fields = ('protocol', 'unit_m')
-    readonly_fields = ('protocol', 'unit_m')
+    fields = ('protocol', 'unit_m', 'listen_s', 'frames')
+    readonly_fields = fields
     extra = 0
 
 
 @admin.register(Sample)
 class SampleAdmin(admin.ModelAdmin):
     inlines = [SampleRangeInline]
-    list_display = ('device', 'start', 'span_s', 'reports', 'es_valid', 'aircraft_max')
+    list_display = ('device', 'start', 'span_s', 'reports', 'mode_s', 'aircraft_max')
     list_filter = ('span_s',)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related('range_rows')
+
+    @admin.display(description='Mode S')
+    def mode_s(self, sample):
+        """All valid Mode S frames: frames.mode_s, or older firmware's modes_valid + es_valid."""
+        return queries.frame_total(sample, {row.protocol: row.frames for row in sample.range_rows.all()})
