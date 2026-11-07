@@ -1402,5 +1402,88 @@
   ],
   "skipped": 0,
   "unknown": 0
+ },
+ {
+  "name": "rid_bt4_modes_clock",
+  "note": "ESP32 synced: B, ts on the Mode S clock (~1 ms BLE callback time, not MLAT-grade)",
+  "hex": "1aef420123451a1a6789b8c0ffee1a1a0001121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "dbm": -72,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "odid_msgs": [
+     1
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0,
+  "signal_mode": "dbm"
+ },
+ {
+  "name": "rid_wifi_beacon_pack_modes_clock",
+  "note": "W, ts on the Mode S clock (~2-4 us), pack, power byte 45",
+  "hex": "1aef570123451a1a67892d6a1a1a2b3c4d5ef21903021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1211111111111111111111111111111111111111111111111142444444444444444444444444444444444444444444444444",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 45,
+    "transport": "wifi_beacon",
+    "addr": "6a:1a:2b:3c:4d:5e",
+    "odid": "f21903021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1211111111111111111111111111111111111111111111111142444444444444444444444444444444444444444444444444",
+    "odid_msgs": [
+     0,
+     1,
+     4
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "rid_bt4_modes_clock_wrap",
+  "note": "the 48-bit 12 MHz counter wraps: ffffffffffff, then 000000000002",
+  "hex": "1aef42ffffffffffffbac0ffee1a1a0001123333333333333333333333333333333333333333333333331aef42000000000002bac0ffee1a1a000112333333333333333333333333333333333333333333333333",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "modes",
+    "ts": 281474976710655,
+    "dbm": -70,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "12333333333333333333333333333333333333333333333333",
+    "odid_msgs": [
+     1
+    ]
+   },
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "modes",
+    "ts": 2,
+    "dbm": -70,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "12333333333333333333333333333333333333333333333333",
+    "odid_msgs": [
+     1
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0,
+  "signal_mode": "dbm"
  }
 ]

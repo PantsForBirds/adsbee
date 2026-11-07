@@ -120,7 +120,7 @@ enum ADSLChannelChar : char { kADSLChannel868_2 = 'A', kADSLChannel868_4 = 'B', 
 
 enum BeastCapsLetter : char { kBeastCapsQuery = 'Q', kBeastCapsAnswer = 'A', kBeastCapsConfirm = 'C' };
 
-// Remote ID link, lower case: the timestamp is not on the Mode S clock.
+// Remote ID link, lower case: the timestamp is not on the Mode S clock (0). Upper case (letter & ~0x20): it is.
 enum RemoteIDTransportChar : char {
     kRemoteIDTransportBT4Legacy = 'b',
     kRemoteIDTransportBT5Coded = 'c',
@@ -273,7 +273,8 @@ uint16_t WriteRemoteIDBeastFrame(uint8_t *beast_frame_buf, char transport, uint6
                                  uint16_t caps);
 
 /**
- * Write a Remote ID frame (0xef) from a received packet.
+ * Write a Remote ID frame (0xef) from a received packet. With a timestamp (mlat_48mhz_64bit_counts, ESP32 synced to
+ * the MLAT clock) the letter is upper case and ts6 the 12 MHz Mode S counter; without one, lower case and ts6 = 0.
  * @param[in] caps Confirmed capability bits of the feed (kBeastCapSignalDbm).
  * @retval Number of bytes written, or 0 if the transport is unknown or the ODID bytes are out of bounds.
  */
@@ -379,6 +380,65 @@ uint16_t SelectBeastGroup(const SinkInfo *sinks, uint16_t num_sinks, Protocol pr
         }
     }
     return num_selected;
+}
+
+/**
+ * Sends the Remote ID frames (0xef) of a reporting round to the sinks that confirmed kBeastCapRemoteID (only Beast
+ * feeds have beast_caps). The frames are built once, in dBm if a sink takes dBm, batched into buf, and their signal
+ * bytes rewritten for the power byte sinks (ConvertSignalDbmToPowerByte). A batch that would overflow buf is sent and
+ * buf refilled.
+ * @param[in] sinks Sink descriptors with .sink and .beast_caps (CommsManager::ReportSinkInfo).
+ * @param[in] buf Scratch for the frames, at least kRemoteIDBeastFrameMaxLenBytes.
+ * @param[out] dbm_sinks, power_sinks Scratch, at least num_sinks entries each.
+ * @param[in] send bool(const Sink *sinks, uint16_t num_sinks, const uint8_t *buf, uint16_t len, uint16_t num_frames).
+ * @param[in,out] num_build_failures Frames dropped (unknown transport, ODID out of bounds) are added here.
+ * @retval False if a send failed or buf is too small.
+ */
+template <typename SinkInfo, typename Sink, typename Send>
+bool ReportRemoteIDFrames(const SinkInfo* sinks, uint16_t num_sinks, const RawRemoteIDPacket* packets,
+                          uint16_t num_packets, uint8_t* buf, uint16_t buf_size, Sink* dbm_sinks, Sink* power_sinks,
+                          Send send, uint16_t& num_build_failures) {
+    if (num_packets == 0) return true;
+    if (buf_size < kRemoteIDBeastFrameMaxLenBytes) return false;
+    uint16_t num_dbm_sinks = 0, num_power_sinks = 0;
+    for (uint16_t i = 0; i < num_sinks; i++) {
+        if (!(sinks[i].beast_caps & kBeastCapRemoteID)) continue;
+        if (sinks[i].beast_caps & kBeastCapSignalDbm) {
+            dbm_sinks[num_dbm_sinks++] = sinks[i].sink;
+        } else {
+            power_sinks[num_power_sinks++] = sinks[i].sink;
+        }
+    }
+    if (num_dbm_sinks == 0 && num_power_sinks == 0) return true;
+    const uint16_t caps = num_dbm_sinks > 0 ? kBeastCapSignalDbm : 0;
+    bool ret = true;
+    uint16_t i = 0;
+    while (i < num_packets) {
+        uint16_t len = 0, num_frames = 0;
+        // The builder writes without a bound, so only start a frame that is sure to fit.
+        for (; i < num_packets && len + kRemoteIDBeastFrameMaxLenBytes <= buf_size; i++) {
+            uint16_t frame_len = BuildRemoteIDBeastFrame(buf + len, packets[i], caps);
+            if (frame_len == 0) {
+                num_build_failures++;
+                continue;
+            }
+            len += frame_len;
+            num_frames++;
+        }
+        if (len == 0) continue;
+        if (num_dbm_sinks > 0) {
+            ret &= send(dbm_sinks, num_dbm_sinks, buf, len, num_frames);
+            if (num_power_sinks == 0) continue;
+            // Never 0 for frames this builder wrote: no power byte is 0x1a, so nothing grows.
+            len = ConvertSignalDbmToPowerByte(buf, len, buf_size);
+            if (len == 0) {
+                num_build_failures += num_frames;
+                continue;
+            }
+        }
+        ret &= send(power_sinks, num_power_sinks, buf, len, num_frames);
+    }
+    return ret;
 }
 
 }  // namespace BeastReporter

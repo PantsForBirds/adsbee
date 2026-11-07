@@ -517,9 +517,10 @@ void CommsManager::IPWANTask(void* pvParameters) {
         PublishMQTTMetrics();
         LogWANQueueOverflows();
 
-        uint16_t num_active_report_sinks = 0, num_remote_id_sinks = 0;
+        uint16_t num_active_report_sinks = 0;
         ReportSinkInfo active_report_sinks[SettingsManager::Settings::kMaxNumFeeds];
-        ReportSinkInfo remote_id_sinks[SettingsManager::Settings::kMaxNumFeeds];
+        // Whether RemoteIDManager queues packets for the feeds; ReportBeast sends them to the feeds that confirmed it.
+        bool feeds_take_remote_id = false;
 
         // Maintain socket connections and build list of acive report sinks.
         for (uint16_t i = 0; i < SettingsManager::Settings::kMaxNumFeeds; i++) {
@@ -559,10 +560,10 @@ void CommsManager::IPWANTask(void* pvParameters) {
                 // Socket is connected, add to active sinks.
                 ReportSinkInfo& sink = active_report_sinks[num_active_report_sinks++];
                 sink = {i, settings_manager.settings.feed_protocols[i], feed_caps_[i].bits()};
-                if (sink.beast_caps & BeastReporter::kBeastCapRemoteID) remote_id_sinks[num_remote_id_sinks++] = sink;
+                feeds_take_remote_id |= (sink.beast_caps & BeastReporter::kBeastCapRemoteID) != 0;
             }
         }
-        feeds_take_remote_id_ = num_remote_id_sinks > 0;
+        feeds_take_remote_id_ = feeds_take_remote_id;
 
         // Gather packet(s) to send.
         /**
@@ -591,9 +592,6 @@ void CommsManager::IPWANTask(void* pvParameters) {
         // Update feeds with raw and digested reports.
         if (!UpdateReporting(active_report_sinks, num_active_report_sinks, &reporting_composite_array)) {
             CONSOLE_ERROR("CommsManager::IPWANTask", "Error during UpdateReporting for feeds.");
-        }
-        if (!ReportRemoteID(remote_id_sinks, num_remote_id_sinks, reporting_composite_array)) {
-            CONSOLE_ERROR("CommsManager::IPWANTask", "Error during ReportRemoteID.");
         }
     }
 
@@ -922,42 +920,6 @@ void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {
     if (was_waiting && caps.state() == BeastReporter::CapsSession::kPlain) {
         CONSOLE_INFO("CommsManager::ReceiveFeedSocket", "Feed %d: no capabilities answer, plain Beast.", feed_index);
     }
-}
-
-bool CommsManager::ReportRemoteID(const ReportSinkInfo* sinks, uint16_t num_sinks,
-                                  const CompositeArray::RawPackets& packets) {
-    if (num_sinks == 0 || packets.header == nullptr || packets.header->num_remote_id_packets == 0) {
-        return true;
-    }
-    uint16_t num_dbm_sinks = 0;
-    for (uint16_t j = 0; j < num_sinks; j++) {
-        if (sinks[j].beast_caps & BeastReporter::kBeastCapSignalDbm) num_dbm_sinks++;
-    }
-    const bool any_power_sinks = num_dbm_sinks < num_sinks;
-    // Build in dBm if anyone takes it; the power byte feeds get the same frame with its signal byte rewritten.
-    const uint16_t caps = num_dbm_sinks > 0 ? BeastReporter::kBeastCapSignalDbm : 0;
-    // One IPWANTask, so one buffer; kept off its stack.
-    static uint8_t frame_buf[BeastReporter::kRemoteIDBeastFrameMaxLenBytes];
-    bool ret = true;
-    for (uint16_t i = 0; i < packets.header->num_remote_id_packets; i++) {
-        uint16_t frame_len = BeastReporter::BuildRemoteIDBeastFrame(frame_buf, packets.remote_id_packets[i], caps);
-        if (frame_len == 0) continue;  // Unknown transport or ODID bounds: nothing a decoder could bound.
-        // Two passes over the feeds: the dBm ones while the frame holds dBm, then the rest.
-        for (uint16_t pass = 0; pass < 2; pass++) {
-            const bool dbm_pass = pass == 0;
-            if (dbm_pass ? num_dbm_sinks == 0 : !any_power_sinks) continue;
-            if (!dbm_pass && caps) {
-                frame_len = BeastReporter::ConvertSignalDbmToPowerByte(frame_buf, frame_len, sizeof(frame_buf));
-                if (frame_len == 0) break;  // Can't happen: the buffer holds the largest frame.
-            }
-            for (uint16_t j = 0; j < num_sinks; j++) {
-                if (((sinks[j].beast_caps & BeastReporter::kBeastCapSignalDbm) != 0) != dbm_pass) continue;
-                if (!feed_sock_is_connected_[sinks[j].sink]) continue;  // Closed by an earlier send.
-                ret &= SendBuf(sinks[j].sink, reinterpret_cast<const char*>(frame_buf), frame_len);
-            }
-        }
-    }
-    return ret;
 }
 
 bool CommsManager::SendBuf(uint16_t iface, const char* buf, uint16_t buf_len, uint16_t num_msgs) {

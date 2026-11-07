@@ -677,3 +677,205 @@ TEST(BeastCapsSettings, NoReadsbeeProtocol) {
     EXPECT_TRUE(manager.Sanitize());
     EXPECT_EQ(manager.settings.feed_protocols[1], S::kNoReports);
 }
+
+namespace {
+// A received Remote ID packet as the ESP32 queues it, with a timestamp in 48 MHz counts (0 = not synced).
+RawRemoteIDPacket RemoteIDPacket(RawRemoteIDPacket::Transport transport, const uint8_t mac[6],
+                                 const std::vector<uint8_t>& odid, int16_t dbm, uint64_t mlat_48mhz_counts) {
+    RawRemoteIDPacket packet;
+    memcpy(packet.payload, odid.data(), odid.size());
+    packet.payload_len_bytes = odid.size();
+    packet.rssi_dbm = dbm;
+    packet.transport = transport;
+    for (int i = 0; i < 6; i++) {
+        // NimBLE holds BLE addresses least significant byte first; WiFi addresses are in frame order.
+        packet.source_mac[i] = transport == RawRemoteIDPacket::kTransportWiFiBeacon ? mac[i] : mac[5 - i];
+    }
+    packet.mlat_48mhz_64bit_counts = mlat_48mhz_counts;
+    return packet;
+}
+
+std::string Build(const RawRemoteIDPacket& packet, uint16_t caps) {
+    uint8_t buf[kRemoteIDBeastFrameMaxLenBytes];
+    return ToHex(buf, BuildRemoteIDBeastFrame(buf, packet, caps));
+}
+}  // namespace
+
+// Synced (#428): upper-case letter and the Mode S clock; not synced: lower case and 0. Vector-exact both ways.
+TEST(BeastCapsRemoteID, TimestampOnTheModeSClock) {
+    const auto kBT4 = RawRemoteIDPacket::kTransportBT4Legacy;
+    const auto kWiFi = RawRemoteIDPacket::kTransportWiFiBeacon;
+    EXPECT_EQ(Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x1a), -72, kTs << 2), kBeastCapSignalDbm),
+              VectorHex("rid_bt4_modes_clock"));
+    EXPECT_EQ(Build(RemoteIDPacket(kWiFi, kPackMAC, VectorPack(), -60, kTs << 2), 0),
+              VectorHex("rid_wifi_beacon_pack_modes_clock"));
+    EXPECT_EQ(Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x1a), -72, 0), kBeastCapSignalDbm),
+              VectorHex("rid_bt4_single"));
+    EXPECT_EQ(Build(RemoteIDPacket(kWiFi, kPackMAC, VectorPack(), -60, 0), 0), VectorHex("rid_wifi_beacon_pack_power"));
+    // The other letters go upper case the same way.
+    EXPECT_EQ(
+        Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT5LongRange, kMAC, ODIDMessage(0, 0x22), -95, kTs << 2),
+              kBeastCapSignalDbm)
+            .substr(0, 6),
+        "1aef43");
+    EXPECT_EQ(Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT5LongRange, kMAC, ODIDMessage(0, 0x22), -95, 0),
+                    kBeastCapSignalDbm),
+              VectorHex("rid_bt5_coded"));
+}
+
+// 48 MHz -> 12 MHz exactly as Mode S frames do it (GetMLAT12MHzCounter): counts / 4, low 48 bits.
+TEST(BeastCapsRemoteID, TimestampConversionMatchesModeS) {
+    const uint64_t counts[] = {4,
+                               7,
+                               kTs << 2,
+                               (kTs << 2) | 3,
+                               0x3FFFFFFFFFFFFull,
+                               0x0004000000000008ull,
+                               0xABABFF1AFFFFFF1Aull,
+                               0xFFFFFFFFFFFFFFFFull,
+                               123456789ull * 48};
+    for (uint64_t c : counts) {
+        std::string rid =
+            Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x33), -70, c),
+                  kBeastCapSignalDbm);
+        uint8_t buf[kModeSBeastFrameMaxLenBytes];
+        DecodedModeSPacket mode_s(kShortMsg, 0, -70, 50, c);
+        std::string ms = ToHex(buf, BuildModeSBeastFrame(buf, mode_s, kBeastCapSignalDbm));
+        // Both escape the same 6 timestamp bytes: same hex from after the letter (Mode S has none) to the signal byte.
+        size_t ts_hex_len = ms.size() - 4 - 2 - 2 * 7;  // 1a 32, signal byte, 7-byte message (no 1a in kShortMsg).
+        EXPECT_EQ(rid.substr(6, ts_hex_len), ms.substr(4, ts_hex_len)) << std::hex << c;
+        EXPECT_EQ(rid.substr(4, 2), "42") << std::hex << c;  // Upper case: every one of these is nonzero at 12 MHz.
+    }
+    // Counts below 4 are 0 at 12 MHz: lower case, so an upper-case frame never says "not synced".
+    for (uint64_t c : {1ull, 3ull, 1ull << 50}) {
+        std::string rid =
+            Build(RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x1a), -72, c),
+                  kBeastCapSignalDbm);
+        EXPECT_EQ(rid, VectorHex("rid_bt4_single")) << c;
+    }
+}
+
+// The 12 MHz counter wraps at 48 bits like the Mode S frames': ffffffffffff, then 000000000002.
+TEST(BeastCapsRemoteID, TimestampWrapsAt48Bits) {
+    const auto kBT4 = RawRemoteIDPacket::kTransportBT4Legacy;
+    std::string before =
+        Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x33), -70, 0xFFFFFFFFFFFFull << 2 | 3), kBeastCapSignalDbm);
+    std::string after =
+        Build(RemoteIDPacket(kBT4, kMAC, ODIDMessage(1, 0x33), -70, (1ull << 50) + (2 << 2)), kBeastCapSignalDbm);
+    EXPECT_EQ(before + after, VectorHex("rid_bt4_modes_clock_wrap"));
+}
+
+namespace {
+struct SentTo {
+    uint16_t sink;
+    std::string hex;
+    uint16_t num_frames;
+};
+
+struct Info {  // Same members as CommsManager::ReportSinkInfo.
+    uint16_t sink;
+    SettingsManager::ReportingProtocol protocol;
+    uint16_t beast_caps;
+};
+
+std::vector<SentTo> ReportRemoteID(const std::vector<Info>& sinks, const std::vector<RawRemoteIDPacket>& packets,
+                                   uint16_t buf_size, bool* ret = nullptr, uint16_t* failures = nullptr) {
+    std::vector<SentTo> sent;
+    std::vector<uint8_t> buf(buf_size);
+    std::vector<uint16_t> dbm(sinks.size() + 1), power(sinks.size() + 1);
+    uint16_t num_build_failures = 0;
+    bool ok = ReportRemoteIDFrames(
+        sinks.data(), sinks.size(), packets.data(), packets.size(), buf.data(), buf_size, dbm.data(), power.data(),
+        [&](const uint16_t* to, uint16_t num_to, const uint8_t* b, uint16_t len, uint16_t num_frames) {
+            for (uint16_t i = 0; i < num_to; i++) sent.push_back({to[i], ToHex(b, len), num_frames});
+            return true;
+        },
+        num_build_failures);
+    if (ret) *ret = ok;
+    if (failures) *failures = num_build_failures;
+    return sent;
+}
+}  // namespace
+
+// Remote ID frames go only to the feeds that confirmed bit 2, in each one's signal format, after the Beast batch.
+TEST(BeastCapsRemoteID, OnlyToFeedsThatConfirmedBit2) {
+    typedef SettingsManager S;
+    const std::vector<Info> sinks = {{0, S::kBeast, 0},
+                                     {1, S::kBeast, kBeastCapSignalDbm | kBeastCapRemoteID},
+                                     {2, S::kBeastNoUAT, kBeastCapRemoteID},
+                                     {3, S::kBeast, kBeastCapSignalDbm},
+                                     {4, S::kBeast, kBeastCapsFrameFormat | kBeastCapADSL},
+                                     {5, S::kRaw, 0},
+                                     {6, S::kBeastNoUATUplink, kBeastCapsKnown}};
+    std::vector<RawRemoteIDPacket> packets = {
+        RemoteIDPacket(RawRemoteIDPacket::kTransportBT4Legacy, kMAC, ODIDMessage(1, 0x1a), -72, kTs << 2),
+        RemoteIDPacket(RawRemoteIDPacket::kTransportWiFiBeacon, kPackMAC, VectorPack(), -60, kTs << 2)};
+    std::string dbm_batch = Build(packets[0], kBeastCapSignalDbm) + Build(packets[1], kBeastCapSignalDbm);
+    std::string power_batch = Build(packets[0], 0) + Build(packets[1], 0);
+    ASSERT_EQ(Build(packets[0], kBeastCapSignalDbm), VectorHex("rid_bt4_modes_clock"));
+    ASSERT_EQ(Build(packets[1], 0), VectorHex("rid_wifi_beacon_pack_modes_clock"));
+
+    bool ok = false;
+    std::vector<SentTo> sent = ReportRemoteID(sinks, packets, kRemoteIDBeastFrameMaxLenBytes * 4, &ok);
+    EXPECT_TRUE(ok);
+    ASSERT_EQ(sent.size(), 3u);  // Sinks 1 and 6 (dBm), then 2 (power byte); never 0, 3, 4 or 5.
+    EXPECT_EQ(sent[0].sink, 1);
+    EXPECT_EQ(sent[1].sink, 6);
+    EXPECT_EQ(sent[2].sink, 2);
+    EXPECT_EQ(sent[0].hex, dbm_batch);
+    EXPECT_EQ(sent[1].hex, dbm_batch);
+    EXPECT_EQ(sent[2].hex, power_batch);
+    for (const SentTo& s : sent) EXPECT_EQ(s.num_frames, 2);
+
+    // Power byte feeds only: built in power bytes directly.
+    sent = ReportRemoteID({sinks[0], sinks[2], sinks[3]}, packets, kRemoteIDBeastFrameMaxLenBytes * 4);
+    ASSERT_EQ(sent.size(), 1u);
+    EXPECT_EQ(sent[0].sink, 2);
+    EXPECT_EQ(sent[0].hex, power_batch);
+
+    // Nobody confirmed bit 2, or no packets (the RP2040 and the 1421): nothing is sent.
+    EXPECT_TRUE(ReportRemoteID({sinks[0], sinks[3], sinks[4], sinks[5]}, packets, 2048).empty());
+    EXPECT_TRUE(ReportRemoteID(sinks, {}, 2048).empty());
+}
+
+// A buffer too small for the round: sent in parts, each holding whole frames; too small for one frame: refused.
+TEST(BeastCapsRemoteID, SplitsABatchThatDoesNotFit) {
+    typedef SettingsManager S;
+    const std::vector<Info> sinks = {{7, S::kBeast, kBeastCapSignalDbm | kBeastCapRemoteID},
+                                     {8, S::kBeast, kBeastCapRemoteID}};
+    std::vector<RawRemoteIDPacket> packets;
+    for (int i = 0; i < 5; i++) {
+        packets.push_back(
+            RemoteIDPacket(RawRemoteIDPacket::kTransportWiFiBeacon, kPackMAC, VectorPack(), -60 + i, (kTs + i) << 2));
+    }
+    RawRemoteIDPacket bad = packets[0];
+    bad.transport = RawRemoteIDPacket::kTransportInvalid;
+    packets.insert(packets.begin() + 2, bad);
+    uint16_t failures = 0;
+    bool ok = false;
+    // Room for exactly two of these frames per send: a frame starts only where a worst-case one would fit.
+    const uint16_t frame_len = Build(packets[0], kBeastCapSignalDbm).size() / 2;
+    std::vector<SentTo> sent =
+        ReportRemoteID(sinks, packets, kRemoteIDBeastFrameMaxLenBytes + frame_len, &ok, &failures);
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(failures, 1);
+    std::string dbm_all, power_all;
+    uint16_t frames_7 = 0;
+    for (const SentTo& s : sent) {
+        (s.sink == 7 ? dbm_all : power_all) += s.hex;
+        if (s.sink == 7) frames_7 += s.num_frames;
+    }
+    std::string want_dbm, want_power;
+    for (const RawRemoteIDPacket& p : packets) {
+        want_dbm += Build(p, kBeastCapSignalDbm);
+        want_power += Build(p, 0);
+    }
+    EXPECT_EQ(sent.size(), 6u);  // Three sends, to two sinks each.
+    EXPECT_EQ(frames_7, 5);
+    EXPECT_EQ(dbm_all, want_dbm);
+    EXPECT_EQ(power_all, want_power);
+
+    sent = ReportRemoteID(sinks, packets, kRemoteIDBeastFrameMaxLenBytes - 1, &ok);
+    EXPECT_FALSE(ok);
+    EXPECT_TRUE(sent.empty());
+}

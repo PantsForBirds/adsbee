@@ -317,15 +317,6 @@ class CommsManager {
     void CloseFeedSocket(uint16_t feed_index);
 
     /**
-     * Sends Remote ID frames (0xef) to the feeds that confirmed kBeastCapRemoteID, after their Beast frames. Each
-     * frame is built once, and its signal byte rewritten for the feeds of the other signal format.
-     * @param[in] sinks Feeds, with their confirmed capability bits (signal byte format).
-     * @param[in] packets Packets of this reporting round.
-     * @retval False if a send failed.
-     */
-    bool ReportRemoteID(const ReportSinkInfo* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets);
-
-    /**
      * Reads what the server sent on a TCP Beast feed without blocking: looks for the capabilities answer, sends the
      * confirm, and drops the rest.
      */

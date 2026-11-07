@@ -124,6 +124,8 @@ static constexpr size_t kReportScratchMaxBytes = std::max(
     {kRawBatchBufMaxBytes, kBeastBatchBufMaxBytes, static_cast<size_t>(CommsManager::kASTERIXDataBlockMaxLenBytes),
      static_cast<size_t>(kUATUplinkJSONLineMaxNumChars)});
 alignas(4) static uint8_t report_scratch[kReportScratchMaxBytes];
+static_assert(kReportScratchMaxBytes >= BeastReporter::kRemoteIDBeastFrameMaxLenBytes,
+              "Report scratch must hold the largest Remote ID frame.");
 
 template <typename T, size_t N>
 static T (&ReportScratch()) [N] {
@@ -613,6 +615,29 @@ bool CommsManager::ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks,
 #endif
         }
     }
+
+#ifdef ON_ESP32
+    // Remote ID (0xef) after the round's Beast frames, to the feeds that confirmed it. Only the ESP32 receives Remote
+    // ID: on the RP2040 and the 1421 the count is always 0, so they leave this out (about 1 kB of code).
+    if (packets.header->num_remote_id_packets > 0) {
+        char error_msg[CompositeArray::RawPackets::kErrorMessageMaxLen] = {0};
+        if (!validated && !packets.IsValid(error_msg)) {
+            CONSOLE_ERROR("CommsManager::ReportBeast", "Invalid CompositeArray::RawPackets: %s", error_msg);
+            return false;
+        }
+#if COMMS_REPORTING_BATCH_SENDS
+        uint8_t (&remote_id_buf)[kReportScratchMaxBytes] = ReportScratch<uint8_t, kReportScratchMaxBytes>();
+#else
+        uint8_t remote_id_buf[BeastReporter::kRemoteIDBeastFrameMaxLenBytes];  // One frame per send.
+#endif
+        auto send = [&](const ReportSink* to, uint16_t num_to, const uint8_t* buf, uint16_t len, uint16_t num_frames) {
+            return SendBufToSinks(to, num_to, reinterpret_cast<const char*>(buf), len, beast_tally, num_frames);
+        };
+        ret &= BeastReporter::ReportRemoteIDFrames(
+            sinks, num_sinks, packets.remote_id_packets, packets.header->num_remote_id_packets, remote_id_buf,
+            sizeof(remote_id_buf), dbm_sinks, power_sinks, send, beast_tally.num_build_failures);
+    }
+#endif
     FLUSH_REPORT_TALLY_RATE_LIMITED("CommsManager::ReportBeast", beast_tally);
     return ret;
 }

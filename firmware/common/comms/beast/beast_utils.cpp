@@ -372,10 +372,12 @@ uint16_t BeastReporter::BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const 
     }
     // The receivers store 0 for an unknown level.
     int16_t rssi_dbm = packet.rssi_dbm == 0 ? INT16_MIN : packet.rssi_dbm;
-    // No Mode S clock on the ESP32 yet: timestamp 0 and a lower-case letter, so the server stamps arrival time.
-    // TODO(#428): use (packet.mlat_48mhz_64bit_counts >> 2) & 0xFFFFFFFFFFFF (0 = none) and the upper-case letter.
-    const uint64_t mlat_12mhz_counter = 0;
-    return WriteRemoteIDBeastFrame(beast_frame_buf, transport, mlat_12mhz_counter, rssi_dbm, mac, packet.payload,
+    // Once synced (#428) the ESP32 stamps packets on the MLAT clock: send the 12 MHz Mode S counter, as Mode S frames
+    // do, with the upper-case letter. 0 = not synced: ts 0 and lower case, so the server stamps arrival time. The
+    // letter follows the 12 MHz value, so an upper-case frame never carries 0 (0 there would mean "not synced").
+    const uint64_t mlat_12mhz_counter = (packet.mlat_48mhz_64bit_counts >> 2) & 0xFFFFFFFFFFFF;
+    const char letter = mlat_12mhz_counter != 0 ? static_cast<char>(transport & ~0x20) : transport;
+    return WriteRemoteIDBeastFrame(beast_frame_buf, letter, mlat_12mhz_counter, rssi_dbm, mac, packet.payload,
                                    packet.payload_len_bytes, caps);
 }
 

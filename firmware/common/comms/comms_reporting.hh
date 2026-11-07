@@ -102,7 +102,9 @@ bool ReportRaw(ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawP
  * transponder_packet_reporting_queue_.
  * Each sink gets the frames of its protocol (kBeast, kBeastNoUAT or kBeastNoUATUplink) in the frame format of its
  * beast_caps. Frames are built once per protocol and UAT letter case: with dBm signal bytes if a sink takes them, then
- * rewritten in place to power bytes for the sinks that don't (BeastReporter::ConvertSignalDbmToPowerByte).
+ * rewritten in place to power bytes for the sinks that don't (BeastReporter::ConvertSignalDbmToPowerByte). Remote ID
+ * frames (0xef) follow, the same way, to every sink that confirmed kBeastCapRemoteID
+ * (BeastReporter::ReportRemoteIDFrames).
  * @param[in] sinks Beast sinks; descriptors with any other protocol are skipped.
  * @param[in] num_sinks Number of sinks in the sinks array.
  * @param[in] packets CompositeArray::RawPackets struct with counts and pointers to arrays of each kind of packet to
