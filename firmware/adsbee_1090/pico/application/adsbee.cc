@@ -25,6 +25,7 @@
 #include <string.h>  // for strcat
 
 #include "comms.hh"           // For debug prints.
+#include "hardware/sync.h"    // save_and_disable_interrupts().
 #include "cpu_utils.hh"
 #include "gnss_interface.hh"  // For the gnss receiver instance.
 
@@ -110,6 +111,19 @@ ADSBee::ADSBee(ADSBeeConfig config_in) {
     tl_pwm_chan_ = pwm_gpio_to_channel(config_.tl_pwm_pin);
 }
 
+// Sync pulse: ~1 us high on SYNC. Runs from RAM with interrupts off so the time from the counter read to the edge is
+// always the same.
+static constexpr uint32_t kSyncPulseWidthCycles = 125;  // 1 us at 125 MHz.
+static uint64_t __time_critical_func(EmitSyncPulse)() {
+    uint32_t interrupts = save_and_disable_interrupts();
+    uint64_t mlat_48mhz_counts = adsbee.GetMLAT48MHzCounts();
+    gpio_put(bsp.sync_pin, 1);
+    restore_interrupts(interrupts);
+    busy_wait_at_least_cycles(kSyncPulseWidthCycles);
+    gpio_put(bsp.sync_pin, 0);
+    return mlat_48mhz_counts;
+}
+
 bool ADSBee::Init() {
     gpio_init(config_.r1090_led_pin);
     gpio_set_dir(config_.r1090_led_pin, GPIO_OUT);
@@ -120,6 +134,7 @@ bool ADSBee::Init() {
         gpio_init(bsp.sync_pin);
         gpio_set_dir(bsp.sync_pin, GPIO_OUT);
         gpio_put(bsp.sync_pin, 0);  // Set to low.
+        sync_pulse_service.SetEmitter(&EmitSyncPulse);
     }
 
     // Disable the Sub-GHz SPI bus output.

@@ -130,6 +130,16 @@ bool CC1312::Update() {
             device_status.num_raw_uat_adsb_packets, device_status.num_valid_uat_adsb_packets,
             device_status.num_raw_uat_uplink_packets, device_status.num_valid_uat_uplink_packets);
 
+        adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberCC1312, device_status.mlat_sync_flags);
+        if (!in_bootloader_ && IsEnabled()) {
+            adsbee.sync_pulse_service.Allow();  // The application just answered a status read.
+        }
+        // A lost write only costs this sync point.
+        ObjectDictionary::SyncPulse pulse;
+        if (adsbee.sync_pulse_service.TakeNewPulse(SyncPulseService::kSubscriberCC1312, pulse)) {
+            adsbee.subg_radio.Write(ObjectDictionary::Address::kAddrSyncPulse, pulse);
+        }
+
         // Read one array of packets from the queues. The CC1312 fills it with as many packets as fit.
         uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
         if (!adsbee.subg_radio.Read(
@@ -149,6 +159,7 @@ bool CC1312::Update() {
         }
 
     } else {
+        BlockSyncPulses();  // The CC1312 may be resetting.
         if (!link_was_down) CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 status.");
         return false;
     }
@@ -156,6 +167,19 @@ bool CC1312::Update() {
     last_update_timestamp_ms_ = get_time_since_boot_ms();
     return true;
 }
+
+void CC1312::BlockSyncPulses() {
+    adsbee.sync_pulse_service.Block();
+    adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberCC1312, 0);
+}
+
+void CC1312::AllowSyncPulsesInReset() {
+    if (enabled_ == SettingsManager::EnableState::kEnableStateDisabled) {
+        adsbee.sync_pulse_service.Allow();
+    }
+}
+
+bool CC1312::SyncPulseDue() const { return adsbee.sync_pulse_service.HasNewPulse(SyncPulseService::kSubscriberCC1312); }
 
 bool CC1312::ApplicationIsUpToDate() {
     // Verify application binary.

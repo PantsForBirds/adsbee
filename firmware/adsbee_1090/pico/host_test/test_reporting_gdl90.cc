@@ -576,3 +576,11 @@ TEST(GDL90Utils, RemoteIDVerticalRateUnavailableWhenNotReceived) {
     vertical_rate_encoded = ((msg[15] & 0x0F) << 8) | msg[16];
     EXPECT_EQ(vertical_rate_encoded, 640 / 64);
 }
+TEST(GDL90Utils, UATTORTicksAre80Nanoseconds) {
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks(0), 0u);
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks(96), 25u);         // 2 us.
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks(48'000'000), 12'500'000u);  // 1 s.
+    // Wraps at 2^24 ticks (1.342 s), also from large counts.
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks(96ull << 24), 0u);
+    EXPECT_EQ(GDL90Reporter::MLAT48MHz64BitCountsToUATTORTicks((96ull << 24) * 1000 + 96), 25u);
+}
