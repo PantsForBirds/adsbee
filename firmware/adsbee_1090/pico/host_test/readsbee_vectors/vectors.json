@@ -1,0 +1,995 @@
+[
+ {
+  "name": "uuid",
+  "note": "",
+  "hex": "1ae430313233616263642d303132332d343536372d383961622d303132333435363738396162",
+  "decoded": [
+   {
+    "type": 228,
+    "kind": "uuid",
+    "uuid": "0123abcd-0123-4567-89ab-0123456789ab"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "mode_s_long",
+  "note": "DF17, ts and rssi contain 0x1a",
+  "hex": "1a330123451a1a67891a1a8d4840d6202cc371c32ce0576098",
+  "decoded": [
+   {
+    "type": 51,
+    "kind": "mode_s_long",
+    "ts": 1250994841481,
+    "rssi": 26,
+    "msg": "8d4840d6202cc371c32ce0576098"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "uat_s_old",
+  "note": "BEAST feed / old firmware: ts not on the Mode S clock",
+  "hex": "1aec73000000001a1a1a1ac8101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d",
+  "decoded": [
+   {
+    "type": 236,
+    "kind": "uat_s",
+    "clock": "not_mlat",
+    "ts": 6682,
+    "rssi": 200,
+    "msg": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "uat_S_modes",
+  "note": "READSBEE feed: ts on the Mode S clock",
+  "hex": "1aec530123451a1a67891a1a101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d",
+  "decoded": [
+   {
+    "type": 236,
+    "kind": "uat_s",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 26,
+    "msg": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "uat_L_unsynced",
+  "note": "READSBEE feed, sub-GHz clock not synced yet: ts 0",
+  "hex": "1aec4c000000000000961a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  "decoded": [
+   {
+    "type": 236,
+    "kind": "uat_l",
+    "clock": "unsynced",
+    "ts": 0,
+    "rssi": 150,
+    "msg": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "uat_U_uplink",
+  "note": "uplink, 552 bytes",
+  "hex": "1aec550123451a1a67895a00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a1a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a1a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11",
+  "decoded": [
+   {
+    "type": 236,
+    "kind": "uat_u",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 90,
+    "msg": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "unknown_type",
+  "note": "unknown type: skipped to the next frame start, the Mode S frame after it decodes",
+  "hex": "1af5711a1a3300000000000000000000000000000000000000001a32000000000002025d4840d6abcdef",
+  "decoded": [
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 2,
+    "rssi": 2,
+    "msg": "5d4840d6abcdef"
+   }
+  ],
+  "skipped": 26,
+  "unknown": 1
+ },
+ {
+  "name": "unknown_uat_letter",
+  "note": "known type, unknown letter: same skip",
+  "hex": "1aec7a000000000000001a1a1a1a330000000000000000001a32000000000002025d4840d6abcdef",
+  "decoded": [
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 2,
+    "rssi": 2,
+    "msg": "5d4840d6abcdef"
+   }
+  ],
+  "skipped": 24,
+  "unknown": 1
+ },
+ {
+  "name": "mixed_stream",
+  "note": "all of the above and the first set's ADS-L / Remote ID frames back to back, then a short Mode S frame",
+  "hex": "1ae430313233616263642d303132332d343536372d383961622d3031323334353637383961621a330123451a1a67891a1a8d4840d6202cc371c32ce05760981aec73000000001a1a1a1ac8101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d1aec530123451a1a67891a1a101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d1aec4c000000000000961a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1aec550123451a1a67895a00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a1a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a1a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a111aed420123451a1a6789a9021a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c31aed4100000000000094001a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c31aed580123451a1a678980ff1a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c31aef62000000000000b8c0ffee1a1a0001121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1aef77000000000000c46a1a1a2b3c4d5ef21903021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a12111111111111111111111111111111111111111111111111424444444444444444444444444444444444444444444444441aef63000000000000a1c0ffee1a1a0001022222222222222222222222222222222222222222222222221af5711a1a3300000000000000000000000000000000000000001a32000000000002025d4840d6abcdef1aec7a000000000000001a1a1a1a330000000000000000001a32000000000002025d4840d6abcdef1a320000000000010100000000000000",
+  "decoded": [
+   {
+    "type": 228,
+    "kind": "uuid",
+    "uuid": "0123abcd-0123-4567-89ab-0123456789ab"
+   },
+   {
+    "type": 51,
+    "kind": "mode_s_long",
+    "ts": 1250994841481,
+    "rssi": 26,
+    "msg": "8d4840d6202cc371c32ce0576098"
+   },
+   {
+    "type": 236,
+    "kind": "uat_s",
+    "clock": "not_mlat",
+    "ts": 6682,
+    "rssi": 200,
+    "msg": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d"
+   },
+   {
+    "type": 236,
+    "kind": "uat_s",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 26,
+    "msg": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d"
+   },
+   {
+    "type": 236,
+    "kind": "uat_l",
+    "clock": "unsynced",
+    "ts": 0,
+    "rssi": 150,
+    "msg": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+   },
+   {
+    "type": 236,
+    "kind": "uat_u",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 90,
+    "msg": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11"
+   },
+   {
+    "type": 237,
+    "kind": "adsl",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 169,
+    "channel": "868.4",
+    "repaired": 2,
+    "onair": "1a00021a3c4d5e6f1a1a00112233445566778899aabb0102a1b2c3"
+   },
+   {
+    "type": 237,
+    "kind": "adsl",
+    "clock": "unsynced",
+    "ts": 0,
+    "rssi": 148,
+    "channel": "868.2",
+    "repaired": 0,
+    "onair": "1a00021a3c4d5e6f1a1a00112233445566778899aabb0102a1b2c3"
+   },
+   {
+    "type": 237,
+    "kind": "adsl",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 128,
+    "channel": null,
+    "repaired": null,
+    "onair": "1a00021a3c4d5e6f1a1a00112233445566778899aabb0102a1b2c3"
+   },
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 184,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "odid_msgs": [
+     1
+    ]
+   },
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 196,
+    "transport": "wifi_beacon",
+    "addr": "6a:1a:2b:3c:4d:5e",
+    "odid": "f21903021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1211111111111111111111111111111111111111111111111142444444444444444444444444444444444444444444444444",
+    "odid_msgs": [
+     0,
+     1,
+     4
+    ]
+   },
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 161,
+    "transport": "bt5_coded",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "02222222222222222222222222222222222222222222222222",
+    "odid_msgs": [
+     0
+    ]
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 2,
+    "rssi": 2,
+    "msg": "5d4840d6abcdef"
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 2,
+    "rssi": 2,
+    "msg": "5d4840d6abcdef"
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 1,
+    "rssi": 1,
+    "msg": "00000000000000"
+   }
+  ],
+  "skipped": 50,
+  "unknown": 2
+ },
+ {
+  "name": "caps_query",
+  "note": "feeder -> server, right after 0xE4: can send ADS-L, Remote ID, upper-case UAT",
+  "hex": "1ae551818e80",
+  "decoded": [
+   {
+    "type": 229,
+    "kind": "caps_query",
+    "version": 1,
+    "bits": 14,
+    "features": [
+     "adsl_ed",
+     "rid_ef",
+     "uat_upper"
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "caps_query_none",
+  "note": "feeder that has nothing extra to send (still allowed)",
+  "hex": "1ae551818080",
+  "decoded": [
+   {
+    "type": 229,
+    "kind": "caps_query",
+    "version": 1,
+    "bits": 0,
+    "features": []
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "feed_start_query",
+  "note": "start of every TCP Beast feed: 0xE4, 0xE5 Q, then today's Beast",
+  "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818e801a330123451a1a67891a1a8d4840d6202cc371c32ce0576098",
+  "decoded": [
+   {
+    "type": 228,
+    "kind": "uuid",
+    "uuid": "0bee0003-8172-d18c-0bee-00038172d18c"
+   },
+   {
+    "type": 229,
+    "kind": "caps_query",
+    "version": 1,
+    "bits": 14,
+    "features": [
+     "adsl_ed",
+     "rid_ef",
+     "uat_upper"
+    ]
+   },
+   {
+    "type": 51,
+    "kind": "mode_s_long",
+    "ts": 1250994841481,
+    "rssi": 26,
+    "msg": "8d4840d6202cc371c32ce0576098"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "caps_bad_byte",
+  "note": "feature byte without the high bit: malformed, skipped like an unknown frame",
+  "hex": "1ae5518107801a32000000000002025d4840d6abcdef",
+  "decoded": [
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 2,
+    "rssi": 2,
+    "msg": "5d4840d6abcdef"
+   }
+  ],
+  "skipped": 6,
+  "unknown": 1
+ },
+ {
+  "name": "answer_all",
+  "note": "readsbee accepts ADS-L, Remote ID, upper-case UAT",
+  "direction": "server_to_feeder",
+  "hex": "1ae541818e80",
+  "answer": {
+   "version": 1,
+   "bits": 14,
+   "features": [
+    "adsl_ed",
+    "rid_ef",
+    "uat_upper"
+   ]
+  }
+ },
+ {
+  "name": "answer_none",
+  "note": "readsbee that accepts nothing extra: plain Beast",
+  "direction": "server_to_feeder",
+  "hex": "1ae541818080",
+  "answer": {
+   "version": 1,
+   "bits": 0,
+   "features": []
+  }
+ },
+ {
+  "name": "answer_rid_only",
+  "note": "policy: Remote ID only",
+  "direction": "server_to_feeder",
+  "hex": "1ae541818480",
+  "answer": {
+   "version": 1,
+   "bits": 4,
+   "features": [
+    "rid_ef"
+   ]
+  }
+ },
+ {
+  "name": "answer_after_pings",
+  "note": "readsb-style ping (escaped 1a) and a Beast heartbeat before the answer: skipped",
+  "direction": "server_to_feeder",
+  "hex": "1a50001a1a051a310000000000000000001ae541818e80",
+  "answer": {
+   "version": 1,
+   "bits": 14,
+   "features": [
+    "adsl_ed",
+    "rid_ef",
+    "uat_upper"
+   ]
+  }
+ },
+ {
+  "name": "answer_future",
+  "note": "newer server: version 2, an unknown bit 9; the feeder uses known bits only",
+  "direction": "server_to_feeder",
+  "hex": "1ae541828484",
+  "answer": {
+   "version": 2,
+   "bits": 516,
+   "features": [
+    "rid_ef"
+   ]
+  }
+ },
+ {
+  "name": "echo_of_query",
+  "note": "our own query echoed back by a reflector: not an answer",
+  "direction": "server_to_feeder",
+  "hex": "1ae551818e80",
+  "answer": null
+ },
+ {
+  "name": "answer_malformed",
+  "note": "feature byte without the high bit: ignored",
+  "direction": "server_to_feeder",
+  "hex": "1ae541810780",
+  "answer": null
+ },
+ {
+  "name": "answer_cut_by_frame",
+  "note": "a 1a inside the caps bytes starts a new frame: the second, complete answer counts",
+  "direction": "server_to_feeder",
+  "hex": "1ae541811ae541818e80",
+  "answer": {
+   "version": 1,
+   "bits": 14,
+   "features": [
+    "adsl_ed",
+    "rid_ef",
+    "uat_upper"
+   ]
+  }
+ },
+ {
+  "name": "stock_readsb_silence",
+  "note": "stock readsb: pings only, no answer -> timeout -> plain Beast",
+  "direction": "server_to_feeder",
+  "hex": "1a50001a1a051a50001a1a051a50001a1a05",
+  "answer": null
+ },
+ {
+  "name": "answer_bit0_set",
+  "note": "reserved bit 0 set: ignored, the feeder uses bits 1-3 only",
+  "direction": "server_to_feeder",
+  "hex": "1ae541818f80",
+  "answer": {
+   "version": 1,
+   "bits": 15,
+   "features": [
+    "adsl_ed",
+    "rid_ef",
+    "uat_upper"
+   ]
+  }
+ },
+ {
+  "name": "mode_s_short_power_m87",
+  "note": "-87 dBm: power byte 4",
+  "hex": "1a32000000001234045d4840d6abcdef",
+  "decoded": [
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 4660,
+    "rssi": 4,
+    "msg": "5d4840d6abcdef"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "mode_s_short_power_m105",
+  "note": "-105 dBm: power byte 1 (floor)",
+  "hex": "1a32000000001234015d4840d6abcdef",
+  "decoded": [
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 4660,
+    "rssi": 1,
+    "msg": "5d4840d6abcdef"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "mode_s_short_power_m20",
+  "note": "-20 dBm: power byte 255 (saturated)",
+  "hex": "1a32000000001234ff5d4840d6abcdef",
+  "decoded": [
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 4660,
+    "rssi": 255,
+    "msg": "5d4840d6abcdef"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "mode_s_short_power_none",
+  "note": "no level: power byte 0",
+  "hex": "1a32000000001234005d4840d6abcdef",
+  "decoded": [
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 4660,
+    "rssi": 0,
+    "msg": "5d4840d6abcdef"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "mode_s_long_power_m60",
+  "note": "-60 dBm: power byte 45",
+  "hex": "1a330123451a1a67892d8d4840d6202cc371c32ce0576098",
+  "decoded": [
+   {
+    "type": 51,
+    "kind": "mode_s_long",
+    "ts": 1250994841481,
+    "rssi": 45,
+    "msg": "8d4840d6202cc371c32ce0576098"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "mode_ac_power_m70",
+  "note": "0x31 (ADSBee doesn't send it; same rule if it ever does)",
+  "hex": "1a31000000000007131234",
+  "decoded": [
+   {
+    "type": 49,
+    "kind": "mode_ac",
+    "ts": 7,
+    "rssi": 19,
+    "msg": "1234"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "uat_s_power_m95",
+  "note": "-95 dBm: power 2",
+  "hex": "1aec7300000000005502101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d",
+  "decoded": [
+   {
+    "type": 236,
+    "kind": "uat_s",
+    "clock": "not_mlat",
+    "ts": 85,
+    "rssi": 2,
+    "msg": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "uat_U_power_m70",
+  "note": "uplink, power byte",
+  "hex": "1aec550123451a1a67891300070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a1a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a1a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11",
+  "decoded": [
+   {
+    "type": 236,
+    "kind": "uat_u",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 19,
+    "msg": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "adsl_868_4_power",
+  "note": "L = 0x1a escaped, 2 erasures repaired, -87 dBm as power byte 4",
+  "hex": "1aed420123451a1a678904021a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c3",
+  "decoded": [
+   {
+    "type": 237,
+    "kind": "adsl",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 4,
+    "channel": "868.4",
+    "repaired": 2,
+    "onair": "1a00021a3c4d5e6f1a1a00112233445566778899aabb0102a1b2c3"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "adsl_868_2_power_floor",
+  "note": "ts 0 = not synced; -108 dBm reads as power byte 1: the -100 dBm floor",
+  "hex": "1aed4100000000000001001a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c3",
+  "decoded": [
+   {
+    "type": 237,
+    "kind": "adsl",
+    "clock": "unsynced",
+    "ts": 0,
+    "rssi": 1,
+    "channel": "868.2",
+    "repaired": 0,
+    "onair": "1a00021a3c4d5e6f1a1a00112233445566778899aabb0102a1b2c3"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "adsl_power_none",
+  "note": "channel unknown, no level: power byte 0",
+  "hex": "1aed580123451a1a678900ff1a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c3",
+  "decoded": [
+   {
+    "type": 237,
+    "kind": "adsl",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 0,
+    "channel": null,
+    "repaired": null,
+    "onair": "1a00021a3c4d5e6f1a1a00112233445566778899aabb0102a1b2c3"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "rid_bt4_single_power",
+  "note": "Location message, BT4 legacy, no timestamp, -72 dBm as power byte 16",
+  "hex": "1aef6200000000000010c0ffee1a1a0001121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 16,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "odid_msgs": [
+     1
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "rid_bt4_power_saturated",
+  "note": "-34 dBm (strongest Remote ID in the t1069 capture) reads 255: the -40 dBm ceiling",
+  "hex": "1aef62000000000000ffc0ffee1a1a0001121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 255,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "odid_msgs": [
+     1
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "rid_wifi_beacon_pack_power",
+  "note": "message pack: Basic ID, Location, System; -60 dBm as power byte 45",
+  "hex": "1aef770000000000002d6a1a1a2b3c4d5ef21903021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1211111111111111111111111111111111111111111111111142444444444444444444444444444444444444444444444444",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 45,
+    "transport": "wifi_beacon",
+    "addr": "6a:1a:2b:3c:4d:5e",
+    "odid": "f21903021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1211111111111111111111111111111111111111111111111142444444444444444444444444444444444444444444444444",
+    "odid_msgs": [
+     0,
+     1,
+     4
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "rid_bt5_coded_power",
+  "note": "BT5 Coded, -95 dBm as power byte 2",
+  "hex": "1aef6300000000000002c0ffee1a1a000102222222222222222222222222222222222222222222222222",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 2,
+    "transport": "bt5_coded",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "02222222222222222222222222222222222222222222222222",
+    "odid_msgs": [
+     0
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "stream_query_answer",
+  "note": "E4 + query 8e, a Mode S frame sent while waiting; answer 8e; then Mode S, ADS-L, Remote ID and upper-case UAT, all with power byte 4",
+  "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818e801a32000000000001045d4840d6abcdef1a32000000000003045d4840d6abcdef1aed410123451a1a678904011a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c31aef6200000000000004c0ffee1a1a0001123333333333333333333333333333333333333333333333331aec530123451a1a678904101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d",
+  "decoded": [
+   {
+    "type": 228,
+    "kind": "uuid",
+    "uuid": "0bee0003-8172-d18c-0bee-00038172d18c"
+   },
+   {
+    "type": 229,
+    "kind": "caps_query",
+    "version": 1,
+    "bits": 14,
+    "features": [
+     "adsl_ed",
+     "rid_ef",
+     "uat_upper"
+    ]
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 1,
+    "rssi": 4,
+    "msg": "5d4840d6abcdef"
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 3,
+    "rssi": 4,
+    "msg": "5d4840d6abcdef"
+   },
+   {
+    "type": 237,
+    "kind": "adsl",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 4,
+    "channel": "868.2",
+    "repaired": 1,
+    "onair": "1a00021a3c4d5e6f1a1a00112233445566778899aabb0102a1b2c3"
+   },
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 4,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "12333333333333333333333333333333333333333333333333",
+    "odid_msgs": [
+     1
+    ]
+   },
+   {
+    "type": 236,
+    "kind": "uat_s",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 4,
+    "msg": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0,
+  "exchange": [
+   {
+    "from": "feeder",
+    "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818e801a32000000000001045d4840d6abcdef"
+   },
+   {
+    "from": "server",
+    "hex": "1ae541818e80"
+   },
+   {
+    "from": "feeder",
+    "hex": "1a32000000000003045d4840d6abcdef1aed410123451a1a678904011a1a00021a1a3c4d5e6f1a1a1a1a00112233445566778899aabb0102a1b2c31aef6200000000000004c0ffee1a1a0001123333333333333333333333333333333333333333333333331aec530123451a1a678904101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d"
+   }
+  ]
+ },
+ {
+  "name": "stream_query_answer_rid_only",
+  "note": "same feed, the server answers 84 (Remote ID only): no ADS-L, UAT stays lower case",
+  "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818e801a32000000000001045d4840d6abcdef1a32000000000003045d4840d6abcdef1aef6200000000000004c0ffee1a1a0001123333333333333333333333333333333333333333333333331aec730123451a1a678904101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d",
+  "decoded": [
+   {
+    "type": 228,
+    "kind": "uuid",
+    "uuid": "0bee0003-8172-d18c-0bee-00038172d18c"
+   },
+   {
+    "type": 229,
+    "kind": "caps_query",
+    "version": 1,
+    "bits": 14,
+    "features": [
+     "adsl_ed",
+     "rid_ef",
+     "uat_upper"
+    ]
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 1,
+    "rssi": 4,
+    "msg": "5d4840d6abcdef"
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 3,
+    "rssi": 4,
+    "msg": "5d4840d6abcdef"
+   },
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "not_mlat",
+    "ts": 0,
+    "rssi": 4,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "12333333333333333333333333333333333333333333333333",
+    "odid_msgs": [
+     1
+    ]
+   },
+   {
+    "type": 236,
+    "kind": "uat_s",
+    "clock": "not_mlat",
+    "ts": 1250994841481,
+    "rssi": 4,
+    "msg": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0,
+  "exchange": [
+   {
+    "from": "feeder",
+    "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818e801a32000000000001045d4840d6abcdef"
+   },
+   {
+    "from": "server",
+    "hex": "1ae541818480"
+   },
+   {
+    "from": "feeder",
+    "hex": "1a32000000000003045d4840d6abcdef1aef6200000000000004c0ffee1a1a0001123333333333333333333333333333333333333333333333331aec730123451a1a678904101112131415161718191a1a1b1c1d1e1f202122232425262728292a2b2c2d"
+   }
+  ]
+ },
+ {
+  "name": "rid_bt4_modes_clock_power",
+  "note": "ESP32 synced: B, ts on the Mode S clock (~1 ms BLE callback time, not MLAT-grade), power byte 16",
+  "hex": "1aef420123451a1a678910c0ffee1a1a0001121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 16,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "121a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "odid_msgs": [
+     1
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "rid_wifi_beacon_pack_modes_clock",
+  "note": "W, ts on the Mode S clock (~2-4 us), pack, power byte 45",
+  "hex": "1aef570123451a1a67892d6a1a1a2b3c4d5ef21903021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1211111111111111111111111111111111111111111111111142444444444444444444444444444444444444444444444444",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "modes",
+    "ts": 1250994841481,
+    "rssi": 45,
+    "transport": "wifi_beacon",
+    "addr": "6a:1a:2b:3c:4d:5e",
+    "odid": "f21903021a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1211111111111111111111111111111111111111111111111142444444444444444444444444444444444444444444444444",
+    "odid_msgs": [
+     0,
+     1,
+     4
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "rid_bt4_modes_clock_wrap_power",
+  "note": "the 48-bit 12 MHz counter wraps: ffffffffffff, then 000000000002; power byte 20",
+  "hex": "1aef42ffffffffffff13c0ffee1a1a0001123333333333333333333333333333333333333333333333331aef4200000000000213c0ffee1a1a000112333333333333333333333333333333333333333333333333",
+  "decoded": [
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "modes",
+    "ts": 281474976710655,
+    "rssi": 19,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "12333333333333333333333333333333333333333333333333",
+    "odid_msgs": [
+     1
+    ]
+   },
+   {
+    "type": 239,
+    "kind": "rid",
+    "clock": "modes",
+    "ts": 2,
+    "rssi": 19,
+    "transport": "bt4_legacy",
+    "addr": "c0:ff:ee:1a:00:01",
+    "odid": "12333333333333333333333333333333333333333333333333",
+    "odid_msgs": [
+     1
+    ]
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ }
+]
