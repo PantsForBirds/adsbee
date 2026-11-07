@@ -10,42 +10,52 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import math
+from pathlib import Path
 
-SECTORS = 36
-BANDS = 12
+_REGISTRY = json.loads((Path(__file__).parent / 'protocols.json').read_text(encoding='utf-8'))
+
+SECTORS = _REGISTRY['sectors']
+BANDS = _REGISTRY['bands']
 BINS = SECTORS * BANDS
 BITMAP_BYTES = BINS // 8
 SECTOR_DEG = 360 // SECTORS
-#: Aircraft band floors in feet (baro, else geometric altitude); the last band has no ceiling.
-BAND_FLOORS_FT = [0, 1000, 2000, 4000, 6000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
-#: Remote ID band floors in feet above the receiver.
-REMOTE_ID_FLOORS_FT = [0, 100, 200, 300, 400, 500, 700, 1000, 1500, 2000, 3000, 5000]
 DEFAULT_UNIT_M = 2000
 
 Map = dict[int, int]
 
 
 class Protocol:
-    def __init__(self, floors_ft: list[int], top_ft: int, unit_m: int | None, basis: str):
-        self.floors_ft, self.top_ft, self.unit_m, self.basis = floors_ft, top_ft, unit_m, basis
+    """One entry of protocols.json."""
+
+    def __init__(self, entry: dict):
+        self.name: str = entry['name']
+        self.reported: bool = entry['reported']
+        self.unit_m: int | None = entry['unit_m']       # the one a report must use (None: any)
+        self.basis: str = entry['basis']                # what the bands measure
+        self.floors_ft: list[int] = entry['floors_ft']
+        self.top_ft: int = entry['top_ft']              # the top band's ceiling, for the horizon limit
+        self.aircraft: bool = entry['aircraft']         # part of the `aircraft` union
+        self.stats: tuple[str, ...] = tuple(entry['stats'])
+        self.label, self.symbol, self.icon, self.tip = entry['label'], entry['symbol'], entry['icon'], entry['tip']
 
 
-#: What a report's `ranges` may hold, and `aircraft`: an old report's `range` (Mode S and UAT
-#: mixed). `top_ft` is the top band's ceiling for the horizon limit; `unit_m` the one a report must
-#: use (None: any); `basis` what the bands measure.
-PROTOCOLS = {
-    'mode_s': Protocol(BAND_FLOORS_FT, 60000, 2000, 'altitude'),
-    'uat': Protocol(BAND_FLOORS_FT, 60000, 2000, 'altitude'),
-    'remote_id': Protocol(REMOTE_ID_FLOORS_FT, 10000, 50, 'height_above_rx'),
-    'aircraft': Protocol(BAND_FLOORS_FT, 60000, None, 'altitude'),
-}
-#: Reported in `ranges`.
-REPORTED = ('mode_s', 'uat', 'remote_id')
-#: Stored rows each user-facing protocol reads: `aircraft` is the max over every aircraft map.
-SOURCES = {'mode_s': ('mode_s',), 'uat': ('uat',), 'remote_id': ('remote_id',),
-           'aircraft': ('mode_s', 'uat', 'aircraft')}
+#: Every protocol a stored map may have, in picker order. `aircraft` is also an old report's `range`
+#: (Mode S and UAT mixed).
+PROTOCOLS = {entry['name']: Protocol(entry) for entry in _REGISTRY['protocols']}
 LEGACY = 'aircraft'
+#: What a bee may send in `ranges`, `listen_s` and `frames` (also the report reply's `protocols`).
+REPORTED = tuple(name for name, p in PROTOCOLS.items() if p.reported)
+#: Stored rows each user-facing protocol reads: `aircraft` is the max over every aircraft map.
+SOURCES = {name: (tuple(n for n, q in PROTOCOLS.items() if q.aircraft) if name == LEGACY else (name,))
+           for name in PROTOCOLS}
+#: Reported protocols counted in `frames`: those without legacy stats columns.
+FRAMES = tuple(name for name in REPORTED if not PROTOCOLS[name].stats)
+#: Aircraft band floors in feet (baro, else geometric altitude); the last band has no ceiling.
+BAND_FLOORS_FT = PROTOCOLS[LEGACY].floors_ft
+#: Remote ID band floors in feet above the receiver.
+REMOTE_ID_FLOORS_FT = PROTOCOLS['remote_id'].floors_ft
 
 
 class RangeError(ValueError):

@@ -95,7 +95,11 @@ def _mutate(body, how):
 @pytest.mark.parametrize('change, detail', [
     (lambda b: b.update(range=b['ranges']['mode_s']), 'range or ranges, not both'),
     (lambda b: b.update(ranges=[1]), 'ranges must be an object'),
-    (lambda b: b['ranges'].update(adsc=b['ranges']['uat']), "unknown protocol 'adsc'"),
+    (lambda b: b['ranges'].update({'ADS-C': b['ranges']['uat']}), 'protocol names are 1-16 of a-z'),
+    (lambda b: b['ranges'].update({f'p{i}': {} for i in range(14)}), 'more than 16 protocols'),
+    (lambda b: b.update(listen_s=[1]), 'listen_s must be an object'),
+    (lambda b: b.update(listen_s={'mode_s': -1}), 'listen_s.mode_s must be an integer 0..604800'),
+    (lambda b: b.update(frames={'remote_id': 'x'}), 'frames.remote_id must be an integer'),
     (lambda b: b['ranges']['mode_s'].update(unit_m=500), 'ranges.mode_s.unit_m must be 2000'),
     (lambda b: b['ranges']['remote_id'].update(unit_m=2000), 'ranges.remote_id.unit_m must be 50'),
     (lambda b: b['ranges']['uat'].update(unit_m='x'), 'ranges.uat.unit_m must be an integer'),
@@ -290,14 +294,15 @@ def test_migration_moves_maps_to_aircraft_rows_and_back():
     executor = MigrationExecutor(connection)
     executor.loader.build_graph()
     executor.migrate([('adsbee_swarm', '0004_remove_sample_range_map')])
-    rows = SampleRange.objects.order_by('sample__span_s')
-    assert [(r.protocol, r.unit_m, r.ranges(), r.sample.span_s) for r in rows] == [
+    # The models as of 0004 (later migrations add columns).
+    apps = executor.loader.project_state([('adsbee_swarm', '0004_remove_sample_range_map')]).apps
+    Range4, Sample4 = apps.get_model('adsbee_swarm', 'SampleRange'), apps.get_model('adsbee_swarm', 'Sample')
+    rows = Range4.objects.order_by('sample__span_s')
+    assert [(r.protocol, r.unit_m, ranges.unpack(r.range_map, r.unit_m), r.sample.span_s) for r in rows] == [
         ('aircraft', 500, {4: 1500}, Sample.HOUR), ('aircraft', 500, {4: 1500}, Sample.DAY)]
 
-    sample = Sample.objects.get(span_s=Sample.HOUR, start=now)
-    row = SampleRange(sample=sample, protocol='mode_s', unit_m=2000)
-    row.set_ranges({4: 6000, 5: 2000})
-    row.save()
+    sample = Sample4.objects.get(span_s=Sample.HOUR, start=now)
+    Range4.objects.create(sample=sample, protocol='mode_s', unit_m=2000, range_map=ranges.pack({4: 6000, 5: 2000}, 2000))
     executor = MigrationExecutor(connection)
     executor.loader.build_graph()
     executor.migrate([('adsbee_swarm', '0002_position_guards')])
