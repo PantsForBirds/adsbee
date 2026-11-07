@@ -63,10 +63,10 @@ components:
         rx_position: {$ref: '#/components/schemas/Position'}
         stats:
           type: object
-          description: "Missing keys count as 0. Newer firmware sends a protocol's keys only when it listened to it."
+          description: "Missing keys count as 0. Newer firmware sends a protocol's keys only when it listened to it. Mode S has none: it goes in frames.mode_s."
           properties:
-            modes_valid: {type: integer}
-            es_valid: {type: integer}
+            modes_valid: {type: integer, description: "Older firmware: valid 56-bit Mode S frames. Taken as 0 when the report has frames.mode_s."}
+            es_valid: {type: integer, description: "Older firmware: valid 112-bit extended squitters. Taken as 0 when the report has frames.mode_s."}
             uat_adsb: {type: integer}
             uat_uplink: {type: integer}
             aircraft_max: {type: integer}
@@ -90,8 +90,11 @@ components:
         frames:
           type: object
           maxProperties: 16
-          description: "Valid frames per protocol without stats keys (remote_id); ignored for mode_s and uat. Unknown protocols are ignored and counted."
+          description: "Valid frames per protocol without stats keys (mode_s, remote_id); ignored for uat. Unknown protocols are ignored and counted."
           additionalProperties: {type: integer, minimum: 0}
+          properties:
+            mode_s: {type: integer, minimum: 0, description: "Every valid Mode S frame, 56- and 112-bit (replaces stats.modes_valid and es_valid)."}
+            remote_id: {type: integer, minimum: 0}
         range_withheld: {type: string, enum: [no_position, implausible], description: "Only when range is omitted for that reason."}
         range_dropped: {type: integer, minimum: 0, description: "Positions the bee dropped as beyond the horizon."}
     ReportAnswer:
@@ -174,7 +177,7 @@ components:
               listen_s: {type: integer, nullable: true, description: "Seconds listened in the window; null: unknown (older firmware)."}
               listened: {type: boolean, nullable: true, description: "null: unknown (older firmware)."}
               heard: {type: boolean}
-              frames: {type: integer, nullable: true}
+              frames: {type: integer, nullable: true, description: "This protocol's frames in the window (mode_s: every valid Mode S frame, as /stats); null for aircraft and when not reported."}
         swarm:
           type: object
           description: "Max per bin over every bee (each relative to its own receiver)."
@@ -194,8 +197,9 @@ components:
             properties:
               t: {type: string, format: date-time}
               bees: {type: integer, description: Bees that reported in this step}
-              modes_valid: {type: integer}
-              es_valid: {type: integer}
+              mode_s: {type: integer, description: "Every valid Mode S frame (56- and 112-bit): frames.mode_s plus older firmware's modes_valid + es_valid."}
+              modes_valid: {type: integer, description: "Older firmware only (56-bit); counted in mode_s."}
+              es_valid: {type: integer, description: "Older firmware only (112-bit); counted in mode_s."}
               uat_adsb: {type: integer}
               uat_uplink: {type: integer}
               aircraft_max: {type: integer}
@@ -203,7 +207,7 @@ components:
               range_dropped: {type: integer}
               bins_ignored: {type: integer}
               protocols_ignored: {type: integer, description: Protocols reports carried that this server doesn't know}
-              frames: {type: object, additionalProperties: {type: integer}, description: "Per protocol without stats keys, when reported."}
+              frames: {type: object, additionalProperties: {type: integer}, description: "Per protocol without stats keys, as reported (mode_s: newer firmware only; see mode_s for the total)."}
     RolloutNew:
       type: object
       required: [product, tag]
