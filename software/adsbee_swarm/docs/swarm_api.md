@@ -24,9 +24,9 @@ The default server is `https://adsbee.aero`.
   "seq": 17,
   "period": {"start_uptime_s": 8745, "len_s": 3600},
   "rx_position": {"lat": 37.1, "lon": -122.1, "alt_m": 30, "source": "fixed"},
-  "stats": {"modes_valid": 0, "es_valid": 0, "uat_adsb": 0, "uat_uplink": 0, "aircraft_max": 0, "aircraft_unique": 0},
+  "stats": {"uat_adsb": 0, "uat_uplink": 0, "aircraft_max": 0, "aircraft_unique": 0},
   "listen_s": {"mode_s": 3600, "uat": 3600, "remote_id": 3600},
-  "frames": {"remote_id": 0},
+  "frames": {"mode_s": 0, "remote_id": 0},
   "ranges": {
     "mode_s": {"sectors": 36, "bands": 12, "unit_m": 2000, "changed": "<base64, 54 bytes>", "max": "<base64>"},
     "uat": {"sectors": 36, "bands": 12, "unit_m": 2000, "changed": "..", "max": ".."},
@@ -43,8 +43,9 @@ The default server is `https://adsbee.aero`.
 | `rx_position` | Required for `ranges`. Without it, send `null` and no `ranges`; the server keeps the stats and drops any range. |
 | `ranges` | One map per protocol. A protocol with no bins in the period is omitted; `{}` is valid. Send only protocols the server listed in its last reply (below). |
 | `listen_s` | Optional. Seconds each protocol's receiver was on in the period (integers 0..604800; 0 or missing: not listening). More than `len_s` is stored as `len_s`. A protocol listened to with no map is stored as "listened, heard nothing". Without the key, listen time is unknown (older firmware). |
-| `frames` | Optional. Valid frames per protocol that has no `stats` keys (integers 0..2^40); ignored for `mode_s` and `uat`. |
-| `stats` | Missing keys count as 0. Newer firmware sends a protocol's keys only when it listened to it: `mode_s` → `modes_valid`, `es_valid`; `uat` → `uat_adsb`, `uat_uplink`; `remote_id` has none. |
+| `frames` | Optional. Valid frames per protocol that has no `stats` keys (integers 0..2^40): `mode_s` (every valid Mode S frame, 56- and 112-bit) and `remote_id`; ignored for `uat`. |
+| `stats` | Missing keys count as 0. Newer firmware sends a protocol's keys only when it listened to it: `uat` → `uat_adsb`, `uat_uplink`; `mode_s` and `remote_id` have none (they go in `frames`). |
+| `modes_valid`, `es_valid` | Older firmware's Mode S counts in `stats` (56-bit, 112-bit), still accepted and stored as sent. Mode S is one count: `frames.mode_s` or, from older firmware, `modes_valid + es_valid`. A report with `frames.mode_s` has these taken as 0. |
 | `range` | Older firmware: one map for every aircraft, stored as protocol `aircraft`. Never with `ranges`. |
 | `changed` | Bitmap of present bins, standard base64 with padding. Bin `i` = byte `i/8`, bit `i%8` (LSB first). |
 | `max` | One byte per set bit, in bin order: `ceil(distance_m / unit_m)`, clamped 1..255. |
@@ -135,7 +136,7 @@ rollout is a 404.
 | GET, PATCH, DELETE | `/devices/{id}` | Read; set `label`, `note`, `location` (`null` = as reported); remove |
 | POST | `/devices/{id}/restore` | Accept a removed bee again |
 | GET | `/range?device=&since=&until=&protocol=` | Max per bin over the window: per bee `max_m` (12 bands × 36 sectors, meters or null) and `sector_max_m`; `swarm` = max over bees |
-| GET | `/stats?device=&since=&until=&step=hour\|day` | Counts summed; `aircraft_*` maxed per bee, then summed; `bees` = bees that reported in the step; `frames` per protocol when reported. Steps without a report are left out |
+| GET | `/stats?device=&since=&until=&step=hour\|day` | Counts summed; `aircraft_*` maxed per bee, then summed; `bees` = bees that reported in the step; `mode_s` = every valid Mode S frame (`frames.mode_s`, plus `modes_valid + es_valid` from older firmware; both columns stay in the row); `frames` per protocol when reported. Steps without a report are left out |
 | GET, POST | `/rollouts` | List / start |
 | GET, POST | `/rollouts/{id}` | Read; `{"action": "promote" \| "pause" \| "resume" \| "cancel"}` |
 
@@ -149,7 +150,8 @@ rest); `band_basis` says what the bands measure.
 **Listening.** `listening` gives, per protocol, how many of the chosen bees `listened` and how many
 `heard` something (a bee on older firmware, which sends no listen time, counts as listened when it
 heard). `devices` leaves out bees that report listen time and didn't listen to the protocol; each bee
-has `listen_s` (null: unknown), `listened` (true, false, or null: unknown), `heard` and `frames`.
+has `listen_s` (null: unknown), `listened` (true, false, or null: unknown), `heard` and `frames` (the
+protocol's own frame count: Mode S as in `/stats`; null for `aircraft` and when not reported).
 
 ```
 GET /api/swarm/v1/range?protocol=remote_id&device=4

@@ -50,20 +50,31 @@ def reception(devices, since: datetime, until: datetime) -> dict[int, dict[str, 
         listen_s=Sum('listen_s'), bins=Max('bins'), frames=Sum('frames'))
     for row in rows:
         out[row['sample__device_id']][row['protocol']] = {k: row[k] for k in ('listen_s', 'bins', 'frames')}
+    # One frame total for `ranges.TOTALS` protocols (Mode S): older firmware's columns added in.
+    legacy = sorted({key for keys in ranges.TOTALS.values() for key in keys})
+    if legacy:
+        for row in _samples(devices, since, until).values('device_id').annotate(**{k: Sum(k) for k in legacy}):
+            for name in ranges.TOTALS:
+                total = sum(row[key] or 0 for key in ranges.TOTALS[name])
+                stored = out[row['device_id']].get(name)
+                if stored is not None:
+                    stored['frames'] = (stored['frames'] or 0) + total
+                elif total:
+                    out[row['device_id']][name] = {'listen_s': None, 'bins': 0, 'frames': total}
     return out
 
 
 def reception_of(stored: dict[str, dict], protocol: str) -> dict:
     """One bee's reception of a user-facing protocol (`aircraft`: over its sources).
-    `listened`: True, False (it reports listen time, none for this), None (unknown: older firmware)."""
+    `listened`: True, False (it reports listen time, none for this), None (unknown: older firmware).
+    `frames`: the protocol's own count (Mode S: all valid frames, `frame_total`); `aircraft` has none."""
     rows = [stored[name] for name in ranges.SOURCES[protocol] if name in stored]
     listen = [r['listen_s'] for r in rows if r['listen_s'] is not None]
-    frames = [r['frames'] for r in rows if r['frames'] is not None]
     reports_listen = any(r['listen_s'] is not None for r in stored.values())
     # A union (`aircraft`) listened as long as its longest source: receivers run side by side.
     return {'listen_s': max(listen) if listen else None,
             'listened': bool(sum(listen)) if listen else (False if reports_listen else None),
-            'heard': any(r['bins'] for r in rows), 'frames': sum(frames) if frames else None}
+            'heard': any(r['bins'] for r in rows), 'frames': stored.get(protocol, {}).get('frames')}
 
 
 def listening(devices, since: datetime, until: datetime, received: dict | None = None) -> dict[str, dict]:
@@ -115,8 +126,9 @@ def swarm_range(devices, since: datetime, until: datetime, protocol: str = range
 def stats_series(devices, since: datetime, until: datetime, step: str = 'hour') -> list[dict]:
     """Counts summed over bees per step; peaks (aircraft_max, aircraft_unique) are summed too
     across bees (each bee hears its own sky), maxed within a bee's step. `bees`: how many of them
-    reported in that step (a dip may be a quiet bee, not a quiet sky). `frames`: per protocol
-    without legacy stats, when any were reported. Steps without a report are left out."""
+    reported in that step (a dip may be a quiet bee, not a quiet sky). `mode_s`: all valid Mode S
+    frames (`frame_total`). `frames`: per protocol without v1 stats keys, when any were reported.
+    Steps without a report are left out."""
     width = 3600 if step == 'hour' else 86400
     per_bee: dict = defaultdict(lambda: defaultdict(int))
     span = Sample.HOUR if step == 'hour' else Sample.DAY
@@ -135,4 +147,13 @@ def stats_series(devices, since: datetime, until: datetime, step: str = 'hour') 
                                           frames__isnull=False).values('sample__start', 'protocol', 'frames'):
         frames[int(row['sample__start'].timestamp()) // width * width][row['protocol']] += row['frames']
     return [{'t': datetime.fromtimestamp(epoch, tz.utc).isoformat(), **totals[epoch],
+             **{name: frame_total(totals[epoch], frames.get(epoch, {}), name) for name in ranges.TOTALS},
              **({'frames': dict(frames[epoch])} if epoch in frames else {})} for epoch in sorted(totals)]
+
+
+def frame_total(stats, frames: dict, protocol: str = 'mode_s') -> int:
+    """One frame count for a `ranges.TOTALS` protocol: `frames[protocol]` plus its legacy columns
+    (`stats` a dict or a Sample). A row from older firmware has only the columns, a newer one only
+    frames; an hour or day with both (a bee updated mid-way, or several bees) adds them."""
+    get = stats.get if isinstance(stats, dict) else lambda key, default=0: getattr(stats, key, default)
+    return (frames.get(protocol) or 0) + sum(get(key, 0) for key in ranges.TOTALS[protocol])

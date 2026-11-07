@@ -171,7 +171,7 @@ def polar_svg(values: list[int | None], scale: int, size: int = 140) -> str:
     return ''.join(parts)
 
 
-CHARTS = [('es_valid', 'ES', 'Extended squitters decoded'), ('modes_valid', 'S', 'Mode S decoded'),
+CHARTS = [('mode_s', 'S', 'Mode S decoded (56- and 112-bit)'),
           ('uat_adsb', 'UAT', 'UAT ADS-B decoded'), ('aircraft_max', '✈', 'Most aircraft at once')]
 
 

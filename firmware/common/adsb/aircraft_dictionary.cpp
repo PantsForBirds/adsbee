@@ -1542,6 +1542,9 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
                       (unsigned)kMaxNumAircraft, (unsigned)evictions);
     }
 
+#ifdef SWARM_RECORDING
+    uint16_t num_swarm_aircraft = 0;
+#endif
     // Iterate over each key-value pair in the unordered_map. Prune if stale, update metrics if still fresh.
     for (auto it = dict.begin(); it != dict.end(); /* No increment here */) {
         uint32_t last_message_timestamp_ms =
@@ -1582,12 +1585,12 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
                     }
                 },
                 it->second);
-            if constexpr (kSwarmRecording) {
-                if (swarm_recorder_ != nullptr && !std::holds_alternative<RemoteIDAircraft>(it->second) &&
-                    !std::holds_alternative<ADSLAircraft>(it->second)) {
-                    swarm_recorder_->MarkAircraft(it->first);
-                }
+#ifdef SWARM_RECORDING
+            if (swarm_recorder_ != nullptr && CountsAsAircraft(it->second)) {
+                swarm_recorder_->MarkAircraft(it->first);
+                num_swarm_aircraft++;
             }
+#endif
 
             // Update lowest GNSS altitude if available.
             bool has_valid_gnss_altitude = false;
@@ -1628,9 +1631,9 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
     }
 
     // Update aggregate statistics.
-    if (kSwarmRecording && swarm_recorder_ != nullptr) {
-        swarm_recorder_->NoteAircraftCount(metrics_counter_.num_mode_s_aircraft + metrics_counter_.num_uat_aircraft);
-    }
+#ifdef SWARM_RECORDING
+    if (swarm_recorder_ != nullptr) swarm_recorder_->NoteAircraftCount(num_swarm_aircraft);
+#endif
     address_parity_correction_attempts_ = 0;
     metrics = metrics_counter_;    // Swap counter values over to publicly visible values.
     metrics_counter_ = Metrics();  // Use default constructor to clear all values.

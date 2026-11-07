@@ -8,7 +8,8 @@ trimmed per bee by a few terrain shadows and the traffic that happens to be up t
 `protocols`, a report carries Mode S, UAT (fewer, lower, shorter) and Remote ID (a few drones,
 up to a few km) maps in `ranges`; without, one mixed `range` as older firmware sends. With
 `listen`, as newer firmware: `listen_s` for those protocols, maps and stats only for them, and
-nothing heard on the ones in `quiet`.
+nothing heard on the ones in `quiet`. With `mode_s_frames`, as firmware since one Mode S total:
+`frames.mode_s` (56- and 112-bit) instead of `modes_valid` and `es_valid`.
 `manage.py swarm_simulate` stores weeks of history at once (no rate limits, past timestamps).
 """
 from __future__ import annotations
@@ -88,7 +89,8 @@ class Bee:
         return heard
 
     def report(self, period_s: int = 3600, rng: random.Random | None = None, unit_m: int = ranges.DEFAULT_UNIT_M,
-               protocols: bool = False, listen: tuple[str, ...] | None = None, quiet: tuple[str, ...] = ()) -> dict:
+               protocols: bool = False, listen: tuple[str, ...] | None = None, quiet: tuple[str, ...] = (),
+               mode_s_frames: bool = False) -> dict:
         rng = rng or random.Random()
         start = self.uptime_s
         self.uptime_s += period_s
@@ -132,6 +134,10 @@ class Bee:
                         body['stats'].pop(key)
                     elif name in quiet:
                         body['stats'][key] = 0
+        if mode_s_frames:
+            total = sum(body['stats'].pop(key, 0) for key in ('modes_valid', 'es_valid'))
+            if listen is None or 'mode_s' in listen:
+                body.setdefault('frames', {})['mode_s'] = total
         return body
 
 

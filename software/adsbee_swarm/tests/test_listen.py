@@ -60,7 +60,8 @@ def test_registry_drives_the_tables():
     assert list(ranges.PROTOCOLS) == ['mode_s', 'uat', 'remote_id', 'aircraft']
     assert ranges.SOURCES == {'mode_s': ('mode_s',), 'uat': ('uat',), 'remote_id': ('remote_id',),
                               'aircraft': ('mode_s', 'uat', 'aircraft')}
-    assert ranges.FRAMES == ('remote_id',)
+    assert ranges.FRAMES == ('mode_s', 'remote_id')
+    assert ranges.TOTALS == {'mode_s': ('modes_valid', 'es_valid')}
     assert ranges.PROTOCOLS['remote_id'].unit_m == 50 and ranges.PROTOCOLS['aircraft'].unit_m is None
     for p in ranges.PROTOCOLS.values():
         assert len(p.floors_ft) == ranges.BANDS and p.floors_ft == sorted(p.floors_ft) and p.top_ft > p.floors_ft[-1]
@@ -159,9 +160,9 @@ def test_hours_and_days_sum_listen_time_and_frames(client, owner, bee):
     for _ in range(2):
         assert post_report(client, owner.token, body(bee, listen={'mode_s': 1800, 'remote_id': 1800},
                                                     frames={'remote_id': 40, 'mode_s': 5})).status_code == 200
-    assert rows() == rows(Sample.DAY) == {'mode_s': (1, 3600, None), 'remote_id': (0, 3600, 80)}
+    assert rows() == rows(Sample.DAY) == {'mode_s': (1, 3600, 10), 'remote_id': (0, 3600, 80)}
     series = api(client, owner, 'stats', step='hour')['series']
-    assert series[0]['frames'] == {'remote_id': 80}
+    assert series[0]['frames'] == {'mode_s': 10, 'remote_id': 80} and series[0]['mode_s'] == 10
 
 
 def test_a_widened_retry_replaces_listen_time_and_frames(client, owner, bee):

@@ -173,6 +173,10 @@ class ObjectDictionary {
         // level sits at noise_floor_mv + TL offset.
         uint16_t noise_floor_mv = 0;
         int16_t noise_floor_dbm = 0;
+        // Receivers running now. AT commands change these before the ESP32's settings copy is synced.
+        bool r1090_rx_enabled = false;
+        bool subg_rx_enabled = false;  // Sub-GHz radio on and receiving.
+        SettingsManager::SubGHzRadioMode subg_mode = SettingsManager::kSubGHzRadioModeUATRx;
     };
 
     struct __attribute__((__packed__)) ESP32DeviceStatus {

@@ -7,9 +7,12 @@ is the earlier report widened, so it replaces that report's stats and max-merges
 
 Range maps: `ranges` holds one per protocol (`ranges.REPORTED`); older firmware sends one `range`
 for every aircraft, stored as protocol `aircraft`. `listen_s` (seconds each receiver was on) and
-`frames` (valid frames of protocols without legacy stats) are optional: without `listen_s` the
-listen time is unknown. A protocol this server doesn't know is ignored and counted, never a 400, so
-newer firmware keeps reporting to an older server.
+`frames` (valid frames of protocols without v1 stats keys) are optional: without `listen_s` the
+listen time is unknown. Mode S is one count, all valid 56- and 112-bit frames: newer firmware sends
+`frames.mode_s`, older firmware `modes_valid` and `es_valid` (still stored as sent); a report with
+`frames.mode_s` has its `modes_valid` and `es_valid` taken as 0, so nothing is counted twice. A
+protocol this server doesn't know is ignored and counted, never a 400, so newer firmware keeps
+reporting to an older server.
 """
 from __future__ import annotations
 
@@ -127,6 +130,9 @@ def parse(data) -> Report:
         report.listen = {name: min(value, report.len_s) for name, value in listen.items() if value > 0}
     report.frames = {name: value for name, value in (_counts(data, 'frames', MAX_COUNT, ignored) or {}).items()
                      if name in ranges.FRAMES}
+    for name in report.frames:
+        for key in ranges.TOTALS.get(name, ()):
+            report.stats[key] = 0
     report.ignored = sorted(ignored)
     report.stats['protocols_ignored'] = len(ignored)
     if maps and report.rx_position is None:

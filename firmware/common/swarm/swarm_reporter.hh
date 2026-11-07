@@ -4,8 +4,8 @@
 #include <cstdint>
 
 #include "auto_updater.hh"  // AutoUpdatePlatform: HTTP types and device identity.
-#include "range_map.hh"
 #include "settings.hh"
+#include "swarm_recorder.hh"
 
 /**
  * What SwarmReporter needs from the device. The ESP32 implements it in esp/main/swarm; host tests use fakes.
@@ -65,7 +65,7 @@ class SwarmReporter {
 
     enum Result : uint8_t { kOK, kNoAnswer, kNoIdentity, kRejected, kRateLimited, kServerError, kRemoved, kBadRequest };
 
-    // Largest body sent; each report allocates only its own length. Three full range maps with OTA keys: 2,915 Bytes.
+    // Largest body sent; each report allocates only its own length. Three full range maps with OTA keys: 2,898 Bytes.
     static constexpr uint16_t kBodyMaxLen = 3072;
 
     SwarmReporter(SwarmPlatform& platform, const char* version, const Config& config, uint32_t first_seq = 0);
@@ -89,17 +89,20 @@ class SwarmReporter {
     // Starts a new period at now_ms without reporting the data so far (e.g. while stopped).
     void Restart(SwarmRecorder& live, uint32_t now_ms);
 
-    // A new server or token: undoes a 410 and the old server's backoff and period. A pending report is kept.
+    // A new server or token: undoes a 410 and the old server's backoff, period and protocol list. A pending report is kept.
     void Reconfigure() {
         status_.stopped = false;
         num_failures_ = 0;
         period_s_ = config_.period_s;
+        accepted_protocols_ = kSwarmV1ProtocolMask;
     }
 
     bool has_pending() const { return have_pending_; }
     uint32_t seq() const { return seq_; }
     const Status& status() const { return status_; }
     const SwarmRecorder& pending() const { return pending_; }
+    // Bit per kSwarmProtocols entry whose range map the server takes: its last reply's "protocols", else the v1 set.
+    uint32_t accepted_protocols() const { return accepted_protocols_; }
 
     /**
      * Whether a receiver position may go into reports: FIXED or GNSS (positions of received aircraft move with them),
@@ -145,5 +148,6 @@ class SwarmReporter {
 
     uint32_t period_s_;
     uint8_t num_failures_ = 0;
+    uint32_t accepted_protocols_ = kSwarmV1ProtocolMask;
     Status status_;
 };
