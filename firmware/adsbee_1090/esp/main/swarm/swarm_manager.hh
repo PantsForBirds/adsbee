@@ -40,10 +40,13 @@ class SwarmManager : public SwarmPlatform {
 
     void GetStatus(Status& status);
 
-    // The RP2040's valid frame counts for the last second. Call from the same task as Update().
-    void AddFrames(uint32_t modes_valid, uint32_t es_valid, uint32_t uat_adsb, uint32_t uat_uplink) {
-        if (live_ != nullptr) live_->AddFrames(modes_valid, es_valid, uat_adsb, uat_uplink);
+    // A protocol's valid frame counts for the last second. Call from the same task as Update().
+    void AddFrames(uint8_t protocol, uint32_t valid, uint32_t second = 0) {
+        if (live_ != nullptr) live_->AddFrames(protocol, valid, second);
     }
+
+    // Which receivers run now, from the RP2040's live status and the Remote ID state.
+    static SwarmListenState ListenState();
 
     // A report is being sent.
     bool Busy() const { return task_ != nullptr; }
@@ -69,6 +72,7 @@ class SwarmManager : public SwarmPlatform {
     uint32_t next_seq_ = 0;  // Survives turning the setting off and on.
     uint32_t next_report_timestamp_ms_ = 0;
     uint32_t last_update_timestamp_ms_ = 0;
+    uint32_t last_listen_timestamp_ms_ = 0;  // Listen time counted up to here.
     bool low_memory_ = false;
     char token_seen_[SettingsManager::Settings::kSwarmTokenMaxLen + 1] = {0};
     char server_seen_[SettingsManager::Settings::kSwarmServerMaxLen + 1] = {0};

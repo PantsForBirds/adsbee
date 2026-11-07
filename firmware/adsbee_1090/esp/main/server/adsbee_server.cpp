@@ -258,8 +258,8 @@ bool ADSBeeServer::Update() {
         last_rp2040_metrics_timestamp_ms_ = timestamp_ms;
         // The RP2040 sees every frame; the ESP32 only those forwarded to it.
         const AircraftDictionary::Metrics& m = rp2040_aircraft_dictionary_metrics;
-        swarm_manager.AddFrames(m.valid_squitter_frames, m.valid_extended_squitter_frames, m.valid_uat_adsb_frames,
-                                m.valid_uat_uplink_frames);
+        swarm_manager.AddFrames(SwarmRecorder::kModeS, m.valid_squitter_frames + m.valid_extended_squitter_frames);
+        swarm_manager.AddFrames(SwarmRecorder::kUAT, m.valid_uat_adsb_frames, m.valid_uat_uplink_frames);
     }
     if (received_rp2040_metrics ||
         timestamp_ms - last_aircraft_dictionary_update_timestamp_ms_ > kAircraftDictionaryUpdateFallbackIntervalMs) {

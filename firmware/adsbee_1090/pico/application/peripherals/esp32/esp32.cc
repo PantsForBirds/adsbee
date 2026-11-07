@@ -180,6 +180,10 @@ bool ESP32::Update() {
                 .gnss_utc_millisecond = static_cast<uint16_t>(utc_ms_of_day % 1000),
                 .noise_floor_mv = static_cast<uint16_t>(adsbee.GetNoiseFloorMilliVolts()),
                 .noise_floor_dbm = static_cast<int16_t>(adsbee.GetNoiseFloordBm()),
+                .r1090_rx_enabled = adsbee.Receiver1090IsEnabled(),
+                .subg_rx_enabled =
+                    bsp.has_subg && adsbee.subg_radio_ll.IsEnabled() && settings_manager.settings.subg_rx_enabled,
+                .subg_mode = settings_manager.settings.subg_mode,
             },
         .subg = adsbee.subg_radio_ll.device_status,
     };
