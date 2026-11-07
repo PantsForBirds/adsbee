@@ -22,8 +22,11 @@ class Command(BaseCommand):
         parser.add_argument('--listen', action='store_true',
                             help='listen time, as newer firmware: every other bee listens to UAT and hears nothing, '
                                  'the third has Remote ID off')
+        parser.add_argument('--mode-s-frames', action='store_true',
+                            help='Mode S as one frames.mode_s count, as firmware since one Mode S total')
 
-    def handle(self, username, bees, hours, seed, legacy=False, listen=False, **options):
+    def handle(self, username, bees, hours, seed, legacy=False, listen=False, mode_s_frames=False,
+               **options):
         account = Account.objects.filter(user__username=username).first()
         if account is None:
             raise CommandError(f'no account {username}')
@@ -35,10 +38,10 @@ class Command(BaseCommand):
             if not device.label:
                 device.label = bee.label
                 device.save(update_fields=['label'])
-            kind = {}
+            kind = {'mode_s_frames': True} if mode_s_frames else {}
             if listen:
-                kind = {'listen': ('mode_s', 'uat') if index % 3 == 2 else ('mode_s', 'uat', 'remote_id'),
-                        'quiet': ('uat',) if index % 2 else ()}
+                kind |= {'listen': ('mode_s', 'uat') if index % 3 == 2 else ('mode_s', 'uat', 'remote_id'),
+                         'quiet': ('uat',) if index % 2 else ()}
             for hour in range(hours, 0, -1):
                 body = bee.report(rng=rng, protocols=not legacy, **kind)
                 protocol.store(device, protocol.parse(body), now - timedelta(hours=hour - 1))
