@@ -125,10 +125,18 @@ bool CC1312::Update() {
         queued_log_messages_packed_size_bytes = device_status.queued_log_messages_packed_size_bytes;
         num_queued_sc_command_requests = device_status.num_queued_sc_command_requests;
 
-        // Record number of attempted and successful message decodes from the Sub-GHz radio since the last update.
-        adsbee.aircraft_dictionary.RecordSubGHzMetrics(
-            device_status.num_raw_uat_adsb_packets, device_status.num_valid_uat_adsb_packets,
-            device_status.num_raw_uat_uplink_packets, device_status.num_valid_uat_uplink_packets);
+        // Record number of attempted and successful message decodes from the Sub-GHz radio since the last update. The
+        // UAT ADS-B counters count every short sub-GHz packet: ADS-L ones in an ADS-L mode.
+        if (SettingsManager::SubGHzModeIsADSL(settings_manager.settings.subg_mode)) {
+            adsbee.aircraft_dictionary.RecordADSLMetrics(device_status.num_raw_uat_adsb_packets,
+                                                         device_status.num_valid_uat_adsb_packets);
+            adsbee.aircraft_dictionary.RecordSubGHzMetrics(0, 0, device_status.num_raw_uat_uplink_packets,
+                                                           device_status.num_valid_uat_uplink_packets);
+        } else {
+            adsbee.aircraft_dictionary.RecordSubGHzMetrics(
+                device_status.num_raw_uat_adsb_packets, device_status.num_valid_uat_adsb_packets,
+                device_status.num_raw_uat_uplink_packets, device_status.num_valid_uat_uplink_packets);
+        }
 
         adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberCC1312, device_status.mlat_sync_flags);
         if (!in_bootloader_ && IsEnabled()) {

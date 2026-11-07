@@ -118,12 +118,17 @@ class SettingsManager {
     };
     static constexpr uint16_t kIPModeStrMaxLen = 4;  // Longest AT string ("IPV4", "DUAL", "IPV6").
 
-    // Mode setting for the Sub-GHz radio.
+    // Mode setting for the Sub-GHz radio (AT+SUBG_MODE). Values are flash-persisted: append new modes, don't renumber.
     enum SubGHzRadioMode : uint8_t {
-        kSubGHzRadioModeUATRx = 0,  // UAT mode (978MHz receiver).
+        kSubGHzRadioModeUATRx = 0,       // UAT mode (978MHz receiver).
+        kSubGHzRadioModeADSLRx,          // ADS-L M-band receiver on 868.2 MHz.
+        kSubGHzRadioModeADSLRx868_4MHz,  // ADS-L M-band receiver on 868.4 MHz.
         kNumSubGHzRadioModes
     };
     static const char kSubGHzModeStrs[kNumSubGHzRadioModes][kSubGHzModeStrMaxLen];
+    static constexpr bool SubGHzModeIsADSL(SubGHzRadioMode mode) {
+        return mode == kSubGHzRadioModeADSLRx || mode == kSubGHzRadioModeADSLRx868_4MHz;
+    }
 
     // Broadcast Remote ID transports, as a bitmask stored in Settings::remote_id_transports. Whether a requested
     // transport actually runs additionally depends on the hardware build (PSRAM vs not) and the WiFi/ethernet state;

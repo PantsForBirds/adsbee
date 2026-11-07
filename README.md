@@ -57,6 +57,7 @@ ADSBee 1090 is an open-source multi-band radio receiver and decoder for ADS-B pa
 ### Features
 * Decoding of 1090 MHz transponder signals (ADS-B and Mode S).
 * Decoding of 978 MHz UAT transponder signals (ADS-B) and uplink data (FIS-B/TIS-B).
+* ADS-L (EASA ADS-L 4 SRD-860) receive on 868.2 or 868.4 MHz instead of UAT (`AT+SUBG_MODE=ADSL_RX`). ADS-L traffic shows in Aircraft JSON, the web UI, GDL90 and RAW (`#ADL*`). Senders alternate between the two channels, so one channel hears about half of their messages. The sub-GHz input is matched for 978 MHz; use an 868 MHz antenna.
 * 1x USB console input / output for changing parameters and transmitting data.
 * 1x UART for reporting data or ingesting GNSS information.
 * Built-in EEPROM for storing nonvolatile settings.
@@ -94,6 +95,7 @@ ADSBee 1421 is an ultra-low-power dual band ADS-B receiver, built around a TI CC
 ### Features
 * Decoding of 1090 MHz transponder signals (ADS-B and Mode S), with selectable preamble modes for range vs. message-type coverage (`AT+R1090_PREAMBLE`).
 * Decoding of 978 MHz UAT transponder signals (ADS-B) and ground uplink data (FIS-B/TIS-B). Uplink reception can be disabled independently (`AT+SUBG_MODE=UAT_RX_NO_UPLINK`) to save airtime and CPU when only traffic is needed.
+* ADS-L (EASA ADS-L 4 SRD-860) receive on 868.2 or 868.4 MHz instead of UAT (`AT+SUBG_MODE=ADSL_RX`), reported in Aircraft JSON, GDL90 and RAW (`#ADL*`). The m1421 sub-GHz filter passes 770-928 MHz.
 * Onboard aircraft dictionary for up to 400 simultaneous targets.
 * UART console with a feature-rich AT command set (baud rate, output protocol, receiver position, gain, logging, …); settings persist in flash.
 * Multiple supported output protocols: Raw packets, CSBee, MAVLINK1, MAVLINK2, GDL90, Mode S Beast, Aircraft JSON.

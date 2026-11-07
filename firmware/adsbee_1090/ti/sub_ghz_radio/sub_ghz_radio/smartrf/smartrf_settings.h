@@ -22,8 +22,10 @@ extern rfc_CMD_PROP_RADIO_DIV_SETUP_t RF_cmdPropRadioDivSetup;
 extern rfc_CMD_FS_t RF_cmdFs;
 extern rfc_CMD_PROP_RX_t RF_cmdPropRx;
 extern rfc_CMD_PROP_RX_ADV_t RF_cmdPropRxAdv;
+extern rfc_CMD_PROP_RADIO_DIV_SETUP_t RF_cmdPropRadioDivSetupADSL;
 
 // RF Core API Overrides
 extern uint32_t pOverrides[];
+extern uint32_t pOverridesADSL[];
 
 #endif // _SMARTRF_SETTINGS_H_

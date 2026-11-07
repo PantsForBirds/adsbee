@@ -371,9 +371,13 @@ bool ADSBeeServer::Update() {
                 }
             }
 
-            // UAT ADSB Packets
+            // UAT ADSB Packets, and ADS-L packets in the same section (protocol tag).
             for (uint16_t i = 0; i < raw_packets.header->num_uat_adsb_packets; i++) {
                 RawUATADSBPacket& raw_uat_adsb_packet = raw_packets.uat_adsb_packets[i];
+                if (raw_uat_adsb_packet.protocol == RawUATADSBPacket::kProtocolADSL) {
+                    aircraft_dictionary.IngestADSLPacket(RawADSLPacket(raw_uat_adsb_packet));
+                    continue;
+                }
                 DecodedUATADSBPacket decoded_packet = DecodedUATADSBPacket(raw_uat_adsb_packet);
                 if (!decoded_packet.is_valid) {
                     CONSOLE_ERROR("ADSBeeServer::Update", "Received invalid UAT ADSB packet.");
