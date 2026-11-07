@@ -211,7 +211,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     bool Update();
     // Poll sooner than the default interval while UAT packets are arriving, so the CC1312 queues don't fill up.
     bool UpdateIsDue() override {
-        return more_raw_packets_pending_ || num_sync_pulses_sent_ != last_sync_pulse_.pulse_num ||
+        return more_raw_packets_pending_ || SyncPulseDue() ||
                (raw_packets_arriving_ &&
                 get_time_since_boot_ms() - last_update_timestamp_ms_ >= kRawPacketPollIntervalMs);
     }
@@ -560,39 +560,22 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     ObjectDictionary::SubGHzDeviceStatus device_status;
 
     /**
-     * Sync pulses put coprocessor timestamps on the RP2040's 48 MHz MLAT clock. About once a second the RP2040 raises
-     * the shared SYNC line (CC1312 DIO5, ESP32 GPIO38) for ~1 us, then writes the MLAT count of that edge
-     * (ObjectDictionary::SyncPulse) to the CC1312 and the ESP32. Each captures the edge on its own clock, fits offset
-     * and rate, and sends packets already on the MLAT time base. The sync pin is also the CC1312 bootloader backdoor
-     * (high at reset = bootloader), so pulses run only after the CC1312 application has answered a status read, and
-     * stop before any reset, bootloader session, flashing or core 1 stop.
+     * SYNC (DIO5) is also the CC1312 bootloader backdoor (high at reset = bootloader), so this driver gates
+     * ADSBee::sync_pulse_service: pulses run once the application has answered a status read, or while the CC1312 is
+     * held disabled (AllowSyncPulsesInReset()), and are blocked before any reset release, bootloader session or flash
+     * and after a failed status read. Every reset and bootloader entry comes through SetEnableState(), which blocks
+     * first.
      */
-    // Sends a requested pulse. Call from the core that owns the MLAT counter (see ADSBee::GetMLAT48MHzCounts()).
-    void ServiceSyncPulse();
-    // Stops pulses and returns once none is in flight. They resume after the next good status read.
+    // Stops pulses and returns once none is in flight.
     void BlockSyncPulses();
-    // The last pulse sent, for the ESP32 (pulse_num 0: none yet).
-    const ObjectDictionary::SyncPulse& GetLastSyncPulse() const { return last_sync_pulse_; }
+    // Allows pulses if the CC1312 is held in reset (disabled): its ROM samples the backdoor only after reset release,
+    // and every release goes through SetEnableState(), which blocks pulses first. Call only where it stays disabled:
+    // EnterBootloader() passes through the disabled state with SYNC held high as the backdoor.
+    void AllowSyncPulsesInReset();
 
    private:
-    static constexpr uint32_t kSyncPulseIntervalMs = 1000;
-    static constexpr uint32_t kSyncPulseTimeoutMs = 500;    // A request not served by then is dropped.
-    static constexpr uint32_t kSyncPulseWidthCycles = 125;  // 1 us at 125 MHz.
-    static_assert(ObjectDictionary::kSyncPulseMinIntervalMs > ObjectDictionary::kSyncPulseMaxAgeMs);
-
-    // Requests pulses and reports sent ones to the CC1312. Call after a good status read.
-    void UpdateTimeSync();
-
-    // Shared with the core that sends pulses.
-    volatile bool sync_pulse_allowed_ = false;
-    volatile bool sync_pulse_requested_ = false;
-    volatile bool sync_pulse_busy_ = false;
-    volatile uint32_t num_sync_pulses_sent_ = 0;
-    volatile uint64_t sync_pulse_mlat_48mhz_counts_ = 0;  // Of the last pulse sent; valid once its count is seen.
-    // Core 0 only.
-    uint32_t sync_pulse_request_timestamp_ms_ = 0;
-    ObjectDictionary::SyncPulse last_sync_pulse_;
-    bool mlat_synced_ = false;  // Last reported by the CC1312.
+    // True if a sync pulse went out that the CC1312 hasn't been told about.
+    bool SyncPulseDue() const;
 
     CC1312Config config_;
     SettingsManager::EnableState enabled_ = SettingsManager::EnableState::kEnableStateDisabled;

@@ -34,7 +34,7 @@ inline void main_core1() {
         RunPendingTestFunctionOnCore1();  // Lets hardware unit tests read core 1 state, e.g. its SysTick.
 #endif
 #ifdef ISRS_ON_CORE1
-        adsbee.subg_radio_ll.ServiceSyncPulse();  // Needs this core's MLAT counter.
+        adsbee.sync_pulse_service.Service();  // Needs this core's MLAT counter.
 #endif  // ISRS_ON_CORE1
         bool did_work = adsbee.DemodulateCaptures() || decoder.raw_mode_s_packet_in_queue.Length() > 0;
         decoder.UpdateDecoderLoop();
@@ -51,13 +51,14 @@ inline void LaunchCore1() {
     multicore_reset_core1();
     RAMMonitor::PaintCore1Stack();
     multicore_launch_core1(main_core1);
+    adsbee.subg_radio_ll.AllowSyncPulsesInReset();  // With the CC1312 running, its next status read allows them.
 }
 
 inline void StopCore1() {
     if (!core1_launched) {
         return;
     }
-    adsbee.subg_radio_ll.BlockSyncPulses();  // Never stop core 1 in the middle of a sync pulse.
+    adsbee.sync_pulse_service.Block();  // Never stop core 1 in the middle of a sync pulse.
     adsbee.DeInitISRs();  // Clean up DMA channels and other ISR resources before stopping core
     core_1_monitor.StopTimingInterrupts();  // InitISRs() sets the handlers again on restart.
     multicore_reset_core1();
@@ -69,4 +70,5 @@ inline void StartCore1() {
     }
     RAMMonitor::PaintCore1Stack();
     multicore_launch_core1(main_core1);
+    adsbee.subg_radio_ll.AllowSyncPulsesInReset();  // With the CC1312 running, its next status read allows them.
 }

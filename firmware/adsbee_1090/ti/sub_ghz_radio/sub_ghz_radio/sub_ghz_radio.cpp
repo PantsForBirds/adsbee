@@ -318,11 +318,7 @@ void SubGHzRadio::HandleSyncPulse(const ObjectDictionary::SyncPulse& pulse) {
 }
 
 uint8_t SubGHzRadio::GetMLATSyncFlags() const {
-    if (time_sync_.IsSynced()) {
-        return ObjectDictionary::kMLATSyncFlagSynced;
-    }
-    // One pulse makes progress right away when the rate is known or nothing is: ask for it.
-    return time_sync_.HasRate() || time_sync_.GetNumSyncPoints() == 0 ? ObjectDictionary::kMLATSyncFlagPulseWanted : 0;
+    return ObjectDictionary::MLATSyncFlags(time_sync_.IsSynced(), time_sync_.WantsPoint());
 }
 
 bool SubGHzRadio::DeInit() {
