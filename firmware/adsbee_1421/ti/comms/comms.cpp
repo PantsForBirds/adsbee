@@ -24,6 +24,14 @@
 static const CommsManager::ReportSink kReportingSinks[] = {SettingsManager::SerialInterface::kConsole};
 static const uint16_t kNumReportingSinks = sizeof(kReportingSinks) / sizeof(CommsManager::ReportSink);
 
+// The serial sinks with their protocols from the settings. Serial interfaces have no capabilities check: beast_caps 0.
+static uint16_t SerialReportSinks(CommsManager::ReportSinkInfo (&sinks)[kNumReportingSinks]) {
+    for (uint16_t i = 0; i < kNumReportingSinks; i++) {
+        sinks[i] = {kReportingSinks[i], settings_manager.settings.reporting_protocols[kReportingSinks[i]]};
+    }
+    return kNumReportingSinks;
+}
+
 // Worst-case console bytes one ReportQueuedRawPackets() chunk can produce. RAW is the largest encoding of every
 // packet type, so the RAW sizes also cover Beast and GDL90 uplink pass-through.
 static_assert(BeastReporter::kModeSBeastFrameMaxLenBytes <= kRawModeSFrameMaxNumChars &&
@@ -292,7 +300,9 @@ bool CommsManager::Update() {
         uint8_t no_packets_buf[sizeof(CompositeArray::RawPackets::Header)];
         CompositeArray::RawPackets no_packets = CompositeArray::PackRawPacketsBuffer(
             no_packets_buf, sizeof(no_packets_buf), nullptr, nullptr, nullptr);
-        UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks,
+        ReportSinkInfo sinks[kNumReportingSinks];
+        uint16_t num_sinks = SerialReportSinks(sinks);
+        UpdateReporting(sinks, num_sinks,
                         &no_packets);
     }
     return true;
@@ -348,7 +358,9 @@ bool CommsManager::ReportQueuedRawPacketsChunk() {
         &uat_uplink_packet_reporting_queue, nullptr,
         CompositeArray::PackLimits(kRawReportMaxModeSPacketsPerUpdate, kRawReportMaxUATADSBPacketsPerUpdate,
                                    max_uat_uplink_packets));
-    UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks, &chunk,
+    ReportSinkInfo sinks[kNumReportingSinks];
+    uint16_t num_sinks = SerialReportSinks(sinks);
+    UpdateReporting(sinks, num_sinks, &chunk,
                     false);
     return true;
 }
