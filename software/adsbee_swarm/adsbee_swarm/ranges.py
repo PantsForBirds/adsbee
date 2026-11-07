@@ -37,7 +37,9 @@ class Protocol:
         self.floors_ft: list[int] = entry['floors_ft']
         self.top_ft: int = entry['top_ft']              # the top band's ceiling, for the horizon limit
         self.aircraft: bool = entry['aircraft']         # part of the `aircraft` union
-        self.stats: tuple[str, ...] = tuple(entry['stats'])
+        self.stats: tuple[str, ...] = tuple(entry['stats'])  # v1 stats keys a bee sends for it
+        #: Stats columns only older firmware sends for it; newer firmware counts it in `frames`.
+        self.legacy_stats: tuple[str, ...] = tuple(entry.get('legacy_stats', ()))
         self.label, self.symbol, self.icon, self.tip = entry['label'], entry['symbol'], entry['icon'], entry['tip']
 
 
@@ -50,8 +52,11 @@ REPORTED = tuple(name for name, p in PROTOCOLS.items() if p.reported)
 #: Stored rows each user-facing protocol reads: `aircraft` is the max over every aircraft map.
 SOURCES = {name: (tuple(n for n, q in PROTOCOLS.items() if q.aircraft) if name == LEGACY else (name,))
            for name in PROTOCOLS}
-#: Reported protocols counted in `frames`: those without legacy stats columns.
+#: Reported protocols counted in `frames`: those without v1 stats keys.
 FRAMES = tuple(name for name in REPORTED if not PROTOCOLS[name].stats)
+#: {protocol: its legacy stats columns} for protocols whose one frame total is `frames` plus those
+#: columns (old rows have only the columns, new rows only `frames`): `mode_s` (56 + 112 bit).
+TOTALS = {name: PROTOCOLS[name].legacy_stats for name in FRAMES if PROTOCOLS[name].legacy_stats}
 #: Aircraft band floors in feet (baro, else geometric altitude); the last band has no ceiling.
 BAND_FLOORS_FT = PROTOCOLS[LEGACY].floors_ft
 #: Remote ID band floors in feet above the receiver.

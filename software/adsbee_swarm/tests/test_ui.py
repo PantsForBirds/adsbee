@@ -34,7 +34,7 @@ def test_device_list_and_map(signed_in):
 def test_device_page_draws_a_polar_plot_per_band(signed_in):
     device = Device.objects.first()
     page = signed_in.get(f'/devices/{device.pk}/').content.decode()
-    assert page.count('class="polar"') == 13 and page.count('class="bars"') == 4 and 'class="wedge"' in page and '≥40k ft' in page
+    assert page.count('class="polar"') == 13 and page.count('class="bars"') == 3 and 'class="wedge"' in page and '≥40k ft' in page
 
 
 def test_device_edit_remove_restore(signed_in):
