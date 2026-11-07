@@ -258,8 +258,8 @@ class SwarmRecorder {
     }
 
     /**
-     * Valid frame counts as the receiver reports them each second. second is the protocol's other v1 counter (Mode S
-     * extended squitter, UAT uplink).
+     * Valid frame counts as the receiver reports them each second. second is the protocol's other v1 counter (UAT
+     * uplink); protocols reporting "frames" take one count.
      */
     inline void AddFrames(uint8_t protocol, uint32_t valid, uint32_t second = 0) {
         const SwarmProtocol& info = kSwarmProtocols[protocol];
@@ -270,9 +270,9 @@ class SwarmRecorder {
             frames[protocol] += valid;
         }
     }
-    // The RP2040's four v1 counters.
-    inline void AddFrames(uint32_t modes_valid, uint32_t es_valid, uint32_t uat_adsb, uint32_t uat_uplink) {
-        AddFrames(kModeS, modes_valid, es_valid);
+    // The RP2040's counters: Mode S as one total of 56- and 112-bit frames.
+    inline void AddRP2040Frames(uint32_t mode_s_valid, uint32_t uat_adsb, uint32_t uat_uplink) {
+        AddFrames(kModeS, mode_s_valid);
         AddFrames(kUAT, uat_adsb, uat_uplink);
     }
 

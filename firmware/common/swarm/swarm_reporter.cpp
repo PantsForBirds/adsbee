@@ -225,7 +225,7 @@ size_t SwarmReporter::BuildBody(char* buf, size_t buf_size, const AutoUpdatePlat
         w.Printf("\"},");
     }
     // Without listen time (it was never sampled) every v1 stats key goes, as in v1. With it, only protocols listened
-    // to or heard: "listen_s" seconds, v1 "stats" keys, "frames" for the rest.
+    // to or heard: "listen_s" seconds, v1 "stats" keys, "frames" for the rest (Mode S's one total included).
     const bool listen_known = pending_.listen_known;
     bool first = true;
     if (listen_known) {
@@ -246,10 +246,12 @@ size_t SwarmReporter::BuildBody(char* buf, size_t buf_size, const AutoUpdatePlat
     }
     w.Printf("\"aircraft_max\":%u,\"aircraft_unique\":%u}", (unsigned)pending_.stats.aircraft_max,
              (unsigned)pending_.UniqueAircraft());
+    // "frames": protocols counted without v1 keys. Without listen time, the v1 ones (Mode S) always, as v1 sent them.
     first = true;
-    for (uint8_t p = 0; listen_known && p < kNumSwarmProtocols; p++) {
+    for (uint8_t p = 0; p < kNumSwarmProtocols; p++) {
         const SwarmProtocol& info = kSwarmProtocols[p];
-        if (info.v1_stats[0].key || !info.counts_frames || !pending_.Reported(p)) continue;
+        if (info.v1_stats[0].key || !info.counts_frames) continue;
+        if (listen_known ? !pending_.Reported(p) : !(kSwarmV1ProtocolMask & (1u << p))) continue;
         w.Printf("%s\"%s\":%lu", first ? ",\"frames\":{" : ",", info.name, (unsigned long)pending_.frames[p]);
         first = false;
     }

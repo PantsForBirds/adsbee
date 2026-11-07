@@ -43,6 +43,13 @@ std::string JsonString(const std::string& json, const std::string& key) {
 }
 
 // The number after "key": in a JSON text, or -1 if absent.
+std::string JsonObject(const std::string& json, const std::string& key) {
+    size_t pos = json.find("\"" + key + "\":{");
+    if (pos == std::string::npos) return "";
+    pos += key.size() + 3;
+    return json.substr(pos, json.find('}', pos) - pos + 1);
+}
+
 long JsonNumber(const std::string& json, const std::string& key) {
     size_t pos = json.find("\"" + key + "\":");
     if (pos == std::string::npos) return -1;
@@ -106,7 +113,7 @@ SwarmReporter::DeviceState FixedPosition() {
 }
 
 void AddSecond(SwarmRecorder& r, uint32_t modes, uint32_t es, uint32_t uat, uint32_t uplink, uint16_t aircraft) {
-    r.AddFrames(modes, es, uat, uplink);
+    r.AddRP2040Frames(modes + es, uat, uplink);
     r.NoteAircraftCount(aircraft);
 }
 
@@ -213,8 +220,7 @@ TEST(SwarmRecorder, MergeTakesMaximaAndSums) {
     b.ranges[SwarmRecorder::kModeS].bins[7] = 5;
     b.ranges[SwarmRecorder::kModeS].bins[8] = 9;
     a.Merge(b);
-    EXPECT_EQ(a.stats.modes_valid, 12u);
-    EXPECT_EQ(a.stats.es_valid, 24u);
+    EXPECT_EQ(a.frames[SwarmRecorder::kModeS], 36u);  // One Mode S total: 56- and 112-bit frames.
     EXPECT_EQ(a.stats.uat_adsb, 9u);
     EXPECT_EQ(a.stats.uat_uplink, 12u);
     EXPECT_EQ(a.stats.aircraft_max, 70);
@@ -245,7 +251,7 @@ TEST(SwarmReporter, ReportBodyFollowsProtocolV1) {
     AddSecond(live, 100, 200, 3, 4, 17);
     live.RecordPosition(SwarmRecorder::kModeS, 50000, DegToBam16(45.0f), 12000, 1);
     reporter.TakePeriod(live, 3700 * 1000, FixedPosition());
-    EXPECT_EQ(live.stats.modes_valid, 0u);  // The live period starts over.
+    EXPECT_EQ(live.frames[SwarmRecorder::kModeS], 0u);  // The live period starts over.
 
     platform.now_ms = 3701 * 1000;
     reporter.Send("https://adsbee.aero/", kToken);
@@ -263,8 +269,8 @@ TEST(SwarmReporter, ReportBodyFollowsProtocolV1) {
     EXPECT_NE(body.find("\"period\":{\"start_uptime_s\":100,\"len_s\":3600}"), std::string::npos);
     EXPECT_NE(body.find("\"rx_position\":{\"lat\":37.10000,\"lon\":-122.10000,\"alt_m\":30,\"source\":\"fixed\"}"),
               std::string::npos);
-    EXPECT_NE(body.find("\"stats\":{\"modes_valid\":100,\"es_valid\":200,\"uat_adsb\":3,\"uat_uplink\":4,"
-                        "\"aircraft_max\":17,\"aircraft_unique\":0}"),
+    EXPECT_NE(body.find("\"stats\":{\"uat_adsb\":3,\"uat_uplink\":4,\"aircraft_max\":17,\"aircraft_unique\":0},"
+                        "\"frames\":{\"mode_s\":300}"),
               std::string::npos);
     EXPECT_NE(body.find(",\"range_dropped\":0,\"ranges\":{\"mode_s\":{\"sectors\":36,\"bands\":12,\"unit_m\":2000,"),
               std::string::npos);
@@ -348,8 +354,7 @@ TEST(SwarmReporter, FailedReportMergesWithSameSeqAndStart) {
     EXPECT_EQ(JsonNumber(platform.bodies[1], "len_s"), 3660);
     EXPECT_EQ(JsonNumber(platform.bodies[2], "len_s"), 3780);
     const std::string& last = platform.bodies[2];
-    EXPECT_EQ(JsonNumber(last, "modes_valid"), 11);  // Counts cover the whole widened period.
-    EXPECT_EQ(JsonNumber(last, "es_valid"), 22);
+    EXPECT_EQ(JsonObject(last, "frames"), "{\"mode_s\":33}");  // Counts cover the whole widened period.
     EXPECT_EQ(JsonNumber(last, "aircraft_max"), 9);
     EXPECT_EQ(JsonNumber(last, "aircraft_unique"), 2);
     std::vector<uint8_t> values = Base64Decode(JsonString(last, "max"));
@@ -363,7 +368,7 @@ TEST(SwarmReporter, FailedReportMergesWithSameSeqAndStart) {
     reporter.Send("https://adsbee.aero", kToken);
     EXPECT_EQ(JsonNumber(platform.bodies[3], "seq"), 1);
     EXPECT_EQ(JsonNumber(platform.bodies[3], "start_uptime_s"), 3980);
-    EXPECT_EQ(JsonNumber(platform.bodies[3], "modes_valid"), 0);
+    EXPECT_EQ(JsonObject(platform.bodies[3], "frames"), "{\"mode_s\":0}");
     EXPECT_NE(platform.bodies[3].find("\"range_dropped\":0,\"ranges\":{}}"), std::string::npos);  // No data.
 }
 
@@ -548,7 +553,7 @@ TEST(SwarmRecorder, DictionaryRecordsConfirmedPositions) {
     ingest("8DBEE001589B87A9D1D79C757A00");
     dictionary.Update(get_time_since_boot_ms());
     EXPECT_EQ(num_bins(), 0);
-    EXPECT_EQ(recorder.stats.es_valid, 0u);  // Frame counts come from the RP2040, not the dictionary.
+    EXPECT_EQ(recorder.frames[SwarmRecorder::kModeS], 0u);  // Frame counts come from the RP2040, not the dictionary.
     EXPECT_EQ(recorder.stats.aircraft_max, 1);
     EXPECT_EQ(recorder.UniqueAircraft(), 1);
 
@@ -910,7 +915,7 @@ TEST(SwarmReporter, RangesPerProtocolInOrderWithTheirUnits) {
     EXPECT_NE(body.find(",\"ranges\":{\"uat\":{\"sectors\":36,\"bands\":12,\"unit_m\":2000,\"changed\":\"AQAA"),
               std::string::npos)
         << body;
-    EXPECT_EQ(body.find("mode_s"), std::string::npos);
+    EXPECT_EQ(body.find("\"mode_s\":{"), std::string::npos);  // No Mode S map (frames.mode_s still counts).
 }
 
 TEST(SwarmReporter, FailedReportMergesEveryProtocol) {
@@ -1099,7 +1104,7 @@ void FillCase(SwarmRecorder& live, const BodyCase& c) {
     if (c.mode_s_bins) FillBins(live.ranges[SwarmRecorder::kModeS], c.mode_s_bins);
     if (c.uat_bins) FillBins(live.ranges[SwarmRecorder::kUAT], c.uat_bins);
     if (c.remote_id_bins) FillBins(live.ranges[SwarmRecorder::kRemoteID], c.remote_id_bins);
-    live.AddFrames(c.modes_valid, c.es_valid, c.uat_adsb, c.uat_uplink);
+    live.AddRP2040Frames(c.modes_valid + c.es_valid, c.uat_adsb, c.uat_uplink);
     live.NoteAircraftCount(40);
     for (uint32_t a = 0; a < 300; a++) live.MarkAircraft(0xA00000 + a);
 }
@@ -1134,16 +1139,11 @@ SwarmListenState ListenAll() {
     return s;
 }
 
-std::string JsonObject(const std::string& json, const std::string& key) {
-    size_t pos = json.find("\"" + key + "\":{");
-    if (pos == std::string::npos) return "";
-    pos += key.size() + 3;
-    return json.substr(pos, json.find('}', pos) - pos + 1);
-}
-
 }  // namespace
 
-TEST(SwarmReporter, BodiesWithoutListenTimeMatchMainByteForByte) {
+// The golden bodies are main's v1 bodies with one change (t-1127): stats lose modes_valid and es_valid, and
+// "frames":{"mode_s":<their sum>} follows stats.
+TEST(SwarmReporter, BodiesWithoutListenTimeMatchTheGoldenFiles) {
     for (const BodyCase& c : kBodyCases) {
         GoldenPlatform platform;
         SwarmReporter reporter(platform, "0.9.1-rc11");
@@ -1392,7 +1392,7 @@ TEST(SwarmReporter, ListenTimeAcrossAModeSwitch) {
     s.remote_id_status = 0;
     live.AddListening(s, 1800);
     live.RecordPosition(SwarmRecorder::kUAT, 20000, 0, 500, 2);
-    live.AddFrames(1000, 500, 300, 20);
+    live.AddRP2040Frames(1500, 300, 20);
     s.subg_mode = static_cast<SettingsManager::SubGHzRadioMode>(1);
     live.AddListening(s, 1800);
     reporter.TakePeriod(live, 3600000, FixedPosition());
@@ -1401,7 +1401,7 @@ TEST(SwarmReporter, ListenTimeAcrossAModeSwitch) {
     EXPECT_EQ(JsonObject(body, "listen_s"), "{\"mode_s\":3600,\"uat\":1800}");
     EXPECT_NE(JsonObject(body, "stats").find("\"uat_adsb\":300,\"uat_uplink\":20,"), std::string::npos);
     EXPECT_NE(body.find("\"uat\":{\"sectors\""), std::string::npos);
-    EXPECT_EQ(body.find("\"frames\""), std::string::npos);  // No protocol without v1 stats keys counts frames yet.
+    EXPECT_EQ(JsonObject(body, "frames"), "{\"mode_s\":1500}");
 }
 
 TEST(SwarmReporter, EuropeUnitSendsNoUATKeys) {
@@ -1412,13 +1412,14 @@ TEST(SwarmReporter, EuropeUnitSendsNoUATKeys) {
     s.subg_rx_enabled = false;
     s.remote_id_status = 0;
     live.AddListening(s, 3600);
-    live.AddFrames(1200000, 500000, 0, 0);
+    live.AddRP2040Frames(1700000, 0, 0);
     live.RecordPosition(SwarmRecorder::kModeS, 10000, 0, 500, 1);
     reporter.TakePeriod(live, 3600000, FixedPosition());
     reporter.Send("https://swarm.example", kToken);
     const std::string& body = platform.bodies[0];
     EXPECT_EQ(JsonObject(body, "listen_s"), "{\"mode_s\":3600}");
-    EXPECT_EQ(JsonObject(body, "stats"), "{\"modes_valid\":1200000,\"es_valid\":500000,\"aircraft_max\":0,\"aircraft_unique\":0}");
+    EXPECT_EQ(JsonObject(body, "stats"), "{\"aircraft_max\":0,\"aircraft_unique\":0}");
+    EXPECT_EQ(JsonObject(body, "frames"), "{\"mode_s\":1700000}");
     EXPECT_EQ(body.find("uat"), std::string::npos);
     EXPECT_EQ(body.find("remote_id"), std::string::npos);
 }
@@ -1433,8 +1434,8 @@ TEST(SwarmReporter, ListenedAndHeardNothingStillReports) {
     const std::string& body = platform.bodies[0];
     EXPECT_EQ(JsonObject(body, "listen_s"), "{\"mode_s\":3600,\"uat\":3600,\"remote_id\":3600}");
     EXPECT_EQ(JsonObject(body, "stats"),
-              "{\"modes_valid\":0,\"es_valid\":0,\"uat_adsb\":0,\"uat_uplink\":0,\"aircraft_max\":0,"
-              "\"aircraft_unique\":0}");
+              "{\"uat_adsb\":0,\"uat_uplink\":0,\"aircraft_max\":0,\"aircraft_unique\":0}");
+    EXPECT_EQ(JsonObject(body, "frames"), "{\"mode_s\":0}");
     EXPECT_NE(body.find("\"ranges\":{}"), std::string::npos);
 }
 

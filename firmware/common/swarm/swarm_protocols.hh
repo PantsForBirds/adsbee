@@ -18,10 +18,8 @@ struct SwarmListenState {
 // Height bands: by aircraft altitude, or by height above the receiver (drones).
 enum class SwarmBandBasis : uint8_t { kAltitude = 0, kHeightAboveRx, kNumBases };
 
-// Frame counts that swarm protocol v1 sends as named "stats" keys. Protocols added later report "frames" instead.
+// Frame counts sent as named v1 "stats" keys (UAT only). Mode S and later protocols report "frames" instead.
 struct SwarmV1Stats {
-    uint32_t modes_valid = 0;
-    uint32_t es_valid = 0;
     uint32_t uat_adsb = 0;
     uint32_t uat_uplink = 0;
     uint16_t aircraft_max = 0;
@@ -39,7 +37,7 @@ struct SwarmProtocol {
     uint8_t aircraft_type;    // Aircraft::AircraftType that feeds its map.
     bool counts_as_aircraft;  // Goes into aircraft_max and aircraft_unique.
     bool counts_frames;       // The receiver reports frame counts.
-    V1Stat v1_stats[2];       // Its frame counts as v1 "stats" keys (second: extended squitter, uplink); none: "frames".
+    V1Stat v1_stats[2];       // Its frame counts as v1 "stats" keys (second: UAT uplink); none: "frames".
     bool (*listening)(const SwarmListenState& state);
 };
 
@@ -54,8 +52,9 @@ inline bool SwarmListenRemoteID(const SwarmListenState& s) {
 
 // Every swarm path loops over this table. v1 servers know the first kNumSwarmV1Protocols entries; append new ones.
 inline constexpr SwarmProtocol kSwarmProtocols[] = {
-    {"mode_s", RangeMap::kUnitMeters, SwarmBandBasis::kAltitude, 0, true, true,
-     {{"modes_valid", &SwarmV1Stats::modes_valid}, {"es_valid", &SwarmV1Stats::es_valid}}, SwarmListenModeS},
+    // Mode S: one count of valid 56- and 112-bit frames in "frames" (v1 sent modes_valid and es_valid).
+    {"mode_s", RangeMap::kUnitMeters, SwarmBandBasis::kAltitude, 0, true, true, {{nullptr, nullptr}, {nullptr, nullptr}},
+     SwarmListenModeS},
     {"uat", RangeMap::kUnitMeters, SwarmBandBasis::kAltitude, 1, true, true,
      {{"uat_adsb", &SwarmV1Stats::uat_adsb}, {"uat_uplink", &SwarmV1Stats::uat_uplink}}, SwarmListenUAT},
     {"remote_id", RangeMap::kDroneUnitMeters, SwarmBandBasis::kHeightAboveRx, 2, false, false,
