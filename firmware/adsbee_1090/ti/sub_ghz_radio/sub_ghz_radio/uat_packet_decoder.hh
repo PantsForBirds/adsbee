@@ -41,6 +41,9 @@ class UATPacketDecoder {
     void DecodeUplinkPacket();
 
     uint32_t num_raw_uat_uplink_packets_dropped_logged_ = 0;
+    uint32_t num_uat_adsb_packets_overwritten_ = 0;  // Decoded packets dropped from the full queue for the RP2040.
+    uint32_t num_uat_adsb_packets_overwritten_logged_ = 0;
+    uint32_t overwritten_log_timestamp_ms_ = 0;
 
     RawUATADSBPacket raw_uat_adsb_packet_buffer_[kRawUATADSBPacketQueueDepth] = {};
     RawUATUplinkPacket raw_uat_uplink_packet_buffer_[kRawUATUplinkPacketQueueDepth] = {};

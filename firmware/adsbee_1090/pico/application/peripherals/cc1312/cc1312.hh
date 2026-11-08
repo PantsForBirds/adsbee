@@ -18,6 +18,11 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     // goes high after kSPIHandshakeLockoutUs. Does not apply in bootloader mode, since we wait for acks.
     static constexpr uint32_t kSPIPostTransmitLockoutUs = 1000;
     static constexpr uint32_t kRawPacketPollIntervalMs = 20;  // Poll interval while UAT packets are arriving.
+    // Poll interval while no packets are arriving. The first poll of a UAT burst comes up to this plus one main loop
+    // pass (~25 ms) after the burst starts, and the CC1312 must hold everything received by then
+    // (ObjectDictionary::kDecodedUATADSBPacketQueueDepth): 96 packets cover bursts up to about 1,200/s. An idle poll
+    // is one status read (~1.3 ms of core 0), so this costs about what the 100 ms polls with two reads did.
+    static constexpr uint32_t kIdlePollIntervalMs = 50;
     static constexpr uint32_t kSPIHandshakeLockoutUs =
         200;  // How long to wait after a transaction to allow the handshake pin to override the post transmit lockout.
               // Used to override the stock value since the CC1312 is slow.
@@ -209,11 +214,12 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     inline bool DeInit() { return true; };
 
     bool Update();
-    // Poll sooner than the default interval while UAT packets are arriving, so the CC1312 queues don't fill up.
+    // Poll sooner than the default interval, and sooner still while UAT packets are arriving, so the CC1312 queues
+    // don't fill up at the start of a burst.
     bool UpdateIsDue() override {
         return more_raw_packets_pending_ || SyncPulseDue() ||
-               (raw_packets_arriving_ &&
-                get_time_since_boot_ms() - last_update_timestamp_ms_ >= kRawPacketPollIntervalMs);
+               get_time_since_boot_ms() - last_poll_timestamp_ms_ >=
+                   (raw_packets_arriving_ ? kRawPacketPollIntervalMs : kIdlePollIntervalMs);
     }
 
     /**
@@ -586,6 +592,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     uint32_t ccfg_crc_ = 0;
     bool more_raw_packets_pending_ = false;  // The CC1312 had more packets queued than the last Update() could read.
     bool raw_packets_arriving_ = false;      // The last Update() read packets.
+    uint32_t last_poll_timestamp_ms_ = 0;    // Start of the last Update(), successful or not.
 
     // Clock config struct used to set the SPI peripheral to the correct clock rate.
     struct SPIClkConfig {

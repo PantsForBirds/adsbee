@@ -4,6 +4,7 @@
 
 #include "buffer_utils.hh"
 #include "comms.hh"
+#include "hal.hh"  // get_time_since_boot_ms()
 #include "object_dictionary.hh"
 #include "pico.hh"
 
@@ -13,6 +14,15 @@
 bool UATPacketDecoder::Update() {
     DecodeADSBPackets();
     DecodeUplinkPacket();
+
+    // ADS-B packets the RP2040 didn't read in time (the queue overwrites its oldest), at most one warning a second.
+    if (num_uat_adsb_packets_overwritten_ != num_uat_adsb_packets_overwritten_logged_ &&
+        get_time_since_boot_ms() - overwritten_log_timestamp_ms_ >= 1000) {
+        CONSOLE_WARNING("UATPacketDecoder::Update", "%lu UAT ADS-B packets overwritten: not read by the RP2040 in time.",
+                        num_uat_adsb_packets_overwritten_ - num_uat_adsb_packets_overwritten_logged_);
+        num_uat_adsb_packets_overwritten_logged_ = num_uat_adsb_packets_overwritten_;
+        overwritten_log_timestamp_ms_ = get_time_since_boot_ms();
+    }
 
     uint32_t num_dropped = num_raw_uat_uplink_packets_dropped;
     if (num_dropped != num_raw_uat_uplink_packets_dropped_logged_) {
@@ -48,6 +58,9 @@ void UATPacketDecoder::DecodeADSBPackets() {
                 decoded_packet.raw.sigq_bits, decoded_packet.header.mdb_type_code, decoded_packet.header.icao_address,
                 packet_len_bytes, raw_packet_buffer, packet.sigs_dbm, static_cast<unsigned long>(packet.mlat_48mhz_64bit_counts));
             key = HwiP_disable();
+            if (object_dictionary.raw_uat_adsb_packet_queue.IsFull()) {
+                num_uat_adsb_packets_overwritten_++;
+            }
             bool enqueued = object_dictionary.raw_uat_adsb_packet_queue.Enqueue(decoded_packet.raw);
             HwiP_restore(key);
             if (!enqueued) {

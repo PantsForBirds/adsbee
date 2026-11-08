@@ -48,9 +48,10 @@ class ObjectDictionary {
     static constexpr uint16_t kNetworkConsoleMutexTimeoutMs = 5;  // Max wait for network_console_rx_queue_mutex in SPI task context.
 #endif
     // CC1312 queues of decoded packets waiting for the RP2040. A UAT frame carries up to 32 ground uplinks within
-    // 176 ms, less than two RP2040 polls apart, so the uplink queue holds all of them. The ADS-B queue holds two
-    // composite array reads, so a burst survives until the RP2040's next poll.
-    static constexpr uint16_t kDecodedUATADSBPacketQueueDepth = 64;
+    // 176 ms, less than two RP2040 polls apart, so the uplink queue holds all of them. The ADS-B queue overwrites its
+    // oldest packet when full, so it must hold everything that arrives before the RP2040's first poll of a burst: up to
+    // CC1312::kIdlePollIntervalMs plus one RP2040 main loop pass (~80 ms), 96 packets up to about 1,200/s.
+    static constexpr uint16_t kDecodedUATADSBPacketQueueDepth = 96;
     static constexpr uint16_t kDecodedUATUplinkPacketQueueDepth = 32;
 
     enum Address : uint8_t {
