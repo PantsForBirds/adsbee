@@ -6,6 +6,7 @@
    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
    CONDITIONS OF ANY KIND, either express or implied.
 */
+#include "esp32_mlat_sync.hh"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -96,6 +97,7 @@ extern "C" void app_main(void) {
     CPUMonitor::Init();
     xTaskCreate(device_status_update_task, "DeviceStatusUpdate", kDeviceStatusUpdateTaskStackSizeBytes, NULL,
                 kDeviceStatusUpdateTaskPriority, NULL);
+    esp32_mlat_sync.Init();  // Before the RP2040 starts sending sync pulses.
     adsbee_server.Init();
     HeapDiagnostics::Mark("init_done");
 

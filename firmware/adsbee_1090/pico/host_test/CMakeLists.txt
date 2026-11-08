@@ -27,6 +27,13 @@ target_compile_definitions(host_test_fpu PRIVATE SWARM_RECORDING)
 target_compile_definitions(host_test_fpu PRIVATE GEO_UTILS_SPLIT_MULTIPLY)
 target_compile_definitions(host_test PRIVATE SETTINGS_BLOBS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/settings_blobs")
 target_compile_definitions(host_test_fpu PRIVATE SETTINGS_BLOBS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/settings_blobs")
+# Swarm report bodies as main sent them before the protocol registry (cases A-F).
+target_compile_definitions(host_test PRIVATE SWARM_BODIES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/swarm_bodies")
+target_compile_definitions(host_test_fpu PRIVATE SWARM_BODIES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/swarm_bodies")
+# ADSBee Beast extensions (2026-11-06) golden vectors (readsbee_vectors/readsbee_proto.py checks and regenerates them).
+foreach(_test_tgt IN ITEMS host_test host_test_fpu)
+    target_compile_definitions(${_test_tgt} PRIVATE READSBEE_VECTORS_JSON="${CMAKE_CURRENT_SOURCE_DIR}/readsbee_vectors/vectors.json")
+endforeach()
 # MAVLink send helpers need the firmware's comms_manager; tests only exercise message packing.
 target_compile_definitions(host_test PRIVATE MAVLINK_NO_CONVENIENCE_FUNCTIONS)
 target_compile_definitions(host_test_fpu PRIVATE MAVLINK_NO_CONVENIENCE_FUNCTIONS)
@@ -58,6 +65,8 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_gdl90_ble_stream.cc
         test_cpu_utils.cc
         test_crc.cc
+        test_mlat_time_sync.cc
+        test_sync_pulse_service.cc
         test_data_structures.cc
         test_decode_utils.cc
         test_fixedmath.cc
@@ -77,6 +86,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_reporting_aircraftjson.cc
         test_reporting_asterix.cc
         test_reporting_beast.cc
+        test_reporting_beast_caps.cc
         test_reporting_csbee.cc
         test_reporting_gdl90.cc
         test_reporting_mavlink.cc
@@ -116,6 +126,8 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         ${ADSBEE_MODULES_DIR}/cppAT/src
         ${CMAKE_SOURCE_DIR}/application/peripherals/gnss
         ${CMAKE_SOURCE_DIR}/../esp/main/remote_id # ble_adv_watchdog.hh, ble_scan_watchdog.hh
+        ${CMAKE_SOURCE_DIR}/../esp/main/mlat_sync # esp32_clock_math.hh
+        ${CMAKE_SOURCE_DIR}/application/peripherals # sync_pulse_service.hh
         ${CMAKE_SOURCE_DIR}/../esp/main/ble # gdl90_ble_stream.hh
         .
         mocks

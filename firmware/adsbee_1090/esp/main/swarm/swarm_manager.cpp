@@ -33,11 +33,29 @@ void SwarmManager::Stop() {
     low_memory_ = false;
 }
 
+SwarmListenState SwarmManager::ListenState() {
+    const ObjectDictionary::RP2040DeviceStatus& rp2040 = object_dictionary.composite_device_status.rp2040;
+    SwarmListenState state;
+    state.r1090_rx_enabled = rp2040.r1090_rx_enabled;
+    state.subg_rx_enabled = rp2040.subg_rx_enabled;
+    state.subg_mode = rp2040.subg_mode;
+    state.remote_id_status = object_dictionary.device_status.remote_id_status;
+    return state;
+}
+
 void SwarmManager::Update() {
-    if (task_ != nullptr) return;  // A report is being sent; it owns the pending report.
     uint32_t now_ms = NowMs();
     if (now_ms - last_update_timestamp_ms_ < kUpdateIntervalMs) return;
     last_update_timestamp_ms_ = now_ms;
+    if (live_ != nullptr) {
+        // Whole seconds since the last count, also while a report is being sent.
+        uint32_t seconds = (now_ms - last_listen_timestamp_ms_) / 1000;
+        if (seconds > 0) {
+            live_->AddListening(ListenState(), seconds);
+            last_listen_timestamp_ms_ += seconds * 1000;
+        }
+    }
+    if (task_ != nullptr) return;  // A report is being sent; it owns the pending report.
     const SettingsManager::Settings& settings = settings_manager.settings;
     if (!settings.swarm_enabled) {
         if (reporter_ != nullptr) Stop();
@@ -55,6 +73,7 @@ void SwarmManager::Update() {
             return;
         }
         live_ = live;
+        last_listen_timestamp_ms_ = now_ms;
         reporter->Restart(*live_, now_ms);
         next_report_timestamp_ms_ = now_ms + reporter->FirstDelayMs(now_ms);
         strncpy(token_seen_, settings.swarm_token, sizeof(token_seen_) - 1);

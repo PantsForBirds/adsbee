@@ -48,9 +48,10 @@ class ObjectDictionary {
     static constexpr uint16_t kNetworkConsoleMutexTimeoutMs = 5;  // Max wait for network_console_rx_queue_mutex in SPI task context.
 #endif
     // CC1312 queues of decoded packets waiting for the RP2040. A UAT frame carries up to 32 ground uplinks within
-    // 176 ms, less than two RP2040 polls apart, so the uplink queue holds all of them. The ADS-B queue holds two
-    // composite array reads, so a burst survives until the RP2040's next poll.
-    static constexpr uint16_t kDecodedUATADSBPacketQueueDepth = 64;
+    // 176 ms, less than two RP2040 polls apart, so the uplink queue holds all of them. The ADS-B queue overwrites its
+    // oldest packet when full, so it must hold everything that arrives before the RP2040's first poll of a burst: up to
+    // CC1312::kIdlePollIntervalMs plus one RP2040 main loop pass (~80 ms), 96 packets up to about 1,200/s.
+    static constexpr uint16_t kDecodedUATADSBPacketQueueDepth = 96;
     static constexpr uint16_t kDecodedUATUplinkPacketQueueDepth = 32;
 
     enum Address : uint8_t {
@@ -76,6 +77,7 @@ class ObjectDictionary {
         kAddrLEDBlink = 0x13,  // Force-blink the slave's LED: uint32_t duration_ms, bypasses led_enabled.
         kAddrDeviceIdentity = 0x14,  // SettingsManager::DeviceIdentity, RP2040 to ESP32 on request.
         kAddrESP32FirmwareHash = 0x15,  // SHA-256 of the running ESP32 application (see ESP32FirmwareCheck).
+        kAddrSyncPulse = 0x16,          // SyncPulse, RP2040 to CC1312 and ESP32 after each sync pulse.
         kNumAddrs
     };
 
@@ -127,6 +129,27 @@ class ObjectDictionary {
         std::function<void()> complete_callback = nullptr;
     };
 
+    /**
+     * The RP2040 pulses the shared SYNC line about once a second, then writes this to the CC1312 and the ESP32. Each
+     * pairs it with the edge it captured on its own clock to put its packet timestamps on the MLAT time base.
+     */
+    struct __attribute__((__packed__)) SyncPulse {
+        uint64_t mlat_48mhz_counts = 0;  // RP2040 MLAT counter at the rising edge.
+        uint32_t pulse_num = 0;          // Counts pulses sent since the RP2040 booted.
+    };
+    // Age limit for pairing a captured edge with its SyncPulse. Pulses are at least kSyncPulseMinIntervalMs apart.
+    static constexpr uint32_t kSyncPulseMaxAgeMs = 250;
+    static constexpr uint32_t kSyncPulseMinIntervalMs = 300;
+
+    // MLAT time sync state of a coprocessor (mlat_sync_flags in SubGHzDeviceStatus and ESP32DeviceStatus).
+    enum MLATSyncFlag : uint8_t {
+        kMLATSyncFlagSynced = 1 << 0,       // Packet timestamps are on the MLAT time base.
+        kMLATSyncFlagPulseWanted = 1 << 1,  // Not synced, and one pulse now makes progress: send it early.
+    };
+    static constexpr uint8_t MLATSyncFlags(bool synced, bool pulse_wanted) {
+        return (synced ? kMLATSyncFlagSynced : 0) | (pulse_wanted ? kMLATSyncFlagPulseWanted : 0);
+    }
+
     struct __attribute__((packed)) RP2040DeviceStatus {
         uint32_t timestamp_ms = 0;
         int8_t temperature_deg_c = 0;
@@ -151,6 +174,10 @@ class ObjectDictionary {
         // level sits at noise_floor_mv + TL offset.
         uint16_t noise_floor_mv = 0;
         int16_t noise_floor_dbm = 0;
+        // Receivers running now. AT commands change these before the ESP32's settings copy is synced.
+        bool r1090_rx_enabled = false;
+        bool subg_rx_enabled = false;  // Sub-GHz radio on and receiving.
+        SettingsManager::SubGHzRadioMode subg_mode = SettingsManager::kSubGHzRadioModeUATRx;
     };
 
     struct __attribute__((__packed__)) ESP32DeviceStatus {
@@ -189,6 +216,7 @@ class ObjectDictionary {
         bool network_utc_time_valid = false;
         uint32_t network_utc_ms_of_day = 0;
 
+        uint8_t mlat_sync_flags = 0;  // MLATSyncFlag bits, for Remote ID timestamps.
         uint8_t ble_output_status = 0;  // BLEOutputStatus.
     };
 
@@ -280,6 +308,8 @@ class ObjectDictionary {
         uint16_t num_valid_uat_adsb_packets = 0;
         uint16_t num_raw_uat_uplink_packets = 0;
         uint16_t num_valid_uat_uplink_packets = 0;
+
+        uint8_t mlat_sync_flags = 0;  // MLATSyncFlag bits, for sub-GHz packet timestamps.
     };
 
     /**

@@ -3,22 +3,13 @@
 #include <cstring>  // memcpy
 #include <new>      // placement new
 
-// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v21 and extend the chain
+// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v20 and extend the chain
 // (see settings_migration.hh).
-static_assert(kSettingsVersion == 21, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
+static_assert(kSettingsVersion == 20, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
 static_assert(sizeof(settings_v12::Settings) == 1088 && sizeof(settings_v14::Settings) == 1140 &&
                   sizeof(settings_v15::Settings) == 1144 && sizeof(settings_v17::Settings) == 1340 &&
-                  sizeof(settings_v18::Settings) == 1340 && sizeof(settings_v19::Settings) == 1792 &&
-                  sizeof(settings_v20::Settings) == 1964,
+                  sizeof(settings_v18::Settings) == 1340 && sizeof(settings_v19::Settings) == 1792,
               "A frozen settings snapshot changed size. Frozen snapshots must never be edited.");
-
-// v20 -> v21 copies the v20 bytes into the live struct (see settings_migration.hh).
-static_assert(sizeof(settings_v20::Settings) == sizeof(SettingsManager::Settings) &&
-                  offsetof(SettingsManager::Settings, ethernet_ipv4) == offsetof(settings_v20::Settings, ethernet_ipv4) &&
-                  offsetof(SettingsManager::Settings, wifi_sta_ipv6) == offsetof(settings_v20::Settings, wifi_sta_ipv6) &&
-                  offsetof(SettingsManager::Settings, ble_output_mode) >=
-                      offsetof(settings_v20::Settings, wifi_sta_ipv6) + sizeof(settings_v20::Settings::wifi_sta_ipv6),
-              "v21 must keep v20's layout and add ble_output_mode in its tail padding.");
 
 // The frozen nested layouts must stay byte-identical to the live ones for the raw copies below to be valid. If a future
 // version changes CoreNetworkSettings or RxPosition, these fire and the migration steps must switch to field-by-field
@@ -285,10 +276,10 @@ void SettingsMigrator::MigrateV18ToV19(const settings_v18::Settings& in, setting
 
 void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, SettingsManager::Settings& out) {
     // Start from a fresh, fully-defaulted current struct: Ethernet and WiFi station IPv4 and IPv6 (new in v20) use DHCP
-    // and AUTO. MigrateV20ToV21 runs next on the same struct.
+    // and AUTO.
     new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
 
-    out.settings_version = 20;
+    out.settings_version = kSettingsVersion;
 
     memcpy(&out.core_network_settings, &in.core_network_settings, sizeof(in.core_network_settings));
 
@@ -355,15 +346,10 @@ void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, Setting
     memcpy(out.swarm_token, in.swarm_token, sizeof(in.swarm_token));
 }
 
-void SettingsMigrator::MigrateV20ToV21(SettingsManager::Settings& settings) {
-    settings.settings_version = kSettingsVersion;
-    settings.ble_output_mode = SettingsManager::kBLEOutputOff;  // Was v20 tail padding.
-}
-
 bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t from_version,
                                SettingsManager::Settings& out) {
     // Each case enters the chain at its own version and runs the remaining steps to the current version. The chain only
-    // has shipped versions (12, 14, 15, 17, 18, 19, 20), so a step can span an unshipped one.
+    // has shipped versions (12, 14, 15, 17, 18, 19), so a step can span an unshipped one.
     // v14 and v15 are no longer needed once v17 exists, so v19 shares their stack space.
     union {
         struct {
@@ -413,7 +399,6 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             MigrateV17ToV18(v17, v18);
             MigrateV18ToV19(v18, v19);
             MigrateV19ToV20(v19, out);
-            MigrateV20ToV21(out);
             return true;
         }
         case 18: {
@@ -423,7 +408,6 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             memcpy(&v18, blob, sizeof(v18));
             MigrateV18ToV19(v18, v19);
             MigrateV19ToV20(v19, out);
-            MigrateV20ToV21(out);
             return true;
         }
         case 19: {
@@ -432,15 +416,6 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             }
             memcpy(&v19, blob, sizeof(v19));
             MigrateV19ToV20(v19, out);
-            MigrateV20ToV21(out);
-            return true;
-        }
-        case 20: {
-            if (blob_len < sizeof(settings_v20::Settings)) {
-                return false;
-            }
-            memcpy(static_cast<void*>(&out), blob, sizeof(settings_v20::Settings));
-            MigrateV20ToV21(out);
             return true;
         }
         default:
@@ -451,7 +426,6 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
     MigrateV15ToV17(v15, v17);  // Last read of v14/v15: v19 may overwrite them from here on.
     MigrateV17ToV18(v17, v18);
     MigrateV18ToV19(v18, v19);
-    MigrateV19ToV20(v19, out);  // Lands on the live struct (see settings_migration.hh).
-    MigrateV20ToV21(out);
+    MigrateV19ToV20(v19, out);  // Final step: v19 is the newest frozen version, so this lands on the live struct.
     return true;
 }

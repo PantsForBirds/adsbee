@@ -12,6 +12,14 @@ static const CommsManager::ReportSink kReportingSinks[] = {SettingsManager::Seri
                                                            SettingsManager::SerialInterface::kCommsUART};
 static const uint16_t kNumReportingSinks = sizeof(kReportingSinks) / sizeof(CommsManager::ReportSink);
 
+// The serial sinks with their protocols from the settings. Serial interfaces have no capabilities check: beast_caps 0.
+static uint16_t SerialReportSinks(CommsManager::ReportSinkInfo (&sinks)[kNumReportingSinks]) {
+    for (uint16_t i = 0; i < kNumReportingSinks; i++) {
+        sinks[i] = {kReportingSinks[i], settings_manager.settings.reporting_protocols[kReportingSinks[i]]};
+    }
+    return kNumReportingSinks;
+}
+
 CommsManager::CommsManager(CommsManagerConfig config_in)
     : config_(config_in), at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)) {}
 
@@ -58,7 +66,9 @@ bool CommsManager::Update() {
             uint8_t no_packets_buf[sizeof(CompositeArray::RawPackets::Header)];
             CompositeArray::RawPackets no_packets = CompositeArray::PackRawPacketsBuffer(
                 no_packets_buf, sizeof(no_packets_buf), nullptr, nullptr, nullptr);
-            UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks,
+            ReportSinkInfo sinks[kNumReportingSinks];
+            uint16_t num_sinks = SerialReportSinks(sinks);
+            UpdateReporting(sinks, num_sinks,
                             &no_packets);
         } else if (required_buffer_len >= CompositeArray::RawPackets::kMaxLenBytes || max_interval_elapsed) {
             ForceFlushRawPackets();
@@ -83,7 +93,9 @@ bool CommsManager::ForceFlushRawPackets() {
             esp32.Write(ObjectDictionary::kAddrCompositeArrayRawPackets, packets_to_report_buf, true,
                         packets_to_report.len_bytes);
         }
-        UpdateReporting(kReportingSinks, settings_manager.settings.reporting_protocols, kNumReportingSinks,
+        ReportSinkInfo sinks[kNumReportingSinks];
+        uint16_t num_sinks = SerialReportSinks(sinks);
+        UpdateReporting(sinks, num_sinks,
                         &packets_to_report);
     }
     if (mode_s_packet_reporting_queue.Length() > 0 || uat_adsb_packet_reporting_queue.Length() > 0 ||

@@ -20,8 +20,7 @@ struct ReleaseBlob {
 const ReleaseBlob kReleaseBlobs[] = {
     {"0.9.0-rc4", 10, false}, {"0.9.0-rc9", 11, false}, {"0.9.0-rc19", 12, true},
     {"0.9.0", 12, true},      {"0.9.1-rc2", 14, true},  {"0.9.1-rc6", 15, true},
-    {"0.9.1-rc7", 17, true},  {"0.9.1-rc8", 18, true},  {"0.9.1-rc10", 19, true},
-    {"0.9.1-rc11", 19, true},
+    {"0.9.1-rc7", 17, true},  {"0.9.1-rc8", 18, true},  {"0.9.1-rc11", 19, true},
 };
 
 // Reads a blob the way Load() does: sizeof(Settings) bytes, the tail past the old struct left as erased EEPROM.

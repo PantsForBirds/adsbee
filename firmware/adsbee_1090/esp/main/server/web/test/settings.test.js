@@ -43,7 +43,7 @@ global.confirm = () => true;
 const { SettingsEngine, SETTINGS_SCHEMA_1090, parseIPv6 } = require('../settings.js');
 
 // The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc9, plus ETHERNET_IP and WIFI_STA_IP (0.9.1-rc12):
-// IPv4 mode and five addresses, then IPv6 mode, addr/prefix and three addresses; and BLE_OUTPUT (0.9.1-rc13).
+// IPv4 mode and five addresses, then IPv6 mode, addr/prefix and three addresses; and BLE_OUTPUT (0.10.0-rc1).
 const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"BLE_OUTPUT":["OFF","OFF"],"ETHERNET":[1],"ETHERNET_IP":["STATIC","192.168.1.50","255.255.255.0","192.168.1.1","1.1.1.1","",' +
     '"STATIC","2001:db8:1::50/64","fe80::1","2001:4860:4860::8888",""],"ESP32_ENABLE":[1],' +
     '"FEED_ENABLE":[1],"FILTER_ALTITUDE_FT":["OFF",0,10000],"FILTER_DISTANCE_NM":[0,100.0],"SWARM":[0,"https://adsbee.aero",""],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"IP_MODE":["DUAL"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +

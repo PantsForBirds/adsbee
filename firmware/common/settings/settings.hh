@@ -19,7 +19,7 @@
 #include "pico/rand.h"
 #endif
 
-static constexpr uint32_t kSettingsVersion = 21;  // Change this when settings format changes!
+static constexpr uint32_t kSettingsVersion = 20;  // Change this when settings format changes!
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 class SettingsManager {
@@ -455,8 +455,7 @@ class SettingsManager {
         IPv6Config ethernet_ipv6;
         IPv6Config wifi_sta_ipv6;
 
-        // Bluetooth LE output (AT+BLE_OUTPUT), a BLEOutputMode. Off by default. Sits in what was wifi_sta_ipv6's tail
-        // padding (v21).
+        // Bluetooth LE output (AT+BLE_OUTPUT), a BLEOutputMode. Off by default. Sits in the struct's tail padding.
         BLEOutputMode ble_output_mode = kBLEOutputOff;
 
         /**
@@ -948,7 +947,7 @@ extern SettingsManager settings_manager;
 //      settings_migration.cpp (see the recipe at the top of settings_versions.hh).
 //   3. Update the version and the numbers below to the new layout.
 // Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
-static_assert(kSettingsVersion == 21,
+static_assert(kSettingsVersion == 20,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
 static_assert(sizeof(SettingsManager::Settings) == 1964,
               "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");

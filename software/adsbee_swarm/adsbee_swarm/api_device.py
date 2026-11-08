@@ -4,6 +4,7 @@ POST /api/swarm/v1/report: what a bee sends every period (docs/swarm_api.md, "De
 401 bad_token (unknown, cut off, or an old token from a bee that wasn't on the account when it
 was replaced), 403 bad_key (the DEVICE_VERIFIER said no), 503 unavailable (it could not decide;
 Retry-After), 410 removed, 429 rate_limited (Retry-After), 400 bad_request. Errors are {"error": code, "detail"?: text}.
+200: {"next_report_s", "firmware", "protocols": the protocols this server takes}.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from . import VerifierUnavailable, conf, protocol, ratelimit, rollout, services
+from . import VerifierUnavailable, conf, protocol, ranges, ratelimit, rollout, services
 from .models import Device
 
 log = logging.getLogger('adsbee_swarm.report')
@@ -92,4 +93,6 @@ def report(request):
     protocol.store(device, parsed)
     Device.objects.filter(pk=device.pk).exclude(enroll_token=token).update(enroll_token=token)
     device.refresh_from_db()
-    return JsonResponse({'next_report_s': conf.get('REPORT_PERIOD_S'), 'firmware': rollout.target(device)})
+    # `protocols`: what this server takes in ranges, listen_s and frames; a bee sends maps only for these.
+    return JsonResponse({'next_report_s': conf.get('REPORT_PERIOD_S'), 'firmware': rollout.target(device),
+                         'protocols': list(ranges.REPORTED)})

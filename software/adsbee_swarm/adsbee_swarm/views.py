@@ -21,9 +21,8 @@ from .api_user import device_json
 from .models import Device, Rollout
 
 WINDOWS = {'24h': timedelta(hours=24), '7d': timedelta(days=7), '30d': timedelta(days=30), '1y': timedelta(days=365)}
-#: The protocol picker: (key, symbol, tooltip).
-PROTOCOL_TABS = [('aircraft', '✈', 'All aircraft: Mode S, UAT and older firmware'), ('mode_s', 'S', 'Mode S (1090 MHz)'),
-                 ('uat', 'UAT', 'UAT (978 MHz)'), ('remote_id', 'RID', 'Remote ID drones (2.4 GHz), height above the bee')]
+#: The protocol picker: (key, symbol, tooltip), from the registry; the union first.
+PROTOCOL_TABS = [(p.name, p.symbol, p.tip) for p in sorted(ranges.PROTOCOLS.values(), key=lambda p: p.name != ranges.LEGACY)]
 
 
 def swarm_page(func):
@@ -49,10 +48,16 @@ def _protocol(request) -> str:
     return protocol if protocol in ranges.PROTOCOLS else ranges.LEGACY
 
 
-def _picker(request, protocol: str, have: list[str]) -> dict:
-    """Template context for the window and protocol links; tabs without data are hidden."""
-    return {'protocol': protocol,
-            'tabs': [{'key': k, 'symbol': s, 'title': t} for k, s, t in PROTOCOL_TABS if k in have or k == protocol]}
+def _picker(request, protocol: str, have: list[str], listening: dict[str, dict]) -> dict:
+    """Template context for the window and protocol links. A tab shows when a bee heard or
+    listened to it; `heard`/`listened` count bees (older firmware: listened = heard)."""
+    tabs = []
+    for key, symbol, title in PROTOCOL_TABS:
+        counts = listening.get(key, {'listened': 0, 'heard': 0})
+        if key in have or key == protocol or counts['listened']:
+            tabs.append({'key': key, 'symbol': symbol, **counts,
+                         'title': f"{title}: {counts['listened']} listened, {counts['heard']} heard"})
+    return {'protocol': protocol, 'tabs': tabs}
 
 
 @swarm_page
@@ -67,7 +72,7 @@ def device_list(request):
     removed = request.account.devices.filter(removed_at__isnull=False)
     return render(request, 'adsbee_swarm/devices.html', {
         'rows': rows, 'removed': removed, 'window': key, 'windows': WINDOWS,
-        **_picker(request, protocol, payload['protocols']),
+        **_picker(request, protocol, payload['protocols'], payload['listening']),
         'markers': [{'id': r['id'], 'url': reverse('adsbee_swarm:device', args=[r['id']]),
                      'label': r['label'] or r['unique_id'], 'lat': r['position']['lat'],
                      'lon': r['position']['lon'], 'range_m': r['max_range_m']} for r in rows if r['position']],
@@ -98,12 +103,16 @@ def device_detail(request, pk: int):
     key, since, until = _window(request)
     protocol = _protocol(request)
     merged = queries.device_range(device, since, until, protocol)
+    received = queries.reception([device], since, until)
+    state = queries.reception_of(received.get(device.pk, {}), protocol)
     scale = max(merged.values(), default=0)
     plots = [{'title': _band_title(band, protocol), 'svg': polar_svg(_band(merged, band), scale)}
              for band in range(ranges.BANDS)]
     return render(request, 'adsbee_swarm/device.html', {
         'device': device, 'info': device_json(device), 'window': key, 'windows': WINDOWS,
-        **_picker(request, protocol, queries.protocols_with_data([device], since, until)),
+        **_picker(request, protocol, queries.protocols_with_data([device], since, until),
+                  queries.listening([device], since, until, received)),
+        'reception': state, 'listen_h': _hours(state['listen_s']),
         'height_above_rx': ranges.PROTOCOLS[protocol].basis == 'height_above_rx',
         'overall': polar_svg(ranges.sector_max(merged), scale, size=320), 'plots': plots,
         'max_km': _km(scale) if scale else None,
@@ -120,6 +129,13 @@ def _band_title(band: int, protocol: str = ranges.LEGACY) -> str:
     if ranges.PROTOCOLS[protocol].basis == 'height_above_rx':
         return f"↑ {low}–{high} ft" if high else f"↑ ≥{low} ft"
     return f"{low // 1000}–{high // 1000}k ft" if high else f"≥{low // 1000}k ft"
+
+
+def _hours(seconds: int | None) -> str | None:
+    """Listen time as hours, one decimal under 10 h."""
+    if not seconds:
+        return None
+    return f'{seconds / 3600:.0f}' if seconds >= 36000 else f'{seconds / 3600:.1f}'
 
 
 def _km(meters: float) -> str:
@@ -155,7 +171,7 @@ def polar_svg(values: list[int | None], scale: int, size: int = 140) -> str:
     return ''.join(parts)
 
 
-CHARTS = [('es_valid', 'ES', 'Extended squitters decoded'), ('modes_valid', 'S', 'Mode S decoded'),
+CHARTS = [('mode_s', 'S', 'Mode S decoded (56- and 112-bit)'),
           ('uat_adsb', 'UAT', 'UAT ADS-B decoded'), ('aircraft_max', '✈', 'Most aircraft at once')]
 
 

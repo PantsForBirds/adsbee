@@ -127,6 +127,8 @@ def device_json(device: Device) -> dict:
             'removed': device.removed, 'firmware_target': rollouts.target(device),
             'range_withheld': device.range_withheld, 'range_dropped': device.range_dropped,
             'bins_ignored': device.bins_ignored, 'check_position': device.check_position,
+            'ignored_protocols': [p for p in device.ignored_protocols.split(',') if p],
+            'check_protocols': device.check_protocols,
             'old_token': device.old_token}
 
 
