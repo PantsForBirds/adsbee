@@ -1150,6 +1150,8 @@ class AircraftDictionary {
     }
     // Allows at most num address parity searches until the next call, e.g. one per main loop pass on a single core.
     inline void LimitAddressParityCorrection(uint16_t num) { address_parity_correction_budget_ = num; }
+    // Corrections of this kind counted since the last Update(), not yet in metrics.
+    inline uint16_t PendingCorrectedFrames(CorrectionKind kind) const { return metrics_counter_.corrected_frames[kind]; }
     // Counts searches skipped elsewhere, e.g. the decoder's 2 bit searches.
     inline void RecordSkippedCorrections(uint32_t num) { metrics_counter_.corrected_frames[kCorrectionSkipped] += num; }
     inline void RecordOffsetRetries(uint32_t num_crc, uint32_t num_address_parity) {

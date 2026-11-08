@@ -156,13 +156,12 @@ Debug image.
 
 ### Debug builds and RF test commands
 
-Commands that make a device transmit on demand for bench testing are compiled into **Debug builds only**. Release
-builds (which is what CI and the published releases produce) don't contain them: `AT+HELP` doesn't list them and
-sending one returns an unknown-command error.
+Commands that make a device transmit on demand for bench testing are compiled into **Debug builds only**, except
+`AT+TX_CW` on LRHF (2.4 GHz), which Release builds (CI and published releases) keep for factory testing.
 
 | Product | Debug-only commands |
 |---------|---------------------|
-| ADSBee 1421 / m1421 (CC1314) | `AT+TX_CW`: unmodulated CW carrier on the CC1314 (SUBG) or LR2021 (LRLF/LRHF) until a key is pressed |
+| ADSBee 1421 / m1421 (CC1314) | `AT+TX_CW` on SUBG (CC1314) and LRLF (LR2021 low band): unmodulated CW carrier until a key is pressed. Release builds accept only `AT+TX_CW=LRHF,...` and answer SUBG/LRLF with an error |
 | ADSBee 1090 family (RP2040) | None. The RP2040 has no RF test transmit commands. |
 
 `AT+REMOTE_ID_TX` (Remote ID broadcast) is an operational feature and is present in all builds. `AT+RX_CW` only

@@ -43,17 +43,19 @@ class SettingsMigrator {
     // the next shipped one, spanning versions no tag shipped (v13, v16). Steps that land on a frozen version write that
     // frozen struct; only the final step (the one that reaches the current version) writes the live
     // SettingsManager::Settings. Bump kSettingsVersion only when the current version shipped in a tag (see
-    // firmware/AGENTS.md). To add v21: change MigrateV19ToV20 to emit a frozen settings_v20::Settings, add
-    // MigrateV20ToV21 emitting the live struct, and extend Migrate()'s dispatch with a `case 20:`. While the current
-    // version is unreleased, change its step in place instead.
+    // firmware/AGENTS.md). To add v22: freeze v21 in settings_versions.hh, change MigrateV19ToV20 to emit
+    // settings_v20::Settings and MigrateV20ToV21 to emit settings_v21::Settings, add MigrateV21ToV22 emitting the live
+    // struct, and extend Migrate()'s dispatch with a `case 21:`. While the current version is unreleased, change its
+    // step in place instead.
     //
-    // v20 only added ble_output_mode in v19's tail padding, so v18 -> v19 builds the live struct (ble_output_mode
-    // defaulted off) and v19 -> v20 runs in place on it: the RP2040 stack has no room for another snapshot.
+    // v21 only added ble_output_mode in v20's tail padding, so v19 -> v20 builds the live struct and v20 -> v21 runs in
+    // place on it: the RP2040 stack has no room for another snapshot.
     static void MigrateV12ToV14(const settings_v12::Settings& in, settings_v14::Settings& out);
     static void MigrateV14ToV15(const settings_v14::Settings& in, settings_v15::Settings& out);
     static void MigrateV15ToV17(const settings_v15::Settings& in, settings_v17::Settings& out);
     static void MigrateV17ToV18(const settings_v17::Settings& in, settings_v18::Settings& out);
-    static void MigrateV18ToV19(const settings_v18::Settings& in, SettingsManager::Settings& out);
-    // `settings` holds the v19 bytes on entry.
-    static void MigrateV19ToV20(SettingsManager::Settings& settings);
+    static void MigrateV18ToV19(const settings_v18::Settings& in, settings_v19::Settings& out);
+    static void MigrateV19ToV20(const settings_v19::Settings& in, SettingsManager::Settings& out);
+    // `settings` holds the v20 bytes on entry.
+    static void MigrateV20ToV21(SettingsManager::Settings& settings);
 };

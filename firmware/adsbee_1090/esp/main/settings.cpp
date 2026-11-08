@@ -37,6 +37,24 @@ bool SettingsManager::Apply() {
     }
     comms_manager.ip_mode = settings.ip_mode;
 
+    // A restart brings a fresh netif: back to DHCP, or the new static address on the next link up.
+    if (memcmp(&comms_manager.ethernet_ipv4, &settings.ethernet_ipv4, sizeof(IPv4Config)) != 0) {
+        ethernet_restart_required |= settings.core_network_settings.ethernet_enabled;
+    }
+    if (memcmp(&comms_manager.wifi_sta_ipv4, &settings.wifi_sta_ipv4, sizeof(IPv4Config)) != 0) {
+        wifi_sta_restart_required |= settings.core_network_settings.wifi_sta_enabled;
+    }
+    comms_manager.ethernet_ipv4 = settings.ethernet_ipv4;
+    comms_manager.wifi_sta_ipv4 = settings.wifi_sta_ipv4;
+    if (memcmp(&comms_manager.ethernet_ipv6, &settings.ethernet_ipv6, sizeof(IPv6Config)) != 0) {
+        ethernet_restart_required |= settings.core_network_settings.ethernet_enabled;
+    }
+    if (memcmp(&comms_manager.wifi_sta_ipv6, &settings.wifi_sta_ipv6, sizeof(IPv6Config)) != 0) {
+        wifi_sta_restart_required |= settings.core_network_settings.wifi_sta_enabled;
+    }
+    comms_manager.ethernet_ipv6 = settings.ethernet_ipv6;
+    comms_manager.wifi_sta_ipv6 = settings.wifi_sta_ipv6;
+
     // Check if the AP settings have changed.
     if (comms_manager.wifi_ap_enabled != settings.core_network_settings.wifi_ap_enabled ||
         (comms_manager.wifi_ap_enabled &&

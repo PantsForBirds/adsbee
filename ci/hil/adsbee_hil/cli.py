@@ -213,7 +213,9 @@ def cmd_tx(args, bench) -> int:
         return 0
     if args.tx_cmd == "stop":
         # Emergency stop for a transmission left running by another process.
-        if hasattr(tx, "at"):
+        if hasattr(tx, "stop_all"):
+            print(tx.stop_all() or "(no reply)")
+        elif hasattr(tx, "at"):
             print(tx.at("x", 3.0) or "(no reply)")
         return 0
     p = _pattern(args)

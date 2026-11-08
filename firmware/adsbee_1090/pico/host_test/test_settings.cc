@@ -1,6 +1,9 @@
 #include <cstring>
+#include <string_view>
+#include <vector>
 
 #include "gtest/gtest.h"
+#include "static_ip_config.hh"
 #include "feed_ram_budget.hh"
 #include "settings.hh"
 #include "settings_migration.hh"
@@ -52,7 +55,10 @@ TEST(SettingsMigration, LayoutLockedSizes) {
     EXPECT_EQ(sizeof(settings_v17::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v18::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v19::Settings), 1792u);
-    EXPECT_EQ(sizeof(SettingsManager::Settings), 1792u);
+    EXPECT_EQ(sizeof(SettingsManager::Settings), 1964u);
+    EXPECT_EQ(offsetof(settings_v19::Settings, swarm_token), offsetof(SettingsManager::Settings, swarm_token));
+    EXPECT_EQ(sizeof(settings_v20::Settings), 1964u);
+    EXPECT_EQ(offsetof(settings_v20::Settings, wifi_sta_ipv6), offsetof(SettingsManager::Settings, wifi_sta_ipv6));
 
     EXPECT_EQ(sizeof(settings_v14::Settings), 1140u);
     EXPECT_EQ(sizeof(settings_v14::CoreNetworkSettings),
@@ -708,14 +714,23 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ntp = dump.find("AT+NTP_SERVER=pool.ntp.org");
     ASSERT_NE(ntp, std::string::npos);
     EXPECT_LT(asterix, ntp);
-    // Then the altitude filter, swarm reports and GDL90 over Bluetooth last.
+    // Then the altitude filter, swarm reports, static IPv4 and IPv6, and GDL90 over Bluetooth last.
     EXPECT_LT(ntp, filter_altitude);
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
     EXPECT_EQ(dump.find("AT+", filter_altitude + 1), swarm);
+    const char* ip_lines[] = {"AT+ETHERNET_IP=IPV4,DHCP\r\n", "AT+ETHERNET_IP=IPV6,AUTO\r\n",
+                              "AT+WIFI_STA_IP=IPV4,DHCP\r\n", "AT+WIFI_STA_IP=IPV6,AUTO\r\n"};
+    size_t prev = swarm;
+    for (const char* ip_line : ip_lines) {
+        size_t at = dump.find(ip_line);
+        ASSERT_NE(at, std::string::npos) << ip_line;
+        EXPECT_EQ(dump.find("AT+", prev + 1), at) << ip_line;
+        prev = at;
+    }
     size_t ble_output = dump.find("AT+BLE_OUTPUT=OFF\r\n");
     ASSERT_NE(ble_output, std::string::npos);
-    EXPECT_EQ(dump.find("AT+", swarm + 1), ble_output);
+    EXPECT_EQ(dump.find("AT+", prev + 1), ble_output);
     EXPECT_EQ(dump.find("AT+", ble_output + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
@@ -723,8 +738,8 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     EXPECT_TRUE(manager.Sanitize());
 }
 
-TEST(SettingsMigration, V19ToV20KeepsEverythingAndLeavesBLEOutputOff) {
-    // A v19 blob as rc10 wrote it, 0xFF in the tail padding where v20 put ble_output_mode.
+TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndLeavesBLEOutputOff) {
+    // A v19 blob as rc10 and rc11 wrote it, 0xFF after it as Load() reads erased flash there.
     static SettingsManager::Settings v19;
     v19 = SettingsManager::Settings();
     v19.settings_version = 19;
@@ -759,6 +774,57 @@ TEST(SettingsMigration, V19ToV20KeepsEverythingAndLeavesBLEOutputOff) {
     EXPECT_STREQ(out.swarm_token, "tok-1234");
     settings_manager.settings = out;
     EXPECT_FALSE(settings_manager.Sanitize());
+}
+
+TEST(SettingsMigration, V20ToV21KeepsEverythingAndLeavesBLEOutputOff) {
+    // A v20 blob as rc12 wrote it, 0xFF in the tail padding where v21 put ble_output_mode.
+    static SettingsManager::Settings v20;
+    v20 = SettingsManager::Settings();
+    v20.settings_version = 20;
+    strcpy(v20.core_network_settings.hostname, "hangar-bee");
+    v20.core_network_settings.UpdateCRC32();
+    v20.ip_mode = SettingsManager::kIPModeIPv4;
+    v20.auto_update_enabled = true;
+    v20.feed_transports[2] = SettingsManager::kFeedTransportMQTT;
+    strcpy(v20.mqtt_broker.host, "broker.example.com");
+    v20.swarm_enabled = true;
+    strcpy(v20.swarm_token, "tok-1234");
+    const uint8_t ip[4] = {192, 168, 1, 50}, netmask[4] = {255, 255, 255, 0}, gateway[4] = {192, 168, 1, 1};
+    v20.ethernet_ipv4.is_static = true;
+    memcpy(v20.ethernet_ipv4.ip, ip, 4);
+    memcpy(v20.ethernet_ipv4.netmask, netmask, 4);
+    memcpy(v20.ethernet_ipv4.gateway, gateway, 4);
+    v20.wifi_sta_ipv6.is_static = true;
+    v20.wifi_sta_ipv6.prefix_len = 64;
+    v20.wifi_sta_ipv6.ip[0] = 0x20;
+    v20.wifi_sta_ipv6.ip[1] = 0x01;
+    v20.wifi_sta_ipv6.ip[2] = 0x0d;
+    v20.wifi_sta_ipv6.ip[3] = 0xb8;
+    v20.wifi_sta_ipv6.ip[15] = 0x50;
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memset(blob, 0xFF, sizeof(blob));
+    memcpy(blob, &v20, offsetof(settings_v20::Settings, wifi_sta_ipv6) + sizeof(settings_v20::Settings::wifi_sta_ipv6));
+
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 20, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
+    EXPECT_TRUE(out.core_network_settings.IsValid());
+    EXPECT_STREQ(out.core_network_settings.hostname, "hangar-bee");
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4);
+    EXPECT_TRUE(out.auto_update_enabled);
+    EXPECT_EQ(out.feed_transports[2], SettingsManager::kFeedTransportMQTT);
+    EXPECT_STREQ(out.mqtt_broker.host, "broker.example.com");
+    EXPECT_TRUE(out.swarm_enabled);
+    EXPECT_STREQ(out.swarm_token, "tok-1234");
+    EXPECT_EQ(memcmp(&out.ethernet_ipv4, &v20.ethernet_ipv4, sizeof(IPv4Config)), 0);
+    EXPECT_EQ(memcmp(&out.wifi_sta_ipv4, &v20.wifi_sta_ipv4, sizeof(IPv4Config)), 0);
+    EXPECT_EQ(memcmp(&out.ethernet_ipv6, &v20.ethernet_ipv6, sizeof(IPv6Config)), 0);
+    EXPECT_EQ(memcmp(&out.wifi_sta_ipv6, &v20.wifi_sta_ipv6, sizeof(IPv6Config)), 0);
+    settings_manager.settings = out;
+    EXPECT_FALSE(settings_manager.Sanitize());
+    EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v20::Settings) - 1, 20, out));
 }
 
 TEST(SettingsMigration, V18ToCurrentLeavesBLEOutputOff) {
@@ -1350,4 +1416,300 @@ TEST(Settings, NTPServerDefaultsToPoolAndIsSanitized) {
     memset(manager.settings.ntp_server, 'a', sizeof(manager.settings.ntp_server));
     EXPECT_TRUE(manager.Sanitize());
     EXPECT_EQ(strlen(manager.settings.ntp_server), SettingsManager::Settings::kNTPServerMaxLen);
+}
+
+TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
+    settings_v15::Settings v15;
+    PopulateV15(v15);
+    // 0xFF past the v19 struct, as Load() reads erased flash there.
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memset(blob, 0xFF, sizeof(blob));
+    settings_v19::Settings v19;
+    memset(&v19, 0, sizeof(v19));
+    memcpy(&v19, &v15, sizeof(v15));
+    v19.settings_version = 19;
+    v19.ip_mode = SettingsManager::kIPModeIPv4;
+    strcpy(v19.wifi_sta_extra_networks[1].ssid, "Hangar");
+    v19.auto_update_enabled = true;
+    v19.filter_distance_enabled = true;
+    v19.filter_distance_deci_nm = 425;
+    v19.feed_transports[3] = SettingsManager::kFeedTransportMQTT;
+    strcpy(v19.mqtt_broker.host, "broker.lan");
+    v19.mqtt_broker.port = 8883;
+    v19.mqtt_broker.tls = true;
+    v19.mqtt_broker.qos = 2;
+    v19.mqtt_broker.transport = SettingsManager::kMQTTTransportWebSocket;
+    strcpy(v19.mqtt_broker.websocket_path, "/ws");
+    v19.asterix_sac = 7;
+    v19.asterix_sic = 8;
+    strcpy(v19.ntp_server, "time.lan");
+    v19.filter_altitude_mode = kAltitudeFilterBetween;
+    v19.filter_altitude_a_ft = 1000;
+    v19.filter_altitude_b_ft = 9000;
+    v19.swarm_enabled = true;
+    strcpy(v19.swarm_server, "https://swarm.example.com");
+    strcpy(v19.swarm_token, "tok123");
+    memcpy(blob, &v19, sizeof(v19));
+
+    SettingsManager::Settings out;
+    out.ethernet_ipv4.is_static = true;  // Stale: must not survive.
+    out.wifi_sta_ipv6.is_static = true;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(memcmp(&out.core_network_settings, &v19.core_network_settings, sizeof(v19.core_network_settings)), 0);
+    EXPECT_STREQ(out.feed_uris[0], "myfeed.example.com");
+    EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+    EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4);
+    EXPECT_STREQ(out.wifi_sta_extra_networks[1].ssid, "Hangar");
+    EXPECT_TRUE(out.auto_update_enabled);
+    EXPECT_TRUE(out.filter_distance_enabled);
+    EXPECT_EQ(out.filter_distance_deci_nm, 425u);
+    EXPECT_EQ(out.feed_transports[3], SettingsManager::kFeedTransportMQTT);
+    EXPECT_STREQ(out.mqtt_broker.host, "broker.lan");
+    EXPECT_EQ(out.mqtt_broker.port, 8883);
+    EXPECT_TRUE(out.mqtt_broker.tls);
+    EXPECT_EQ(out.mqtt_broker.qos, 2);
+    EXPECT_EQ(out.mqtt_broker.transport, SettingsManager::kMQTTTransportWebSocket);
+    EXPECT_STREQ(out.mqtt_broker.websocket_path, "/ws");
+    EXPECT_EQ(out.asterix_sac, 7);
+    EXPECT_EQ(out.asterix_sic, 8);
+    EXPECT_STREQ(out.ntp_server, "time.lan");
+    EXPECT_EQ(out.filter_altitude_mode, kAltitudeFilterBetween);
+    EXPECT_EQ(out.filter_altitude_a_ft, 1000);
+    EXPECT_EQ(out.filter_altitude_b_ft, 9000);
+    EXPECT_TRUE(out.swarm_enabled);
+    EXPECT_STREQ(out.swarm_server, "https://swarm.example.com");
+    EXPECT_STREQ(out.swarm_token, "tok123");
+    // New in v20: DHCP on both interfaces, whatever the erased tail held.
+    IPv4Config dhcp;
+    EXPECT_EQ(memcmp(&out.ethernet_ipv4, &dhcp, sizeof(dhcp)), 0);
+    EXPECT_EQ(memcmp(&out.wifi_sta_ipv4, &dhcp, sizeof(dhcp)), 0);
+    IPv6Config slaac;
+    EXPECT_EQ(memcmp(&out.ethernet_ipv6, &slaac, sizeof(slaac)), 0);
+    EXPECT_EQ(memcmp(&out.wifi_sta_ipv6, &slaac, sizeof(slaac)), 0);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);  // New in v21.
+
+    SettingsManager manager;
+    manager.settings = out;
+    EXPECT_FALSE(manager.Sanitize());
+    EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v19::Settings) - 1, 19, out));
+}
+
+TEST(SettingsMigration, V18ToCurrentUsesDHCPAndV19Defaults) {
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memset(blob, 0xFF, sizeof(blob));
+    settings_v18::Settings v18;
+    memset(&v18, 0, sizeof(v18));
+    v18.settings_version = 18;
+    memcpy(blob, &v18, sizeof(v18));
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 18, out));
+    SettingsManager::Settings defaults;
+    EXPECT_EQ(out.filter_distance_deci_nm, defaults.filter_distance_deci_nm);
+    EXPECT_EQ(out.mqtt_broker.port, defaults.mqtt_broker.port);
+    EXPECT_STREQ(out.ntp_server, defaults.ntp_server);
+    EXPECT_STREQ(out.swarm_server, defaults.swarm_server);
+    EXPECT_EQ(out.filter_altitude_b_ft, defaults.filter_altitude_b_ft);
+    EXPECT_FALSE(out.ethernet_ipv4.is_static);
+    EXPECT_FALSE(out.wifi_sta_ipv4.is_static);
+    EXPECT_FALSE(out.ethernet_ipv6.is_static);
+    EXPECT_FALSE(out.wifi_sta_ipv6.is_static);
+}
+
+TEST(SettingsManager, SanitizeResetsInvalidIPv4ConfigToDHCP) {
+    SettingsManager manager;
+    EXPECT_FALSE(manager.Sanitize());
+
+    // Off-subnet gateway.
+    IPv4Config& eth = manager.settings.ethernet_ipv4;
+    eth.is_static = true;
+    IPv4FromU32(0xC0A80132, eth.ip);       // 192.168.1.50
+    IPv4FromU32(0xFFFFFF00, eth.netmask);  // /24
+    IPv4FromU32(0x0A000001, eth.gateway);  // 10.0.0.1
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(eth.is_static);
+    EXPECT_TRUE(IPv4IsZero(eth.ip));
+
+    // Addresses left behind on a DHCP interface.
+    IPv4FromU32(0x01010101, manager.settings.wifi_sta_ipv4.dns[1]);
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_TRUE(IPv4IsZero(manager.settings.wifi_sta_ipv4.dns[1]));
+
+    // A raw non-boolean is_static is normalized, then validated.
+    uint8_t raw = 0x7F;
+    memcpy(&manager.settings.wifi_sta_ipv4.is_static, &raw, 1);
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(manager.settings.wifi_sta_ipv4.is_static);
+
+    // A valid static configuration is kept.
+    eth.is_static = true;
+    IPv4FromU32(0xC0A80132, eth.ip);
+    IPv4FromU32(0xFFFFFF00, eth.netmask);
+    IPv4FromU32(0xC0A80101, eth.gateway);
+    EXPECT_FALSE(manager.Sanitize());
+    EXPECT_TRUE(eth.is_static);
+}
+
+TEST(SettingsManager, SanitizeResetsInvalidIPv6ConfigToAuto) {
+    SettingsManager manager;
+    IPv6Config& eth = manager.settings.ethernet_ipv6;
+    // Off-prefix gateway.
+    eth.is_static = true;
+    eth.prefix_len = 64;
+    ASSERT_TRUE(ParseIPv6Addr("2001:db8:1::50", 14, eth.ip));
+    ASSERT_TRUE(ParseIPv6Addr("2001:db8:2::1", 13, eth.gateway));
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(eth.is_static);
+    EXPECT_TRUE(IPv6IsZero(eth.ip));
+    EXPECT_TRUE(IPv6IsZero(eth.gateway));
+
+    // A prefix length left behind on an AUTO interface.
+    manager.settings.wifi_sta_ipv6.prefix_len = 64;
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_EQ(manager.settings.wifi_sta_ipv6.prefix_len, 0);
+
+    // A raw non-boolean is_static is normalized, then validated (no address: back to AUTO).
+    uint8_t raw = 0x7F;
+    memcpy(&manager.settings.wifi_sta_ipv6.is_static, &raw, 1);
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(manager.settings.wifi_sta_ipv6.is_static);
+
+    // Erased flash (0xFF everywhere) is not a valid configuration.
+    memset(static_cast<void*>(&eth), 0xFF, sizeof(eth));
+    EXPECT_TRUE(manager.Sanitize());
+    EXPECT_FALSE(eth.is_static);
+
+    // A valid static configuration is kept.
+    eth.is_static = true;
+    eth.prefix_len = 64;
+    ASSERT_TRUE(ParseIPv6Addr("2001:db8:1::50", 14, eth.ip));
+    ASSERT_TRUE(ParseIPv6Addr("fe80::1", 7, eth.gateway));
+    EXPECT_FALSE(manager.Sanitize());
+    EXPECT_TRUE(eth.is_static);
+}
+
+// Splits "a,b,c" into AT arguments, as cppAT does after the operator.
+static std::vector<std::string_view> SplitArgs(const std::string& line) {
+    std::vector<std::string_view> parts;
+    size_t pos = 0;
+    while (true) {
+        size_t comma = line.find(',', pos);
+        parts.push_back(std::string_view(line).substr(pos, comma == std::string::npos ? std::string::npos : comma - pos));
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    return parts;
+}
+
+static const char* SetStaticIP(const char* arg_str, IPv4Config& v4, IPv6Config& v6) {
+    static std::string storage;
+    storage = arg_str;
+    std::vector<std::string_view> parts = SplitArgs(storage);
+    IPFamily family;
+    return ParseStaticIPArgs(parts.data(), parts.size(), v4, v6, family);
+}
+
+TEST(Settings, StaticIPDumpReplaysThroughTheParser) {
+    SettingsManager manager;
+    SettingsManager::Settings& s = manager.settings;
+    ASSERT_EQ(SetStaticIP("IPV4,10.42.2.60,255.255.255.0,10.42.2.1,,9.9.9.9", s.ethernet_ipv4, s.ethernet_ipv6), nullptr);
+    ASSERT_EQ(SetStaticIP("IPV6,2001:DB8:1:0::50/64,fe80::1,,2001:4860:4860::8888", s.wifi_sta_ipv4, s.wifi_sta_ipv6),
+              nullptr);
+    // Lowercase family; only the IPv6 configuration changes.
+    ASSERT_EQ(SetStaticIP("ipv6,fd00:42::60/48", s.ethernet_ipv4, s.ethernet_ipv6), nullptr);
+    EXPECT_TRUE(s.ethernet_ipv4.is_static);
+
+    testing::internal::CaptureStdout();
+    manager.PrintAT();
+    std::string dump = testing::internal::GetCapturedStdout();
+    EXPECT_NE(dump.find("AT+ETHERNET_IP=IPV4,10.42.2.60,255.255.255.0,10.42.2.1,,9.9.9.9\r\n"), std::string::npos);
+    EXPECT_NE(dump.find("AT+ETHERNET_IP=IPV6,fd00:42::60/48,,,\r\n"), std::string::npos);
+    EXPECT_NE(dump.find("AT+WIFI_STA_IP=IPV4,DHCP\r\n"), std::string::npos);
+    EXPECT_NE(dump.find("AT+WIFI_STA_IP=IPV6,2001:db8:1::50/64,fe80::1,,2001:4860:4860::8888\r\n"), std::string::npos);
+
+    // Replaying every line into fresh settings gives the same four configurations.
+    SettingsManager replayed;
+    SettingsManager::Settings& r = replayed.settings;
+    int num_lines = 0;
+    for (const char* cmd : {"AT+ETHERNET_IP=", "AT+WIFI_STA_IP="}) {
+        bool ethernet = strcmp(cmd, "AT+ETHERNET_IP=") == 0;
+        for (size_t at = dump.find(cmd); at != std::string::npos; at = dump.find(cmd, at + 1)) {
+            size_t start = at + strlen(cmd);
+            std::string line = dump.substr(start, dump.find("\r\n", start) - start);
+            EXPECT_EQ(SetStaticIP(line.c_str(), ethernet ? r.ethernet_ipv4 : r.wifi_sta_ipv4,
+                                  ethernet ? r.ethernet_ipv6 : r.wifi_sta_ipv6),
+                      nullptr)
+                << line;
+            num_lines++;
+        }
+    }
+    EXPECT_EQ(num_lines, 4);
+    EXPECT_EQ(memcmp(&r.ethernet_ipv4, &s.ethernet_ipv4, sizeof(IPv4Config)), 0);
+    EXPECT_EQ(memcmp(&r.wifi_sta_ipv4, &s.wifi_sta_ipv4, sizeof(IPv4Config)), 0);
+    EXPECT_EQ(memcmp(&r.ethernet_ipv6, &s.ethernet_ipv6, sizeof(IPv6Config)), 0);
+    EXPECT_EQ(memcmp(&r.wifi_sta_ipv6, &s.wifi_sta_ipv6, sizeof(IPv6Config)), 0);
+
+    // The longest configuration fits the format buffer.
+    IPv6Config longest;
+    longest.is_static = true;
+    longest.prefix_len = 128;
+    memset(longest.ip, 0xFF, 16);
+    longest.ip[0] = 0x2F;
+    memset(longest.gateway, 0xFF, 16);
+    longest.gateway[0] = 0x2F;
+    memset(longest.dns[0], 0xFF, 16);
+    memset(longest.dns[1], 0xFF, 16);
+    char buf[SettingsManager::kIPv6ConfigStrMaxLen + 1];
+    int len = SettingsManager::FormatIPv6ConfigArgs(longest, buf, sizeof(buf));
+    EXPECT_GT(len, 0);
+    EXPECT_LT(len, (int)sizeof(buf));
+}
+
+TEST(Settings, FreshDefaultsAreDualWithDHCPAndAuto) {
+    SettingsManager::Settings fresh;
+    EXPECT_EQ(fresh.ip_mode, SettingsManager::kIPModeDual);
+    EXPECT_FALSE(fresh.ethernet_ipv4.is_static);
+    EXPECT_FALSE(fresh.wifi_sta_ipv4.is_static);
+    EXPECT_FALSE(fresh.ethernet_ipv6.is_static);
+    EXPECT_FALSE(fresh.wifi_sta_ipv6.is_static);
+
+    SettingsManager manager;
+    EXPECT_FALSE(manager.Sanitize());
+    testing::internal::CaptureStdout();
+    manager.PrintAT();
+    std::string dump = testing::internal::GetCapturedStdout();
+    for (const char* line : {"AT+IP_MODE=DUAL\r\n", "AT+ETHERNET_IP=IPV4,DHCP\r\n", "AT+ETHERNET_IP=IPV6,AUTO\r\n",
+                             "AT+WIFI_STA_IP=IPV4,DHCP\r\n", "AT+WIFI_STA_IP=IPV6,AUTO\r\n"}) {
+        EXPECT_NE(dump.find(line), std::string::npos) << line;
+    }
+}
+
+TEST(SettingsMigration, StoredIPModeIsKeptOnUpgrade) {
+    // A v19 unit keeps its stored IP mode, whatever it is: upgrades don't change networks.
+    for (SettingsManager::IPMode mode :
+         {SettingsManager::kIPModeDual, SettingsManager::kIPModeIPv4, SettingsManager::kIPModeIPv6}) {
+        uint8_t blob[sizeof(SettingsManager::Settings)];
+        memset(blob, 0xFF, sizeof(blob));
+        settings_v19::Settings v19{};
+        v19.settings_version = 19;
+        v19.ip_mode = mode;
+        memcpy(blob, &v19, sizeof(v19));
+        SettingsManager::Settings out;
+        ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
+        EXPECT_EQ(out.ip_mode, mode);
+    }
+    // Same for v17 and v18.
+    for (uint32_t version : {17u, 18u}) {
+        uint8_t blob[sizeof(SettingsManager::Settings)];
+        memset(blob, 0xFF, sizeof(blob));
+        settings_v18::Settings v18;
+        memset(&v18, 0, sizeof(v18));
+        v18.settings_version = version;
+        v18.ip_mode = SettingsManager::kIPModeIPv6;
+        memcpy(blob, &v18, sizeof(v18));  // v17 and v18 share a layout.
+        SettingsManager::Settings out;
+        ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), version, out));
+        EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv6) << version;
+    }
 }

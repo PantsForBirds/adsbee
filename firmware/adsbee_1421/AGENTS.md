@@ -48,7 +48,7 @@ From this `firmware/adsbee_1421/` directory (or via the dispatcher:
 
 ```bash
 ./build.sh               # build the CC1314 app (ti) in Release
-./build.sh -d            # build ti in Debug (includes the RF test command AT+TX_CW; Release omits it)
+./build.sh -d            # build ti in Debug (AT+TX_CW on all bands; Release has LRHF only)
 ./build.sh programmer    # build the ADSBee 1421 Programmer (requires ti built first)
 ./build.sh build_and_flash  # build ti + programmer, then reflash an attached m1421 via the Programmer
                          # (prompts to put the Programmer in BOOT mode, copies the uf2, monitors)

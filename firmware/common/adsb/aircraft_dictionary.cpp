@@ -1992,6 +1992,12 @@ bool AircraftDictionary::CorrectAddressParityPacket(DecodedModeSPacket& packet) 
     // replying with that address: stop correcting an address that repeats. The data bit flips are undone first, so
     // the address is the sender's even when its reply had another error.
     uint16_t first_parity_bit = len_bits - kAddressParityFieldNumBits;
+    // Two flips in the parity field explain the reply no better than an untracked aircraft whose address is a few
+    // bits away and whose reply had one bit error, so only one flip there may be made without data bit flips.
+    if (best_num_bits == 2 && fit_bits[0] >= first_parity_bit && fit_bits[1] >= first_parity_bit) {
+        metrics_counter_.corrected_frames[kCorrectionRejected]++;
+        return false;
+    }
     if (fit_bits[best_num_bits - 1] >= first_parity_bit) {
         uint32_t sender_address = packet.crc_syndrome;
         for (uint16_t i = 0; i < best_num_bits; i++) {

@@ -251,6 +251,10 @@ class ObjectDictionary {
         char wifi_sta_ip6_link_local[kIP6AddrStrLen + 1] = {0};
         char wifi_sta_ip6_global[kIP6AddrStrLen + 1] = {0};
 
+        // DNS servers in use (empty if none). All interfaces share them.
+        static constexpr uint16_t kNumDNSServers = 2;
+        char dns_servers[kNumDNSServers][kIP6AddrStrLen + 1] = {};
+
         ESP32NetworkInfo() {
             for (uint16_t i = 0; i < SettingsManager::Settings::kWiFiMaxNumClients; i++) {
                 memset(wifi_ap_client_ips[i], 0x0, SettingsManager::Settings::kIPAddrStrLen + 1);
