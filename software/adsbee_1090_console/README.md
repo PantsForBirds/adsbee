@@ -40,6 +40,17 @@ server needed), pick **USB Serial** or **Network** in the tab bar, and click
     browser. The page and the device must be on the same network.
   - A hostname changed with `AT+HOSTNAME` no longer matches the label; type it
     instead.
+- **Device page** (network mode, once a host is entered): opens the device's
+  own web page, `http://<host>/` (any `:port` kept), in a new tab. It is the
+  way in when this page can't reach the device: Safari and every iPhone/iPad
+  browser block `ws://` sockets from an `https://` page (such as
+  `https://adsbee.aero/console`) as mixed content, while the device's own page
+  works on the same network. In those browsers the button is yellow and a bar
+  under the tab bar says so as soon as there is a host. Elsewhere the bar
+  appears after a scan or a serial conversion (with an outlined button), and
+  turns into a warning with a yellow button if the first connect attempt fails,
+  nothing connects within 5 s, or a working connection stays down for 30 s.
+  Connect itself behaves as before.
 
 Serial and network reach the *same* RP2040 console — its output is mirrored to
 USB stdout and the network console simultaneously — so the terminal behaves
