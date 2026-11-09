@@ -206,11 +206,25 @@ TEST(SyncPulseService, CountsArriveBeforeTheNextEdge) {
             EXPECT_EQ(edge_count, pulse.pulse_num);  // The last edge is this pulse's.
             if (pairing[subscriber].Pair(edge_count, pulse.pulse_num, 0, 1, 1)) num_paired[subscriber]++;
         };
+        // The ESP32 gets the pulse in its status write, every pass here (every ~100 ms on the device), and takes each
+        // pulse_num once.
+        uint32_t esp32_last_pulse_num = 0;
+        auto status = [&] {
+            ObjectDictionary::SyncPulse pulse = s.GetStatusPulse();
+            if (pulse.pulse_num == 0 || pulse.pulse_num == esp32_last_pulse_num) return;
+            esp32_last_pulse_num = pulse.pulse_num;
+            uint16_t edge_count = static_cast<uint16_t>(g_num_emitted.load());
+            EXPECT_EQ(edge_count, pulse.pulse_num);  // The last edge is this pulse's.
+            if (pairing[S::kSubscriberESP32].Pair(edge_count, pulse.pulse_num, 0, 1, 1)) {
+                num_paired[S::kSubscriberESP32]++;
+            }
+        };
         for (uint32_t t = 1000; t < 60'000; t += pass_ms) {
             take(S::kSubscriberCC1312);  // In adsbee.Update().
             s.Update(t);
-            take(S::kSubscriberESP32);
+            status();     // esp32.Update().
             s.Service();  // Core 1 serves the request at once.
+            status();     // A status written after the next edge carries no pulse.
         }
         EXPECT_GT(g_num_emitted, 10);
         EXPECT_GT(num_paired[S::kSubscriberESP32], 10u);
@@ -233,61 +247,65 @@ std::vector<uint32_t> PulseTimes(S& s, uint32_t start_ms, uint32_t end_ms) {
 
 }  // namespace
 
-TEST(SyncPulseService, SlowPulsesOnceEverySubscriberIsSynced) {
+TEST(SyncPulseService, OneHertzWhetherSyncedOrNot) {
     g_num_emitted = 0;
     S s(&FakeEmit);
     s.Allow();
     s.ReportFlags(S::kSubscriberCC1312, kWanted);
     s.ReportFlags(S::kSubscriberESP32, kWanted);
     EXPECT_EQ(PulseTimes(s, 1000, 1010), std::vector<uint32_t>({1000}));
-    // One with a fit, one without: a pulse a second.
     s.ReportFlags(S::kSubscriberCC1312, kSynced);
     s.ReportFlags(S::kSubscriberESP32, 0);
     EXPECT_EQ(PulseTimes(s, 1010, 3010), std::vector<uint32_t>({2000, 3000}));
-    // Both synced: kFastPulsesWhenSynced more at 1 s, then the interval doubles up to the slow one.
+    // Both synced: still a pulse a second.
     s.ReportFlags(S::kSubscriberESP32, kSynced);
-    std::vector<uint32_t> times = PulseTimes(s, 3010, 200'000);
-    std::vector<uint32_t> expected;
-    uint32_t t = 3000, interval = 1000;
-    for (int i = 0; i < S::kFastPulsesWhenSynced; i++) expected.push_back(t += 1000);
-    while (true) {
-        t += interval;
-        if (t >= 200'000) break;
-        expected.push_back(t);
-        interval = std::min(interval * 2, S::kSlowIntervalMs);
-    }
-    EXPECT_EQ(times, expected);
-    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
-    // A coprocessor that loses its fit (restart, SUBG_MODE change) asks: a pulse right away, then 1 s again.
+    std::vector<uint32_t> times = PulseTimes(s, 3010, 60'010);
+    ASSERT_EQ(times.size(), 57u);
+    for (size_t i = 0; i < times.size(); i++) EXPECT_EQ(times[i], 4000 + 1000 * i);
+    // A coprocessor that loses its fit (restart, SUBG_MODE change) asks: a pulse after the min interval, then the
+    // schedule runs from it.
     s.ReportFlags(S::kSubscriberCC1312, kWanted);
-    uint32_t last = expected.back();
-    times = PulseTimes(s, 200'000, 200'010);
-    EXPECT_EQ(times, std::vector<uint32_t>({200'000}));
-    s.ReportFlags(S::kSubscriberCC1312, 0);
-    EXPECT_EQ(PulseTimes(s, 200'010, 202'010), std::vector<uint32_t>({201'000, 202'000}));
-    EXPECT_GT(200'000u, last);
+    EXPECT_EQ(PulseTimes(s, 60'010, 60'310), std::vector<uint32_t>({60'300}));
+    s.ReportFlags(S::kSubscriberCC1312, kSynced);
+    EXPECT_EQ(PulseTimes(s, 60'310, 62'310), std::vector<uint32_t>({61'300, 62'300}));
+    // An absent subscriber (link down) asks for nothing.
+    s.ReportFlags(S::kSubscriberESP32, kWanted);
+    s.ReportAbsent(S::kSubscriberESP32);
+    EXPECT_EQ(PulseTimes(s, 62'310, 63'310), std::vector<uint32_t>({63'300}));
 }
 
-TEST(SyncPulseService, ASubscriberThatDoesntAnswerDoesntHoldFastPulses) {
+TEST(SyncPulseService, TheStatusCarriesTheLastPulseUntilTheNextIsRequested) {
     g_num_emitted = 0;
     S s(&FakeEmit);
+    EXPECT_EQ(s.GetStatusPulse().pulse_num, 0u);  // None yet.
     s.Allow();
-    s.ReportFlags(S::kSubscriberCC1312, kSynced);
-    s.ReportFlags(S::kSubscriberESP32, 0);
-    PulseTimes(s, 1000, 20'000);
-    EXPECT_EQ(s.GetIntervalMs(), S::kIntervalMs);
-    s.ReportAbsent(S::kSubscriberESP32);  // ESP32 link down.
-    PulseTimes(s, 20'000, 120'000);
-    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
-    s.ReportFlags(S::kSubscriberESP32, kWanted);  // Back, rebooted.
-    int before = g_num_emitted;
-    PulseTimes(s, 120'000, 120'010);
-    EXPECT_EQ(g_num_emitted, before + 1);
-    EXPECT_EQ(s.GetIntervalMs(), S::kIntervalMs);
+    Pass(s, 1000);
+    ObjectDictionary::SyncPulse pulse = s.GetStatusPulse();
+    EXPECT_EQ(pulse.pulse_num, 1u);
+    EXPECT_EQ(pulse.mlat_48mhz_counts, g_mlat.load());
+    // Every status in between carries it (a lost status write costs nothing), whatever the CC1312 took.
+    ObjectDictionary::SyncPulse cc;
+    ASSERT_TRUE(s.TakeNewPulse(S::kSubscriberCC1312, cc));
+    for (uint32_t t = 1010; t < 2000; t += 10) {
+        s.Update(t);
+        EXPECT_EQ(s.GetStatusPulse().pulse_num, 1u);
+    }
+    // From the next request until that pulse is recorded: none, so the count never follows the next edge.
+    s.Update(2000);
+    EXPECT_EQ(s.GetStatusPulse().pulse_num, 0u);
+    s.Service();
+    EXPECT_EQ(s.GetStatusPulse().pulse_num, 0u);
+    s.Update(2010);
+    EXPECT_EQ(s.GetStatusPulse().pulse_num, 2u);
+    // A blocked service (CC1312 reset) keeps the last pulse, sent before the block.
+    s.Block();
+    s.Update(5000);
+    EXPECT_EQ(s.GetStatusPulse().pulse_num, 2u);
 }
 
-// The whole path under output overload: main loop passes of 1.1 and 2.5 s, counts delivered a pass after their edge.
-// Both coprocessors sync, ramp to slow pulses and keep timestamps well under a microsecond.
+// The whole path under output overload: main loop passes of 1.1 and 2.5 s. The CC1312 gets its count by write in the
+// pass after its edge, the ESP32 in its status writes (every pass here). Both sync, never restart, and keep timestamps
+// well under a microsecond.
 TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
     for (uint32_t pass_ms : {10u, 1100u, 2500u}) {
         SCOPED_TRACE(pass_ms);
@@ -306,6 +324,8 @@ TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
         auto local_of_mlat = [](uint64_t mlat) { return static_cast<uint32_t>(mlat / 12 * (1 - 20e-6)); };
         uint32_t edges_seen = 0;
         int max_error = 0;
+        uint32_t esp32_last_pulse_num = 0;
+        int num_esp32_points = 0;
         for (uint32_t t = 1000; t < 400'000; t += pass_ms) {
             auto take = [&](S::Subscriber sub) {
                 Copro& c = copro[sub];
@@ -323,9 +343,23 @@ TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
                     }
                 }
             };
+            auto status = [&] {
+                Copro& c = copro[S::kSubscriberESP32];
+                s.ReportFlags(S::kSubscriberESP32,
+                              ObjectDictionary::MLATSyncFlags(c.sync.IsSynced(), c.sync.WantsPoint()));
+                ObjectDictionary::SyncPulse pulse = s.GetStatusPulse();
+                if (pulse.pulse_num == 0 || pulse.pulse_num == esp32_last_pulse_num) return;
+                esp32_last_pulse_num = pulse.pulse_num;
+                uint32_t age_us = static_cast<uint32_t>((t - c.edge_ms) * 1000);
+                if (c.pairing.Pair(c.edge_count, pulse.pulse_num, age_us, ObjectDictionary::kSyncPulseMaxAgeMs * 1000,
+                                   ObjectDictionary::kSyncPulseMaxMatchedAgeMs * 1000)) {
+                    num_esp32_points++;
+                    EXPECT_NE(MLATTimeSync::kRestarted, c.sync.AddSyncPoint(c.edge_local, pulse.mlat_48mhz_counts));
+                }
+            };
             take(S::kSubscriberCC1312);
             s.Update(t);
-            take(S::kSubscriberESP32);
+            status();
             s.Service();
             if (static_cast<uint32_t>(g_num_emitted) != edges_seen) {
                 edges_seen = g_num_emitted;
@@ -338,46 +372,11 @@ TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
         }
         EXPECT_TRUE(copro[S::kSubscriberCC1312].sync.IsSynced());
         EXPECT_TRUE(copro[S::kSubscriberESP32].sync.IsSynced());
-        EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
         EXPECT_LE(max_error, 12);  // One radio timer tick.
-        // A pulse a second would be ~400.
-        EXPECT_LT(g_num_emitted, 400 / (S::kSlowIntervalMs / 1000) + 20);
+        // A pulse a second, or one every two passes when a pass is longer (one records it, the next requests).
+        uint32_t expected = 399'000 / std::max<uint32_t>(1000, 2 * pass_ms);
+        EXPECT_GE(static_cast<uint32_t>(g_num_emitted), expected * 9 / 10);
+        EXPECT_LE(static_cast<uint32_t>(g_num_emitted), expected + 2);
+        EXPECT_GE(num_esp32_points, g_num_emitted - 2);  // The ESP32 pairs every pulse.
     }
-}
-
-TEST(SyncPulseService, ADriftingSubscriberHalvesTheInterval) {
-    constexpr uint8_t kDrifting = kSynced | ObjectDictionary::kMLATSyncFlagDrifting;
-    g_num_emitted = 0;
-    S s(&FakeEmit);
-    s.Allow();
-    s.ReportFlags(S::kSubscriberCC1312, kSynced);
-    s.ReportFlags(S::kSubscriberESP32, kSynced);
-    std::vector<uint32_t> times = PulseTimes(s, 1000, 100'000);
-    ASSERT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
-    uint32_t t = times.back();
-    // The ESP32's crystal is warming up: each pulse it is drifting at halves the interval.
-    s.ReportFlags(S::kSubscriberESP32, kDrifting);
-    EXPECT_EQ(PulseTimes(s, 100'000, t + 15'001), std::vector<uint32_t>({t + 10'000, t + 15'000}));
-    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs / 4);
-    // Settled: kFastPulsesWhenSynced at that interval, then it doubles back up.
-    s.ReportFlags(S::kSubscriberESP32, kSynced);
-    t += 15'000;
-    uint32_t settled = t;
-    std::vector<uint32_t> expected;
-    uint32_t interval = S::kSlowIntervalMs / 4;
-    for (int i = 0; i < S::kFastPulsesWhenSynced; i++) expected.push_back(t += interval);
-    for (int i = 0; i < 4; i++) {
-        expected.push_back(t += interval);
-        interval = std::min(interval * 2, S::kSlowIntervalMs);
-    }
-    EXPECT_EQ(PulseTimes(s, settled + 10, t + 10), expected);
-    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
-    // Never faster than a pulse a second, and a subscriber that doesn't answer doesn't count.
-    s.ReportFlags(S::kSubscriberCC1312, kDrifting);
-    times = PulseTimes(s, t + 1, t + 60'000);
-    EXPECT_EQ(s.GetIntervalMs(), S::kIntervalMs);
-    s.ReportAbsent(S::kSubscriberCC1312);
-    t = times.back();
-    times = PulseTimes(s, t + 1, t + 200'000);
-    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
 }

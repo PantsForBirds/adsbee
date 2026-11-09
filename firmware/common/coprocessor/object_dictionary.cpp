@@ -57,6 +57,7 @@ static bool CheckObjectBounds(const char* tag, const char* object_name, uint16_t
     return true;
 }
 
+#ifdef ON_TI
 static bool ReadSyncPulse(const uint8_t* buf, uint16_t buf_len, uint16_t offset, ObjectDictionary::SyncPulse& pulse) {
     if (buf_len != sizeof(pulse) || offset != 0) {
         CONSOLE_ERROR("ObjectDictionary::SetBytes", "Buffer length %d and offset %d for writing SyncPulse must be %d and 0.",
@@ -66,6 +67,7 @@ static bool ReadSyncPulse(const uint8_t* buf, uint16_t buf_len, uint16_t offset,
     memcpy(&pulse, buf, sizeof(pulse));
     return true;
 }
+#endif
 
 bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, uint16_t offset) {
     switch (addr) {
@@ -208,6 +210,9 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
                 return false;
             }
             memcpy(&composite_device_status, buf, sizeof(CompositeDeviceStatus));
+            // The RP2040 sends its last sync pulse's count with its status (pulse_num 0: none).
+            esp32_mlat_sync.HandleSyncPulse(composite_device_status.rp2040.sync_pulse.mlat_48mhz_counts,
+                                            composite_device_status.rp2040.sync_pulse.pulse_num);
             break;
         }
         case kAddrLEDBlink: {
@@ -231,12 +236,6 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
             if (offset + buf_len == sizeof(device_identity)) {
                 device_identity_valid = true;
             }
-            break;
-        }
-        case kAddrSyncPulse: {
-            SyncPulse pulse;
-            if (!ReadSyncPulse(buf, buf_len, offset, pulse)) return false;
-            esp32_mlat_sync.HandleSyncPulse(pulse.mlat_48mhz_counts, pulse.pulse_num);
             break;
         }
 #elif defined(ON_TI)

@@ -177,11 +177,10 @@ TEST(MLATTimeSync, OneBadPointOnceSyncedIsSkipped) {
     EXPECT_TRUE(sync.IsSynced());
 }
 
-TEST(MLATTimeSync, SlowPulsesAddLittleToTheCaptureNoise) {
+TEST(MLATTimeSync, OneHertzPulsesKeepTheFitAtTheCaptureNoise) {
     // Two crystals whose rate wanders like the bench 1090U's (a random walk, ~45 ppb rms change per minute, around
-    // -52 ppm), the radio timer capture quantized to 0.25 us. Pulses every second, then the SyncPulseService ramp to
-    // the slow interval. Packets in between keep within a fraction of a microsecond (0.155 us rms here, ~0.1 us of it
-    // the quantized capture and packet times).
+    // -52 ppm), the radio timer capture quantized to 0.25 us, pulses every second. Packets in between keep to about the
+    // quantized capture and packet times.
     std::mt19937 rng(11);
     std::normal_distribution<double> step_ppb(0, 45.0 / std::sqrt(60.0));
     const double kRatTicksPerUs = 4;
@@ -190,10 +189,9 @@ TEST(MLATTimeSync, SlowPulsesAddLittleToTheCaptureNoise) {
     auto local = [&](double l_us) { return static_cast<uint32_t>(static_cast<uint64_t>(l_us * kRatTicksPerUs)); };
     auto mlat = [&](double us) { return static_cast<uint64_t>(us * 48); };
     std::vector<double> errors_us;
-    uint32_t interval_ms = 1000;
+    const uint32_t interval_ms = ObjectDictionary::kSyncPulseIntervalMs;
     for (int pulse = 0; t_us < 3600e6; pulse++) {
         sync.AddSyncPoint(local(local_us), mlat(t_us));
-        if (pulse >= 6) interval_ms = std::min<uint32_t>(interval_ms * 2, ObjectDictionary::kSyncPulseSlowIntervalMs);
         for (uint32_t ms = 0; ms < interval_ms; ms++) {
             // 1 ms steps: the rate walks, the radio timer runs at (1 + rate) of true time... seen from the MLAT clock.
             rate_ppb += step_ppb(rng) / std::sqrt(1000.0);
@@ -213,8 +211,8 @@ TEST(MLATTimeSync, SlowPulsesAddLittleToTheCaptureNoise) {
     }
     double rms = std::sqrt(sum_sq / errors_us.size());
     printf("  %zu packets: rms %.3f us, max %.3f us\n", errors_us.size(), rms, worst);
-    EXPECT_LT(rms, 0.2);
-    EXPECT_LT(worst, 1.0);
+    EXPECT_LT(rms, 0.15);
+    EXPECT_LT(worst, 0.6);
 }
 
 TEST(MLATTimeSync, PointsFarApartOrBackwardsRestart) {
@@ -229,19 +227,20 @@ TEST(MLATTimeSync, PointsFarApartOrBackwardsRestart) {
 }
 
 TEST(MLATTimeSync, TheRateIsTheSlopeOverTheLongestRecentIntervals) {
-    // A 1 us error in one point moves the rate by 1 ppm over a 1 s interval, but only by 1/30 ppm over 30 s.
+    // A 1 us error in one point moves the rate by 1 ppm over a 1 s interval, but only by 1/8 ppm over 8 s (pulses
+    // missed or late, e.g. under overload).
     MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
     uint64_t t_us = 0;
     sync.AddSyncPoint(0, 0);
-    for (uint32_t interval_s : {1u, 2u, 4u, 8u, 16u, 30u, 30u, 30u, 30u}) {
+    for (uint32_t interval_s : {1u, 2u, 4u, 8u, 8u, 8u, 8u}) {
         t_us += interval_s * 1'000'000ull;
         sync.AddSyncPoint(static_cast<uint32_t>(t_us * 4), t_us * 48);
     }
     EXPECT_EQ(sync.GetRateErrorPPB(), 0);
-    t_us += 30'000'000;
+    t_us += 8'000'000;
     EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(static_cast<uint32_t>(t_us * 4), t_us * 48 + 48));  // 1 us late.
     EXPECT_GT(sync.GetRateErrorPPB(), 0);
-    EXPECT_LE(sync.GetRateErrorPPB(), 1'000'000'000 / 30'000'000 + 1);
+    EXPECT_LE(sync.GetRateErrorPPB(), 1'000'000'000 / 8'000'000 + 1);
 }
 
 TEST(MLATTimeSync, NoTimestampsFarFromTheLastSyncPoint) {
@@ -440,26 +439,4 @@ TEST(ESP32ClockMath, RemoteIDTimestampsEndToEnd) {
         }
     }
     EXPECT_LE(worst_error, 48 + 24);  // 1 us of MAC clock resolution, plus the fit.
-}
-
-TEST(MLATTimeSync, APointThatMissesThePredictionMarksTheFitAsDrifting) {
-    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(0, 0));
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(4'000'000, 48'000'000));
-    EXPECT_FALSE(sync.IsDrifting());
-    // 10 s later, 1 us off the prediction (the rate moved 100 ppb): still in the fit, but drifting.
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(44'000'000, 528'000'000 + 48));
-    EXPECT_TRUE(sync.IsSynced());
-    EXPECT_TRUE(sync.IsDrifting());
-    EXPECT_FALSE(sync.WantsPoint());  // Faster pulses, not one right away.
-    // Within kDriftingResidualNs of the prediction: settled.
-    uint64_t predicted = sync.ToMLAT48MHzCounts(84'000'000);
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(84'000'000, predicted + 10));
-    EXPECT_FALSE(sync.IsDrifting());
-    // Off again, then the local clock restarts: a fresh fit isn't drifting.
-    predicted = sync.ToMLAT48MHzCounts(124'000'000);
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(124'000'000, predicted - 30));
-    EXPECT_TRUE(sync.IsDrifting());
-    sync.Restart();
-    EXPECT_FALSE(sync.IsDrifting());
 }

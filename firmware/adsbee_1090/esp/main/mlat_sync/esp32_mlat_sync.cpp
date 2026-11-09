@@ -103,6 +103,9 @@ void IRAM_ATTR ESP32MLATSync::HandleSoftCapture(uint32_t capture_now) {
 }
 
 void ESP32MLATSync::HandleSyncPulse(uint64_t mlat_48mhz_counts, uint32_t pulse_num) {
+    // Every status carries the last pulse until the next is requested.
+    if (pulse_num == 0 || pulse_num == last_pulse_num_) return;
+    last_pulse_num_ = pulse_num;
     portENTER_CRITICAL(&lock_);
     uint64_t edge_systimer = edge_systimer_;
     uint16_t edge_count = edge_count_;
@@ -162,12 +165,7 @@ uint8_t ESP32MLATSync::GetMLATSyncFlags() {
         sync_point_age_ticks > static_cast<uint64_t>(kSyncPointMaxAgeUs) * esp32_clock_math::kSystimerTicksPerUs) {
         time_sync_.Restart();  // Pulses stopped (CC1312 reset or flashing, RP2040 restart).
     }
-    bool synced = time_sync_.IsSynced();
-    // A pulse went missing: ask for one before the fit gets too old.
-    bool overdue = synced && sync_point_age_ticks > static_cast<uint64_t>(ObjectDictionary::kSyncPulseOverdueMs) *
-                                                        1000 * esp32_clock_math::kSystimerTicksPerUs;
-    uint8_t flags =
-        ObjectDictionary::MLATSyncFlags(synced, time_sync_.WantsPoint() || overdue, time_sync_.IsDrifting());
+    uint8_t flags = ObjectDictionary::MLATSyncFlags(time_sync_.IsSynced(), time_sync_.WantsPoint());
     portEXIT_CRITICAL(&lock_);
     return flags;
 }

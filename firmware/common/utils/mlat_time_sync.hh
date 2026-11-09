@@ -11,13 +11,12 @@
  * (true on the m1421, where the RAT and the MLAT timer share the 48 MHz crystal). Each further point measures the rate
  * between the two clocks (ADSBee 1090: the CC1312 or ESP32 crystal against the RP2040's) over the interval since the
  * previous point. The estimate is the rate over about the last kRateMemoryUs (or the last interval, if longer): each
- * interval weighs by its length, so a long interval between sync pulses counts for more. The rate is a property of the
- * crystals, so it survives Restart() (local clock restarted or stepped): one new point then re-anchors the offset.
+ * interval weighs by its length, so a longer interval (a late or missed pulse) counts for more. The rate is a property
+ * of the crystals, so it survives Restart() (local clock restarted or stepped): one new point then re-anchors the
+ * offset.
  *
  * Once synced, a point further from the prediction than kMaxResidualUs (plus kMaxResidualDriftPPB of the interval) is
- * skipped and the fit kept; a second one in a row restarts the fit from it. A point that fits but is further from the
- * prediction than kDriftingResidualNs (the crystals' rate is changing fast, e.g. while they warm up after a boot) marks
- * the fit as drifting until a point lands close again: the sync pulses should come faster.
+ * skipped and the fit kept; a second one in a row restarts the fit from it.
  */
 class MLATTimeSync {
    public:
@@ -25,7 +24,7 @@ class MLATTimeSync {
     static constexpr uint32_t kMLATTicksPerRATTick = kMLATTicksPerUs / 4;           // CC13xx radio timer: 4 MHz.
     static constexpr uint32_t kMLATTicksPerESP32SystimerTick = kMLATTicksPerUs / 16;  // ESP32-S3 system timer: 16 MHz.
     // A point further from the previous one than this, or implying a larger rate error, restarts the fit.
-    static constexpr uint32_t kMaxSyncIntervalUs = 60'000'000;
+    static constexpr uint32_t kMaxSyncIntervalUs = 10'000'000;
     static constexpr int64_t kMaxRateErrorPPB = 200'000;  // 200 ppm.
     // Timestamps further than this from the last sync point get none (0). Must stay below half the local clock period.
     static constexpr uint32_t kMaxExtrapolationUs = 60'000'000;
@@ -34,9 +33,6 @@ class MLATTimeSync {
     // Outlier limit for a point once synced: a fixed part plus a rate change over the interval.
     static constexpr uint32_t kMaxResidualUs = 20;
     static constexpr uint32_t kMaxResidualDriftPPB = 2'000;
-    // A point further than this from the prediction marks the fit as drifting. Twice the CC1312's capture noise
-    // (rms 0.11 us at 1 s pulses), and half the UAT/ADS-L receivers' own jitter at the timestamp halfway to it.
-    static constexpr uint32_t kDriftingResidualNs = 400;
 
     enum Result : uint8_t {
         kAdded = 0,  // The point is in the fit.
@@ -64,7 +60,6 @@ class MLATTimeSync {
         rate_valid_ = false;
         rate_span_us_ = 0;
         skipped_point_ = false;
-        drifting_ = false;
         points_needed_ = min_sync_points_;
     }
 
@@ -72,14 +67,12 @@ class MLATTimeSync {
     void Restart() {
         num_points_ = 0;
         skipped_point_ = false;
-        drifting_ = false;
         points_needed_ = rate_valid_ ? 1 : min_sync_points_;
     }
 
     // Adds the local and MLAT counts of the same instant.
     Result AddSyncPoint(uint32_t local, uint64_t mlat_48mhz_counts) {
         Result result = kAdded;
-        bool drifting = false;
         if (num_points_ > 0) {
             uint32_t local_ticks = local - local_;
             int64_t mlat_ticks = static_cast<int64_t>(mlat_48mhz_counts - mlat_48mhz_counts_);
@@ -97,8 +90,6 @@ class MLATTimeSync {
                     static_cast<int64_t>(kMaxResidualUs) * kMLATTicksPerUs +
                     static_cast<int64_t>(interval_us) * kMLATTicksPerUs * kMaxResidualDriftPPB / 1'000'000'000;
                 fits = residual_ticks <= max_residual_ticks && residual_ticks >= -max_residual_ticks;
-                int64_t drifting_ticks = static_cast<int64_t>(kDriftingResidualNs) * kMLATTicksPerUs / 1000;
-                drifting = residual_ticks > drifting_ticks || residual_ticks < -drifting_ticks;
             }
             if (!fits && IsSynced() && !skipped_point_) {
                 // One bad point (e.g. a mispaired edge) doesn't cost the fit: wait for the next one.
@@ -123,7 +114,6 @@ class MLATTimeSync {
             }
         }
         skipped_point_ = false;
-        drifting_ = drifting && result == kAdded;
         local_ = local;
         mlat_48mhz_counts_ = mlat_48mhz_counts;
         if (num_points_ < UINT16_MAX) num_points_++;
@@ -134,8 +124,6 @@ class MLATTimeSync {
     // True if one more point makes progress right away (the rate is known, or nothing is, or the last point was
     // skipped): worth an early pulse.
     bool WantsPoint() const { return skipped_point_ || (!IsSynced() && (rate_valid_ || num_points_ == 0)); }
-    // True if the last point was further than kDriftingResidualNs from the prediction: worth faster pulses.
-    bool IsDrifting() const { return drifting_; }
     uint16_t GetNumSyncPoints() const { return num_points_; }
     bool HasRate() const { return rate_valid_; }
     int64_t GetRateErrorPPB() const { return rate_error_ppb_; }
@@ -170,7 +158,6 @@ class MLATTimeSync {
     int64_t rate_error_ppb_ = 0;  // MLAT clock rate relative to the nominal ratio, in parts per billion.
     uint32_t rate_span_us_ = 0;   // Length of the sync intervals the rate estimate stands for, up to kRateMemoryUs.
     bool skipped_point_ = false;
-    bool drifting_ = false;
 };
 
 /**

@@ -91,8 +91,8 @@ public:
     volatile uint32_t uat_len_mismatch_count = 0;
 
     /**
-     * Sub-GHz packet timestamps go out on the RP2040's 48 MHz MLAT clock. The RP2040 pulses the SYNC line (DIO5) about
-     * once a second and then writes the pulse's MLAT count (kAddrSyncPulse). The radio timer (RAT) captures each rising
+     * Sub-GHz packet timestamps go out on the RP2040's 48 MHz MLAT clock. The RP2040 pulses the SYNC line (DIO5) once a
+     * second and then writes the pulse's MLAT count (kAddrSyncPulse). The radio timer (RAT) captures each rising
      * edge; pairing the two gives a sync point for time_sync_.
      */
     // Pairs a SyncPulse from the RP2040 with the last captured edge. Main loop only.
