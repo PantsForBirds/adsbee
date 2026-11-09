@@ -160,3 +160,54 @@ TEST(SyncPulseService, ESP32PulseWantedPath) {
     Pass(s, 20'000 + ObjectDictionary::kSyncPulseMinIntervalMs);
     EXPECT_EQ(g_num_emitted, 2);
 }
+
+TEST(SyncPulseService, NoNewPulseInThePassThatRecordsOne) {
+    g_num_emitted = 0;
+    S s(&FakeEmit);
+    s.Allow();
+    s.Update(1000);  // Requested.
+    s.Service();
+    ASSERT_EQ(g_num_emitted, 1);
+    s.Update(2200);  // A long pass: records pulse 1, and the next one is due, but not before the subscribers take it.
+    s.Service();
+    EXPECT_EQ(g_num_emitted, 1);
+    ObjectDictionary::SyncPulse pulse;
+    ASSERT_TRUE(s.TakeNewPulse(S::kSubscriberESP32, pulse));
+    EXPECT_EQ(pulse.pulse_num, 1u);
+    // The CC1312 doesn't take it in time: it is dropped when the next pulse is requested, never sent after its edge.
+    EXPECT_TRUE(s.HasNewPulse(S::kSubscriberCC1312));
+    s.Update(3400);
+    EXPECT_FALSE(s.HasNewPulse(S::kSubscriberCC1312));
+    s.Service();
+    EXPECT_EQ(g_num_emitted, 2);
+}
+
+// The main loop's order (adsbee.Update() with the CC1312 poll, then Update(), then esp32.Update()) on passes shorter and
+// longer than the pulse interval: a coprocessor always gets a count before the next pulse's edge, so its last edge is
+// the pulse's own, and SyncPulsePairing pairs every count it gets.
+TEST(SyncPulseService, CountsArriveBeforeTheNextEdge) {
+    for (uint32_t pass_ms : {5u, 400u, 1100u, 2500u}) {
+        SCOPED_TRACE(pass_ms);
+        g_num_emitted = 0;
+        S s(&FakeEmit);
+        s.Allow();
+        SyncPulsePairing pairing[S::kNumSubscribers];
+        uint32_t num_paired[S::kNumSubscribers] = {};
+        auto take = [&](S::Subscriber subscriber) {
+            ObjectDictionary::SyncPulse pulse;
+            if (!s.TakeNewPulse(subscriber, pulse)) return;
+            uint16_t edge_count = static_cast<uint16_t>(g_num_emitted.load());
+            EXPECT_EQ(edge_count, pulse.pulse_num);  // The last edge is this pulse's.
+            if (pairing[subscriber].Pair(edge_count, pulse.pulse_num, 0, 1)) num_paired[subscriber]++;
+        };
+        for (uint32_t t = 1000; t < 60'000; t += pass_ms) {
+            take(S::kSubscriberCC1312);  // In adsbee.Update().
+            s.Update(t);
+            take(S::kSubscriberESP32);
+            s.Service();  // Core 1 serves the request at once.
+        }
+        EXPECT_GT(g_num_emitted, 10);
+        EXPECT_GT(num_paired[S::kSubscriberESP32], 10u);
+        EXPECT_GT(num_paired[S::kSubscriberCC1312], 10u);
+    }
+}

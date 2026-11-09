@@ -66,12 +66,16 @@ class SyncPulseService {
         busy_ = false;
     }
 
-    // Schedules pulses and records sent ones. Call every main loop pass.
+    // Schedules pulses and records sent ones. Call every main loop pass, before the subscriber drivers' updates.
     void Update(uint32_t timestamp_ms) {
         uint32_t num_pulses_sent = num_pulses_sent_;
         if (num_pulses_sent != last_pulse_.pulse_num) {
             Fence();
             last_pulse_ = {.mlat_48mhz_counts = last_mlat_48mhz_counts_, .pulse_num = num_pulses_sent};
+            // No new pulse in this pass: the subscribers take this one first. A coprocessor pairs a count with the last
+            // edge it captured, so a count written after the next pulse's edge would be paired with that edge (on a
+            // main loop pass longer than kIntervalMs, e.g. under output overload, every pulse was).
+            return;
         }
         if (!allowed_ || emitter_ == nullptr) {
             return;
@@ -86,6 +90,9 @@ class SyncPulseService {
         // A coprocessor whose clock restarted is back on the MLAT clock after one pulse: send it soon.
         if (ms_since_request >= kIntervalMs ||
             (AnyPulseWanted() && ms_since_request >= ObjectDictionary::kSyncPulseMinIntervalMs)) {
+            // A subscriber that didn't take the last pulse never gets it now, for the same reason. Its coprocessor
+            // then sees two edges for two pulses at the next count, which still pairs.
+            for (uint32_t& delivered_pulse_num : delivered_pulse_num_) delivered_pulse_num = last_pulse_.pulse_num;
             request_timestamp_ms_ = timestamp_ms;
             Fence();
             requested_ = true;
