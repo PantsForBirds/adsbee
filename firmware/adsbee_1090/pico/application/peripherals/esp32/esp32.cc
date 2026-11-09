@@ -74,7 +74,7 @@ bool ESP32::Update() {
             esp32.Write(ObjectDictionary::Address::kAddrSyncPulse, pulse);
         }
     } else {
-        adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberESP32, 0);
+        adsbee.sync_pulse_service.ReportAbsent(SyncPulseService::kSubscriberESP32);
         if (!esp32.IsLinkDown()) {  // Don't repeat this every pass while the link is down.
             CONSOLE_ERROR("ESP32::Update", "Unable to read ESP32 status.");
         }

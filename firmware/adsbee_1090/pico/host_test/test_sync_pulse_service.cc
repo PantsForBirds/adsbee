@@ -1,6 +1,9 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <vector>
+#include <algorithm>
+#include <cstdlib>
 
 #include "gtest/gtest.h"
 #include "mlat_time_sync.hh"
@@ -39,6 +42,7 @@ void Pass(S& s, uint32_t timestamp_ms) {
 TEST(SyncPulseService, OneHertzOnceAllowed) {
     g_num_emitted = 0;
     S s(&FakeEmit);
+    s.ReportFlags(S::kSubscriberCC1312, 0);  // Answers status reads, no fit yet.
     for (uint32_t t = 0; t < 3000; t += 10) Pass(s, 1000 + t);
     EXPECT_EQ(g_num_emitted, 0);  // Not allowed yet.
     s.Allow();
@@ -191,6 +195,8 @@ TEST(SyncPulseService, CountsArriveBeforeTheNextEdge) {
         g_num_emitted = 0;
         S s(&FakeEmit);
         s.Allow();
+        s.ReportFlags(S::kSubscriberCC1312, 0);  // No fit: a pulse a second.
+        s.ReportFlags(S::kSubscriberESP32, 0);
         SyncPulsePairing pairing[S::kNumSubscribers];
         uint32_t num_paired[S::kNumSubscribers] = {};
         auto take = [&](S::Subscriber subscriber) {
@@ -198,7 +204,7 @@ TEST(SyncPulseService, CountsArriveBeforeTheNextEdge) {
             if (!s.TakeNewPulse(subscriber, pulse)) return;
             uint16_t edge_count = static_cast<uint16_t>(g_num_emitted.load());
             EXPECT_EQ(edge_count, pulse.pulse_num);  // The last edge is this pulse's.
-            if (pairing[subscriber].Pair(edge_count, pulse.pulse_num, 0, 1)) num_paired[subscriber]++;
+            if (pairing[subscriber].Pair(edge_count, pulse.pulse_num, 0, 1, 1)) num_paired[subscriber]++;
         };
         for (uint32_t t = 1000; t < 60'000; t += pass_ms) {
             take(S::kSubscriberCC1312);  // In adsbee.Update().
@@ -209,5 +215,131 @@ TEST(SyncPulseService, CountsArriveBeforeTheNextEdge) {
         EXPECT_GT(g_num_emitted, 10);
         EXPECT_GT(num_paired[S::kSubscriberESP32], 10u);
         EXPECT_GT(num_paired[S::kSubscriberCC1312], 10u);
+    }
+}
+
+namespace {
+
+// Request times of the pulses sent from start_ms to end_ms, in 10 ms passes.
+std::vector<uint32_t> PulseTimes(S& s, uint32_t start_ms, uint32_t end_ms) {
+    std::vector<uint32_t> times;
+    for (uint32_t t = start_ms; t < end_ms; t += 10) {
+        int before = g_num_emitted;
+        Pass(s, t);
+        if (g_num_emitted != before) times.push_back(t);
+    }
+    return times;
+}
+
+}  // namespace
+
+TEST(SyncPulseService, SlowPulsesOnceEverySubscriberIsSynced) {
+    g_num_emitted = 0;
+    S s(&FakeEmit);
+    s.Allow();
+    s.ReportFlags(S::kSubscriberCC1312, kWanted);
+    s.ReportFlags(S::kSubscriberESP32, kWanted);
+    EXPECT_EQ(PulseTimes(s, 1000, 1010), std::vector<uint32_t>({1000}));
+    // One with a fit, one without: a pulse a second.
+    s.ReportFlags(S::kSubscriberCC1312, kSynced);
+    s.ReportFlags(S::kSubscriberESP32, 0);
+    EXPECT_EQ(PulseTimes(s, 1010, 3010), std::vector<uint32_t>({2000, 3000}));
+    // Both synced: kFastPulsesWhenSynced more at 1 s, then the interval doubles up to the slow one.
+    s.ReportFlags(S::kSubscriberESP32, kSynced);
+    std::vector<uint32_t> times = PulseTimes(s, 3010, 200'000);
+    std::vector<uint32_t> expected;
+    uint32_t t = 3000, interval = 1000;
+    for (int i = 0; i < S::kFastPulsesWhenSynced; i++) expected.push_back(t += 1000);
+    while (true) {
+        t += interval;
+        if (t >= 200'000) break;
+        expected.push_back(t);
+        interval = std::min(interval * 2, S::kSlowIntervalMs);
+    }
+    EXPECT_EQ(times, expected);
+    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
+    // A coprocessor that loses its fit (restart, SUBG_MODE change) asks: a pulse right away, then 1 s again.
+    s.ReportFlags(S::kSubscriberCC1312, kWanted);
+    uint32_t last = expected.back();
+    times = PulseTimes(s, 200'000, 200'010);
+    EXPECT_EQ(times, std::vector<uint32_t>({200'000}));
+    s.ReportFlags(S::kSubscriberCC1312, 0);
+    EXPECT_EQ(PulseTimes(s, 200'010, 202'010), std::vector<uint32_t>({201'000, 202'000}));
+    EXPECT_GT(200'000u, last);
+}
+
+TEST(SyncPulseService, ASubscriberThatDoesntAnswerDoesntHoldFastPulses) {
+    g_num_emitted = 0;
+    S s(&FakeEmit);
+    s.Allow();
+    s.ReportFlags(S::kSubscriberCC1312, kSynced);
+    s.ReportFlags(S::kSubscriberESP32, 0);
+    PulseTimes(s, 1000, 20'000);
+    EXPECT_EQ(s.GetIntervalMs(), S::kIntervalMs);
+    s.ReportAbsent(S::kSubscriberESP32);  // ESP32 link down.
+    PulseTimes(s, 20'000, 120'000);
+    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
+    s.ReportFlags(S::kSubscriberESP32, kWanted);  // Back, rebooted.
+    int before = g_num_emitted;
+    PulseTimes(s, 120'000, 120'010);
+    EXPECT_EQ(g_num_emitted, before + 1);
+    EXPECT_EQ(s.GetIntervalMs(), S::kIntervalMs);
+}
+
+// The whole path under output overload: main loop passes of 1.1 and 2.5 s, counts delivered a pass after their edge.
+// Both coprocessors sync, ramp to slow pulses and keep timestamps well under a microsecond.
+TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
+    for (uint32_t pass_ms : {10u, 1100u, 2500u}) {
+        SCOPED_TRACE(pass_ms);
+        g_num_emitted = 0;
+        g_mlat = 1000;
+        S s(&FakeEmit);
+        s.Allow();
+        struct Copro {
+            MLATTimeSync sync = MLATTimeSync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+            SyncPulsePairing pairing;
+            uint16_t edge_count = 0;
+            uint32_t edge_local = 0;
+            uint64_t edge_ms = 0;
+        } copro[S::kNumSubscribers];
+        // FakeEmit steps the MLAT count by 48e6 a pulse; the fake local clock (4 MHz, 20 ppm slow vs MLAT) follows it.
+        auto local_of_mlat = [](uint64_t mlat) { return static_cast<uint32_t>(mlat / 12 * (1 - 20e-6)); };
+        uint32_t edges_seen = 0;
+        int max_error = 0;
+        for (uint32_t t = 1000; t < 400'000; t += pass_ms) {
+            auto take = [&](S::Subscriber sub) {
+                Copro& c = copro[sub];
+                s.ReportFlags(sub, ObjectDictionary::MLATSyncFlags(c.sync.IsSynced(), c.sync.WantsPoint()));
+                ObjectDictionary::SyncPulse pulse;
+                if (!s.TakeNewPulse(sub, pulse)) return;
+                uint32_t age_us = static_cast<uint32_t>((t - c.edge_ms) * 1000);
+                if (c.pairing.Pair(c.edge_count, pulse.pulse_num, age_us, ObjectDictionary::kSyncPulseMaxAgeMs * 1000,
+                                   ObjectDictionary::kSyncPulseMaxMatchedAgeMs * 1000)) {
+                    EXPECT_NE(MLATTimeSync::kRestarted, c.sync.AddSyncPoint(c.edge_local, pulse.mlat_48mhz_counts));
+                    if (c.sync.IsSynced()) {
+                        int e = static_cast<int>(static_cast<int64_t>(c.sync.ToMLAT48MHzCounts(c.edge_local)) -
+                                                 static_cast<int64_t>(pulse.mlat_48mhz_counts));
+                        max_error = std::max(max_error, std::abs(e));
+                    }
+                }
+            };
+            take(S::kSubscriberCC1312);
+            s.Update(t);
+            take(S::kSubscriberESP32);
+            s.Service();
+            if (static_cast<uint32_t>(g_num_emitted) != edges_seen) {
+                edges_seen = g_num_emitted;
+                for (Copro& c : copro) {
+                    c.edge_count++;
+                    c.edge_local = local_of_mlat(g_mlat);
+                    c.edge_ms = t;
+                }
+            }
+        }
+        EXPECT_TRUE(copro[S::kSubscriberCC1312].sync.IsSynced());
+        EXPECT_TRUE(copro[S::kSubscriberESP32].sync.IsSynced());
+        EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
+        EXPECT_LE(max_error, 12);  // One radio timer tick.
+        EXPECT_LT(g_num_emitted, 40);
     }
 }

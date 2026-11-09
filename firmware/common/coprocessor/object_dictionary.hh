@@ -130,21 +130,33 @@ class ObjectDictionary {
     };
 
     /**
-     * The RP2040 pulses the shared SYNC line about once a second, then writes this to the CC1312 and the ESP32. Each
-     * pairs it with the edge it captured on its own clock to put its packet timestamps on the MLAT time base.
+     * The RP2040 pulses the shared SYNC line, then writes this to the CC1312 and the ESP32. Each pairs it with the edge
+     * it captured on its own clock to put its packet timestamps on the MLAT time base. Pulses come once a second while
+     * a coprocessor has no fit (sooner when it asks), then every kSyncPulseSlowIntervalMs: often enough for crystal
+     * drift only.
      */
     struct __attribute__((__packed__)) SyncPulse {
         uint64_t mlat_48mhz_counts = 0;  // RP2040 MLAT counter at the rising edge.
         uint32_t pulse_num = 0;          // Counts pulses sent since the RP2040 booted.
     };
-    // Age limit for pairing a captured edge with its SyncPulse. Pulses are at least kSyncPulseMinIntervalMs apart.
+    // Age limit for pairing a captured edge with its SyncPulse when nothing else says it is the pulse's. Pulses are at
+    // least kSyncPulseMinIntervalMs apart.
     static constexpr uint32_t kSyncPulseMaxAgeMs = 250;
     static constexpr uint32_t kSyncPulseMinIntervalMs = 300;
+    // Age limit when one edge per pulse came in since the previous SyncPulse (SyncPulsePairing). Covers main loop passes
+    // of a few seconds under output overload (the CC1312 gets its count a pass after the ESP32).
+    static constexpr uint32_t kSyncPulseMaxMatchedAgeMs = 10'000;
+    static constexpr uint32_t kSyncPulseIntervalMs = 1000;  // While a coprocessor has no fit.
+    static constexpr uint32_t kSyncPulseSlowIntervalMs = 30'000;
+    // A coprocessor with no sync point for this long asks for a pulse (one went missing).
+    static constexpr uint32_t kSyncPulseOverdueMs = kSyncPulseSlowIntervalMs + kSyncPulseSlowIntervalMs / 2;
+    // A fit this long without a new sync point is dropped (pulses stopped). At most MLATTimeSync::kMaxExtrapolationUs.
+    static constexpr uint32_t kSyncPointMaxAgeMs = 2 * kSyncPulseSlowIntervalMs;
 
     // MLAT time sync state of a coprocessor (mlat_sync_flags in SubGHzDeviceStatus and ESP32DeviceStatus).
     enum MLATSyncFlag : uint8_t {
         kMLATSyncFlagSynced = 1 << 0,       // Packet timestamps are on the MLAT time base.
-        kMLATSyncFlagPulseWanted = 1 << 1,  // Not synced, and one pulse now makes progress: send it early.
+        kMLATSyncFlagPulseWanted = 1 << 1,  // One pulse now makes progress (not synced, a point skipped, or overdue).
     };
     static constexpr uint8_t MLATSyncFlags(bool synced, bool pulse_wanted) {
         return (synced ? kMLATSyncFlagSynced : 0) | (pulse_wanted ? kMLATSyncFlagPulseWanted : 0);

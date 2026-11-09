@@ -106,9 +106,6 @@ public:
     uint8_t GetMLATSyncFlags() const;
 
 private:
-    // A fit this long without a new sync point is dropped (pulses stopped).
-    static constexpr uint32_t kSyncPointMaxAgeMs = 30'000;
-
     // Routes the sync pin to the radio timer and captures its rising edges. The RAT restarts with the RF client, so
     // this also restarts the fit.
     void StartSyncCapture();

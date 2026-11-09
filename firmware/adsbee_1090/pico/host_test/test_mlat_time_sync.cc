@@ -60,7 +60,7 @@ TEST(MLATTimeSync, TracksTwoCrystalsToWellUnderAMicrosecond) {
             int64_t worst_error = 0;
             for (int pulse = 0; pulse < 600; pulse++) {
                 double t_us = pulse * 1'000'000.0 + jitter_us(rng) + 0.3;
-                EXPECT_TRUE(sync.AddSyncPoint(clocks.Local(t_us), clocks.Mlat(t_us + jitter_us(rng))));
+                EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(clocks.Local(t_us), clocks.Mlat(t_us + jitter_us(rng))));
                 if (pulse < 8) continue;  // Let the rate estimate settle.
                 for (int i = 0; i < 20; i++) {
                     double packet_us = t_us + within_s(rng);  // Before the next pulse.
@@ -136,24 +136,68 @@ TEST(MLATTimeSync, AResetForgetsTheRate) {
     EXPECT_FALSE(sync.IsSynced());
 }
 
-TEST(MLATTimeSync, ABadPointStopsTimestampsUntilTwoPointsAgree) {
+TEST(MLATTimeSync, ABadPointBeforeSyncStopsTimestampsUntilTwoPointsAgree) {
     MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    EXPECT_TRUE(sync.AddSyncPoint(0, 0));
-    EXPECT_TRUE(sync.AddSyncPoint(4'000'000, 48'000'000 + 480));  // 10 ppm.
-    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(0, 0));
     // 1 ms off in one second (1000 ppm): not a crystal, e.g. an edge paired with the wrong pulse.
-    EXPECT_FALSE(sync.AddSyncPoint(8'000'000, 96'000'000 + 48'000));
+    EXPECT_EQ(MLATTimeSync::kRestarted, sync.AddSyncPoint(4'000'000, 48'000'000 + 48'000));
     EXPECT_FALSE(sync.IsSynced());
-    EXPECT_EQ(sync.ToMLAT48MHzCounts(8'000'000), 0u);
-    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);  // The rate measured so far stays.
-    // The next good point agrees with the rate again.
-    EXPECT_TRUE(sync.AddSyncPoint(12'000'000, 144'000'000 + 48'000 + 480));
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(8'000'000, 96'000'000 + 48'000 + 480));  // 10 ppm.
     EXPECT_TRUE(sync.IsSynced());
-    EXPECT_EQ(sync.ToMLAT48MHzCounts(12'000'000), 144'048'480u);
-    // A point more than 10 s later and one going backwards also restart.
-    EXPECT_FALSE(sync.AddSyncPoint(12'000'000 + 41'000'000, 500'000'000));
-    EXPECT_FALSE(sync.AddSyncPoint(53'000'000 + 4'000'000, 100));
+    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
+}
+
+TEST(MLATTimeSync, OneBadPointOnceSyncedIsSkipped) {
+    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(0, 0));
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(4'000'000, 48'000'000 + 480));  // 10 ppm.
+    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
+    EXPECT_FALSE(sync.WantsPoint());
+    // 1 ms off: skipped, timestamps go on from the fit, and the next point is wanted soon.
+    EXPECT_EQ(MLATTimeSync::kSkipped, sync.AddSyncPoint(8'000'000, 96'000'000 + 48'000));
+    EXPECT_TRUE(sync.IsSynced());
+    EXPECT_TRUE(sync.WantsPoint());
+    EXPECT_EQ(sync.ToMLAT48MHzCounts(8'000'000), 96'000'960u);
+    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
+    // The next good point agrees with the fit (two intervals from its last point).
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(12'000'000, 144'000'000 + 1440));
+    EXPECT_FALSE(sync.WantsPoint());
+    EXPECT_EQ(sync.ToMLAT48MHzCounts(12'000'000), 144'001'440u);
+    // 30 us off after 1 s is off the fit too (a crystal moves well under 1 ppm in a second).
+    EXPECT_EQ(MLATTimeSync::kSkipped, sync.AddSyncPoint(16'000'000, 192'000'000 + 1920 + 30 * 48));
+    // Two in a row: the fit restarts from the second; its rate stays.
+    EXPECT_EQ(MLATTimeSync::kRestarted, sync.AddSyncPoint(20'000'000, 240'000'000 + 2400 + 40 * 48));
     EXPECT_FALSE(sync.IsSynced());
+    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(24'000'000, 288'000'000 + 2880 + 40 * 48));
+    EXPECT_TRUE(sync.IsSynced());
+}
+
+TEST(MLATTimeSync, PointsFarApartOrBackwardsRestart) {
+    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    sync.AddSyncPoint(0, 0);
+    // Further apart than kMaxSyncIntervalUs.
+    uint32_t far = (MLATTimeSync::kMaxSyncIntervalUs + 1'000'000) * 4;
+    EXPECT_EQ(MLATTimeSync::kRestarted, sync.AddSyncPoint(far, static_cast<uint64_t>(far) * 12));
+    // Backwards.
+    EXPECT_EQ(MLATTimeSync::kRestarted, sync.AddSyncPoint(far + 4'000'000, 100));
+    EXPECT_FALSE(sync.IsSynced());
+}
+
+TEST(MLATTimeSync, TheRateIsTheSlopeOverTheLongestRecentIntervals) {
+    // A 1 us error in one point moves the rate by 1 ppm over a 1 s interval, but only by 1/30 ppm over 30 s.
+    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    uint64_t t_us = 0;
+    sync.AddSyncPoint(0, 0);
+    for (uint32_t interval_s : {1u, 2u, 4u, 8u, 16u, 30u, 30u, 30u, 30u}) {
+        t_us += interval_s * 1'000'000ull;
+        sync.AddSyncPoint(static_cast<uint32_t>(t_us * 4), t_us * 48);
+    }
+    EXPECT_EQ(sync.GetRateErrorPPB(), 0);
+    t_us += 30'000'000;
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(static_cast<uint32_t>(t_us * 4), t_us * 48 + 48));  // 1 us late.
+    EXPECT_GT(sync.GetRateErrorPPB(), 0);
+    EXPECT_LE(sync.GetRateErrorPPB(), 1'000'000'000 / 30'000'000 + 1);
 }
 
 TEST(MLATTimeSync, NoTimestampsFarFromTheLastSyncPoint) {
@@ -169,34 +213,52 @@ TEST(MLATTimeSync, NoTimestampsFarFromTheLastSyncPoint) {
 TEST(SyncPulsePairing, PairsOneEdgePerPulse) {
     SyncPulsePairing pairing;
     constexpr uint32_t kMaxAgeUs = ObjectDictionary::kSyncPulseMaxAgeMs * 1000;
-    EXPECT_TRUE(pairing.Pair(1, 1, 3'000, kMaxAgeUs));
-    EXPECT_TRUE(pairing.Pair(2, 2, 3'000, kMaxAgeUs));
+    constexpr uint32_t kMatchedUs = ObjectDictionary::kSyncPulseMaxMatchedAgeMs * 1000;
+    EXPECT_TRUE(pairing.Pair(1, 1, 3'000, kMaxAgeUs, kMatchedUs));
+    EXPECT_TRUE(pairing.Pair(2, 2, 3'000, kMaxAgeUs, kMatchedUs));
     // No edge for this pulse (the radio was closed): the old edge isn't reused.
-    EXPECT_FALSE(pairing.Pair(2, 3, 1'003'000, kMaxAgeUs));
+    EXPECT_FALSE(pairing.Pair(2, 3, 1'003'000, kMaxAgeUs, kMatchedUs));
     // An extra edge (two edges, one pulse).
-    EXPECT_FALSE(pairing.Pair(4, 4, 3'000, kMaxAgeUs));
-    EXPECT_TRUE(pairing.Pair(5, 5, 3'000, kMaxAgeUs));
+    EXPECT_FALSE(pairing.Pair(4, 4, 3'000, kMaxAgeUs, kMatchedUs));
+    EXPECT_TRUE(pairing.Pair(5, 5, 3'000, kMaxAgeUs, kMatchedUs));
     // A lost message: two pulses and two edges since the last one, the last edge is this pulse's.
-    EXPECT_TRUE(pairing.Pair(7, 7, 3'000, kMaxAgeUs));
-    // The edge is too old.
-    EXPECT_FALSE(pairing.Pair(8, 8, kMaxAgeUs + 1, kMaxAgeUs));
+    EXPECT_TRUE(pairing.Pair(7, 7, 3'000, kMaxAgeUs, kMatchedUs));
+    // A late message (a long main loop pass): one edge for one pulse since the last message still pairs.
+    EXPECT_TRUE(pairing.Pair(8, 8, kMaxAgeUs + 1, kMaxAgeUs, kMatchedUs));
+    // Too late even for that.
+    EXPECT_FALSE(pairing.Pair(9, 9, kMatchedUs + 1, kMaxAgeUs, kMatchedUs));
+    // A missed edge after a lost message: one edge for two pulses is the older pulse's, and too old.
+    EXPECT_FALSE(pairing.Pair(10, 11, 1'000'000, kMaxAgeUs, kMatchedUs));
+    // Back in step.
+    EXPECT_TRUE(pairing.Pair(11, 12, 3'000, kMaxAgeUs, kMatchedUs));
     // Edge count wraps.
     pairing.SkipEdges(0xFFFF);
-    EXPECT_TRUE(pairing.Pair(0, 9, 3'000, kMaxAgeUs));
+    EXPECT_TRUE(pairing.Pair(0, 13, 3'000, kMaxAgeUs, kMatchedUs));
 }
 
 TEST(SyncPulsePairing, EdgesBeforeAClockRestartDontCount) {
     SyncPulsePairing pairing;
-    EXPECT_TRUE(pairing.Pair(1, 1, 3'000, 250'000));
+    EXPECT_TRUE(pairing.Pair(1, 1, 3'000, 250'000, 5'000'000));
     pairing.SkipEdges(2);  // Edge 2 came in on the old clock.
-    EXPECT_FALSE(pairing.Pair(2, 2, 3'000, 250'000));
-    EXPECT_TRUE(pairing.Pair(3, 3, 3'000, 250'000));
+    EXPECT_FALSE(pairing.Pair(2, 2, 3'000, 250'000, 5'000'000));
+    EXPECT_TRUE(pairing.Pair(3, 3, 3'000, 250'000, 5'000'000));
 }
 
 TEST(SyncPulsePairing, TheRP2040RestartingItsPulseCount) {
     SyncPulsePairing pairing;
-    EXPECT_TRUE(pairing.Pair(500, 500, 3'000, 250'000));
-    EXPECT_TRUE(pairing.Pair(501, 1, 3'000, 250'000));  // RP2040 rebooted, one edge since: still its pulse.
+    EXPECT_TRUE(pairing.Pair(500, 500, 3'000, 250'000, 5'000'000));
+    EXPECT_TRUE(pairing.Pair(501, 1, 3'000, 250'000, 5'000'000));  // RP2040 rebooted, one edge since: still its pulse.
+}
+
+TEST(SyncPulsePairing, ALateFirstMessageOnlySetsTheHistory) {
+    // Under output overload every count arrives a second or more after its edge: the first can't pair (nothing says its
+    // edge is the pulse's), the next ones do.
+    SyncPulsePairing pairing;
+    EXPECT_FALSE(pairing.Pair(1, 40, 1'100'000, 250'000, 5'000'000));
+    EXPECT_TRUE(pairing.Pair(2, 41, 1'100'000, 250'000, 5'000'000));
+    pairing.SkipEdges(2);  // The coprocessor's clock restarted: history gone.
+    EXPECT_FALSE(pairing.Pair(3, 42, 1'100'000, 250'000, 5'000'000));
+    EXPECT_TRUE(pairing.Pair(4, 43, 1'100'000, 250'000, 5'000'000));
 }
 
 TEST(SyncPulseMessage, WireFormat) {

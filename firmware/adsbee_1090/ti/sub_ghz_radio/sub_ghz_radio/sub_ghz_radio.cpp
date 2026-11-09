@@ -241,18 +241,23 @@ void SubGHzRadio::HandleSyncPulse(const ObjectDictionary::SyncPulse& pulse) {
     HwiP_restore(key);
     uint32_t capture_age_us = (RF_getCurrentTime() - capture_rat) / 4;  // RAT: 4 MHz.
     if (!sync_pulse_pairing_.Pair(capture_count, pulse.pulse_num, capture_age_us,
-                                  ObjectDictionary::kSyncPulseMaxAgeMs * 1000) ||
+                                  ObjectDictionary::kSyncPulseMaxAgeMs * 1000,
+                                  ObjectDictionary::kSyncPulseMaxMatchedAgeMs * 1000) ||
         sync_capture_handle_ == RF_ALLOC_ERROR) {
         return;
     }
     key = HwiP_disable();
     bool was_synced = time_sync_.IsSynced();
-    bool consistent = time_sync_.AddSyncPoint(capture_rat, pulse.mlat_48mhz_counts);
+    MLATTimeSync::Result result = time_sync_.AddSyncPoint(capture_rat, pulse.mlat_48mhz_counts);
     bool synced = time_sync_.IsSynced();
     HwiP_restore(key);
     uint32_t timestamp_ms = get_time_since_boot_ms();
+    if (result == MLATTimeSync::kSkipped) {
+        CONSOLE_WARNING("SubGHzRadio::HandleSyncPulse", "Sync pulse %lu is off the fit: skipped.", pulse.pulse_num);
+        return;
+    }
     last_sync_point_timestamp_ms_ = timestamp_ms;
-    if (!consistent) {
+    if (result == MLATTimeSync::kRestarted) {
         CONSOLE_WARNING("SubGHzRadio::HandleSyncPulse", "Sync pulse %lu doesn't fit the previous ones: re-syncing.",
                         pulse.pulse_num);
     } else if (synced && !was_synced) {
@@ -263,7 +268,10 @@ void SubGHzRadio::HandleSyncPulse(const ObjectDictionary::SyncPulse& pulse) {
 }
 
 uint8_t SubGHzRadio::GetMLATSyncFlags() const {
-    return ObjectDictionary::MLATSyncFlags(time_sync_.IsSynced(), time_sync_.WantsPoint());
+    bool synced = time_sync_.IsSynced();
+    // A pulse went missing: ask for one before the fit gets too old.
+    bool overdue = synced && get_time_since_boot_ms() - last_sync_point_timestamp_ms_ > ObjectDictionary::kSyncPulseOverdueMs;
+    return ObjectDictionary::MLATSyncFlags(synced, time_sync_.WantsPoint() || overdue);
 }
 
 bool SubGHzRadio::DeInit() {
@@ -361,9 +369,9 @@ void SubGHzRadio::HandleRxCommandEnd() {
 
 bool SubGHzRadio::Update() {
     if (time_sync_.GetNumSyncPoints() > 0 &&
-        get_time_since_boot_ms() - last_sync_point_timestamp_ms_ > kSyncPointMaxAgeMs) {
+        get_time_since_boot_ms() - last_sync_point_timestamp_ms_ > ObjectDictionary::kSyncPointMaxAgeMs) {
         CONSOLE_WARNING("SubGHzRadio::Update", "No sync pulse for %lu ms: sub-GHz timestamps stop until the next one.",
-                        kSyncPointMaxAgeMs);
+                        ObjectDictionary::kSyncPointMaxAgeMs);
         uintptr_t key = HwiP_disable();
         time_sync_.Restart();
         HwiP_restore(key);

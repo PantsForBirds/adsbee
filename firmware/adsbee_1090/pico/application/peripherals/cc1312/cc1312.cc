@@ -176,7 +176,7 @@ bool CC1312::Update() {
 
 void CC1312::BlockSyncPulses() {
     adsbee.sync_pulse_service.Block();
-    adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberCC1312, 0);
+    adsbee.sync_pulse_service.ReportAbsent(SyncPulseService::kSubscriberCC1312);
 }
 
 void CC1312::AllowSyncPulsesInReset() {
