@@ -2123,6 +2123,69 @@ body.dark-mode #map .leaflet-tile-pane {
     cursor: not-allowed;
 }
 
+/* "Open device page": the device's own http:// page, for browsers that block ws:// from an https page. Secondary
+   (outlined) normally, yellow when it is the way in. */
+.device-page-link,
+.device-page-btn {
+    font-size: 0.78rem;
+    font-family: Arial, sans-serif;
+    padding: 3px 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    text-decoration: none;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.device-page-link:hover,
+.device-page-btn:hover {
+    border-color: #ffcb00;
+}
+
+.device-page-link.prominent,
+.device-page-btn.prominent {
+    background: #ffcb00;
+    border-color: #ffcb00;
+    color: #000;
+    font-weight: bold;
+}
+
+.device-page-hint {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: Arial, sans-serif;
+    font-size: 0.85rem;
+    padding: 6px 16px;
+    flex-shrink: 0;
+}
+
+.device-page-hint.warn {
+    border-left: 4px solid #f59e0b;
+}
+
+.device-page-hint .device-page-btn {
+    font-size: 0.85rem;
+    padding: 4px 12px;
+}
+
+.device-page-hint-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
 /* Room for the firmware chip on narrow windows. */
 @media (max-width: 760px) {
     .host-input {
@@ -2171,6 +2234,8 @@ body.dark-mode #map .leaflet-tile-pane {
                 title="Device hostname or IP address. A serial number (typed, pasted or from a barcode scanner) becomes its default hostname."
                 spellcheck="false" autocomplete="off">
             <button id="scan-btn" class="scan-btn" title="Scan the QR code on the device's serial label">Scan</button>
+            <a id="device-page-link" class="device-page-link" target="_blank" rel="noopener" style="display: none"
+                title="Opens the device's own web page (same network)" aria-label="Open device page">Device page</a>
             <button id="connect-btn" class="connect-btn">Connect</button>
             <span id="fw-check"></span>
             <span class="theme-toggle-label">&#9788;</span>
@@ -2186,6 +2251,15 @@ body.dark-mode #map .leaflet-tile-pane {
     <div id="browser-banner" class="browser-banner">
         This browser has no Web Serial API (use Chrome or Edge for USB serial) &mdash; network connections still
         work.
+    </div>
+
+    <!-- Device page hint: after a scan, when the network sockets fail, or when this browser blocks them -->
+    <div id="device-page-hint" class="device-page-hint" role="status">
+        <span id="device-page-hint-text"></span>
+        <a id="device-page-hint-btn" class="device-page-btn" target="_blank" rel="noopener"
+            title="Opens the device's own web page (same network)">Open device page</a>
+        <button id="device-page-hint-close" class="device-page-hint-close" title="Dismiss"
+            aria-label="Dismiss">&times;</button>
     </div>
 
     <!-- Console tab -->
@@ -4346,6 +4420,10 @@ body.dark-mode #map .leaflet-tile-pane {
         const SERIAL_BAUD = 115200;
         const LAST_HOST_KEY = 'adsbee1090LastHost';
         const LAST_MODE_KEY = 'adsbee1090LastMode';
+        // Network connect: show the device page hint when the first attempt fails or after this long without a socket,
+        // and after a drop once the device has been gone this long (an OTA reboot takes ~15 s).
+        const NET_FAIL_HINT_MS = 5000;
+        const NET_DROP_HINT_MS = 30000;
 
         // BEGIN LABEL_HOSTNAME
         // Serial label (QR code, barcode scanner, typed) to the device's default mDNS hostname. The firmware builds it
@@ -4357,6 +4435,37 @@ body.dark-mode #map .leaflet-tile-pane {
             return m ? `adsbee1090-${m[1].slice(1)}${m[2]}.local`.toLowerCase() : null;
         }
         // END LABEL_HOSTNAME
+
+        // BEGIN DEVICE_PAGE
+        // "http://adsbee.local/", "adsbee.local:80/x" → "adsbee.local"(:port kept).
+        function normalizeHost(raw) {
+            let h = (raw || '').trim();
+            h = h.replace(/^[a-z]+:\/\//i, '');
+            h = h.replace(/[/?#].*$/, '');
+            return h;
+        }
+
+        // The device's own web page (served by its ESP32) for what is in the host box: a hostname, IP (v4 or v6), any
+        // :port kept, or a serial label. Null if there is no usable host.
+        function devicePageUrl(raw) {
+            let host = labelToHostname(raw) || normalizeHost(raw);
+            if (!host) return null;
+            if (/^[0-9a-f]*:[0-9a-f:]*:[0-9a-f:.]*$/i.test(host)) host = `[${host}]`;     // bare IPv6
+            const label = '[a-z0-9]([a-z0-9-]*[a-z0-9])?';
+            const ok = new RegExp(`^(\\[[0-9a-f:.]+\\]|${label}(\\.${label})*\\.?)(:\\d{1,5})?$`, 'i');
+            return ok.test(host) ? `http://${host}/` : null;
+        }
+
+        // True where an https page can't open ws:// sockets to a device at all: Safari, and every iPhone/iPad browser
+        // (they all use WebKit). WebKit treats them as blocked mixed content; the device's own http:// page works.
+        function networkBlockedByPage(protocol, userAgent, maxTouchPoints) {
+            if (protocol !== 'https:') return false;
+            const ua = String(userAgent || '');
+            if (/iPhone|iPad|iPod/.test(ua)) return true;
+            if (/Macintosh/.test(ua) && maxTouchPoints > 1) return true;       // iPadOS asks for desktop pages
+            return /Version\/[\d.]+.* Safari\//.test(ua) && !/Chrome|Chromium|Edg|OPR|Firefox|Android/.test(ua);
+        }
+        // END DEVICE_PAGE
 
         // URLs are filled in by connectionManager when a network connection is
         // opened; the reconnect delay is referenced by the WebSocket classes ported
@@ -9585,7 +9694,7 @@ class Settings1090Transport {
                 }
                 this.close();
                 appendToTerminal(`Serial label ${text.trim().toUpperCase()} → ${host}\n`);
-                connectionManager.connectToHost(host);
+                connectionManager.connectToHost(host, { fromLabel: true });
             },
         };
 
@@ -9603,6 +9712,11 @@ class Settings1090Transport {
             _wantReconnect: false,
             networkSettingsTransport: null,
             _netDotTimer: null,
+            _netFailed: false,         // the sockets haven't come up (or dropped and stayed down): device page is the way in
+            _netDownSince: null,
+            _netEverOpen: false,
+            _hintReason: null,         // 'label' | 'blocked' | 'failed' while the device page hint shows
+            _hintDismissed: false,     // closed with its ×: stays closed until the next connect
             els: {},
 
             init() {
@@ -9612,7 +9726,18 @@ class Settings1090Transport {
                     modeSel: document.getElementById('conn-mode'),
                     hostInput: document.getElementById('host-input'),
                     scanBtn: document.getElementById('scan-btn'),
+                    pageLink: document.getElementById('device-page-link'),
+                    hint: document.getElementById('device-page-hint'),
+                    hintText: document.getElementById('device-page-hint-text'),
+                    hintBtn: document.getElementById('device-page-hint-btn'),
                 };
+                this.blockedByPage = networkBlockedByPage(location.protocol, navigator.userAgent,
+                    navigator.maxTouchPoints);
+                document.getElementById('device-page-hint-close').addEventListener('click', () => {
+                    this._hintDismissed = true;
+                    this._hideHint();
+                });
+                this.els.hostInput.addEventListener('input', () => this._updateDevicePage());
                 const serialSupported = ('serial' in navigator);
                 if (!serialSupported) {
                     document.getElementById('browser-banner').style.display = 'block';
@@ -9641,7 +9766,10 @@ class Settings1090Transport {
                 // A pasted serial shows as its hostname right away.
                 this.els.hostInput.addEventListener('paste', () => setTimeout(() => {
                     const host = labelToHostname(this.els.hostInput.value);
-                    if (host) this.els.hostInput.value = host;
+                    if (host) {
+                        this.els.hostInput.value = host;
+                        this._showHint(this.blockedByPage ? 'blocked' : 'label');
+                    }
                 }, 0));
                 if (serialSupported) {
                     // One-click reconnect: remember a previously-granted port.
@@ -9668,6 +9796,80 @@ class Settings1090Transport {
                 const network = this.els.modeSel.value === 'network';
                 this.els.hostInput.style.display = network ? '' : 'none';
                 this.els.scanBtn.style.display = network ? '' : 'none';
+                this._updateDevicePage();
+            },
+
+            // ─── Open device page ───
+            // The tab bar link shows in network mode once a host is entered; it turns yellow (the next step) when this
+            // browser blocks the sockets or they have failed. The hint bar below the tab bar says why.
+            _devicePageUrl() {
+                if (this.els.modeSel.value !== 'network') return null;
+                return devicePageUrl(this.state === 'connected' && this.mode === 'network'
+                    ? this.host : this.els.hostInput.value);
+            },
+
+            _updateDevicePage() {
+                const url = this._devicePageUrl();
+                const { pageLink, hintBtn } = this.els;
+                pageLink.style.display = url ? '' : 'none';
+                if (url) {
+                    pageLink.href = url;
+                    hintBtn.href = url;
+                } else {
+                    pageLink.removeAttribute('href');
+                    this._hideHint();
+                }
+                pageLink.classList.toggle('prominent', !!url && (this.blockedByPage || this._netFailed));
+                // Where the sockets can't work, say so as soon as there is a host (the tab bar can be off-screen on phones).
+                if (url && this.blockedByPage && !this._hintReason && !this._hintDismissed) this._showHint('blocked');
+            },
+
+            _showHint(reason) {
+                const url = this._devicePageUrl();
+                if (!url) return;
+                const host = url.slice('http://'.length, -1);
+                this._hintReason = reason;
+                this.els.hintText.textContent = {
+                    label: `Device ${host}. You can also open its own web page (same network).`,
+                    blocked: 'This browser doesn\'t let an https page connect to the device. ' +
+                        'Open the device\'s own page instead (same network).',
+                    failed: `Can't reach ${host} from this page. ` +
+                        'Open the device\'s own page (same network), or check the hostname.',
+                }[reason];
+                this.els.hintBtn.classList.toggle('prominent', reason !== 'label');
+                this.els.hint.classList.toggle('warn', reason !== 'label');
+                this.els.hint.style.display = 'flex';
+                this._updateDevicePage();
+            },
+
+            _hideHint() {
+                this._hintReason = null;
+                this.els.hint.style.display = 'none';
+            },
+
+            // Called every 500 ms while network-connected with the console socket's state.
+            _trackNetworkHealth(open, closed) {
+                const now = Date.now();
+                if (open) {
+                    this._netEverOpen = true;
+                    this._netDownSince = null;
+                    if (this._netFailed) {
+                        this._netFailed = false;
+                        this._updateDevicePage();
+                    }
+                    if (this._hintReason === 'label' || this._hintReason === 'failed') this._hideHint();
+                    return;
+                }
+                if (this._netDownSince === null) this._netDownSince = now;
+                // A first attempt that closed has failed; after a drop, give a rebooting device time to come back.
+                const failed = this._netEverOpen
+                    ? now - this._netDownSince >= NET_DROP_HINT_MS
+                    : closed || now - this._netDownSince >= NET_FAIL_HINT_MS;
+                if (failed && !this._netFailed) {
+                    this._netFailed = true;
+                    this._updateDevicePage();
+                    if (this._hintReason !== 'blocked') this._showHint(this.blockedByPage ? 'blocked' : 'failed');
+                }
             },
 
             _lockControls(locked) {
@@ -9719,8 +9921,9 @@ class Settings1090Transport {
             },
 
             // Network connection to a hostname from a scanned label.
-            connectToHost(host) {
+            connectToHost(host, { fromLabel = false } = {}) {
                 if (this.state === 'connected') return;
+                this._viaLabel = fromLabel;
                 this.els.modeSel.value = 'network';
                 this._updateModeUI();
                 try { localStorage.setItem(LAST_MODE_KEY, 'network'); } catch (_) { }
@@ -9741,6 +9944,12 @@ class Settings1090Transport {
                 this.host = host;
                 this.els.hostInput.value = host;
                 try { localStorage.setItem(LAST_HOST_KEY, host); } catch (_) { }
+                const viaLabel = !!fromLabel || this._viaLabel;
+                this._viaLabel = false;
+                this._hintDismissed = false;
+                this._netFailed = false;
+                this._netEverOpen = false;
+                this._netDownSince = Date.now();
                 WS_CONFIG.console_ws_url = `ws://${host}/console`;
                 WS_CONFIG.metrics_ws_url = `ws://${host}/metrics`;
                 WS_CONFIG.aircraft_ws_url = `ws://${host}/aircraft`;
@@ -9760,21 +9969,23 @@ class Settings1090Transport {
                 // retry loop is reconnecting.
                 this._netDotTimer = setInterval(() => {
                     if (!consoleWebSocket) return;
-                    const open = consoleWebSocket.getState() === 'OPEN';
+                    const state = consoleWebSocket.getState();
+                    const open = state === 'OPEN';
                     this._setDot(open ? 'connected' : 'reconnecting',
                         open ? `Connected to ${this.host}` : `Trying to reach ${this.host}…`);
+                    this._trackNetworkHealth(open, state === 'CLOSED');
                 }, 500);
                 this._setDot('reconnecting', `Connecting to ${host}…`);
                 appendToTerminal(`Connecting to ws://${host}/console…\n`);
+                this._updateDevicePage();
+                if (this.blockedByPage) this._showHint('blocked');
+                else if (viaLabel) this._showHint('label');
+                else this._hideHint();
                 tabController.onConnected();
             },
 
-            // "http://adsbee.local/", "adsbee.local:80/x" → "adsbee.local"(:port kept).
             _normalizeHost(raw) {
-                let h = (raw || '').trim();
-                h = h.replace(/^[a-z]+:\/\//i, '');
-                h = h.replace(/[/?#].*$/, '');
-                return h;
+                return normalizeHost(raw);
             },
 
             async disconnect() {
@@ -9813,6 +10024,7 @@ class Settings1090Transport {
                 mapWeather.clear();
                 this._lockControls(false);
                 this._setDot('', 'Disconnected');
+                this._updateDevicePage();
             },
 
             _onSerialLost() {
