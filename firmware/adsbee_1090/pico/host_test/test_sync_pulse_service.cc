@@ -344,3 +344,40 @@ TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
         EXPECT_LT(g_num_emitted, 400 / (S::kSlowIntervalMs / 1000) + 20);
     }
 }
+
+TEST(SyncPulseService, ADriftingSubscriberHalvesTheInterval) {
+    constexpr uint8_t kDrifting = kSynced | ObjectDictionary::kMLATSyncFlagDrifting;
+    g_num_emitted = 0;
+    S s(&FakeEmit);
+    s.Allow();
+    s.ReportFlags(S::kSubscriberCC1312, kSynced);
+    s.ReportFlags(S::kSubscriberESP32, kSynced);
+    std::vector<uint32_t> times = PulseTimes(s, 1000, 100'000);
+    ASSERT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
+    uint32_t t = times.back();
+    // The ESP32's crystal is warming up: each pulse it is drifting at halves the interval.
+    s.ReportFlags(S::kSubscriberESP32, kDrifting);
+    EXPECT_EQ(PulseTimes(s, 100'000, t + 15'001), std::vector<uint32_t>({t + 10'000, t + 15'000}));
+    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs / 4);
+    // Settled: kFastPulsesWhenSynced at that interval, then it doubles back up.
+    s.ReportFlags(S::kSubscriberESP32, kSynced);
+    t += 15'000;
+    uint32_t settled = t;
+    std::vector<uint32_t> expected;
+    uint32_t interval = S::kSlowIntervalMs / 4;
+    for (int i = 0; i < S::kFastPulsesWhenSynced; i++) expected.push_back(t += interval);
+    for (int i = 0; i < 4; i++) {
+        expected.push_back(t += interval);
+        interval = std::min(interval * 2, S::kSlowIntervalMs);
+    }
+    EXPECT_EQ(PulseTimes(s, settled + 10, t + 10), expected);
+    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
+    // Never faster than a pulse a second, and a subscriber that doesn't answer doesn't count.
+    s.ReportFlags(S::kSubscriberCC1312, kDrifting);
+    times = PulseTimes(s, t + 1, t + 60'000);
+    EXPECT_EQ(s.GetIntervalMs(), S::kIntervalMs);
+    s.ReportAbsent(S::kSubscriberCC1312);
+    t = times.back();
+    times = PulseTimes(s, t + 1, t + 200'000);
+    EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
+}

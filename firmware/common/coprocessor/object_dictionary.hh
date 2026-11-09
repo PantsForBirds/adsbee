@@ -161,9 +161,11 @@ class ObjectDictionary {
     enum MLATSyncFlag : uint8_t {
         kMLATSyncFlagSynced = 1 << 0,       // Packet timestamps are on the MLAT time base.
         kMLATSyncFlagPulseWanted = 1 << 1,  // One pulse now makes progress (not synced, a point skipped, or overdue).
+        kMLATSyncFlagDrifting = 1 << 2,     // Synced, but the last point missed the prediction: pulse faster.
     };
-    static constexpr uint8_t MLATSyncFlags(bool synced, bool pulse_wanted) {
-        return (synced ? kMLATSyncFlagSynced : 0) | (pulse_wanted ? kMLATSyncFlagPulseWanted : 0);
+    static constexpr uint8_t MLATSyncFlags(bool synced, bool pulse_wanted, bool drifting = false) {
+        return (synced ? kMLATSyncFlagSynced : 0) | (pulse_wanted ? kMLATSyncFlagPulseWanted : 0) |
+               (synced && drifting ? kMLATSyncFlagDrifting : 0);
     }
 
     struct __attribute__((packed)) RP2040DeviceStatus {

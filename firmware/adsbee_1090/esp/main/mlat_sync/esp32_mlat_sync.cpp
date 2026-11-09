@@ -166,7 +166,8 @@ uint8_t ESP32MLATSync::GetMLATSyncFlags() {
     // A pulse went missing: ask for one before the fit gets too old.
     bool overdue = synced && sync_point_age_ticks > static_cast<uint64_t>(ObjectDictionary::kSyncPulseOverdueMs) *
                                                         1000 * esp32_clock_math::kSystimerTicksPerUs;
-    uint8_t flags = ObjectDictionary::MLATSyncFlags(synced, time_sync_.WantsPoint() || overdue);
+    uint8_t flags =
+        ObjectDictionary::MLATSyncFlags(synced, time_sync_.WantsPoint() || overdue, time_sync_.IsDrifting());
     portEXIT_CRITICAL(&lock_);
     return flags;
 }

@@ -441,3 +441,25 @@ TEST(ESP32ClockMath, RemoteIDTimestampsEndToEnd) {
     }
     EXPECT_LE(worst_error, 48 + 24);  // 1 us of MAC clock resolution, plus the fit.
 }
+
+TEST(MLATTimeSync, APointThatMissesThePredictionMarksTheFitAsDrifting) {
+    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(0, 0));
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(4'000'000, 48'000'000));
+    EXPECT_FALSE(sync.IsDrifting());
+    // 10 s later, 1 us off the prediction (the rate moved 100 ppb): still in the fit, but drifting.
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(44'000'000, 528'000'000 + 48));
+    EXPECT_TRUE(sync.IsSynced());
+    EXPECT_TRUE(sync.IsDrifting());
+    EXPECT_FALSE(sync.WantsPoint());  // Faster pulses, not one right away.
+    // Within kDriftingResidualNs of the prediction: settled.
+    uint64_t predicted = sync.ToMLAT48MHzCounts(84'000'000);
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(84'000'000, predicted + 10));
+    EXPECT_FALSE(sync.IsDrifting());
+    // Off again, then the local clock restarts: a fresh fit isn't drifting.
+    predicted = sync.ToMLAT48MHzCounts(124'000'000);
+    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(124'000'000, predicted - 30));
+    EXPECT_TRUE(sync.IsDrifting());
+    sync.Restart();
+    EXPECT_FALSE(sync.IsDrifting());
+}

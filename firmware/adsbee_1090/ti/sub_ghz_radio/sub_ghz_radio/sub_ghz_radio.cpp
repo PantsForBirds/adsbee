@@ -272,7 +272,7 @@ uint8_t SubGHzRadio::GetMLATSyncFlags() const {
     // A pulse went missing: ask for one before the fit gets too old.
     bool overdue =
         synced && get_time_since_boot_ms() - last_sync_point_timestamp_ms_ > ObjectDictionary::kSyncPulseOverdueMs;
-    return ObjectDictionary::MLATSyncFlags(synced, time_sync_.WantsPoint() || overdue);
+    return ObjectDictionary::MLATSyncFlags(synced, time_sync_.WantsPoint() || overdue, time_sync_.IsDrifting());
 }
 
 bool SubGHzRadio::DeInit() {

@@ -17,7 +17,9 @@
  * (kSyncPulseMinIntervalMs) when one asks (boot, coprocessor or sub-GHz receiver restart, a point skipped or overdue).
  * Once all are synced, kFastPulsesWhenSynced more at a second, then the interval doubles up to
  * kSyncPulseSlowIntervalMs: the fit's rate then spans a long baseline before the gaps get long, and pulses are only as
- * frequent as crystal drift needs.
+ * frequent as crystal drift needs. A subscriber whose last point missed the prediction (drifting: its crystal's rate is
+ * changing fast, as for the first minutes after a boot) halves the interval, down to kIntervalMs, and restarts the
+ * ramp, so the cadence follows the drift.
  *
  * SYNC is also the CC1312 bootloader backdoor (high at reset = bootloader), so the CC1312 driver gates the pulses:
  * Allow() once its application has answered a status read or while it holds the CC1312 in reset, Block() before any
@@ -113,7 +115,10 @@ class SyncPulseService {
             Fence();
             requested_ = true;
             if (AllSynced()) {
-                if (num_pulses_synced_ < kFastPulsesWhenSynced) {
+                if (AnyDrifting()) {
+                    interval_ms_ = interval_ms_ / 2 > kIntervalMs ? interval_ms_ / 2 : kIntervalMs;
+                    num_pulses_synced_ = 0;
+                } else if (num_pulses_synced_ < kFastPulsesWhenSynced) {
                     num_pulses_synced_++;
                 } else {
                     interval_ms_ = interval_ms_ < kSlowIntervalMs / 2 ? interval_ms_ * 2 : kSlowIntervalMs;
@@ -177,6 +182,13 @@ class SyncPulseService {
             if (present_[i] && !(flags_[i] & ObjectDictionary::kMLATSyncFlagSynced)) return false;
         }
         return true;
+    }
+
+    bool AnyDrifting() const {
+        for (uint16_t i = 0; i < kNumSubscribers; i++) {
+            if (present_[i] && (flags_[i] & ObjectDictionary::kMLATSyncFlagDrifting)) return true;
+        }
+        return false;
     }
 
     bool AnyPulseWanted() const {
