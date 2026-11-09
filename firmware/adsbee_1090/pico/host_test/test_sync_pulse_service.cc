@@ -1,9 +1,9 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 #include <vector>
-#include <algorithm>
-#include <cstdlib>
 
 #include "gtest/gtest.h"
 #include "mlat_time_sync.hh"
@@ -340,6 +340,7 @@ TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
         EXPECT_TRUE(copro[S::kSubscriberESP32].sync.IsSynced());
         EXPECT_EQ(s.GetIntervalMs(), S::kSlowIntervalMs);
         EXPECT_LE(max_error, 12);  // One radio timer tick.
-        EXPECT_LT(g_num_emitted, 40);
+        // A pulse a second would be ~400.
+        EXPECT_LT(g_num_emitted, 400 / (S::kSlowIntervalMs / 1000) + 20);
     }
 }

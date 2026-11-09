@@ -82,7 +82,8 @@ class MLATTimeSync {
                         rate_error_ppb <= kMaxRateErrorPPB && rate_error_ppb >= -kMaxRateErrorPPB;
             uint32_t interval_us = local_ticks / (kMLATTicksPerUs / mlat_ticks_per_local_tick_);
             if (fits && IsSynced() && rate_valid_) {
-                int64_t predicted_mlat_ticks = expected_mlat_ticks + expected_mlat_ticks * rate_error_ppb_ / 1'000'000'000;
+                int64_t predicted_mlat_ticks =
+                    expected_mlat_ticks + expected_mlat_ticks * rate_error_ppb_ / 1'000'000'000;
                 int64_t residual_ticks = mlat_ticks - predicted_mlat_ticks;
                 int64_t max_residual_ticks =
                     static_cast<int64_t>(kMaxResidualUs) * kMLATTicksPerUs +
@@ -151,11 +152,11 @@ class MLATTimeSync {
     uint16_t points_needed_;
     uint16_t num_points_ = 0;
     bool rate_valid_ = false;
-    bool skipped_point_ = false;
-    uint32_t rate_span_us_ = 0;  // Length of the sync intervals the rate estimate stands for, up to kRateMemoryUs.
     uint32_t local_ = 0;
     uint64_t mlat_48mhz_counts_ = 0;
     int64_t rate_error_ppb_ = 0;  // MLAT clock rate relative to the nominal ratio, in parts per billion.
+    uint32_t rate_span_us_ = 0;   // Length of the sync intervals the rate estimate stands for, up to kRateMemoryUs.
+    bool skipped_point_ = false;
 };
 
 /**
@@ -165,9 +166,8 @@ class MLATTimeSync {
  * The RP2040 writes a pulse's message before it sends the next pulse, so the last edge is the message's when exactly
  * one edge per pulse came in since the previous message. That holds for messages that arrive late (a main loop pass of
  * a second or more under output overload), up to max_matched_edge_age_us. With no such history (the first message,
- * either side restarted, or a missed edge or message), a single edge
- * (or as many edges as pulses) pairs only if it is younger than max_edge_age_us, which is shorter than the time
- * between pulses: an older edge is a previous pulse's.
+ * either side restarted, or a missed edge or message), a single edge (or as many edges as pulses) pairs only if it is
+ * younger than max_edge_age_us, which is shorter than the time between pulses: an older edge is a previous pulse's.
  */
 class SyncPulsePairing {
    public:

@@ -14,7 +14,7 @@
  * and rate, and sends packets already on the MLAT time base.
  *
  * Cadence: a pulse a second while a subscriber that answers status reads has no fit, and one as soon as allowed
- * (kSyncPulseMinIntervalMs) when one asks (boot, coprocessor restart, SUBG_MODE change, a point skipped or overdue).
+ * (kSyncPulseMinIntervalMs) when one asks (boot, coprocessor or sub-GHz receiver restart, a point skipped or overdue).
  * Once all are synced, kFastPulsesWhenSynced more at a second, then the interval doubles up to
  * kSyncPulseSlowIntervalMs: the fit's rate then spans a long baseline before the gaps get long, and pulses are only as
  * frequent as crystal drift needs.

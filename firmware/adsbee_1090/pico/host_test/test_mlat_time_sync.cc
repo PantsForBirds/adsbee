@@ -1,6 +1,9 @@
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <random>
+#include <vector>
 
 #include "esp32_clock_math.hh"
 #include "gtest/gtest.h"
@@ -60,7 +63,8 @@ TEST(MLATTimeSync, TracksTwoCrystalsToWellUnderAMicrosecond) {
             int64_t worst_error = 0;
             for (int pulse = 0; pulse < 600; pulse++) {
                 double t_us = pulse * 1'000'000.0 + jitter_us(rng) + 0.3;
-                EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(clocks.Local(t_us), clocks.Mlat(t_us + jitter_us(rng))));
+                EXPECT_EQ(MLATTimeSync::kAdded,
+                          sync.AddSyncPoint(clocks.Local(t_us), clocks.Mlat(t_us + jitter_us(rng))));
                 if (pulse < 8) continue;  // Let the rate estimate settle.
                 for (int i = 0; i < 20; i++) {
                     double packet_us = t_us + within_s(rng);  // Before the next pulse.
@@ -171,6 +175,46 @@ TEST(MLATTimeSync, OneBadPointOnceSyncedIsSkipped) {
     EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
     EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(24'000'000, 288'000'000 + 2880 + 40 * 48));
     EXPECT_TRUE(sync.IsSynced());
+}
+
+TEST(MLATTimeSync, SlowPulsesAddLittleToTheCaptureNoise) {
+    // Two crystals whose rate wanders like the bench 1090U's (a random walk, ~45 ppb rms change per minute, around
+    // -52 ppm), the radio timer capture quantized to 0.25 us. Pulses every second, then the SyncPulseService ramp to
+    // the slow interval. Packets in between keep within a fraction of a microsecond (0.155 us rms here, ~0.1 us of it
+    // the quantized capture and packet times).
+    std::mt19937 rng(11);
+    std::normal_distribution<double> step_ppb(0, 45.0 / std::sqrt(60.0));
+    const double kRatTicksPerUs = 4;
+    double rate_ppb = -52'000, t_us = 0, local_us = 0;  // local_us: the radio timer's view of t_us.
+    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    auto local = [&](double l_us) { return static_cast<uint32_t>(static_cast<uint64_t>(l_us * kRatTicksPerUs)); };
+    auto mlat = [&](double us) { return static_cast<uint64_t>(us * 48); };
+    std::vector<double> errors_us;
+    uint32_t interval_ms = 1000;
+    for (int pulse = 0; t_us < 3600e6; pulse++) {
+        sync.AddSyncPoint(local(local_us), mlat(t_us));
+        if (pulse >= 6) interval_ms = std::min<uint32_t>(interval_ms * 2, ObjectDictionary::kSyncPulseSlowIntervalMs);
+        for (uint32_t ms = 0; ms < interval_ms; ms++) {
+            // 1 ms steps: the rate walks, the radio timer runs at (1 + rate) of true time... seen from the MLAT clock.
+            rate_ppb += step_ppb(rng) / std::sqrt(1000.0);
+            t_us += 1000;
+            local_us += 1000 / (1 + rate_ppb * 1e-9);
+            if (pulse > 20 && ms % 97 == 0) {
+                errors_us.push_back(
+                    (static_cast<double>(sync.ToMLAT48MHzCounts(local(local_us))) - static_cast<double>(mlat(t_us))) /
+                    48);
+            }
+        }
+    }
+    double sum_sq = 0, worst = 0;
+    for (double e : errors_us) {
+        sum_sq += e * e;
+        worst = std::max(worst, std::abs(e));
+    }
+    double rms = std::sqrt(sum_sq / errors_us.size());
+    printf("  %zu packets: rms %.3f us, max %.3f us\n", errors_us.size(), rms, worst);
+    EXPECT_LT(rms, 0.2);
+    EXPECT_LT(worst, 1.0);
 }
 
 TEST(MLATTimeSync, PointsFarApartOrBackwardsRestart) {

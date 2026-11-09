@@ -119,8 +119,8 @@ void ESP32MLATSync::HandleSyncPulse(uint64_t mlat_48mhz_counts, uint32_t pulse_n
     if (result != MLATTimeSync::kSkipped) {
         last_sync_point_systimer_ = edge_systimer;
     }
-    SyncEvent event = result == MLATTimeSync::kSkipped     ? kSyncEventSkipped
-                      : result == MLATTimeSync::kRestarted ? kSyncEventRestarted
+    SyncEvent event = result == MLATTimeSync::kSkipped       ? kSyncEventSkipped
+                      : result == MLATTimeSync::kRestarted   ? kSyncEventRestarted
                       : time_sync_.IsSynced() && !was_synced ? kSyncEventSynced
                                                              : kSyncEventNone;
     if (event != kSyncEventNone) {

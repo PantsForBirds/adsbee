@@ -143,11 +143,15 @@ class ObjectDictionary {
     // least kSyncPulseMinIntervalMs apart.
     static constexpr uint32_t kSyncPulseMaxAgeMs = 250;
     static constexpr uint32_t kSyncPulseMinIntervalMs = 300;
-    // Age limit when one edge per pulse came in since the previous SyncPulse (SyncPulsePairing). Covers main loop passes
-    // of a few seconds under output overload (the CC1312 gets its count a pass after the ESP32).
+    // Age limit when one edge per pulse came in since the previous SyncPulse (SyncPulsePairing). Covers main loop
+    // passes of a few seconds under output overload (the CC1312 gets its count a pass after the ESP32).
     static constexpr uint32_t kSyncPulseMaxMatchedAgeMs = 10'000;
     static constexpr uint32_t kSyncPulseIntervalMs = 1000;  // While a coprocessor has no fit.
-    static constexpr uint32_t kSyncPulseSlowIntervalMs = 30'000;
+    // Crystal drift on a 1090U (t-1185, one hour of 1 Hz pulses replayed at longer intervals): the CC1312 and ESP32
+    // rates against the RP2040 move up to ~0.2 and ~0.5 ppm from one minute to the next with board temperature. At
+    // 10 s the fit adds ~0.06 us rms to UAT timestamps (0.30 us p99 against 0.24 us with pulses every second); at 30 s
+    // it would add ~1 us p99, more than the UAT receiver's own jitter.
+    static constexpr uint32_t kSyncPulseSlowIntervalMs = 10'000;
     // A coprocessor with no sync point for this long asks for a pulse (one went missing).
     static constexpr uint32_t kSyncPulseOverdueMs = kSyncPulseSlowIntervalMs + kSyncPulseSlowIntervalMs / 2;
     // A fit this long without a new sync point is dropped (pulses stopped). At most MLATTimeSync::kMaxExtrapolationUs.
