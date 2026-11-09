@@ -4,6 +4,7 @@
 
 #include "cc.h"  // For endiannness swapping.
 #include "comms.hh"
+#include "dhcpserver/dhcpserver.h"  // dhcps_offer_t
 #include "esp_event.h"
 #include "esp_mac.h"
 #include "hal.hh"
@@ -295,6 +296,25 @@ void CommsManager::WiFiAccessPointTask(void* pvParameters) {
     close(sock);
 }
 
+// AP clients get no default route or DNS server, so phones keep cellular for the internet. The subnet route from the
+// lease still reaches the AP IP and GDL90 on UDP 4000. Needs CONFIG_LWIP_DHCPS_ADD_DNS off, or the server adds its own
+// IP as DNS anyway.
+static void WiFiAPOfferLocalOnly(esp_netif_t* ap_netif) {
+    dhcps_offer_t offer = 0;
+    // Options can only be set while the server is stopped. Before the AP is up, start only arms it for the AP start.
+    esp_err_t err = esp_netif_dhcps_stop(ap_netif);
+    if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        CONSOLE_ERROR("CommsManager::WiFiAPOfferLocalOnly", "Stopping DHCP server failed: %s.", esp_err_to_name(err));
+        return;
+    }
+    WiFiCheck(esp_netif_dhcps_option(ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS, &offer,
+                                     sizeof(offer)),
+              "Clearing DHCP router offer");
+    WiFiCheck(esp_netif_dhcps_option(ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof(offer)),
+              "Clearing DHCP DNS offer");
+    WiFiCheck(esp_netif_dhcps_start(ap_netif), "Starting DHCP server");
+}
+
 bool CommsManager::WiFiInit() {
     // Locals so a rejected interface doesn't change the settings comparison in SettingsManager::Apply().
     bool ap_enabled = wifi_ap_enabled, sta_enabled = wifi_sta_enabled;
@@ -319,8 +339,9 @@ bool CommsManager::WiFiInit() {
         }
     }
 
-    esp_netif_t* wifi_ap_netif_ = esp_netif_create_default_wifi_ap();
+    wifi_ap_netif_ = esp_netif_create_default_wifi_ap();
     assert(wifi_ap_netif_);
+    WiFiAPOfferLocalOnly(wifi_ap_netif_);
     // Same as esp_netif_create_default_wifi_sta(), with the IP mode applied.
     esp_netif_inherent_config_t sta_base = ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
     ApplyIPModeToNetifConfig(sta_base, wifi_sta_ipv6);
