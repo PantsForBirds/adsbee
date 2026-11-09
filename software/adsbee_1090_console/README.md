@@ -22,6 +22,24 @@ server needed), pick **USB Serial** or **Network** in the tab bar, and click
   the device-hosted page uses. The sockets keep retrying on their own (amber
   status dot) until the device is reachable. The host is remembered for the
   next session.
+- **Scan** (network mode): reads the QR code on the device's serial label with
+  the camera (rear camera on phones) and connects to the device's default
+  hostname. A serial typed or pasted into the host box, or typed by a USB
+  barcode scanner (ending in Enter), is converted the same way. The label
+  `NNNNNNNNNR-YYYYMMDD-VVXXXX` maps to `adsbee1090-` + `YYYMMDD` (the date
+  without its first digit) + `VVXXXX` + `.local`, e.g.
+  `000000000A-20250101-000001` → `adsbee1090-0250101000001.local`, as the
+  firmware sets it (`DeviceInfo::GetDefaultSSID` in
+  `firmware/common/settings/settings.hh`). If the camera can't be used
+  (permission denied, no camera, page not on https or `file://`), **Photo**
+  decodes a picture of the label instead. The QR is decoded with the browser's
+  `BarcodeDetector` where it has one (Chrome on Android, macOS and ChromeOS),
+  otherwise with the vendored jsQR.
+  - `.local` names need mDNS on the computer or phone: built into macOS, iOS
+    and Windows 10+, Avahi on Linux; Android support varies by version and
+    browser. The page and the device must be on the same network.
+  - A hostname changed with `AT+HOSTNAME` no longer matches the label; type it
+    instead.
 
 Serial and network reach the *same* RP2040 console — its output is mirrored to
 USB stdout and the network console simultaneously — so the terminal behaves
@@ -135,6 +153,12 @@ re-copy the marked block:
   `BEGIN/END VENDORED` markers, and `AircraftWebSocket`, `UplinkWebSocket`, `webSocketRefused()` and
   `MapWeather` are copied from `adsbee.js` (here and, `MapWeather` only, in the 1421 console);
   `test/fisb_drift.test.js` fails when a copy differs.
+- **Serial label → hostname**: `labelToHostname` between the `BEGIN/END LABEL_HOSTNAME` markers;
+  `firmware/adsbee_1090/esp/main/server/web/test/label_hostname.test.js` tests it and checks it
+  against the firmware's default-hostname test vector.
+- **jsQR 1.4.0** (Apache-2.0, https://github.com/cozmo/jsQR) is vendored inline between
+  `BEGIN/END VENDORED jsQR 1.4.0` markers: `dist/jsQR.js` from the npm package, minified with
+  terser 5.
 - **Leaflet 1.9.4** is vendored inline (BSD-2-Clause, license header kept)
   between `BEGIN/END VENDORED` markers, copied from the 1421 console.
 
