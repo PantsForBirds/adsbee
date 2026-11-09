@@ -23,6 +23,7 @@ const uint32_t kExtendedSquitterLastWordPopCount = 16;
 const uint32_t kSquitterLastWordIngestionMask = 0xFFFFFF00;
 const uint32_t kSquitterLastWordPopCount = 24;
 
+#include "core1_ram.hh"
 #include "crc.hh"
 #include "mode_s_bit_errors.hh"
 #include "mode_s_single_bit_filter.hh"
@@ -109,7 +110,7 @@ DecodedModeSPacket::DecodedModeSPacket(const char *rx_string, int16_t source, in
     ConstructModeSPacket();
 }
 
-DecodedModeSPacket::DecodedModeSPacket(const RawModeSPacket &packet_in) : raw(packet_in) { ConstructModeSPacket(); }
+CORE1_RAM_FUNC(DecodedModeSPacket::DecodedModeSPacket)(const RawModeSPacket &packet_in) : raw(packet_in) { ConstructModeSPacket(); }
 
 DecodedModeSPacket::DownlinkFormat DecodedModeSPacket::GetDownlinkFormatEnum() {
     switch (downlink_format) {
@@ -172,7 +173,7 @@ uint16_t DecodedModeSPacket::DumpPacketBuffer(uint8_t to_buffer[kMaxPacketLenWor
     return bytes_written;
 }
 
-uint32_t DecodedModeSPacket::CalculateCRC24(uint16_t packet_len_bits) const {
+uint32_t CORE1_RAM_FUNC(DecodedModeSPacket::CalculateCRC24)(uint16_t packet_len_bits) const {
     // Digest the 32-bit word packet buffer into a byte buffer.
     uint16_t packet_len_bytes = packet_len_bits / kBitsPerByte;
     uint8_t raw_buffer[packet_len_bytes];
@@ -181,13 +182,13 @@ uint32_t DecodedModeSPacket::CalculateCRC24(uint16_t packet_len_bits) const {
     return crc24(raw_buffer, packet_len_bytes - 3);  // Don't include the CRC itself.
 }
 
-bool DecodedModeSPacket::IsSingleBitCorrectable() const {
+bool CORE1_RAM_FUNC(DecodedModeSPacket::IsSingleBitCorrectable)() const {
     return !is_valid && raw.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
            (downlink_format == kDownlinkFormatExtendedSquitter ||
             downlink_format == kDownlinkFormatExtendedSquitterNonTransponder);
 }
 
-int16_t DecodedModeSPacket::CorrectSingleBitError() {
+int16_t CORE1_RAM_FUNC(DecodedModeSPacket::CorrectSingleBitError)() {
     if (!IsSingleBitCorrectable()) {
         return -1;
     }
@@ -209,7 +210,7 @@ int16_t DecodedModeSPacket::CorrectSingleBitError() {
     return bit_flip_index;
 }
 
-bool DecodedModeSPacket::CorrectTwoBitError() {
+bool CORE1_RAM_FUNC(DecodedModeSPacket::CorrectTwoBitError)() {
     if (!IsSingleBitCorrectable() || !ModeSBitErrors::MayBeOneOrTwoBitError(crc_syndrome)) {
         return false;
     }
@@ -229,7 +230,7 @@ bool DecodedModeSPacket::CorrectTwoBitError() {
     return true;
 }
 
-void DecodedModeSPacket::ConstructModeSPacket() {
+void CORE1_RAM_FUNC(DecodedModeSPacket::ConstructModeSPacket)() {
     if (raw.buffer_len_bytes != RawModeSPacket::kExtendedSquitterPacketLenBytes &&
         raw.buffer_len_bytes != RawModeSPacket::kSquitterPacketLenBytes) {
         return;  // Invalid length; leave is_valid as false.

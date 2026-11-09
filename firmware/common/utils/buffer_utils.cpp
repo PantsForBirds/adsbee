@@ -1,4 +1,5 @@
 #include "buffer_utils.hh"
+#include "core1_ram.hh"
 
 #include <array>
 #include <cstring>  // For strlen.
@@ -29,7 +30,7 @@ bool ByteBufferMatchesString(const uint8_t *buffer, const char *str) {
 
 // NOTE: Buffer operations are done big-endian (oldest bits are stored in the MSB), since input buffer shifts left.
 
-uint32_t Get24BitsFromWordBuffer(uint32_t first_bit_index, const uint32_t buffer[]) {
+uint32_t CORE1_RAM_FUNC(Get24BitsFromWordBuffer)(uint32_t first_bit_index, const uint32_t buffer[]) {
     return GetNBitsFromWordBuffer(24, first_bit_index, buffer);
 }
 
