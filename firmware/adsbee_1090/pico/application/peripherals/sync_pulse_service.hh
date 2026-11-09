@@ -17,9 +17,11 @@
  * Cadence: a pulse every kIntervalMs (1 s), and one as soon as allowed (kSyncPulseMinIntervalMs after the last) when a
  * coprocessor asks: boot, coprocessor or sub-GHz receiver restart, a skipped point, a dropped fit.
  *
- * A coprocessor pairs a count with the last edge it captured, so a count must reach it before the next pulse's edge.
- * Update() never requests a pulse in the call that records one (the drivers deliver it in that main loop pass), and
- * a request drops a count that hasn't been delivered.
+ * A coprocessor pairs a count with the last edge it captured, so it must handle a count before the next pulse's edge.
+ * Update() never requests a pulse in the call that records one (the drivers deliver it in that main loop pass), nor
+ * within kDeliveryGuardMs of a TakeNewPulse() delivery (the CC1312 handles its write in its main loop, after the SPI
+ * transfer; on a main loop pass longer than kIntervalMs, the next request would otherwise follow at once). A request
+ * drops a count that hasn't been delivered.
  *
  * SYNC is also the CC1312 bootloader backdoor (high at reset = bootloader), so the CC1312 driver gates the pulses:
  * Allow() once its application has answered a status read or while it holds the CC1312 in reset, Block() before any
@@ -33,6 +35,8 @@ class SyncPulseService {
 
     static constexpr uint32_t kIntervalMs = ObjectDictionary::kSyncPulseIntervalMs;
     static constexpr uint32_t kRequestTimeoutMs = 500;  // A request not served by then is dropped.
+    // No request this soon after a TakeNewPulse() delivery: the coprocessor handles the write first.
+    static constexpr uint32_t kDeliveryGuardMs = 100;
     static_assert(ObjectDictionary::kSyncPulseMinIntervalMs > ObjectDictionary::kSyncPulseMaxAgeMs);
     static_assert(ObjectDictionary::kSyncPointMaxAgeMs * 1000ull <= MLATTimeSync::kMaxExtrapolationUs);
     static_assert(ObjectDictionary::kSyncPointMaxAgeMs * 1000ull <= MLATTimeSync::kMaxSyncIntervalUs);
@@ -89,7 +93,14 @@ class SyncPulseService {
             // kIntervalMs (output overload): a request here would send the next edge before this count.
             return;
         }
+        if (delivered_since_update_) {
+            delivered_since_update_ = false;
+            delivery_timestamp_ms_ = timestamp_ms;  // At or after the delivery.
+        }
         if (!allowed_ || emitter_ == nullptr) {
+            return;
+        }
+        if (timestamp_ms - delivery_timestamp_ms_ < kDeliveryGuardMs) {
             return;
         }
         uint32_t ms_since_request = timestamp_ms - request_timestamp_ms_;
@@ -122,6 +133,7 @@ class SyncPulseService {
         }
         pulse = last_pulse_;
         delivered_pulse_num_[subscriber] = pulse.pulse_num;
+        delivered_since_update_ = true;
         return true;
     }
 
@@ -183,4 +195,6 @@ class SyncPulseService {
     bool last_pulse_current_ = false;  // No pulse requested since last_pulse_: its count may still be delivered.
     uint32_t delivered_pulse_num_[kNumSubscribers] = {};
     uint8_t flags_[kNumSubscribers] = {};
+    bool delivered_since_update_ = false;  // TakeNewPulse() gave a pulse since the last Update().
+    uint32_t delivery_timestamp_ms_ = 0;   // Update() time after the last TakeNewPulse() delivery.
 };

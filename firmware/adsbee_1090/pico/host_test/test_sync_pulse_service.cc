@@ -131,8 +131,9 @@ TEST(SyncPulseService, EverySubscriberGetsEveryPulseOnce) {
     EXPECT_EQ(cc.pulse_num, esp.pulse_num);
     EXPECT_EQ(cc.mlat_48mhz_counts, esp.mlat_48mhz_counts);
     // A subscriber that missed a pulse (link busy) gets the latest one, numbered so it can tell.
-    Pass(s, 3000);
+    Pass(s, 3000);  // No request in the Update() right after a delivery.
     Pass(s, 4000);
+    Pass(s, 5000);
     ASSERT_TRUE(s.TakeNewPulse(S::kSubscriberESP32, esp));
     EXPECT_EQ(esp.pulse_num, cc.pulse_num + 2);
     ASSERT_TRUE(s.TakeNewPulse(S::kSubscriberCC1312, cc));
@@ -180,15 +181,21 @@ TEST(SyncPulseService, NoNewPulseInThePassThatRecordsOne) {
     EXPECT_EQ(pulse.pulse_num, 1u);
     // The CC1312 doesn't take it in time: it is dropped when the next pulse is requested, never sent after its edge.
     EXPECT_TRUE(s.HasNewPulse(S::kSubscriberCC1312));
-    s.Update(3400);
+    s.Update(3400);  // Right after the ESP32's delivery: the coprocessor handles it first.
+    EXPECT_TRUE(s.HasNewPulse(S::kSubscriberCC1312));
+    s.Update(3400 + S::kDeliveryGuardMs - 1);
+    s.Service();
+    EXPECT_EQ(g_num_emitted, 1);
+    s.Update(3400 + S::kDeliveryGuardMs);
     EXPECT_FALSE(s.HasNewPulse(S::kSubscriberCC1312));
     s.Service();
     EXPECT_EQ(g_num_emitted, 2);
 }
 
 // The main loop's order (adsbee.Update() with the CC1312 poll, then Update(), then esp32.Update()) on passes shorter and
-// longer than the pulse interval: a coprocessor always gets a count before the next pulse's edge, so its last edge is
-// the pulse's own, and SyncPulsePairing pairs every count it gets.
+// longer than the pulse interval: a coprocessor always handles a count before the next pulse's edge, so its last edge
+// is the pulse's own, and SyncPulsePairing pairs every count it gets. The CC1312 handles its write late (its main loop,
+// after core 1 served the pass's request); the ESP32 handles the status write before acking it.
 TEST(SyncPulseService, CountsArriveBeforeTheNextEdge) {
     for (uint32_t pass_ms : {5u, 400u, 1100u, 2500u}) {
         SCOPED_TRACE(pass_ms);
@@ -199,12 +206,17 @@ TEST(SyncPulseService, CountsArriveBeforeTheNextEdge) {
         s.ReportFlags(S::kSubscriberESP32, 0);
         SyncPulsePairing pairing[S::kNumSubscribers];
         uint32_t num_paired[S::kNumSubscribers] = {};
-        auto take = [&](S::Subscriber subscriber) {
-            ObjectDictionary::SyncPulse pulse;
-            if (!s.TakeNewPulse(subscriber, pulse)) return;
+        ObjectDictionary::SyncPulse cc_pending;
+        bool cc_has_pending = false;
+        auto take = [&] { cc_has_pending = s.TakeNewPulse(S::kSubscriberCC1312, cc_pending); };
+        auto cc_handle = [&] {
+            if (!cc_has_pending) return;
+            cc_has_pending = false;
             uint16_t edge_count = static_cast<uint16_t>(g_num_emitted.load());
-            EXPECT_EQ(edge_count, pulse.pulse_num);  // The last edge is this pulse's.
-            if (pairing[subscriber].Pair(edge_count, pulse.pulse_num, 0, 1, 1)) num_paired[subscriber]++;
+            EXPECT_EQ(edge_count, cc_pending.pulse_num);  // The last edge is this pulse's.
+            if (pairing[S::kSubscriberCC1312].Pair(edge_count, cc_pending.pulse_num, 0, 1, 1)) {
+                num_paired[S::kSubscriberCC1312]++;
+            }
         };
         // The ESP32 gets the pulse in its status write, every pass here (every ~100 ms on the device), and takes each
         // pulse_num once.
@@ -219,12 +231,13 @@ TEST(SyncPulseService, CountsArriveBeforeTheNextEdge) {
                 num_paired[S::kSubscriberESP32]++;
             }
         };
-        for (uint32_t t = 1000; t < 60'000; t += pass_ms) {
-            take(S::kSubscriberCC1312);  // In adsbee.Update().
+        for (uint32_t t = 1000; t < 120'000; t += pass_ms) {
+            take();  // In adsbee.Update().
             s.Update(t);
             status();     // esp32.Update().
             s.Service();  // Core 1 serves the request at once.
             status();     // A status written after the next edge carries no pulse.
+            cc_handle();  // The CC1312's main loop gets to the write.
         }
         EXPECT_GT(g_num_emitted, 10);
         EXPECT_GT(num_paired[S::kSubscriberESP32], 10u);
@@ -304,8 +317,9 @@ TEST(SyncPulseService, TheStatusCarriesTheLastPulseUntilTheNextIsRequested) {
 }
 
 // The whole path under output overload: main loop passes of 1.1 and 2.5 s. The CC1312 gets its count by write in the
-// pass after its edge, the ESP32 in its status writes (every pass here). Both sync, never restart, and keep timestamps
-// well under a microsecond.
+// pass after the one that records it and handles it late, after core 1 served that pass (as on the bench, where pulse
+// N's count then paired with pulse N+1's edge); the ESP32 gets it in its status writes (every pass here). Both pair
+// every pulse, never skip or restart, and keep timestamps well under a microsecond.
 TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
     for (uint32_t pass_ms : {10u, 1100u, 2500u}) {
         SCOPED_TRACE(pass_ms);
@@ -326,16 +340,26 @@ TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
         int max_error = 0;
         uint32_t esp32_last_pulse_num = 0;
         int num_esp32_points = 0;
+        ObjectDictionary::SyncPulse cc_pending;
+        bool cc_has_pending = false;
+        int num_cc1312_points = 0;
         for (uint32_t t = 1000; t < 400'000; t += pass_ms) {
-            auto take = [&](S::Subscriber sub) {
-                Copro& c = copro[sub];
-                s.ReportFlags(sub, ObjectDictionary::MLATSyncFlags(c.sync.IsSynced(), c.sync.WantsPoint()));
-                ObjectDictionary::SyncPulse pulse;
-                if (!s.TakeNewPulse(sub, pulse)) return;
+            auto take = [&] {
+                Copro& c = copro[S::kSubscriberCC1312];
+                s.ReportFlags(S::kSubscriberCC1312,
+                              ObjectDictionary::MLATSyncFlags(c.sync.IsSynced(), c.sync.WantsPoint()));
+                cc_has_pending = s.TakeNewPulse(S::kSubscriberCC1312, cc_pending);
+            };
+            auto cc_handle = [&] {
+                Copro& c = copro[S::kSubscriberCC1312];
+                if (!cc_has_pending) return;
+                cc_has_pending = false;
+                ObjectDictionary::SyncPulse pulse = cc_pending;
                 uint32_t age_us = static_cast<uint32_t>((t - c.edge_ms) * 1000);
                 if (c.pairing.Pair(c.edge_count, pulse.pulse_num, age_us, ObjectDictionary::kSyncPulseMaxAgeMs * 1000,
                                    ObjectDictionary::kSyncPulseMaxMatchedAgeMs * 1000)) {
-                    EXPECT_NE(MLATTimeSync::kRestarted, c.sync.AddSyncPoint(c.edge_local, pulse.mlat_48mhz_counts));
+                    num_cc1312_points++;
+                    EXPECT_EQ(MLATTimeSync::kAdded, c.sync.AddSyncPoint(c.edge_local, pulse.mlat_48mhz_counts));
                     if (c.sync.IsSynced()) {
                         int e = static_cast<int>(static_cast<int64_t>(c.sync.ToMLAT48MHzCounts(c.edge_local)) -
                                                  static_cast<int64_t>(pulse.mlat_48mhz_counts));
@@ -354,10 +378,10 @@ TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
                 if (c.pairing.Pair(c.edge_count, pulse.pulse_num, age_us, ObjectDictionary::kSyncPulseMaxAgeMs * 1000,
                                    ObjectDictionary::kSyncPulseMaxMatchedAgeMs * 1000)) {
                     num_esp32_points++;
-                    EXPECT_NE(MLATTimeSync::kRestarted, c.sync.AddSyncPoint(c.edge_local, pulse.mlat_48mhz_counts));
+                    EXPECT_EQ(MLATTimeSync::kAdded, c.sync.AddSyncPoint(c.edge_local, pulse.mlat_48mhz_counts));
                 }
             };
-            take(S::kSubscriberCC1312);
+            take();
             s.Update(t);
             status();
             s.Service();
@@ -369,14 +393,18 @@ TEST(SyncPulseService, CoprocessorsSyncUnderOverload) {
                     c.edge_ms = t;
                 }
             }
+            cc_handle();  // After the pass's edge: the CC1312 handles its write in its main loop.
         }
         EXPECT_TRUE(copro[S::kSubscriberCC1312].sync.IsSynced());
         EXPECT_TRUE(copro[S::kSubscriberESP32].sync.IsSynced());
         EXPECT_LE(max_error, 12);  // One radio timer tick.
-        // A pulse a second, or one every two passes when a pass is longer (one records it, the next requests).
-        uint32_t expected = 399'000 / std::max<uint32_t>(1000, 2 * pass_ms);
+        // A pulse a second, or one every three passes when a pass is longer (one records it, the next delivers it to the
+        // CC1312, the third requests).
+        uint32_t expected = 399'000 / std::max<uint32_t>(1000, 3 * pass_ms);
         EXPECT_GE(static_cast<uint32_t>(g_num_emitted), expected * 9 / 10);
         EXPECT_LE(static_cast<uint32_t>(g_num_emitted), expected + 2);
-        EXPECT_GE(num_esp32_points, g_num_emitted - 2);  // The ESP32 pairs every pulse.
+        // Both pair every pulse.
+        EXPECT_GE(num_esp32_points, g_num_emitted - 2);
+        EXPECT_GE(num_cc1312_points, g_num_emitted - 2);
     }
 }
