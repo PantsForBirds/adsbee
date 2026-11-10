@@ -54,6 +54,9 @@ static const uint32_t kFeedBacklogFlushIntervalMs = 5;
 // Bytes a server sends back on a Beast feed are read in chunks of this size, a bounded number per pass.
 static const uint16_t kFeedRecvChunkBytes = 64;
 static const uint16_t kFeedRecvMaxChunksPerPass = 16;
+// While the capabilities answer can still arrive, a feed's socket is read on every pass. After that it is only drained
+// (pings, a late answer) at this interval: a recv() per feed per pass cost CPU time the 5-feed throughput needs.
+static const uint32_t kFeedRecvDrainIntervalMs = 1000;
 
 // #define ENABLE_TCP_SOCKET_RATE_LIMITING
 #ifdef ENABLE_TCP_SOCKET_RATE_LIMITING
@@ -878,8 +881,12 @@ void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {
     BeastReporter::CapsSession& caps = feed_caps_[feed_index];
     const bool was_waiting = caps.state() == BeastReporter::CapsSession::kWaiting;
     uint32_t timestamp_ms = get_time_since_boot_ms();
+    if (!was_waiting && timestamp_ms - feed_rx_last_drain_timestamp_ms_[feed_index] < kFeedRecvDrainIntervalMs) {
+        return;
+    }
+    feed_rx_last_drain_timestamp_ms_[feed_index] = timestamp_ms;
     uint8_t buf[kFeedRecvChunkBytes];
-    // Drain every pass, also after the check, so pings can't fill the receive window.
+    // Also drained after the check, so pings can't fill the receive window.
     for (uint16_t chunk = 0; chunk < kFeedRecvMaxChunksPerPass; chunk++) {
         int len = recv(feed_sock_[feed_index], buf, sizeof(buf), MSG_DONTWAIT);
         if (len <= 0) {

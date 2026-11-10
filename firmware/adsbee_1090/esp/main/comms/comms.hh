@@ -320,7 +320,7 @@ class CommsManager {
 
     /**
      * Reads what the server sent on a TCP Beast feed without blocking: looks for the capabilities answer and drops the
-     * rest.
+     * rest. Reads every call while the answer can arrive, then once per kFeedRecvDrainIntervalMs.
      */
     void ReceiveFeedSocket(uint16_t feed_index);
 
@@ -488,6 +488,7 @@ class CommsManager {
     // Capabilities check of each TCP Beast feed's connection, and whether its socket is still read.
     BeastReporter::CapsSession feed_caps_[SettingsManager::Settings::kMaxNumFeeds];
     bool feed_rx_open_[SettingsManager::Settings::kMaxNumFeeds] = {false};
+    uint32_t feed_rx_last_drain_timestamp_ms_[SettingsManager::Settings::kMaxNumFeeds] = {0};
     // Written by IPWANTask, read by the main task. Relaxed: it only gates queueing, and no other data is published
     // through it (the Remote ID packets reach IPWANTask by the WAN queue).
     std::atomic<bool> feeds_take_remote_id_ = false;
