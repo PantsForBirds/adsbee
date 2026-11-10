@@ -47,10 +47,12 @@ GPIO1.mode            = "Output";
 GPIO1.$name           = "SUBG_DIO26";
 GPIO1.gpioPin.$assign = "DIO_26";
 
-GPIO2.$name              = "LR_CS";
-GPIO2.mode               = "Output";
-GPIO2.initialOutputState = "High";
-GPIO2.gpioPin.$assign    = "DIO_11";
+/* Shared LR2021 bus: LR_CS and LR_RESET boot as pulled inputs so nothing drives the bus before the firmware
+ * has seen SYNC low. LR2021::RestoreInterface() makes them outputs. CS pulled up (deselected), RESET pulled
+ * down (LR2021 held in reset). */
+GPIO2.$name           = "LR_CS";
+GPIO2.pull            = "Pull Up";
+GPIO2.gpioPin.$assign = "DIO_11";
 
 /* LR2021 BUSY. Polled by the LR2021 driver, plus a falling-edge ("chip ready") interrupt used by the
  * IRQ-paced RX FIFO drain chain to post the next SPI frame without busy-waiting. The interrupt stays
@@ -59,10 +61,9 @@ GPIO3.$name            = "LR_BUSY";
 GPIO3.interruptTrigger = "Falling Edge";
 GPIO3.gpioPin.$assign  = "DIO_14";
 
-GPIO4.$name              = "LR_RESET";
-GPIO4.mode               = "Output";
-GPIO4.initialOutputState = "High";
-GPIO4.gpioPin.$assign    = "DIO_15";
+GPIO4.$name           = "LR_RESET";
+GPIO4.pull            = "Pull Down";
+GPIO4.gpioPin.$assign = "DIO_15";
 
 /* DIO_1 is unused by the firmware and has no connection on the ADSBee m1421 (U2 pin 6). Pull it down
  * so the enabled input buffer never floats, including in STANDBY, where pin configs stay latched. */
