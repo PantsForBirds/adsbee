@@ -95,13 +95,10 @@ public:
      * second and then writes the pulse's MLAT count (kAddrSyncPulse). The radio timer (RAT) captures each rising
      * edge; pairing the two gives a sync point for time_sync_.
      */
-    // Pairs a SyncPulse from the RP2040 with the last captured edge. Main loop only.
+    // Pairs a SyncPulse from the RP2040 with a captured edge (SyncPulsePairing). Main loop only.
     void HandleSyncPulse(const ObjectDictionary::SyncPulse& pulse);
     // Called from the RAT capture callback.
-    void HandleSyncCapture(uint32_t rat) {
-        sync_capture_rat_ = rat;
-        sync_capture_count_ = sync_capture_count_ + 1;
-    }
+    void HandleSyncCapture(uint32_t rat) { sync_pulse_pairing_.AddEdge(rat); }
     // ObjectDictionary::MLATSyncFlag bits for the device status.
     uint8_t GetMLATSyncFlags() const;
 
@@ -116,9 +113,7 @@ private:
     // Two crystals (CC1312 and RP2040): timestamps start once a second sync point has measured the rate. Read by the RF
     // callback, so changed with interrupts off.
     MLATTimeSync time_sync_ = MLATTimeSync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    volatile uint32_t sync_capture_rat_ = 0;
-    volatile uint16_t sync_capture_count_ = 0;
-    SyncPulsePairing sync_pulse_pairing_;
+    SyncPulsePairing sync_pulse_pairing_;  // Edges from the RAT capture callback: used with interrupts off.
     uint32_t last_sync_point_timestamp_ms_ = 0;
     uint32_t rat_start_timestamp_ms_ = 0;
 

@@ -27,9 +27,9 @@ class ESP32MLATSync {
 
     bool Init();
 
-    // Pairs the RP2040's MLAT count for its last pulse with the last captured edge. Each pulse_num counts once; 0 is no
-    // pulse. SPI task: doesn't log, so the RP2040's write isn't held up (see Update()).
-    void HandleSyncPulse(uint64_t mlat_48mhz_counts, uint32_t pulse_num);
+    // Pairs the RP2040's MLAT count for its latest pulse with a captured edge (SyncPulsePairing). Each count counts
+    // once; 0 is no pulse. SPI task: doesn't log, so the RP2040's write isn't held up (see Update()).
+    void HandleSyncPulse(uint64_t mlat_48mhz_counts);
 
     // Logs what HandleSyncPulse() saw. Main task.
     void Update();
@@ -64,21 +64,16 @@ class ESP32MLATSync {
     uint32_t pending_edge_capture_ = 0;
     uint64_t pending_edge_systimer_now_ = 0;
     bool edge_pending_ = false;
-    uint64_t edge_systimer_ = 0;
-    uint16_t edge_count_ = 0;
 
     // Under lock_.
+    SyncPulsePairing sync_pulse_pairing_;  // Edges (low 32 bits of the system timer) from the capture interrupts.
     MLATTimeSync time_sync_ = MLATTimeSync(MLATTimeSync::kMLATTicksPerESP32SystimerTick, 2);
     uint64_t last_sync_point_systimer_ = 0;
-
-    // SPI task only.
-    SyncPulsePairing sync_pulse_pairing_;
-    uint32_t last_pulse_num_ = 0;  // Last pulse_num handled.
 
     // Under lock_: the last sync point's outcome, for Update() to log.
     enum SyncEvent : uint8_t { kSyncEventNone = 0, kSyncEventSynced, kSyncEventSkipped, kSyncEventRestarted };
     SyncEvent sync_event_ = kSyncEventNone;
-    uint32_t sync_event_pulse_num_ = 0;
+    uint64_t sync_event_mlat_48mhz_counts_ = 0;
     int32_t sync_event_rate_error_ppb_ = 0;
 
     // WiFi task only.

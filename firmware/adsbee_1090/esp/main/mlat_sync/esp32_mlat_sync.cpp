@@ -94,42 +94,32 @@ void IRAM_ATTR ESP32MLATSync::HandleEdgeCapture(uint32_t capture) {
 void IRAM_ATTR ESP32MLATSync::HandleSoftCapture(uint32_t capture_now) {
     portENTER_CRITICAL_ISR(&lock_);
     if (edge_pending_) {
-        edge_systimer_ = esp32_clock_math::CaptureToSystimerTicks(pending_edge_capture_, capture_now,
-                                                                  pending_edge_systimer_now_);
-        edge_count_ = edge_count_ + 1;
+        sync_pulse_pairing_.AddEdge(static_cast<uint32_t>(
+            esp32_clock_math::CaptureToSystimerTicks(pending_edge_capture_, capture_now, pending_edge_systimer_now_)));
         edge_pending_ = false;
     }
     portEXIT_CRITICAL_ISR(&lock_);
 }
 
-void ESP32MLATSync::HandleSyncPulse(uint64_t mlat_48mhz_counts, uint32_t pulse_num) {
-    // Every status carries the last pulse until the next is requested.
-    if (pulse_num == 0 || pulse_num == last_pulse_num_) return;
-    last_pulse_num_ = pulse_num;
+void ESP32MLATSync::HandleSyncPulse(uint64_t mlat_48mhz_counts) {
     portENTER_CRITICAL(&lock_);
-    uint64_t edge_systimer = edge_systimer_;
-    uint16_t edge_count = edge_count_;
-    portEXIT_CRITICAL(&lock_);
-    uint64_t edge_age_us = (SystimerNow() - edge_systimer) / esp32_clock_math::kSystimerTicksPerUs;
-    if (!sync_pulse_pairing_.Pair(edge_count, pulse_num, edge_age_us > UINT32_MAX ? UINT32_MAX : edge_age_us,
-                                  ObjectDictionary::kSyncPulseMaxAgeMs * 1000,
-                                  ObjectDictionary::kSyncPulseMaxMatchedAgeMs * 1000)) {
-        return;
-    }
-    portENTER_CRITICAL(&lock_);
-    bool was_synced = time_sync_.IsSynced();
-    MLATTimeSync::Result result = time_sync_.AddSyncPoint(static_cast<uint32_t>(edge_systimer), mlat_48mhz_counts);
-    if (result != MLATTimeSync::kSkipped) {
-        last_sync_point_systimer_ = edge_systimer;
-    }
-    SyncEvent event = result == MLATTimeSync::kSkipped       ? kSyncEventSkipped
-                      : result == MLATTimeSync::kRestarted   ? kSyncEventRestarted
-                      : time_sync_.IsSynced() && !was_synced ? kSyncEventSynced
-                                                             : kSyncEventNone;
-    if (event != kSyncEventNone) {
-        sync_event_ = event;
-        sync_event_pulse_num_ = pulse_num;
-        sync_event_rate_error_ppb_ = static_cast<int32_t>(time_sync_.GetRateErrorPPB());
+    uint64_t systimer_now = SystimerNow();  // Under the lock: no edge newer than this.
+    uint32_t edge_systimer = 0;
+    if (sync_pulse_pairing_.Pair(time_sync_, mlat_48mhz_counts, static_cast<uint32_t>(systimer_now), edge_systimer)) {
+        bool was_synced = time_sync_.IsSynced();
+        MLATTimeSync::Result result = time_sync_.AddSyncPoint(edge_systimer, mlat_48mhz_counts);
+        if (result != MLATTimeSync::kSkipped) {
+            last_sync_point_systimer_ = systimer_now - static_cast<uint32_t>(systimer_now - edge_systimer);
+        }
+        SyncEvent event = result == MLATTimeSync::kSkipped       ? kSyncEventSkipped
+                          : result == MLATTimeSync::kRestarted   ? kSyncEventRestarted
+                          : time_sync_.IsSynced() && !was_synced ? kSyncEventSynced
+                                                                 : kSyncEventNone;
+        if (event != kSyncEventNone) {
+            sync_event_ = event;
+            sync_event_mlat_48mhz_counts_ = mlat_48mhz_counts;
+            sync_event_rate_error_ppb_ = static_cast<int32_t>(time_sync_.GetRateErrorPPB());
+        }
     }
     portEXIT_CRITICAL(&lock_);
 }
@@ -137,7 +127,7 @@ void ESP32MLATSync::HandleSyncPulse(uint64_t mlat_48mhz_counts, uint32_t pulse_n
 void ESP32MLATSync::Update() {
     portENTER_CRITICAL(&lock_);
     SyncEvent event = sync_event_;
-    uint32_t pulse_num = sync_event_pulse_num_;
+    uint32_t mlat_ms = static_cast<uint32_t>(sync_event_mlat_48mhz_counts_ / 48'000);
     int32_t rate_error_ppb = sync_event_rate_error_ppb_;
     sync_event_ = kSyncEventNone;
     portEXIT_CRITICAL(&lock_);
@@ -146,11 +136,11 @@ void ESP32MLATSync::Update() {
             CONSOLE_INFO("ESP32MLATSync::Update", "Remote ID timestamps on the MLAT clock (%ld ppb).", rate_error_ppb);
             break;
         case kSyncEventSkipped:
-            CONSOLE_WARNING("ESP32MLATSync::Update", "Sync pulse %lu is off the fit: skipped.", pulse_num);
+            CONSOLE_WARNING("ESP32MLATSync::Update", "Sync pulse at MLAT %lu ms is off the fit: skipped.", mlat_ms);
             break;
         case kSyncEventRestarted:
-            CONSOLE_WARNING("ESP32MLATSync::Update", "Sync pulse %lu doesn't fit the previous ones: re-syncing.",
-                            pulse_num);
+            CONSOLE_WARNING("ESP32MLATSync::Update",
+                            "Sync pulse at MLAT %lu ms doesn't fit the previous ones: re-syncing.", mlat_ms);
             break;
         default:
             break;
@@ -165,7 +155,7 @@ uint8_t ESP32MLATSync::GetMLATSyncFlags() {
         sync_point_age_ticks > static_cast<uint64_t>(kSyncPointMaxAgeUs) * esp32_clock_math::kSystimerTicksPerUs) {
         time_sync_.Restart();  // Pulses stopped (CC1312 reset or flashing, RP2040 restart).
     }
-    uint8_t flags = ObjectDictionary::MLATSyncFlags(time_sync_.IsSynced(), time_sync_.WantsPoint());
+    uint8_t flags = time_sync_.IsSynced() ? ObjectDictionary::kMLATSyncFlagSynced : 0;
     portEXIT_CRITICAL(&lock_);
     return flags;
 }

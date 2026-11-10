@@ -34,7 +34,7 @@ inline void __not_in_flash_func(main_core1)() {
         RunPendingTestFunctionOnCore1();  // Lets hardware unit tests read core 1 state, e.g. its SysTick.
 #endif
 #ifdef ISRS_ON_CORE1
-        adsbee.sync_pulse_service.Service();  // Needs this core's MLAT counter.
+        adsbee.sync_pulse_service.Service(time_us_32());  // Needs this core's MLAT counter.
 #endif  // ISRS_ON_CORE1
         bool did_work = adsbee.DemodulateCaptures() || decoder.raw_mode_s_packet_in_queue.Length() > 0;
         decoder.UpdateDecoderLoop();

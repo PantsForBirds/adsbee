@@ -179,7 +179,7 @@ bool ESP32::Update() {
                 .subg_rx_enabled =
                     bsp.has_subg && adsbee.subg_radio_ll.IsEnabled() && settings_manager.settings.subg_rx_enabled,
                 .subg_mode = settings_manager.settings.subg_mode,
-                .sync_pulse = adsbee.sync_pulse_service.GetStatusPulse(),
+                .sync_pulse = adsbee.sync_pulse_service.GetLastPulse(),
             },
         .subg = adsbee.subg_radio_ll.device_status,
     };

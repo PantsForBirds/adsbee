@@ -135,10 +135,10 @@ bool CC1312::Update() {
         if (!in_bootloader_ && IsEnabled()) {
             adsbee.sync_pulse_service.Allow();  // The application just answered a status read.
         }
-        // The last sync pulse's count, once, in one small un-acked write: there is no RP2040 -> CC1312 status write to
+        // A new sync pulse's count, once, in one small un-acked write: there is no RP2040 -> CC1312 status write to
         // carry it. A lost write only costs this sync point.
         ObjectDictionary::SyncPulse pulse;
-        if (adsbee.sync_pulse_service.TakeNewPulse(SyncPulseService::kSubscriberCC1312, pulse)) {
+        if (adsbee.sync_pulse_service.TakeNewPulse(pulse)) {
             adsbee.subg_radio.Write(ObjectDictionary::Address::kAddrSyncPulse, pulse);
         }
 
