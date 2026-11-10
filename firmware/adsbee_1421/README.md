@@ -169,8 +169,14 @@ While the application runs, SYNC high requests sleep: the firmware enters STANDB
 LR2021 bus to an external MCU (see [SYNC low-power sleep](AGENTS.md#sync-low-power-sleep)).
 
 - Return SYNC low after flashing, or the module sleeps and the next reset enters the bootloader.
-- Any reset with SYNC high, including a watchdog reset, enters the bootloader. The firmware wakes
-  briefly every half watchdog timeout (5 s by default) to feed it, so sleep alone doesn't reset it.
+- Any reset with SYNC high, including power-up, brownout and a watchdog reset, enters the
+  bootloader, which stays there until a reset with SYNC low. The firmware wakes briefly every half
+  watchdog timeout (5 s by default) to feed it, so sleep alone doesn't reset it.
+- With the backdoor off, a reset with SYNC high boots the firmware, which goes straight to sleep
+  without touching the LR2021 bus (0.4.0-rc2 and later).
+- The bootloader's SPI port is on the LR2021 bus pins (DIO_8 to DIO_11). A host that talks to the
+  LR2021 while the module sits in the bootloader gets a MISO drive fight. Hosts that share the bus
+  and can hold SYNC high through a reset should turn the backdoor off.
 - On a plain adapter, closing the port can put the module to sleep: Linux and macOS deassert RTS
   and DTR on close (HUPCL). To prevent this, clear HUPCL (`stty -F /dev/ttyUSB0 -hupcl`) and leave
   RTS asserted.
@@ -186,7 +192,8 @@ LR2021 bus to an external MCU (see [SYNC low-power sleep](AGENTS.md#sync-low-pow
 
 ### Turning the backdoor off: AT+BOOTLOADER_PIN
 
-Stops anyone reflashing the module by holding SYNC high through a reset.
+Stops anyone reflashing the module by holding SYNC high through a reset. Also turn it off when a host
+shares the LR2021 bus and may hold SYNC high through a reset or brownout (see [SYNC and sleep](#sync-and-sleep)).
 
 | Command | Effect |
 |---|---|
