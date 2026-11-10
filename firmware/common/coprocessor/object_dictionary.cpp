@@ -210,9 +210,8 @@ bool ObjectDictionary::SetBytes(Address addr, uint8_t* buf, uint16_t buf_len, ui
                 return false;
             }
             memcpy(&composite_device_status, buf, sizeof(CompositeDeviceStatus));
-            // The RP2040 sends its last sync pulse's count with its status (pulse_num 0: none).
-            esp32_mlat_sync.HandleSyncPulse(composite_device_status.rp2040.sync_pulse.mlat_48mhz_counts,
-                                            composite_device_status.rp2040.sync_pulse.pulse_num);
+            // The RP2040 sends its latest sync pulse's count with its status (0: none yet).
+            esp32_mlat_sync.HandleSyncPulse(composite_device_status.rp2040.sync_pulse.mlat_48mhz_counts);
             break;
         }
         case kAddrLEDBlink: {

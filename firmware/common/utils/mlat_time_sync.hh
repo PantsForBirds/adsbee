@@ -12,8 +12,7 @@
  * between the two clocks (ADSBee 1090: the CC1312 or ESP32 crystal against the RP2040's) over the interval since the
  * previous point. The estimate is the rate over about the last kRateMemoryUs (or the last interval, if longer): each
  * interval weighs by its length, so a longer interval (a late or missed pulse) counts for more. The rate is a property
- * of the crystals, so it survives Restart() (local clock restarted or stepped): one new point then re-anchors the
- * offset.
+ * of the crystals, so it survives Restart() (local clock restarted or stepped).
  *
  * Once synced, a point further from the prediction than kMaxResidualUs (plus kMaxResidualDriftPPB of the interval) is
  * skipped and the fit kept; a second one in a row restarts the fit from it.
@@ -63,11 +62,12 @@ class MLATTimeSync {
         points_needed_ = min_sync_points_;
     }
 
-    // The local clock restarted or stepped: drops the offset and keeps the rate, so the next point syncs again.
+    // The local clock restarted or stepped: drops the offset and keeps the rate. Timestamps resume once min_sync_points
+    // agree again (with two, a wrongly paired first point never gives timestamps).
     void Restart() {
         num_points_ = 0;
         skipped_point_ = false;
-        points_needed_ = rate_valid_ ? 1 : min_sync_points_;
+        points_needed_ = min_sync_points_;
     }
 
     // Adds the local and MLAT counts of the same instant.
@@ -121,14 +121,25 @@ class MLATTimeSync {
     }
 
     bool IsSynced() const { return num_points_ > 0 && num_points_ >= points_needed_; }
-    // True if one more point makes progress right away (the rate is known, or nothing is, or the last point was
-    // skipped): worth an early pulse.
-    bool WantsPoint() const { return skipped_point_ || (!IsSynced() && (rate_valid_ || num_points_ == 0)); }
     uint16_t GetNumSyncPoints() const { return num_points_; }
     bool HasRate() const { return rate_valid_; }
     int64_t GetRateErrorPPB() const { return rate_error_ppb_; }
     // Local clock value of the last sync point.
     uint32_t GetLastSyncPointLocal() const { return local_; }
+    uint64_t GetLastSyncPointMLAT48MHzCounts() const { return mlat_48mhz_counts_; }
+    uint32_t GetLocalTicksPerUs() const { return kMLATTicksPerUs / mlat_ticks_per_local_tick_; }
+
+    /**
+     * MLAT counts the fit predicts for a local clock value, also before timestamps are given: from the last point at
+     * the rate so far (the nominal ratio if none). For pairing sync pulse edges with their counts.
+     * @retval False if there is no point.
+     */
+    bool Predict(uint32_t local, uint64_t& mlat_48mhz_counts) const {
+        if (num_points_ == 0) return false;
+        int64_t mlat_ticks = static_cast<int64_t>(static_cast<int32_t>(local - local_)) * mlat_ticks_per_local_tick_;
+        mlat_48mhz_counts = mlat_48mhz_counts_ + mlat_ticks + mlat_ticks * rate_error_ppb_ / 1'000'000'000;
+        return true;
+    }
 
     /**
      * @param[in] local Local clock value within kMaxExtrapolationUs of the last sync point.
@@ -141,8 +152,9 @@ class MLATTimeSync {
             local_ticks < -static_cast<int32_t>(max_extrapolation_local_ticks_)) {
             return 0;
         }
-        int64_t mlat_ticks = static_cast<int64_t>(local_ticks) * mlat_ticks_per_local_tick_;
-        return mlat_48mhz_counts_ + mlat_ticks + mlat_ticks * rate_error_ppb_ / 1'000'000'000;
+        uint64_t mlat_48mhz_counts = 0;
+        Predict(local, mlat_48mhz_counts);
+        return mlat_48mhz_counts;
     }
 
    private:
@@ -161,46 +173,78 @@ class MLATTimeSync {
 };
 
 /**
- * Decides whether the last edge a coprocessor captured on the SYNC line belongs to the SyncPulse message the RP2040
- * sent after it (ObjectDictionary::SyncPulse).
+ * Pairs the MLAT count of a sync pulse (ObjectDictionary::SyncPulse) with the edge a coprocessor captured for it.
  *
- * The RP2040 writes a pulse's message before it sends the next pulse, so the last edge is the message's when exactly
- * one edge per pulse came in since the previous message. That holds for messages that arrive late (a main loop pass of
- * a second or more under output overload), up to max_matched_edge_age_us. With no such history (the first message,
- * either side restarted, or a missed edge or message), a single edge (or as many edges as pulses) pairs only if it is
- * younger than max_edge_age_us, which is shorter than the time between pulses: an older edge is a previous pulse's.
+ * The coprocessor keeps its last kNumEdges captured edges. A count pairs with the edge whose local time the fit
+ * predicts closest to it, if within kToleranceUs (plus kUnknownRatePPM of the time since the last point while the rate
+ * isn't measured yet). Edges are a second apart, far more than that, so the order and lateness of counts don't matter:
+ * a count that arrives after the next edge, or never, or twice, or an edge with no count, pairs right or not at all.
+ * With no point there is nothing to predict with: the count pairs with the latest edge if it is younger than
+ * kMaxFirstEdgeAgeUs (shorter than the time between pulses), else waits for the next count. That edge is the next
+ * pulse's if the count arrived just after it; the fit's second point then doesn't agree (MLATTimeSync needs two before
+ * timestamps). So while the fit isn't synced, a count that fits no edge is tried the same way, as a new first point.
+ *
+ * Not thread safe: callers hold the lock that guards the edges.
  */
 class SyncPulsePairing {
    public:
-    /**
-     * @param[in] edge_count Edges captured so far (wraps).
-     * @param[in] pulse_num The message's pulse number (counts pulses sent).
-     * @param[in] edge_age_us Age of the last edge when the message arrived.
-     * @param[in] max_edge_age_us Age limit for a single edge with no matching history.
-     * @param[in] max_matched_edge_age_us Age limit when the edges since the previous message match its pulses.
-     * @retval True if the last edge is this pulse's.
-     */
-    bool Pair(uint16_t edge_count, uint32_t pulse_num, uint32_t edge_age_us, uint32_t max_edge_age_us,
-              uint32_t max_matched_edge_age_us) {
-        uint16_t num_edges = edge_count - edge_count_at_last_message_;
-        uint32_t num_pulses = pulse_num - last_pulse_num_;
-        bool have_history = have_history_;
-        edge_count_at_last_message_ = edge_count;
-        last_pulse_num_ = pulse_num;
-        have_history_ = true;
-        if (num_edges == 0) return false;
-        if (have_history && num_edges == num_pulses) return edge_age_us <= max_matched_edge_age_us;
-        return (num_edges == 1 || num_edges == num_pulses) && edge_age_us <= max_edge_age_us;
+    static constexpr uint16_t kNumEdges = 4;
+    static constexpr uint32_t kToleranceUs = 1000;
+    static constexpr uint32_t kUnknownRatePPM = 200;  // Crystal tolerance: MLATTimeSync::kMaxRateErrorPPB.
+    static constexpr uint32_t kMaxFirstEdgeAgeUs = 250'000;
+
+    // Records a captured edge (local clock value).
+    void AddEdge(uint32_t local) {
+        edges_[next_edge_] = local;
+        next_edge_ = (next_edge_ + 1) % kNumEdges;
+        if (num_edges_ < kNumEdges) num_edges_++;
     }
 
-    // Edges up to edge_count no longer count (the local clock restarted).
-    void SkipEdges(uint16_t edge_count) {
-        edge_count_at_last_message_ = edge_count;
-        have_history_ = false;
+    // Forgets the edges (the local clock restarted).
+    void Clear() {
+        num_edges_ = 0;
+        next_edge_ = 0;  // Edges fill from slot 0 until the ring is full.
+    }
+
+    /**
+     * @param[in] sync The coprocessor's fit, for the prediction.
+     * @param[in] mlat_48mhz_counts The pulse's count. 0 (no pulse) and a count already handled are ignored.
+     * @param[in] local_now Local clock now, for the age of the latest edge.
+     * @param[out] edge_local Local clock value of the pulse's edge.
+     * @retval True if an edge pairs: add (edge_local, mlat_48mhz_counts) to the fit.
+     */
+    bool Pair(const MLATTimeSync& sync, uint64_t mlat_48mhz_counts, uint32_t local_now, uint32_t& edge_local) {
+        if (mlat_48mhz_counts == 0 || mlat_48mhz_counts == last_mlat_48mhz_counts_ || num_edges_ == 0) return false;
+        last_mlat_48mhz_counts_ = mlat_48mhz_counts;
+        if (sync.GetNumSyncPoints() > 0) {
+            int64_t tolerance = static_cast<int64_t>(kToleranceUs) * MLATTimeSync::kMLATTicksPerUs;
+            if (!sync.HasRate()) {
+                int64_t interval = static_cast<int64_t>(mlat_48mhz_counts - sync.GetLastSyncPointMLAT48MHzCounts());
+                tolerance += (interval < 0 ? -interval : interval) / 1'000'000 * kUnknownRatePPM;
+            }
+            bool paired = false;
+            for (uint16_t i = 0; i < num_edges_; i++) {
+                uint64_t predicted = 0;
+                sync.Predict(edges_[i], predicted);
+                int64_t error = static_cast<int64_t>(predicted - mlat_48mhz_counts);
+                if (error < 0) error = -error;
+                if (error <= tolerance) {
+                    tolerance = error;  // Closest so far.
+                    edge_local = edges_[i];
+                    paired = true;
+                }
+            }
+            if (paired || sync.IsSynced()) return paired;
+        }
+        uint32_t latest = edges_[(next_edge_ + kNumEdges - 1) % kNumEdges];
+        if (local_now - latest > kMaxFirstEdgeAgeUs * sync.GetLocalTicksPerUs()) return false;
+        edge_local = latest;
+        return true;
     }
 
    private:
-    uint16_t edge_count_at_last_message_ = 0;
-    uint32_t last_pulse_num_ = 0;
-    bool have_history_ = false;  // A message came in since the start or the last SkipEdges().
+    uint32_t edges_[kNumEdges] = {};
+    uint16_t next_edge_ = 0;
+    uint16_t num_edges_ = 0;
+    uint64_t last_mlat_48mhz_counts_ = 0;
 };
