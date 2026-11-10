@@ -152,9 +152,8 @@ class MLATTimeSync {
             local_ticks < -static_cast<int32_t>(max_extrapolation_local_ticks_)) {
             return 0;
         }
-        uint64_t mlat_48mhz_counts = 0;
-        Predict(local, mlat_48mhz_counts);
-        return mlat_48mhz_counts;
+        int64_t mlat_ticks = static_cast<int64_t>(local_ticks) * mlat_ticks_per_local_tick_;
+        return mlat_48mhz_counts_ + mlat_ticks + mlat_ticks * rate_error_ppb_ / 1'000'000'000;
     }
 
    private:
