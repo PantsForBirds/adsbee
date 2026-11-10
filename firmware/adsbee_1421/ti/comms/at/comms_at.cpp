@@ -93,6 +93,13 @@ CPP_AT_CALLBACK(CommsManager::ATBaudRateCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+// Replaces cppAT's built-in help, which prints the whole listing at once through the printf buffer and overfills the
+// TX ring. Update() queues the entries as the ring drains.
+CPP_AT_CALLBACK(CommsManager::ATHelpCallback) {
+    help_printer_.Start();
+    CPP_AT_SILENT_SUCCESS();
+}
+
 CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
     switch (op) {
         case '?': {
@@ -1582,6 +1589,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "no receiver position, see AT+RX_POSITION) are always kept. Default: 0,100.0 (off).\r\n\t"
                     "AT+FILTER_DISTANCE_NM?\r\n\tQuery whether the filter is enabled and its distance.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATFilterDistanceNMCallback, comms_manager)},
+    {.command = "HELP",
+     .min_args = 0,
+     .max_args = 0,
+     .help_string = "AT+HELP\r\n\tList all AT commands. Other commands sent meanwhile run after the listing.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATHelpCallback, comms_manager)},
     {.command = "LED_BLINK",
      .min_args = 2,
      .max_args = 4,

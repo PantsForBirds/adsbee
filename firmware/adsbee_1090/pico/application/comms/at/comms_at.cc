@@ -47,10 +47,35 @@ const uint32_t kDeviceInfoProgrammingPassword = 0xDEDBEEF;
 const uint32_t kOTAHeartbeatMs = 50;
 
 /** CppAT Printf Override **/
+// AT replies longer than the console printf buffer (e.g. the REMOTE_ID_TX help) are formatted into this buffer
+// instead of being cut short. AT callbacks run only from the main loop; a nested call while it is in use falls back to
+// the printf buffer.
+static constexpr uint16_t kATLongPrintfBufBytes = 2048;
+static char at_long_printf_buf[kATLongPrintfBufBytes];
+static bool at_long_printf_buf_in_use = false;
+
 int CppAT::cpp_at_printf(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    int ret = comms_manager.iface_vprintf(SettingsManager::SerialInterface::kConsole, format, args);
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int len = vsnprintf(nullptr, 0, format, args_copy);
+    va_end(args_copy);
+    int ret;
+    if (len >= CommsManager::kPrintfBufferMaxSize && !at_long_printf_buf_in_use) {
+        at_long_printf_buf_in_use = true;
+        ret = vsnprintf(at_long_printf_buf, sizeof(at_long_printf_buf), format, args);
+        if (ret > 0) {
+            uint16_t write_len = ret < kATLongPrintfBufBytes ? ret : kATLongPrintfBufBytes - 1;
+            if (!comms_manager.iface_write(SettingsManager::SerialInterface::kConsole, at_long_printf_buf, write_len) ||
+                !comms_manager.UpdateNetworkConsole()) {
+                ret = -1;
+            }
+        }
+        at_long_printf_buf_in_use = false;
+    } else {
+        ret = comms_manager.iface_vprintf(SettingsManager::SerialInterface::kConsole, format, args);
+    }
     va_end(args);
 
     return ret;
@@ -450,6 +475,16 @@ CPP_AT_CALLBACK(CommsManager::ATBootloader) {
             CPP_AT_ERROR("Operator %c not supported.", op);
         }
     }
+}
+
+// Replaces cppAT's built-in help, which prints each help string through the printf buffer and cuts the long ones.
+CPP_AT_CALLBACK(CommsManager::ATHelpCallback) {
+    ATHelpPrinter help_printer(at_command_list, at_command_list_num_commands);
+    help_printer.PrintAll([this](const char* buf, size_t len) {
+        return iface_write(SettingsManager::SerialInterface::kConsole, buf, static_cast<uint16_t>(len)) &&
+               UpdateNetworkConsole();
+    });
+    CPP_AT_SILENT_SUCCESS();
 }
 
 CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
@@ -2749,6 +2784,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "heading in degrees true, groundspeed in knots, active satellites, UTC time, and PPS count "
                     "since the last GNSS enable or disable operation.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSFixCallback, comms_manager)},
+    {.command = "HELP",
+     .min_args = 0,
+     .max_args = 0,
+     .help_string = "AT+HELP\r\n\tList all AT commands.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATHelpCallback, comms_manager)},
     {.command = "HOSTNAME",
      .min_args = 0,
      .max_args = 1,

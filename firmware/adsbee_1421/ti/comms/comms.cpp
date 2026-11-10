@@ -72,7 +72,9 @@ static inline bool ConsoleBreakSeen() { return (HWREG(UART0_BASE + UART_O_RIS) &
 static inline void ClearConsoleBreak() { HWREG(UART0_BASE + UART_O_ICR) = UART_INT_BE; }
 
 CommsManager::CommsManager(CommsManagerConfig config)
-    : config_(config), at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)) {}
+    : config_(config),
+      at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)),
+      help_printer_(at_command_list, at_command_list_num_commands) {}
 
 void CommsManager::uart_write_callback(UART2_Handle handle, void* buf, size_t count, void* userArg,
                                        int_fast16_t status) {
@@ -106,8 +108,8 @@ void CommsManager::KickTx() {
     }
     // Longest contiguous run starting at head (stop at the end of the ring; the callback chains the wrapped part).
     size_t count = tail > head ? static_cast<size_t>(tail - head) : static_cast<size_t>(kUartTxRingBytes - head);
+    if (count > kUartTxSegmentMaxBytes) count = kUartTxSegmentMaxBytes;  // The callback chains the rest.
     uart_tx_in_progress_ = true;
-    // The driver internally restarts DMA in <=1024 B pieces until the whole count is out, so no chunking here.
     int_fast16_t status = UART2_write(uart_handle_, &uart_tx_ring_[head], count, nullptr);
     if (status != UART2_STATUS_SUCCESS) {
         uart_tx_in_progress_ = false;  // Update() / the next iface_write will retry.
@@ -119,10 +121,11 @@ bool CommsManager::WaitForTxRingSpace(uint16_t num_bytes) {
         return true;
     }
     uart_tx_stall_count++;
-    // Budget: time for the shortfall to clock out at the current baud rate, doubled, plus margin. Bounded so a wedged
-    // UART degrades to dropped output rather than a frozen main loop.
+    // Budget: time for the shortfall plus the segment in flight (its space frees only when it completes) to clock out
+    // at the current baud rate, doubled, plus margin. Bounded so a wedged UART degrades to dropped output rather than
+    // a frozen main loop.
     uint32_t shortfall = num_bytes - TxRingFreeBytes();
-    uint32_t wait_ms = 2 * TxBytesToMs(shortfall) + kTxWaitMarginMs;
+    uint32_t wait_ms = 2 * TxBytesToMs(shortfall + kUartTxSegmentMaxBytes) + kTxWaitMarginMs;
     uint32_t deadline_ms =
         get_time_since_boot_ms() + (wait_ms < kTxRingSpaceWaitMaxMs ? wait_ms : kTxRingSpaceWaitMaxMs);
     while (TxRingFreeBytes() < num_bytes && get_time_since_boot_ms() < deadline_ms) {
@@ -170,6 +173,7 @@ void CommsManager::AnnounceConsoleRate() {
 }
 
 void CommsManager::DropQueuedConsoleTx() {
+    help_printer_.Stop();
     // The write callback retires what already went out, synchronously.
     if (uart_tx_in_progress_) UART2_writeCancel(uart_handle_);
     uintptr_t key = HwiP_disable();
@@ -290,7 +294,11 @@ bool CommsManager::Update() {
     }
 
     if (ConsoleBreakSeen()) AnswerConsoleBreak();
-    UpdateAT();
+    if (help_printer_.Active()) {
+        PrintHelpEntries();
+    } else {
+        UpdateAT();
+    }
     ReportQueuedRawPackets();
 
     uint32_t timestamp_ms = get_time_since_boot_ms();
@@ -306,6 +314,19 @@ bool CommsManager::Update() {
                         &no_packets);
     }
     return true;
+}
+
+void CommsManager::PrintHelpEntries() {
+    const uint64_t start_us = get_time_since_boot_us();
+    auto write = [this](const char* buf, size_t len) {
+        return iface_write(SettingsManager::SerialInterface::kConsole, buf, len);
+    };
+    // An entry bigger than the whole ring goes out with bounded waits for space instead of never.
+    while (help_printer_.Active() && (TxRingFreeBytes() >= help_printer_.NextEntryMaxBytes() ||
+                                      TxRingUsedBytes() == 0) &&
+           get_time_since_boot_us() - start_us < kHelpPrintBudgetUs) {
+        help_printer_.PrintNext(write);
+    }
 }
 
 bool CommsManager::ReportsRawPackets() const {
