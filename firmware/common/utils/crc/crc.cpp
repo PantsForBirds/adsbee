@@ -20,7 +20,7 @@ uint32_t crc24_syndrome(const uint8_t *buffer, uint16_t buffer_len_bytes, uint32
     return calculated_crc ^ buffer_crc;
 }
 
-int16_t crc24_find_single_bit_error(uint32_t syndrome, uint16_t message_len_bits) {
+int16_t CORE1_RAM_FUNC(crc24_find_single_bit_error)(uint32_t syndrome, uint16_t message_len_bits) {
     const uint32_t *syndrome_table = nullptr;
     switch (message_len_bits) {
         case 112:
@@ -49,7 +49,7 @@ void flip_bit(uint8_t *message, uint16_t index) {
     message[index / kBitsPerByte] ^= (1 << ((kBitsPerByte - 1) - (index & (kBitsPerByte - 1))));
 }
 
-void flip_bit(uint32_t *message, uint16_t index) {
+void CORE1_RAM_FUNC(flip_bit)(uint32_t *message, uint16_t index) {
     message[index / (kBitsPerByte * kBytesPerWord)] ^=
         (1 << ((kBitsPerByte * kBytesPerWord - 1) - (index & (kBitsPerByte * kBytesPerWord - 1))));
 }
