@@ -79,6 +79,20 @@ TEST(CdcTx, HostThatReadsAgainEndsTheStall) {
     EXPECT_EQ(tx.TakeDropped(), 0u);
 }
 
+TEST(CdcTx, FreeFifoSpaceEndsTheStallWithoutAWrite) {
+    FakeHost host;
+    host.fifo_free = 0;
+    host.read_per_wait = 0;
+    CdcTx tx;
+    tx.Write(host, kData.data(), 64);
+    ASSERT_TRUE(tx.stalled());
+    tx.OnFifoFree(0);  // Still full: the host hasn't read.
+    EXPECT_TRUE(tx.stalled());
+    tx.OnFifoFree(512);  // The host drained the FIFO; nothing new to send yet.
+    EXPECT_FALSE(tx.stalled());
+    EXPECT_EQ(tx.TakeDropped(), 64u);  // Still counted, for the report.
+}
+
 TEST(CdcTx, SlowHostIsWaitedForAsLongAsItMakesProgress) {
     FakeHost host;
     host.fifo_free = 0;

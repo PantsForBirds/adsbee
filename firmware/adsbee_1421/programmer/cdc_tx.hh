@@ -47,6 +47,11 @@ class CdcTx {
         return written;
     }
 
+    // Ends a stall once the host has read from the FIFO (`fifo_free` bytes free), even with nothing new to write.
+    void OnFifoFree(uint32_t fifo_free) {
+        if (fifo_free > 0) stalled_ = false;
+    }
+
     // The host stopped reading; writes drop until it takes bytes again.
     bool stalled() const { return stalled_; }
 

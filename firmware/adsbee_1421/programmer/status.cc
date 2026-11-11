@@ -99,7 +99,10 @@ CdcTx cdc_tx;
 
 size_t CdcWrite(const uint8_t* data, size_t len) { return cdc_tx.Write(usb_cdc, data, len); }
 
-bool CdcHostStalled() { return cdc_tx.stalled(); }
+bool CdcHostStalled() {
+    cdc_tx.OnFifoFree(tud_cdc_write_available());
+    return cdc_tx.stalled();
+}
 
 uint32_t CdcTakeDropped() { return cdc_tx.TakeDropped(); }
 

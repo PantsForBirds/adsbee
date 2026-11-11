@@ -40,7 +40,7 @@ void CdcPrintf(const char* format, ...) __attribute__((format(printf, 1, 2)));
 // CdcTx::kStallMs are dropped and counted. Returns the bytes written.
 size_t CdcWrite(const uint8_t* data, size_t len);
 
-// The host stopped reading: CdcWrite() drops until it takes bytes again.
+// The host stopped reading: CdcWrite() drops until it takes bytes again. Also notices that it has read again.
 bool CdcHostStalled();
 
 // Bytes CdcWrite() and CdcPrintf() dropped since the last call.
