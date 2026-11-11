@@ -3,7 +3,6 @@
 #include "aircraft_dictionary_config.hh"
 #include "at_console_guard.hh"
 #include "composite_array.hh"
-#include "at_help_printer.hh"
 #include "cpp_at.hh"
 #include "data_structures.hh"  // For PFBQueue.
 #include "hardware/uart.h"
@@ -85,7 +84,6 @@ class CommsManager {
     CPP_AT_CALLBACK(ATBiasTeeEnableCallback);
     CPP_AT_CALLBACK(ATConfigHashCallback);
     CPP_AT_CALLBACK(ATDeviceInfoCallback);
-    CPP_AT_CALLBACK(ATHelpCallback);
     CPP_AT_CALLBACK(ATESP32EnableCallback);
     CPP_AT_CALLBACK(ATESP32FlashCallback);
     CPP_AT_CALLBACK(ATESP32RebootInfoCallback);

@@ -5,9 +5,9 @@
 #include <iostream>  // for AT command ingestion
 
 #include "adsbee.hh"
+#include "chunked_printf_sink.hh"
 #include "comms.hh"
 #include "core1.hh"  // For turning multiprocessor on / off during firmware flashing.
-#include "chunked_printf_sink.hh"
 #include "cpu_utils.hh"
 #include "eeprom.hh"
 #include "esp32.hh"  // Access to ESP32 low level SPICoprocessorSlaveInterface.
@@ -461,16 +461,6 @@ CPP_AT_CALLBACK(CommsManager::ATBootloader) {
             CPP_AT_ERROR("Operator %c not supported.", op);
         }
     }
-}
-
-// Replaces cppAT's built-in help, which prints each help string through the printf buffer and cuts the long ones.
-CPP_AT_CALLBACK(CommsManager::ATHelpCallback) {
-    ATHelpPrinter help_printer(at_command_list, at_command_list_num_commands);
-    help_printer.PrintAll([this](const char* buf, size_t len) {
-        return iface_write(SettingsManager::SerialInterface::kConsole, buf, static_cast<uint16_t>(len)) &&
-               UpdateNetworkConsole();
-    });
-    CPP_AT_SILENT_SUCCESS();
 }
 
 CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
@@ -2177,8 +2167,7 @@ static void PrintStaticIPJSON(const char* cmd, const IPv4Config& v4, const IPv6C
 // Each value is an array ordered to match the web settings GUI's field list for that
 // command (the writable AT= args plus query-only extras like live status, minus the
 // redacted WiFi STA password), using the same value representations as the individual
-// AT queries (enum strings, 0/1 booleans). Emitted in multiple printf calls to stay
-// under kPrintfBufferMaxSize. Keep in sync with SETTINGS_SCHEMA_1090 in
+// AT queries (enum strings, 0/1 booleans). Keep in sync with SETTINGS_SCHEMA_1090 in
 // esp/main/server/web/settings.js when adding commands.
 static void PrintSettingsJSON() {
     char esc[2 * SettingsManager::Settings::kWiFiPasswordMaxLen + 2];
@@ -2770,11 +2759,6 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "heading in degrees true, groundspeed in knots, active satellites, UTC time, and PPS count "
                     "since the last GNSS enable or disable operation.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSFixCallback, comms_manager)},
-    {.command = "HELP",
-     .min_args = 0,
-     .max_args = 0,
-     .help_string = "AT+HELP\r\n\tList all AT commands.",
-     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATHelpCallback, comms_manager)},
     {.command = "HOSTNAME",
      .min_args = 0,
      .max_args = 1,
