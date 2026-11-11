@@ -45,14 +45,7 @@ static void ForwardConsole(uint32_t limit) {
         size_t len = TargetUartRead(buf, pending < (int32_t)sizeof(buf) ? (size_t)pending : sizeof(buf));
         if (len == 0) break;
         pending -= (int32_t)len;
-        size_t written = 0;
-        while (written < len) {
-            written += tud_cdc_write(buf + written, (uint32_t)(len - written));
-            if (written < len) {
-                tud_cdc_write_flush();
-                tud_task();  // FIFO full: let USB drain.
-            }
-        }
+        CdcWrite(buf, len);  // Drops what a host that isn't reading leaves behind, so the bridge keeps running.
     }
 }
 
@@ -123,6 +116,14 @@ BridgeExit BridgeRun() {
             ForwardConsole(watch.Forwardable());
         }
         tud_cdc_write_flush();
+        if (!CdcHostStalled()) {
+            uint32_t dropped = CdcTakeDropped();
+            if (dropped != 0) {
+                CdcPrintf("\r\n[ADSBee 1421 Programmer] The host stopped reading: %lu bytes from the module were "
+                          "dropped.\r\n",
+                          (unsigned long)dropped);
+            }
+        }
 
         // Host -> device. Only take what the UART TX ring can hold so the CDC FIFO provides natural backpressure to
         // the host. Held during a lock.

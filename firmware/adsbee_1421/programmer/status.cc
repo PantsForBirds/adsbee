@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "cdc_text.hh"
+#include "cdc_tx.hh"
 #include "hardware/pio.h"
 #include "pico/stdlib.h"
 #include "tusb.h"
@@ -81,6 +82,27 @@ void StatusUpdate() {
     }
 }
 
+namespace {
+// CdcTx's port: TinyUSB's CDC interface.
+struct TinyUsbCdc {
+    uint32_t Write(const uint8_t* data, uint32_t len) { return tud_cdc_write(data, len); }
+    void Wait() {
+        tud_cdc_write_flush();
+        tud_task();
+    }
+    bool Connected() { return tud_cdc_connected(); }
+    uint32_t NowMs() { return to_ms_since_boot(get_absolute_time()); }
+};
+TinyUsbCdc usb_cdc;
+CdcTx cdc_tx;
+}  // namespace
+
+size_t CdcWrite(const uint8_t* data, size_t len) { return cdc_tx.Write(usb_cdc, data, len); }
+
+bool CdcHostStalled() { return cdc_tx.stalled(); }
+
+uint32_t CdcTakeDropped() { return cdc_tx.TakeDropped(); }
+
 void CdcPrintf(const char* format, ...) {
     if (!tud_cdc_connected()) return;
     char buf[kCdcTextMax];
@@ -88,15 +110,7 @@ void CdcPrintf(const char* format, ...) {
     va_start(args, format);
     int formatted = vsnprintf(buf, sizeof(buf), format, args);
     va_end(args);
-    int len = (int)CdcTextFinish(buf, sizeof(buf), formatted);  // Marks a cut-off message with "...".
-
-    const char* pos = buf;
-    while (len > 0) {
-        uint32_t wrote = tud_cdc_write(pos, (uint32_t)len);
-        pos += wrote;
-        len -= (int)wrote;
-        tud_cdc_write_flush();
-        tud_task();
-        if (!tud_cdc_connected()) return;  // Host went away mid-message.
-    }
+    size_t len = CdcTextFinish(buf, sizeof(buf), formatted);  // Marks a cut-off message with "...".
+    CdcWrite((const uint8_t*)buf, len);
+    tud_cdc_write_flush();
 }
