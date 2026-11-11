@@ -20,7 +20,7 @@ class ATHelpPrinter {
    public:
     static constexpr std::string_view kHeader = "AT Command Help Menu:\r\n";
     // Space reserved for an entry whose help_callback prints its own text. Callbacks must print less than this.
-    static constexpr size_t kHelpCallbackMaxBytes = 1024;
+    static constexpr size_t kHelpCallbackMaxBytes = 2048;
 
     ATHelpPrinter(const CppAT::ATCommandDef_t* commands, uint16_t num_commands)
         : commands_(commands), num_commands_(num_commands) {}
