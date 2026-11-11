@@ -1,6 +1,7 @@
 #ifndef _ADSB_PACKET_HH_
 #define _ADSB_PACKET_HH_
 
+#include <cstddef>
 #include <cstdint>
 
 #include "buffer_utils.hh"
@@ -26,7 +27,7 @@ class RawModeSPacket {
     /**
      * Default constructor.
      */
-    RawModeSPacket() {
+    RawModeSPacket() : no_mlat_timestamp(false), skip_aircraft_dictionary(false) {
         for (uint16_t i = 0; i < kMaxPacketLenWords32; i++) {
             buffer[i] = 0;
         }
@@ -60,7 +61,10 @@ class RawModeSPacket {
     int8_t source = -1;                    // Source of the ADS-B packet (PIO state machine number).
     // mlat_48mhz_64bit_counts is only a coarse receive time (about 1 ms): good for ordering and aging packets,
     // never for MLAT. Fills a padding byte, so the layout is unchanged.
-    bool no_mlat_timestamp = false;
+    bool no_mlat_timestamp : 1;  // Bit fields are set in the constructors.
+    // A corrected frame that the aircraft dictionary forwards but keeps out of aircraft data. Tells the ESP32's
+    // dictionary to leave it out too. Shares the byte with no_mlat_timestamp.
+    bool skip_aircraft_dictionary : 1;
     int16_t sigs_dbm = INT16_MIN;          // Signal strength, in dBm.
     int16_t sigq_db = INT16_MIN;           // Signal quality (dB above noise floor), in dB.
     uint64_t mlat_48mhz_64bit_counts = 0;  // High resolution MLAT counter.
@@ -68,6 +72,7 @@ class RawModeSPacket {
 
 // Sent between processors as raw bytes: new fields may only fill padding.
 static_assert(sizeof(RawModeSPacket) == 32);
+static_assert(offsetof(RawModeSPacket, sigs_dbm) == 20);
 
 class DecodedModeSPacket {
    public:

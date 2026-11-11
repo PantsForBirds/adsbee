@@ -33,6 +33,8 @@ RawModeSPacket::RawModeSPacket(uint32_t rx_buffer[kMaxPacketLenWords32], uint16_
                                int16_t source_in, int16_t sigs_dbm_in, int16_t sigq_db_in,
                                uint64_t mlat_48mhz_64bit_counts_in)
     : source(source_in),
+      no_mlat_timestamp(false),
+      skip_aircraft_dictionary(false),
       sigs_dbm(sigs_dbm_in),
       sigq_db(sigq_db_in),
       mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
@@ -63,6 +65,8 @@ RawModeSPacket::RawModeSPacket(uint32_t rx_buffer[kMaxPacketLenWords32], uint16_
 RawModeSPacket::RawModeSPacket(const char *rx_string, int16_t source_in, int16_t sigs_dbm_in, int16_t sigq_db_in,
                                uint64_t mlat_48mhz_64bit_counts_in)
     : source(source_in),
+      no_mlat_timestamp(false),
+      skip_aircraft_dictionary(false),
       sigs_dbm(sigs_dbm_in),
       sigq_db(sigq_db_in),
       mlat_48mhz_64bit_counts(mlat_48mhz_64bit_counts_in) {
