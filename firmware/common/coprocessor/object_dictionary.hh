@@ -217,6 +217,7 @@ class ObjectDictionary {
         uint32_t network_utc_ms_of_day = 0;
 
         uint8_t mlat_sync_flags = 0;  // MLATSyncFlag bits, for Remote ID timestamps.
+        uint8_t ble_output_status = 0;  // BLEOutputStatus.
     };
 
     enum ESP32HardwareCapability : uint8_t {

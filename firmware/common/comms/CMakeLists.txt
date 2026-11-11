@@ -31,6 +31,7 @@ elseif (TARGET host_test OR TARGET host_test_fpu)
             target_sources(${_test_tgt} PRIVATE
                 asterix/asterix_utils.cpp
                 beast/beast_utils.cpp
+                flarm_nmea/flarm_nmea.cpp
                 gdl90/gdl90_utils.cpp
                 mavlink/mavlink_utils.cpp
                 raw/raw_utils.cpp
@@ -40,6 +41,7 @@ elseif (TARGET host_test OR TARGET host_test_fpu)
                 asterix
                 beast
                 csbee
+                flarm_nmea
                 gdl90
                 json
                 mavlink

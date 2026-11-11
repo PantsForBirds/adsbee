@@ -43,8 +43,8 @@ global.confirm = () => true;
 const { SettingsEngine, SETTINGS_SCHEMA_1090, parseIPv6 } = require('../settings.js');
 
 // The AT+SETTINGS?JSON line from an ADSBee 1090 running 0.9.1-rc9, plus ETHERNET_IP and WIFI_STA_IP (0.9.1-rc12):
-// IPv4 mode and five addresses, then IPv6 mode, addr/prefix and three addresses.
-const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"ETHERNET":[1],"ETHERNET_IP":["STATIC","192.168.1.50","255.255.255.0","192.168.1.1","1.1.1.1","",' +
+// IPv4 mode and five addresses, then IPv6 mode, addr/prefix and three addresses; and BLE_OUTPUT (0.10.0-rc1).
+const DUMP = 'SETTINGS={"ASTERIX_SAC_SIC":[0,0],"AUTO_UPDATE":[0],"BAUD_RATE":[115207,9600],"BIAS_TEE_ENABLE":[0,0],"BLE_OUTPUT":["OFF","OFF"],"ETHERNET":[1],"ETHERNET_IP":["STATIC","192.168.1.50","255.255.255.0","192.168.1.1","1.1.1.1","",' +
     '"STATIC","2001:db8:1::50/64","fe80::1","2001:4860:4860::8888",""],"ESP32_ENABLE":[1],' +
     '"FEED_ENABLE":[1],"FILTER_ALTITUDE_FT":["OFF",0,10000],"FILTER_DISTANCE_NM":[0,100.0],"SWARM":[0,"https://adsbee.aero",""],"GNSS":[0,"NONE",0],"HOSTNAME":["test-bee"],"IP_MODE":["DUAL"],"LED_ENABLE":[1],"LOG_LEVEL":["WARNINGS"],' +
     '"MAVLINK_ID":[1,156],"NTP_SERVER":["pool.ntp.org"],"PROTOCOL_OUT":["NONE","NONE"],"REMOTE_ID":[0,7,"0x00"],' +
@@ -237,6 +237,40 @@ test('the altitude filter loads from the dump and saves mode and altitudes in ft
     input('FILTER_ALTITUDE_FT', 'b').value = '18000';
     await engine.save();
     assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+FILTER_ALTITUDE_FT=BETWEEN,1000,18000', 'AT+SETTINGS=SAVE']);
+});
+
+test('Bluetooth output loads its mode and state from the dump and saves the mode alone', async () => {
+    let dump = DUMP;
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [dump];
+        if (cmd === 'AT+BLE_OUTPUT=GDL90') { dump = dump.replace('"BLE_OUTPUT":["OFF","OFF"]', '"BLE_OUTPUT":["GDL90","ADVERTISING"]'); return []; }
+        if (cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.strictEqual(input('BLE_OUTPUT', 'mode').value, 'OFF');
+    input('BLE_OUTPUT', 'mode').value = 'GDL90';
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+BLE_OUTPUT=GDL90', 'AT+SETTINGS=SAVE']);
+    assert.strictEqual(input('BLE_OUTPUT', 'mode').value, 'GDL90');
+});
+
+test('Bluetooth output offers FLARM NMEA and saves it', async () => {
+    let dump = DUMP;
+    const t = makeTransport((cmd) => {
+        if (cmd === 'AT+SETTINGS?JSON') return [dump];
+        if (cmd === 'AT+BLE_OUTPUT=FLARM_NMEA') { dump = dump.replace('"BLE_OUTPUT":["OFF","OFF"]', '"BLE_OUTPUT":["FLARM_NMEA","STREAMING"]'); return []; }
+        if (cmd === 'AT+SETTINGS=SAVE') return [];
+        throw new Error(`unexpected ${cmd}`);
+    });
+    const engine = makeEngine(t);
+    await engine.refresh();
+    assert.deepStrictEqual(input('BLE_OUTPUT', 'mode').children.map((o) => o.value), ['OFF', 'GDL90', 'FLARM_NMEA']);
+    input('BLE_OUTPUT', 'mode').value = 'FLARM_NMEA';
+    await engine.save();
+    assert.deepStrictEqual(t.sent.slice(1, 3), ['AT+BLE_OUTPUT=FLARM_NMEA', 'AT+SETTINGS=SAVE']);
+    assert.strictEqual(input('BLE_OUTPUT', 'mode').value, 'FLARM_NMEA');
 });
 
 test('swarm reports load from the dump and save without resending the token', async () => {

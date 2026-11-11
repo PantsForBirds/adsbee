@@ -73,6 +73,7 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         EXPECT_EQ(out.settings_version, kSettingsVersion);
         ExpectCoreNetworkSettingsKept(out.core_network_settings);
         EXPECT_FALSE(out.auto_update_enabled);  // Opt-in: off after every upgrade.
+        EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
         EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);
         EXPECT_FALSE(out.ethernet_ipv4.is_static);
         EXPECT_FALSE(out.wifi_sta_ipv4.is_static);

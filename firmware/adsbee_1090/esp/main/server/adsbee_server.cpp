@@ -1,5 +1,10 @@
 #include "adsbee_server.hh"
 
+#include <sys/time.h>
+
+#include <algorithm>
+#include <cmath>
+#include <ctime>
 #include <new>
 
 #include "esp_heap_caps.h"
@@ -16,6 +21,8 @@
 #include "heap_diagnostics.hh"
 #include "json_utils.hh"
 #include "pico.hh"
+#include "ble/ble_output.hh"
+#include "flarm_nmea/flarm_nmea.hh"
 #include "remote_id/remote_id_manager.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
@@ -25,6 +32,23 @@
 // #define VERBOSE_DEBUG
 
 static const uint16_t kGDL90Port = 4000;
+
+// True if GDL90 goes to WiFi access point clients.
+static bool GDL90ToWiFi() {
+    return comms_manager.WiFiAccessPointIsRunning() && comms_manager.WiFiAccessPointHasClients();
+}
+
+/**
+ * Sends framed GDL90 messages to WiFi access point clients and the Bluetooth client.
+ * @param[in] droppable True for FIS-B uplinks, which Bluetooth refuses first when its queue fills.
+ * @retval False if the WiFi send failed. A full Bluetooth queue shows in its drop count.
+ */
+static bool SendGDL90(CommsManager::NetworkMessage& message, bool droppable = false) {
+    bool ret = true;
+    if (GDL90ToWiFi()) ret = comms_manager.WiFiAccessPointSendMessageToAllStations(message);
+    if (ble_output.StreamsMode(SettingsManager::kBLEOutputGDL90)) ble_output.Send(message.data, message.len, droppable);
+    return ret;
+}
 
 static const uint16_t kNetworkConsoleWelcomeMessageMaxLen = 1000;
 static const uint16_t kNetworkMetricsMessageMaxLen = 2048;
@@ -247,6 +271,7 @@ bool ADSBeeServer::Update() {
     // aircraft-dictionary mutation stays single-threaded.
     remote_id_manager.ServiceIngestQueue();
     remote_id_manager.Update();
+    ble_output.Update();
 
     // Prune aircraft dictionary. Need to do this up front so that we don't end up with a negative timestamp delta
     // caused by packets being ingested more recently than the timestamp we take at the beginning of this function.
@@ -403,13 +428,14 @@ bool ADSBeeServer::Update() {
         }
     }
 
-    // Broadcast aircraft locations to connected WiFi clients over GDL90.
+    // Broadcast aircraft locations over GDL90 to WiFi access point clients and the Bluetooth client.
     if (timestamp_ms - last_gdl90_report_timestamp_ms_ > kGDL90ReportingIntervalMs) {
         last_gdl90_report_timestamp_ms_ = timestamp_ms;
-        if (comms_manager.WiFiAccessPointHasClients() && !ReportGDL90()) {
+        if ((GDL90ToWiFi() || ble_output.StreamsMode(SettingsManager::kBLEOutputGDL90)) && !ReportGDL90()) {
             CONSOLE_ERROR("ADSBeeServer::Update", "Encountered error while reporting GDL90.");
             ret = false;
         }
+        if (ble_output.StreamsMode(SettingsManager::kBLEOutputFLARMNMEA)) ReportFLARMNMEA();
     }
 
     // Broadcast aircraft JSON to connected /aircraft WebSocket clients. A report starts once the last one is done.
@@ -468,10 +494,7 @@ void ADSBeeServer::SPIReceiveTask() {
 }
 
 bool ADSBeeServer::ReportGDL90() {
-    if (!comms_manager.WiFiAccessPointIsRunning()) {
-        return true;  // Nothing to do.
-    }
-
+    ble_output.BeginReport();
     CommsManager::NetworkMessage message;
     message.port = kGDL90Port;
 
@@ -493,65 +516,80 @@ bool ADSBeeServer::ReportGDL90() {
         aircraft_dictionary.metrics.valid_squitter_frames + aircraft_dictionary.metrics.valid_extended_squitter_frames +
             aircraft_dictionary.metrics.valid_uat_adsb_frames,  // ADS-B message count includes UAT ADS-B messages.
         aircraft_dictionary.metrics.valid_uat_uplink_frames);
-    comms_manager.WiFiAccessPointSendMessageToAllStations(message);
+    SendGDL90(message);
     message.len = 0;
 
     // Ownship Report
     message.len = gdl90.WriteGDL90TargetReportMessage(message.data, CommsManager::NetworkMessage::kMaxLenBytes,
                                                       ownship_data, true);
-    comms_manager.WiFiAccessPointSendMessageToAllStations(message);
+    SendGDL90(message);
     message.len = 0;
 
     // Traffic Reports
-    int16_t aircraft_index = -1;  // Just used for error reporting.
-    uint8_t aircraft_msg_buf[CommsManager::NetworkMessage::kMaxLenBytes];
-    uint16_t aircraft_msg_buf_len = 0;
+    const bool to_wifi = GDL90ToWiFi();
+    const bool to_ble = ble_output.StreamsMode(SettingsManager::kBLEOutputGDL90);
     uint32_t timestamp_ms = get_time_since_boot_ms();
     AircraftReportFilter report_filter = aircraft_dictionary.GetReportFilter(settings_manager.settings);
-    for (auto& itr : aircraft_dictionary.dict) {
-        aircraft_index++;
+    // Writes the traffic report of one dictionary entry; 0 if it isn't reported.
+    auto write_traffic = [&](auto& itr, uint8_t* buf, uint16_t buf_len, bool log) -> uint16_t {
         if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) {
-            continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
+            return 0;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
         }
         if (std::visit([&report_filter](const auto& a) { return report_filter.Excludes(a); }, itr.second)) {
-            continue;  // AT+FILTER_DISTANCE_NM, AT+FILTER_ALTITUDE_FT.
+            return 0;  // AT+FILTER_DISTANCE_NM, AT+FILTER_ALTITUDE_FT.
         }
-
         if (ModeSAircraft* mode_s_aircraft = get_if<ModeSAircraft>(&(itr.second)); mode_s_aircraft) {
             if (!mode_s_aircraft->HasBitFlag(ModeSAircraft::kBitFlagPositionValid) ||
                 mode_s_aircraft->icao_address == ownship_data.participant_address) {
                 // Don't report aircraft without a valid position, and ignore ownship position when bootstrapping off a
                 // fixed ICAO.
-                continue;
+                return 0;
             }
-            printf("\t#A %s (0x%06lX): %.5f %.5f %ld\r\n", mode_s_aircraft->callsign, mode_s_aircraft->icao_address,
-                   mode_s_aircraft->latitude_deg, mode_s_aircraft->longitude_deg, mode_s_aircraft->baro_altitude_ft);
-            aircraft_msg_buf_len = gdl90.WriteGDL90TargetReportMessage(aircraft_msg_buf, sizeof(aircraft_msg_buf),
-                                                                       *mode_s_aircraft, false);
-        } else if (UATAircraft* uat_aircraft = get_if<UATAircraft>(&(itr.second)); uat_aircraft) {
+            if (log) {
+                printf("\t#A %s (0x%06lX): %.5f %.5f %ld\r\n", mode_s_aircraft->callsign,
+                       mode_s_aircraft->icao_address, mode_s_aircraft->latitude_deg, mode_s_aircraft->longitude_deg,
+                       mode_s_aircraft->baro_altitude_ft);
+            }
+            return gdl90.WriteGDL90TargetReportMessage(buf, buf_len, *mode_s_aircraft, false);
+        }
+        if (UATAircraft* uat_aircraft = get_if<UATAircraft>(&(itr.second)); uat_aircraft) {
             if (!uat_aircraft->HasBitFlag(UATAircraft::kBitFlagPositionValid) ||
                 uat_aircraft->icao_address == ownship_data.participant_address) {
-                // Don't report aircraft without a valid position, and ignore ownship position when bootstrapping off a
-                // fixed ICAO.
-                continue;
+                return 0;
             }
-            printf("\t#U %s (0x%06lX): %.5f %.5f %ld\r\n", uat_aircraft->callsign, uat_aircraft->icao_address,
-                   uat_aircraft->latitude_deg, uat_aircraft->longitude_deg, uat_aircraft->baro_altitude_ft);
-            aircraft_msg_buf_len =
-                gdl90.WriteGDL90TargetReportMessage(aircraft_msg_buf, sizeof(aircraft_msg_buf), *uat_aircraft, false);
-        } else if (RemoteIDAircraft* remote_id_aircraft = get_if<RemoteIDAircraft>(&(itr.second)); remote_id_aircraft) {
+            if (log) {
+                printf("\t#U %s (0x%06lX): %.5f %.5f %ld\r\n", uat_aircraft->callsign, uat_aircraft->icao_address,
+                       uat_aircraft->latitude_deg, uat_aircraft->longitude_deg, uat_aircraft->baro_altitude_ft);
+            }
+            return gdl90.WriteGDL90TargetReportMessage(buf, buf_len, *uat_aircraft, false);
+        }
+        if (RemoteIDAircraft* remote_id_aircraft = get_if<RemoteIDAircraft>(&(itr.second)); remote_id_aircraft) {
             if (!remote_id_aircraft->HasBitFlag(RemoteIDAircraft::kBitFlagPositionValid)) {
-                // Don't report drones without a valid position.
-                continue;
+                return 0;  // Don't report drones without a valid position.
             }
-            aircraft_msg_buf_len = gdl90.WriteGDL90TargetReportMessage(aircraft_msg_buf, sizeof(aircraft_msg_buf),
-                                                                       *remote_id_aircraft, false);
-        } else {
+            return gdl90.WriteGDL90TargetReportMessage(buf, buf_len, *remote_id_aircraft, false);
+        }
+        if (log) {
             CONSOLE_WARNING("CommsManager::ReportGDL90", "Unknown aircraft type in dictionary for UID 0x%lx.",
                             itr.first);
-            continue;
         }
+        return 0;
+    };
 
+    // WiFi gets the aircraft in dictionary order, packed into datagrams. Bluetooth gets one message per aircraft,
+    // starting at ble_output.TrafficStart() and wrapping around (second loop), so a full queue skips other aircraft
+    // next time.
+    uint8_t aircraft_msg_buf[CommsManager::NetworkMessage::kMaxLenBytes];
+    const uint16_t ble_start = ble_output.TrafficStart();
+    uint16_t num_reported = 0;
+    for (auto& itr : aircraft_dictionary.dict) {
+        const uint16_t aircraft_msg_buf_len = write_traffic(itr, aircraft_msg_buf, sizeof(aircraft_msg_buf), true);
+        if (aircraft_msg_buf_len == 0) continue;
+        if (to_ble && num_reported >= ble_start) {
+            ble_output.SendTraffic(aircraft_msg_buf, aircraft_msg_buf_len, num_reported);
+        }
+        num_reported++;
+        if (!to_wifi) continue;
         if (message.len + aircraft_msg_buf_len <= CommsManager::NetworkMessage::kMaxLenBytes) {
             // We can tack this aircraft message onto the existing message to save space in the queue.
             memcpy(message.data + message.len, aircraft_msg_buf, aircraft_msg_buf_len);
@@ -559,16 +597,27 @@ bool ADSBeeServer::ReportGDL90() {
         } else {
             // Send the existing message and start a new one.
             if (!comms_manager.WiFiAccessPointSendMessageToAllStations(message)) {
-                CONSOLE_ERROR("ADSBeeServer::ReportGDL90", "Failed to send info about aircraft %d to all clients.",
-                              aircraft_index);
+                CONSOLE_ERROR("ADSBeeServer::ReportGDL90", "Failed to send info about aircraft %u to all clients.",
+                              num_reported);
             }
             memcpy(message.data, aircraft_msg_buf, aircraft_msg_buf_len);
             message.len = aircraft_msg_buf_len;
         }
     }
+    if (to_ble && ble_start > 0) {
+        uint16_t index = 0;
+        for (auto& itr : aircraft_dictionary.dict) {
+            if (index >= ble_start) break;
+            const uint16_t aircraft_msg_buf_len = write_traffic(itr, aircraft_msg_buf, sizeof(aircraft_msg_buf), false);
+            if (aircraft_msg_buf_len == 0) continue;
+            ble_output.SendTraffic(aircraft_msg_buf, aircraft_msg_buf_len, index);
+            index++;
+        }
+    }
+    if (to_ble) ble_output.EndTraffic(num_reported);
 
     // Send any remaining message data.
-    if (message.len > 0) {
+    if (to_wifi && message.len > 0) {
         if (!comms_manager.WiFiAccessPointSendMessageToAllStations(message)) {
             CONSOLE_ERROR("ADSBeeServer::ReportGDL90", "Failed to send final aircraft message to all clients.");
         }
@@ -577,8 +626,115 @@ bool ADSBeeServer::ReportGDL90() {
     return true;
 }
 
+namespace {
+// UTC for GPRMC / GPGGA: GNSS time of day, else the ESP32 clock once NTP has set it. The date comes from the clock.
+FLARMNMEAReporter::UTCTime FLARMNMEAUTCTime(const ObjectDictionary::RP2040DeviceStatus& rp2040_status) {
+    FLARMNMEAReporter::UTCTime utc;
+    struct timeval tv;
+    struct tm tm_utc;
+    // Before NTP the clock counts from 1970.
+    const bool clock_set =
+        gettimeofday(&tv, nullptr) == 0 && gmtime_r(&tv.tv_sec, &tm_utc) != nullptr && tm_utc.tm_year + 1900 >= 2025;
+    if (clock_set) {
+        utc.date_valid = true;
+        utc.year = static_cast<uint16_t>(tm_utc.tm_year + 1900);
+        utc.month = static_cast<uint8_t>(tm_utc.tm_mon + 1);
+        utc.day = static_cast<uint8_t>(tm_utc.tm_mday);
+    }
+    if (rp2040_status.gnss_utc_time_valid) {
+        utc.time_valid = true;
+        utc.hour = rp2040_status.gnss_utc_hour % 24;
+        utc.minute = rp2040_status.gnss_utc_minute % 60;
+        utc.second = rp2040_status.gnss_utc_second % 60;
+    } else if (clock_set) {
+        utc.time_valid = true;
+        utc.hour = static_cast<uint8_t>(tm_utc.tm_hour);
+        utc.minute = static_cast<uint8_t>(tm_utc.tm_min);
+        utc.second = static_cast<uint8_t>(tm_utc.tm_sec);
+    }
+    return utc;
+}
+}  // namespace
+
+void ADSBeeServer::ReportFLARMNMEA() {
+    ble_output.BeginReport();
+    const ObjectDictionary::RP2040DeviceStatus& rp2040_status = object_dictionary.composite_device_status.rp2040;
+    FLARMNMEAReporter::Ownship own;
+    const bool have_ownship =
+        FLARMNMEAReporter::OwnshipFromRxPosition(own, rp2040_status.rx_position, rp2040_status.rx_position_available);
+    // Our own ADS-B, when ownship comes from it.
+    const uint32_t ownship_icao =
+        have_ownship && rp2040_status.rx_position.source == SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO
+            ? rp2040_status.rx_position.icao_address
+            : UINT32_MAX;
+
+    // Reported aircraft, nearest first. Without ownship they are only counted for PFLAU.
+    struct TrafficRef {
+        uint32_t distance_m;
+        const AircraftDictionary::AircraftEntry* entry;
+    };
+    TrafficRef* traffic = have_ownship ? new (std::nothrow) TrafficRef[AircraftDictionary::kMaxNumAircraft] : nullptr;
+    uint16_t num_traffic = 0;
+    uint16_t num_received = 0;
+    const uint32_t timestamp_ms = get_time_since_boot_ms();
+    AircraftReportFilter report_filter = aircraft_dictionary.GetReportFilter(settings_manager.settings);
+    FLARMNMEAReporter::Target target;
+    for (auto& itr : aircraft_dictionary.dict) {
+        if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) continue;
+        if (std::visit([&report_filter](const auto& a) { return report_filter.Excludes(a); }, itr.second)) continue;
+        if (!std::visit([&target](const auto& a) { return FLARMNMEAReporter::TargetFromAircraft(target, a); },
+                        itr.second)) {
+            continue;  // No position.
+        }
+        if (Aircraft::UIDToAircraftType(itr.first) != Aircraft::kAircraftTypeRemoteID && target.id == ownship_icao) {
+            continue;
+        }
+        num_received++;
+        int32_t north_m, east_m, vertical_m;
+        if (traffic == nullptr || num_traffic >= AircraftDictionary::kMaxNumAircraft ||
+            !FLARMNMEAReporter::Relative(own, target, north_m, east_m, vertical_m)) {
+            continue;
+        }
+        traffic[num_traffic++] = {
+            .distance_m = static_cast<uint32_t>(sqrt(static_cast<double>(north_m) * north_m +
+                                                     static_cast<double>(east_m) * east_m)),
+            .entry = &itr.second};
+    }
+    if (traffic != nullptr) {
+        std::sort(traffic, traffic + num_traffic,
+                  [](const TrafficRef& a, const TrafficRef& b) { return a.distance_m < b.distance_m; });
+    }
+
+    char sentence[FLARMNMEAReporter::kMaxSentenceLenBytes + 1];
+    uint16_t len;
+    if (have_ownship) {
+        const FLARMNMEAReporter::UTCTime utc = FLARMNMEAUTCTime(rp2040_status);
+        if ((len = FLARMNMEAReporter::WriteGPRMC(sentence, sizeof(sentence), own, utc)) > 0) {
+            ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
+        }
+        if ((len = FLARMNMEAReporter::WritePGRMZ(sentence, sizeof(sentence), own)) > 0) {
+            ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
+        }
+        if ((len = FLARMNMEAReporter::WriteGPGGA(sentence, sizeof(sentence), own, utc)) > 0) {
+            ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
+        }
+    }
+    // The heartbeat goes before traffic so a full queue never drops it.
+    const uint8_t gps = !have_ownship ? 0 : (own.airborne ? 2 : 1);
+    len = FLARMNMEAReporter::WritePFLAU(sentence, sizeof(sentence), num_received, gps);
+    ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
+
+    for (uint16_t i = 0; i < num_traffic; i++) {
+        std::visit([&target](const auto& a) { FLARMNMEAReporter::TargetFromAircraft(target, a); },
+                   *traffic[i].entry);
+        len = FLARMNMEAReporter::WritePFLAA(sentence, sizeof(sentence), own, target);
+        if (len > 0 && !ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len)) break;  // Queue full.
+    }
+    delete[] traffic;
+}
+
 bool ADSBeeServer::ReportGDL90UplinkDataMessage(const DecodedUATUplinkPacket& uplink_packet) {
-    if (!comms_manager.WiFiAccessPointIsRunning()) {
+    if (!comms_manager.WiFiAccessPointIsRunning() && !ble_output.StreamsMode(SettingsManager::kBLEOutputGDL90)) {
         return true;  // Nothing to do.
     }
 
@@ -594,7 +750,7 @@ bool ADSBeeServer::ReportGDL90UplinkDataMessage(const DecodedUATUplinkPacket& up
         return false;
     }
 
-    if (!comms_manager.WiFiAccessPointSendMessageToAllStations(message)) {
+    if (!SendGDL90(message, /*droppable=*/true)) {
         CONSOLE_ERROR("ADSBeeServer::ReportGDL90UplinkPacket", "Failed to send UAT uplink packet to all clients.");
         return false;
     }

@@ -118,6 +118,14 @@ class SettingsManager {
     };
     static constexpr uint16_t kIPModeStrMaxLen = 4;  // Longest AT string ("IPV4", "DUAL", "IPV6").
 
+    // What the ESP32 streams to one Bluetooth LE client (AT+BLE_OUTPUT). Append new modes; never renumber.
+    enum BLEOutputMode : uint8_t {
+        kBLEOutputOff = 0,
+        kBLEOutputGDL90 = 1,      // The GDL90 the WiFi access point sends on UDP port 4000.
+        kBLEOutputFLARMNMEA = 2,  // FLARM data port sentences (PFLAU, PFLAA, GPRMC, GPGGA) for gliding apps.
+        kNumBLEOutputModes
+    };
+
     // Mode setting for the Sub-GHz radio.
     enum SubGHzRadioMode : uint8_t {
         kSubGHzRadioModeUATRx = 0,  // UAT mode (978MHz receiver).
@@ -447,6 +455,9 @@ class SettingsManager {
         IPv6Config ethernet_ipv6;
         IPv6Config wifi_sta_ipv6;
 
+        // Bluetooth LE output (AT+BLE_OUTPUT), a BLEOutputMode. Off by default. Sits in the struct's tail padding.
+        BLEOutputMode ble_output_mode = kBLEOutputOff;
+
         /**
          * Default constructor.
          */
@@ -766,6 +777,32 @@ class SettingsManager {
         return false;
     }
 
+    static inline const char* BLEOutputModeToStr(uint8_t mode) {
+        switch (mode) {
+            case kBLEOutputGDL90:
+                return "GDL90";
+            case kBLEOutputFLARMNMEA:
+                return "FLARM_NMEA";
+            case kBLEOutputOff:
+            default:
+                return "OFF";
+        }
+    }
+
+    /**
+     * Parses an AT command Bluetooth output mode string (OFF, GDL90 or FLARM_NMEA, case-insensitive).
+     * @retval True if `str` named a mode and `mode` was written.
+     */
+    static inline bool BLEOutputModeFromStr(const char* str, BLEOutputMode& mode) {
+        for (uint8_t i = 0; i < kNumBLEOutputModes; i++) {
+            if (strcasecmp(str, BLEOutputModeToStr(i)) == 0) {
+                mode = static_cast<BLEOutputMode>(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Parses an AT command feed transport string (TCP, UDP or MQTT, case-insensitive).
      * @retval True if `str` named a transport and `transport` was written.
@@ -954,5 +991,6 @@ static_assert(offsetof(SettingsManager::Settings, wifi_sta_ipv4) == 1810, "Setti
 static_assert(sizeof(IPv6Config) == 66, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, ethernet_ipv6) == 1831, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, wifi_sta_ipv6) == 1897, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, ble_output_mode) == 1963, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */

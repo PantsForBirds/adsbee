@@ -78,6 +78,7 @@ nav:
       - Update Firmware: guides/update-firmware.md
       - Check a Unit's Configuration: guides/check-configuration.md
       - Swarm Reports: guides/swarm-reports.md
+      - Bluetooth Output: guides/bluetooth-output.md
       - Modify the Enclosure: guides/modify-enclosure.md
   - Community: community.md
   - Contributing to these docs: contributing.md

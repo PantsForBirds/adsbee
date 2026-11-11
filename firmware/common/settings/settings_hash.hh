@@ -130,6 +130,7 @@ inline uint32_t Compute(const SettingsManager::Settings& settings, Scope scope) 
         hasher.AddBytes(ipv6->gateway, sizeof(ipv6->gateway));
         hasher.AddBytes(&ipv6->dns[0][0], sizeof(ipv6->dns));
     }
+    hasher.AddU8(settings.ble_output_mode);
 
     return hasher.Value();
 }
