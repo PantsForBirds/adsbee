@@ -243,9 +243,8 @@ class LR2021 {
     // from the SPI peripheral, and an in-flight DMA transfer completes internally against the un-muxed
     // pins. SPI_close afterwards leaves the pins hi-Z (SysConfig not-in-use configs are inputs).
     void TristateInterface();
-    // Restores the driven pins tri-stated by TristateInterface(). NSS/ENABLE are reset to their driven
-    // SysConfig defaults (outputs); the SPI pins (SCLK/PICO/POCI) are re-muxed by SPI_open() in Init().
-    // Call BEFORE the next Init()/ApplyReceiverConfig(), which drives NSS/ENABLE via GPIO_write.
+    // Drives NSS high and ENABLE low (outputs); the SPI pins are re-muxed by SPI_open() in Init(). Until the
+    // first call, every bus pin is an input (SysConfig defaults). Call BEFORE the next Init().
     void RestoreInterface();
 
     // Async RX drain
