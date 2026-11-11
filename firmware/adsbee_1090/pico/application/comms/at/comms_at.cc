@@ -7,6 +7,7 @@
 #include "adsbee.hh"
 #include "comms.hh"
 #include "core1.hh"  // For turning multiprocessor on / off during firmware flashing.
+#include "chunked_printf_sink.hh"
 #include "cpu_utils.hh"
 #include "eeprom.hh"
 #include "esp32.hh"  // Access to ESP32 low level SPICoprocessorSlaveInterface.
@@ -18,6 +19,7 @@
 #include "main.hh"
 #include "pico/bootrom.h"  // For Jumping to Bootloader
 #include "pico/multicore.h"
+#include "pico/printf.h"  // For vfctprintf.
 #include "pico/stdlib.h"  // for getchar etc
 #include "pico/unique_id.h"
 #include "ram_monitor.hh"
@@ -47,37 +49,21 @@ const uint32_t kDeviceInfoProgrammingPassword = 0xDEDBEEF;
 const uint32_t kOTAHeartbeatMs = 50;
 
 /** CppAT Printf Override **/
-// AT replies longer than the console printf buffer (e.g. the REMOTE_ID_TX help) are formatted into this buffer
-// instead of being cut short. AT callbacks run only from the main loop; a nested call while it is in use falls back to
-// the printf buffer.
-static constexpr uint16_t kATLongPrintfBufBytes = 2048;
-static char at_long_printf_buf[kATLongPrintfBufBytes];
-static bool at_long_printf_buf_in_use = false;
-
+// Formats straight into the console in small chunks (vfctprintf is the SDK's printf with an output function), so AT
+// replies longer than the console printf buffer (e.g. the REMOTE_ID_TX help) come out whole without a buffer for them.
 int CppAT::cpp_at_printf(const char* format, ...) {
+    CPUMonitor::WorkScope work;
+    auto write = [](const char* buf, size_t len) {
+        return comms_manager.iface_write(SettingsManager::SerialInterface::kConsole, buf, static_cast<uint16_t>(len));
+    };
+    ChunkedPrintfSink<decltype(write)> sink(write);
     va_list args;
     va_start(args, format);
-    va_list args_copy;
-    va_copy(args_copy, args);
-    int len = vsnprintf(nullptr, 0, format, args_copy);
-    va_end(args_copy);
-    int ret;
-    if (len >= CommsManager::kPrintfBufferMaxSize && !at_long_printf_buf_in_use) {
-        at_long_printf_buf_in_use = true;
-        ret = vsnprintf(at_long_printf_buf, sizeof(at_long_printf_buf), format, args);
-        if (ret > 0) {
-            uint16_t write_len = ret < kATLongPrintfBufBytes ? ret : kATLongPrintfBufBytes - 1;
-            if (!comms_manager.iface_write(SettingsManager::SerialInterface::kConsole, at_long_printf_buf, write_len) ||
-                !comms_manager.UpdateNetworkConsole()) {
-                ret = -1;
-            }
-        }
-        at_long_printf_buf_in_use = false;
-    } else {
-        ret = comms_manager.iface_vprintf(SettingsManager::SerialInterface::kConsole, format, args);
-    }
+    int ret = vfctprintf(ChunkedPrintfSink<decltype(write)>::Putc, &sink, format, args);
     va_end(args);
-
+    if (!sink.Flush() || !comms_manager.UpdateNetworkConsole()) {
+        return -1;
+    }
     return ret;
 }
 

@@ -97,6 +97,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_spi_link_gate.cc
         test_at_console_guard.cc
         test_at_help_printer.cc
+        test_chunked_printf_sink.cc
         test_auto_update.cc
         test_wifi_network_selector.cc
         test_feed_datagram.cc
