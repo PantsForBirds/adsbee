@@ -104,6 +104,10 @@ the pin low), so a host tool can enter the ROM bootloader and reflash the module
 - **DTR assert edge → 50 ms reset pulse**. SYNC follows RTS at the edge and is held 250 ms after
   the pulse. Holding DTR asserted doesn't hold the device in reset.
 - **With DTR deasserted, SYNC is low**, so **closing the port leaves the module awake**.
+- **A host that stops reading loses data, not the Programmer.** With DTR asserted (an open port, or one
+  closed with HUPCL off), module output waits for the host at most 100 ms; after that it's dropped until
+  the host reads again, and the Programmer then reports how many bytes it dropped. Host data, RTS/DTR and
+  the magic baud below keep working meanwhile.
 - **The host's baud rate is ignored** (see [Baud rate](#baud-rate)), also for a ROM bootloader client.
 - **Except 233495534 baud (`0xDEADBEE`)**, which reboots the Programmer into its USB bootloader
   (`RPI-RP2`) for updates without pressing BOOT, e.g.
