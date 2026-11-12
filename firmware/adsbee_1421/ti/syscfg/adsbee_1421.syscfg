@@ -103,6 +103,10 @@ CCFG.ccfgTemplate.$name = "ti_devices_CCFG_CCFGCC26XXTemplate0";
  * since Power_init() only arms LF calibration when the CCFG source is RCOSC_LF. */
 CCFG.srcClkLF                 = "LF RCOSC";
 
+/* -2 cap steps from the factory trim: the 7 pF crystal runs ~6.5 ppm slow on the factory setting. */
+CCFG.xoscCapArray             = true;
+CCFG.xoscCapArrayDelta        = 0xFE;
+
 /* Bootloader backdoor: holding SYNC (DIO_5) high during reset forces entry into the ROM serial
  * bootloader on DIO_2 (RX) / DIO_3 (TX). Previously a hand edit in ti_devices_config.c that silent
  * regenerations kept reverting; encoded here so regeneration is safe. */
