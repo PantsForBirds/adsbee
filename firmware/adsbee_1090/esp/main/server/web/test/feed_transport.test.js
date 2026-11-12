@@ -111,8 +111,8 @@ test('presets fill protocol, transport, host and port', async () => {
     await FeedEditor.open(5);
     const names = Array.from(FeedEditor.PRESETS, p => p.name);
     assert.deepStrictEqual(Array.from(get('feed-presets').children, c => c.textContent), names);
-    for (const name of ['adsb.fi', 'adsb.lol', 'airplanes.live', 'whereplane', 'EFB tablets', 'Ground station',
-        'Home Assistant']) {
+    for (const name of ['adsb.fi', 'adsb.lol', 'airplanes.live', 'whereplane', 'PlaneTrack', 'EFB tablets',
+        'Ground station', 'Home Assistant']) {
         assert.ok(names.includes(name), name);
     }
 
@@ -127,6 +127,13 @@ test('presets fill protocol, transport, host and port', async () => {
     FeedEditor.applyPreset(names.indexOf('whereplane'));
     assert.strictEqual(get('feed-uri').value, 'feed.whereplane.xyz');
     assert.strictEqual(get('feed-map-row').style.display, '');
+
+    FeedEditor.applyPreset(names.indexOf('PlaneTrack'));
+    assert.strictEqual(get('feed-uri').value, 'feed.planetrack.ai');
+    assert.strictEqual(get('feed-port').value, 30004);
+    assert.strictEqual(get('feed-protocol').value, 'BEAST_NO_UAT');
+    assert.strictEqual(get('feed-transport').value, 'TCP');
+    assert.strictEqual(get('feed-map-row').style.display, 'none');
 
     FeedEditor.applyPreset(names.indexOf('Home Assistant'));
     assert.strictEqual(get('feed-mqtt-host').value, 'homeassistant.local');

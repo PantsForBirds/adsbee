@@ -781,6 +781,7 @@ class FeedEditor {
         { name: 'adsb.lol', protocol: 'BEAST_NO_UAT', transport: 'TCP', host: 'feed.adsb.lol', port: 30004 },
         { name: 'airplanes.live', protocol: 'BEAST_NO_UAT', transport: 'TCP', host: 'feed.airplanes.live', port: 30004 },
         { name: 'whereplane', protocol: 'BEAST', transport: 'TCP', host: 'feed.whereplane.xyz', port: 30004 },
+        { name: 'PlaneTrack', protocol: 'BEAST_NO_UAT', transport: 'TCP', host: 'feed.planetrack.ai', port: 30004 },
         {
             name: 'EFB tablets', protocol: 'GDL90', transport: 'UDP', host: '192.168.4.255', port: 4000,
             tip: 'GDL90 broadcast on port 4000 to tablets on the ADSBee WiFi (ForeFlight, Garmin Pilot, SkyDemon...)',
