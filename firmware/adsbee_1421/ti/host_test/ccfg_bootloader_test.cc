@@ -24,7 +24,7 @@ static int failures = 0;
 
 // .ccfg of the adsbee_1421 release image (adsbee_1421.syscfg -> ti_devices_config.c), by word.
 static const uint32_t kReleaseCcfg[kCcfgStructSizeBytes / 4] = {
-    0x007CFFFD, 0xF3FBFFFF, 0xFF800010, 0xFFFFFFFF, 0xFFFFFFFF, 0x01800000, 0xFFFFFFFF, 0xFFFFFFFF,
+    0x007CFFFD, 0xF3F9FEFF, 0xFF800010, 0xFFFFFFFF, 0xFFFFFFFF, 0x01800000, 0xFFFFFFFF, 0xFFFFFFFF,
     0xFFFFFFFF, 0xFFFFFFFF, 0xC5FF05C5, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFC50000, 0xFFC5C500, 0xFF000000,
     0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFE0400, 0xFFFC0000, 0xFFFFFFFE,
     0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
@@ -236,14 +236,14 @@ static void TestSetArgsPassword() {
     EXPECT(a.error && strstr(a.error, "CCFG not touched"));
 }
 
-// Matches the ROM bootloader's COMMAND_CRC32 (0x66E9858D for the release CCFG) and zlib's crc32().
+// Matches the ROM bootloader's COMMAND_CRC32 (0x6886ABE1 for the release CCFG) and zlib's crc32().
 static void TestCrc32() {
     FlashSector release;
-    EXPECT(StructCrc32(release.bytes) == 0x66E9858D);
+    EXPECT(StructCrc32(release.bytes) == 0x6886ABE1);
     EXPECT(Crc32(reinterpret_cast<const uint8_t*>("123456789"), 9) == 0xCBF43926);  // CRC-32 check value.
     FlashSector disabled;
     PlanAndApply(disabled, false);
-    EXPECT(StructCrc32(disabled.bytes) != 0x66E9858D);
+    EXPECT(StructCrc32(disabled.bytes) != 0x6886ABE1);
 }
 
 // Runs one planned write with a fault and checks the result matches the sector: kOk = planned image,
@@ -395,7 +395,7 @@ static void TestFailureBanner() {
     r.new_bl_config = 0xC5FF05C5;
     r.readback_bl_config = 0xFFFFFFFF;
     r.original_crc = 0x11111111;
-    r.expected_crc = 0x66E9858D;
+    r.expected_crc = 0x6886ABE1;
     r.readback_crc = 0x22222222;
     r.restore_attempts = kRestoreAttempts;
     r.error = "CCFG erase, program or verify failed";
@@ -413,7 +413,7 @@ static void TestFailureBanner() {
     EXPECT(AnyLineHas(lines, "erase and reprogram the CCFG sector, BL_CONFIG 0xC5FF0500 -> 0xC5FF05C5"));
     EXPECT(AnyLineHas(lines, "Failed: CCFG erase, program or verify failed"));
     EXPECT(AnyLineHas(lines, "BL_CONFIG 0xFFFFFFFF"));
-    EXPECT(AnyLineHas(lines, "CRC32 0x22222222 (planned 0x66E9858D, original 0x11111111)"));
+    EXPECT(AnyLineHas(lines, "CRC32 0x22222222 (planned 0x6886ABE1, original 0x11111111)"));
     EXPECT(AnyLineHas(lines, "DO NOT RESET OR POWER CYCLE"));
     EXPECT(AnyLineHas(lines, "failed 3 time(s)"));
     EXPECT(AnyLineHas(lines, "AT+BOOTLOADER_PIN=1,DEADBEE again now"));
@@ -464,7 +464,7 @@ static void TestBuiltImage(const char* path) {
     fclose(f);
     printf("  %s: %zu bytes\n", path, len);
     EXPECT(len == kCcfgStructSizeBytes);
-    EXPECT(StructCrc32(built.bytes) == 0x66E9858D);
+    EXPECT(StructCrc32(built.bytes) == 0x6886ABE1);
     FlashSector release;
     EXPECT(memcmp(built.bytes, release.bytes, sizeof(built.bytes)) == 0);
     // Disabling and re-enabling must reproduce the built CCFG exactly.

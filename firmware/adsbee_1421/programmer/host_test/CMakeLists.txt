@@ -38,6 +38,7 @@ target_sources(host_test PRIVATE
     test_console_baud.cc
     test_rate_watch.cc
     test_cdc_text.cc
+    test_cdc_tx.cc
     test_host_line_coding.cc
     test_modem_lines.cc
 )
