@@ -106,8 +106,8 @@ void CommsManager::KickTx() {
     }
     // Longest contiguous run starting at head (stop at the end of the ring; the callback chains the wrapped part).
     size_t count = tail > head ? static_cast<size_t>(tail - head) : static_cast<size_t>(kUartTxRingBytes - head);
+    if (count > kUartTxSegmentMaxBytes) count = kUartTxSegmentMaxBytes;  // The callback chains the rest.
     uart_tx_in_progress_ = true;
-    // The driver internally restarts DMA in <=1024 B pieces until the whole count is out, so no chunking here.
     int_fast16_t status = UART2_write(uart_handle_, &uart_tx_ring_[head], count, nullptr);
     if (status != UART2_STATUS_SUCCESS) {
         uart_tx_in_progress_ = false;  // Update() / the next iface_write will retry.
@@ -119,10 +119,11 @@ bool CommsManager::WaitForTxRingSpace(uint16_t num_bytes) {
         return true;
     }
     uart_tx_stall_count++;
-    // Budget: time for the shortfall to clock out at the current baud rate, doubled, plus margin. Bounded so a wedged
-    // UART degrades to dropped output rather than a frozen main loop.
+    // Budget: time for the shortfall plus the segment in flight (its space frees only when it completes) to clock out
+    // at the current baud rate, doubled, plus margin. Bounded so a wedged UART degrades to dropped output rather than
+    // a frozen main loop.
     uint32_t shortfall = num_bytes - TxRingFreeBytes();
-    uint32_t wait_ms = 2 * TxBytesToMs(shortfall) + kTxWaitMarginMs;
+    uint32_t wait_ms = 2 * TxBytesToMs(shortfall + kUartTxSegmentMaxBytes) + kTxWaitMarginMs;
     uint32_t deadline_ms =
         get_time_since_boot_ms() + (wait_ms < kTxRingSpaceWaitMaxMs ? wait_ms : kTxRingSpaceWaitMaxMs);
     while (TxRingFreeBytes() < num_bytes && get_time_since_boot_ms() < deadline_ms) {
@@ -411,9 +412,32 @@ int CommsManager::iface_printf(SettingsManager::SerialInterface iface, const cha
 
 int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const char* format, va_list args) {
     char buf[kPrintfBufferMaxSize];
+    va_list args_again;
+    va_copy(args_again, args);
 
     // Formatted print to buffer.
     int res = vsnprintf(buf, kPrintfBufferMaxSize, format, args);
+    if (res >= kPrintfBufferMaxSize) {
+        // Too long for buf: format it again through a stdio stream that writes out buf each time it fills.
+        struct Sink {
+            CommsManager* comms;
+            SettingsManager::SerialInterface iface;
+        } sink = {this, iface};
+        auto write = [](void* cookie, const char* data, int len) {
+            Sink* s = static_cast<Sink*>(cookie);
+            return s->comms->iface_write(s->iface, data, static_cast<size_t>(len)) ? len : -1;
+        };
+        FILE* stream = funopen(&sink, nullptr, write, nullptr, nullptr);  // Write-only stream.
+        if (stream != nullptr) {
+            setvbuf(stream, buf, _IOFBF, kPrintfBufferMaxSize);
+            bool ok = vfprintf(stream, format, args_again) >= 0;
+            ok = fclose(stream) == 0 && ok;
+            va_end(args_again);
+            return ok ? res : -1;
+        }
+        // No stream (heap exhausted): print the cut-off text in buf instead.
+    }
+    va_end(args_again);
     if (res <= 0) {
         return res;  // vsnprintf failed.
     }
