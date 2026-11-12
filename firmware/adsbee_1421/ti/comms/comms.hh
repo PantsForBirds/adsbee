@@ -15,7 +15,6 @@ extern "C" {
 #include "composite_array.hh"
 #include "console_autobaud.hh"
 #include "console_baud.hh"
-#include "at_help_printer.hh"
 #include "cpp_at.hh"
 #include "settings.hh"
 
@@ -45,8 +44,6 @@ class CommsManager {
     // Largest piece of the ring handed to one UART2_write. Ring space is freed only when a write completes, so small
     // pieces free it steadily and keep the bounded wait for space accurate (256 B = 2.6 ms at 1 Mbaud).
     static constexpr uint16_t kUartTxSegmentMaxBytes = 256;
-    // Main loop time spent queueing AT+HELP entries per iteration.
-    static constexpr uint32_t kHelpPrintBudgetUs = 1000;
 
     struct CommsManagerConfig {
         uint8_t uart_index = bsp.kSubGUARTIndex;
@@ -140,7 +137,6 @@ class CommsManager {
     CPP_AT_CALLBACK(ATBootloaderPinCallback);
     CPP_AT_CALLBACK(ATConfigHashCallback);
     CPP_AT_CALLBACK(ATDeviceInfoCallback);
-    CPP_AT_CALLBACK(ATHelpCallback);
     CPP_AT_HELP_CALLBACK(ATOTAHelpCallback);
     CPP_AT_CALLBACK(ATR1090GainCallback);
     CPP_AT_CALLBACK(ATLEDBlinkCallback);
@@ -244,9 +240,6 @@ class CommsManager {
     // AT Functions
     bool UpdateAT();
 
-    // Queues AT+HELP entries while the TX ring has room for them, for up to kHelpPrintBudgetUs.
-    void PrintHelpEntries();
-
     // Size of a CompositeArray that holds one full raw report chunk.
     static constexpr uint16_t kRawReportChunkBufBytes =
         sizeof(CompositeArray::RawPackets::Header) + kRawReportMaxModeSPacketsPerUpdate * sizeof(RawModeSPacket) +
@@ -302,8 +295,6 @@ class CommsManager {
 
     // Console Settings
     CppAT at_parser_;
-    // AT+HELP listing in progress. Console input waits until it is done, so replies don't interleave with it.
-    ATHelpPrinter help_printer_;
 
     UART2_Handle uart_handle_ = nullptr;
     bool rate_announced_ = false;  // AnnounceConsoleRate() ran since boot.

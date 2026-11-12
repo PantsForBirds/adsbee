@@ -5,7 +5,6 @@
 #include <iostream>  // for AT command ingestion
 
 #include "adsbee.hh"
-#include "chunked_printf_sink.hh"
 #include "comms.hh"
 #include "core1.hh"  // For turning multiprocessor on / off during firmware flashing.
 #include "cpu_utils.hh"
@@ -19,7 +18,6 @@
 #include "main.hh"
 #include "pico/bootrom.h"  // For Jumping to Bootloader
 #include "pico/multicore.h"
-#include "pico/printf.h"  // For vfctprintf.
 #include "pico/stdlib.h"  // for getchar etc
 #include "pico/unique_id.h"
 #include "ram_monitor.hh"
@@ -49,21 +47,12 @@ const uint32_t kDeviceInfoProgrammingPassword = 0xDEDBEEF;
 const uint32_t kOTAHeartbeatMs = 50;
 
 /** CppAT Printf Override **/
-// Formats straight into the console in small chunks (vfctprintf is the SDK's printf with an output function), so AT
-// replies longer than the console printf buffer (e.g. the REMOTE_ID_TX help) come out whole without a buffer for them.
 int CppAT::cpp_at_printf(const char* format, ...) {
-    CPUMonitor::WorkScope work;
-    auto write = [](const char* buf, size_t len) {
-        return comms_manager.iface_write(SettingsManager::SerialInterface::kConsole, buf, static_cast<uint16_t>(len));
-    };
-    ChunkedPrintfSink<decltype(write)> sink(write);
     va_list args;
     va_start(args, format);
-    int ret = vfctprintf(ChunkedPrintfSink<decltype(write)>::Putc, &sink, format, args);
+    int ret = comms_manager.iface_vprintf(SettingsManager::SerialInterface::kConsole, format, args);
     va_end(args);
-    if (!sink.Flush() || !comms_manager.UpdateNetworkConsole()) {
-        return -1;
-    }
+
     return ret;
 }
 
@@ -2167,7 +2156,8 @@ static void PrintStaticIPJSON(const char* cmd, const IPv4Config& v4, const IPv6C
 // Each value is an array ordered to match the web settings GUI's field list for that
 // command (the writable AT= args plus query-only extras like live status, minus the
 // redacted WiFi STA password), using the same value representations as the individual
-// AT queries (enum strings, 0/1 booleans). Keep in sync with SETTINGS_SCHEMA_1090 in
+// AT queries (enum strings, 0/1 booleans). Emitted in multiple printf calls to stay
+// under kPrintfBufferMaxSize. Keep in sync with SETTINGS_SCHEMA_1090 in
 // esp/main/server/web/settings.js when adding commands.
 static void PrintSettingsJSON() {
     char esc[2 * SettingsManager::Settings::kWiFiPasswordMaxLen + 2];

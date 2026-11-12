@@ -72,9 +72,7 @@ static inline bool ConsoleBreakSeen() { return (HWREG(UART0_BASE + UART_O_RIS) &
 static inline void ClearConsoleBreak() { HWREG(UART0_BASE + UART_O_ICR) = UART_INT_BE; }
 
 CommsManager::CommsManager(CommsManagerConfig config)
-    : config_(config),
-      at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)),
-      help_printer_(at_command_list, at_command_list_num_commands) {}
+    : config_(config), at_parser_(CppAT(at_command_list, at_command_list_num_commands, true)) {}
 
 void CommsManager::uart_write_callback(UART2_Handle handle, void* buf, size_t count, void* userArg,
                                        int_fast16_t status) {
@@ -173,7 +171,6 @@ void CommsManager::AnnounceConsoleRate() {
 }
 
 void CommsManager::DropQueuedConsoleTx() {
-    help_printer_.Stop();
     // The write callback retires what already went out, synchronously.
     if (uart_tx_in_progress_) UART2_writeCancel(uart_handle_);
     uintptr_t key = HwiP_disable();
@@ -294,11 +291,7 @@ bool CommsManager::Update() {
     }
 
     if (ConsoleBreakSeen()) AnswerConsoleBreak();
-    if (help_printer_.Active()) {
-        PrintHelpEntries();
-    } else {
-        UpdateAT();
-    }
+    UpdateAT();
     ReportQueuedRawPackets();
 
     uint32_t timestamp_ms = get_time_since_boot_ms();
@@ -314,19 +307,6 @@ bool CommsManager::Update() {
                         &no_packets);
     }
     return true;
-}
-
-void CommsManager::PrintHelpEntries() {
-    const uint64_t start_us = get_time_since_boot_us();
-    auto write = [this](const char* buf, size_t len) {
-        return iface_write(SettingsManager::SerialInterface::kConsole, buf, len);
-    };
-    // An entry bigger than the whole ring goes out with bounded waits for space instead of never.
-    while (help_printer_.Active() && (TxRingFreeBytes() >= help_printer_.NextEntryMaxBytes() ||
-                                      TxRingUsedBytes() == 0) &&
-           get_time_since_boot_us() - start_us < kHelpPrintBudgetUs) {
-        help_printer_.PrintNext(write);
-    }
 }
 
 bool CommsManager::ReportsRawPackets() const {
@@ -432,9 +412,32 @@ int CommsManager::iface_printf(SettingsManager::SerialInterface iface, const cha
 
 int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const char* format, va_list args) {
     char buf[kPrintfBufferMaxSize];
+    va_list args_again;
+    va_copy(args_again, args);
 
     // Formatted print to buffer.
     int res = vsnprintf(buf, kPrintfBufferMaxSize, format, args);
+    if (res >= kPrintfBufferMaxSize) {
+        // Too long for buf: format it again through a stdio stream that writes out buf each time it fills.
+        struct Sink {
+            CommsManager* comms;
+            SettingsManager::SerialInterface iface;
+        } sink = {this, iface};
+        auto write = [](void* cookie, const char* data, int len) {
+            Sink* s = static_cast<Sink*>(cookie);
+            return s->comms->iface_write(s->iface, data, static_cast<size_t>(len)) ? len : -1;
+        };
+        FILE* stream = funopen(&sink, nullptr, write, nullptr, nullptr);  // Write-only stream.
+        if (stream != nullptr) {
+            setvbuf(stream, buf, _IOFBF, kPrintfBufferMaxSize);
+            bool ok = vfprintf(stream, format, args_again) >= 0;
+            ok = fclose(stream) == 0 && ok;
+            va_end(args_again);
+            return ok ? res : -1;
+        }
+        // No stream (heap exhausted): print the cut-off text in buf instead.
+    }
+    va_end(args_again);
     if (res <= 0) {
         return res;  // vsnprintf failed.
     }
