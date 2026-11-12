@@ -63,9 +63,8 @@ TEST(MLATTimeSync, TracksTwoCrystalsToWellUnderAMicrosecond) {
             int64_t worst_error = 0;
             for (int pulse = 0; pulse < 600; pulse++) {
                 double t_us = pulse * 1'000'000.0 + jitter_us(rng) + 0.3;
-                EXPECT_EQ(MLATTimeSync::kAdded,
-                          sync.AddSyncPoint(clocks.Local(t_us), clocks.Mlat(t_us + jitter_us(rng))));
-                if (pulse < 8) continue;  // Let the rate estimate settle.
+                EXPECT_TRUE(sync.AddSyncPoint(clocks.Local(t_us), clocks.Mlat(t_us + jitter_us(rng))));
+                if (pulse < 1) continue;
                 for (int i = 0; i < 20; i++) {
                     double packet_us = t_us + within_s(rng);  // Before the next pulse.
                     worst_error = std::max(
@@ -103,7 +102,7 @@ TEST(MLATTimeSync, TwoCrystalsWaitForTheSecondPoint) {
     EXPECT_EQ(sync.ToMLAT48MHzCounts(8'000'000), 1000u + 96'000'000 + 960);
 }
 
-TEST(MLATTimeSync, ARestartKeepsTheRateAndWaitsForTwoPoints) {
+TEST(MLATTimeSync, ARestartWaitsForTwoNewPoints) {
     // An RF re-open (AT+SUBG_MODE switch) restarts the radio timer with an unknown step.
     TwoClocks clocks = {-30.0, 0, 1'000'000};
     MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
@@ -112,68 +111,53 @@ TEST(MLATTimeSync, ARestartKeepsTheRateAndWaitsForTwoPoints) {
     sync.Restart();
     EXPECT_FALSE(sync.IsSynced());
     EXPECT_EQ(sync.ToMLAT48MHzCounts(clocks.Local(9.5e6)), 0u);  // Old offset is gone.
-    EXPECT_TRUE(sync.HasRate());
     clocks.local_start = 0x12345678;  // The step.
     sync.AddSyncPoint(clocks.Local(10.2e6), clocks.Mlat(10.2e6));
-    EXPECT_FALSE(sync.IsSynced());  // One point could be paired with the wrong edge.
-    sync.AddSyncPoint(clocks.Local(10.7e6), clocks.Mlat(10.7e6));
+    EXPECT_FALSE(sync.IsSynced());
+    sync.AddSyncPoint(clocks.Local(11.2e6), clocks.Mlat(11.2e6));
     EXPECT_TRUE(sync.IsSynced());
-    EXPECT_LE(AbsError(sync.ToMLAT48MHzCounts(clocks.Local(11e6)), clocks.Mlat(11e6)), 3);
+    EXPECT_LE(AbsError(sync.ToMLAT48MHzCounts(clocks.Local(11.5e6)), clocks.Mlat(11.5e6)), 3);
     EXPECT_NEAR(sync.GetRateErrorPPB(), -30'000, 1);
 }
 
-TEST(MLATTimeSync, ARestartBeforeTheRateIsKnownStillNeedsTwoPoints) {
+TEST(MLATTimeSync, ARateBeyond200PPMStartsTheFitAgain) {
     MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    sync.AddSyncPoint(0, 0);
-    sync.Restart();
-    sync.AddSyncPoint(100, 1000);
-    EXPECT_FALSE(sync.IsSynced());
-}
-
-TEST(MLATTimeSync, AResetForgetsTheRate) {
-    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    sync.AddSyncPoint(0, 0);
-    sync.AddSyncPoint(4'000'000, 48'000'000 + 480);
-    ASSERT_TRUE(sync.HasRate());
-    sync.Reset();  // CC1312 reset.
-    EXPECT_FALSE(sync.HasRate());
-    EXPECT_FALSE(sync.IsSynced());
-    sync.AddSyncPoint(4'000, 7);
-    EXPECT_FALSE(sync.IsSynced());
-}
-
-TEST(MLATTimeSync, ABadPointBeforeSyncStopsTimestampsUntilTwoPointsAgree) {
-    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(0, 0));
+    EXPECT_TRUE(sync.AddSyncPoint(0, 0));
     // 1 ms off in one second (1000 ppm): not a crystal, e.g. an edge paired with the wrong pulse.
-    EXPECT_EQ(MLATTimeSync::kRestarted, sync.AddSyncPoint(4'000'000, 48'000'000 + 48'000));
+    EXPECT_FALSE(sync.AddSyncPoint(4'000'000, 48'000'000 + 48'000));
     EXPECT_FALSE(sync.IsSynced());
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(8'000'000, 96'000'000 + 48'000 + 480));  // 10 ppm.
+    EXPECT_EQ(sync.GetNumSyncPoints(), 1);  // The fit starts again from the new point.
+    // 10 ppm from that point.
+    EXPECT_TRUE(sync.AddSyncPoint(8'000'000, 96'000'000 + 48'000 + 480));
     EXPECT_TRUE(sync.IsSynced());
     EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
+    // 199 ppm agrees, 201 ppm doesn't.
+    MLATTimeSync edge(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    edge.AddSyncPoint(0, 0);
+    EXPECT_TRUE(edge.AddSyncPoint(4'000'000, 48'000'000 + 199 * 48));
+    MLATTimeSync beyond(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    beyond.AddSyncPoint(0, 0);
+    EXPECT_FALSE(beyond.AddSyncPoint(4'000'000, 48'000'000 - 201 * 48));
 }
 
-TEST(MLATTimeSync, OneBadPointOnceSyncedIsSkipped) {
+TEST(MLATTimeSync, APointOffThePredictionStartsTheFitAgain) {
     MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(0, 0));
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(4'000'000, 48'000'000 + 480));  // 10 ppm.
-    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
-    // 1 ms off: skipped, timestamps go on from the fit.
-    EXPECT_EQ(MLATTimeSync::kSkipped, sync.AddSyncPoint(8'000'000, 96'000'000 + 48'000));
+    EXPECT_TRUE(sync.AddSyncPoint(0, 0));
+    EXPECT_TRUE(sync.AddSyncPoint(4'000'000, 48'000'000 + 480));  // 10 ppm.
+    // 49 us off the prediction one second on: agrees. The rate moves a quarter of the way to the 59 ppm measured.
+    uint64_t mlat = 96'000'000 + 960 + 49 * 48;
+    EXPECT_TRUE(sync.AddSyncPoint(8'000'000, mlat));
     EXPECT_TRUE(sync.IsSynced());
-    EXPECT_EQ(sync.ToMLAT48MHzCounts(8'000'000), 96'000'960u);
-    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
-    // The next good point agrees with the fit (two intervals from its last point).
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(12'000'000, 144'000'000 + 1440));
-    EXPECT_EQ(sync.ToMLAT48MHzCounts(12'000'000), 144'001'440u);
-    // 30 us off after 1 s is off the fit too (a crystal moves well under 1 ppm in a second).
-    EXPECT_EQ(MLATTimeSync::kSkipped, sync.AddSyncPoint(16'000'000, 192'000'000 + 1920 + 30 * 48));
-    // Two in a row: the fit restarts from the second; its rate stays.
-    EXPECT_EQ(MLATTimeSync::kRestarted, sync.AddSyncPoint(20'000'000, 240'000'000 + 2400 + 40 * 48));
+    EXPECT_EQ(sync.GetRateErrorPPB(), 22'250);
+    // 101 us off the prediction (123 ppm from the last point, within 200 ppm of nominal): the fit starts again from it.
+    mlat += 48'000'000 + 1068 + 101 * 48;
+    EXPECT_FALSE(sync.AddSyncPoint(12'000'000, mlat));
     EXPECT_FALSE(sync.IsSynced());
-    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(24'000'000, 288'000'000 + 2880 + 40 * 48));
+    EXPECT_EQ(sync.ToMLAT48MHzCounts(12'000'000), 0u);
+    // The next point agrees with it: synced again, at the rate between the two.
+    EXPECT_TRUE(sync.AddSyncPoint(16'000'000, mlat + 48'000'000 + 480));
     EXPECT_TRUE(sync.IsSynced());
+    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
 }
 
 TEST(MLATTimeSync, OneHertzPulsesKeepTheFitAtTheCaptureNoise) {
@@ -214,32 +198,27 @@ TEST(MLATTimeSync, OneHertzPulsesKeepTheFitAtTheCaptureNoise) {
     EXPECT_LT(worst, 0.6);
 }
 
-TEST(MLATTimeSync, PointsFarApartOrBackwardsRestart) {
+TEST(MLATTimeSync, APointAtTheSameTimeOrBackwardsStartsTheFitAgain) {
     MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    sync.AddSyncPoint(0, 0);
-    // Further apart than kMaxSyncIntervalUs.
-    uint32_t far = (MLATTimeSync::kMaxSyncIntervalUs + 1'000'000) * 4;
-    EXPECT_EQ(MLATTimeSync::kRestarted, sync.AddSyncPoint(far, static_cast<uint64_t>(far) * 12));
-    // Backwards.
-    EXPECT_EQ(MLATTimeSync::kRestarted, sync.AddSyncPoint(far + 4'000'000, 100));
+    sync.AddSyncPoint(4'000'000, 48'000'000);
+    EXPECT_FALSE(sync.AddSyncPoint(4'000'000, 96'000'000));  // Same edge, another count.
+    EXPECT_FALSE(sync.AddSyncPoint(8'000'000, 48'000'000));  // Count backwards.
     EXPECT_FALSE(sync.IsSynced());
 }
 
-TEST(MLATTimeSync, TheRateIsTheSlopeOverTheLongestRecentIntervals) {
-    // A 1 us error in one point moves the rate by 1 ppm over a 1 s interval, but only by 1/8 ppm over 8 s (pulses
-    // missed or late, e.g. under overload).
+TEST(MLATTimeSync, EachPointMovesTheRateAQuarterOfTheWay) {
     MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
     uint64_t t_us = 0;
-    sync.AddSyncPoint(0, 0);
-    for (uint32_t interval_s : {1u, 2u, 4u, 8u, 8u, 8u, 8u}) {
-        t_us += interval_s * 1'000'000ull;
-        sync.AddSyncPoint(static_cast<uint32_t>(t_us * 4), t_us * 48);
-    }
+    for (int i = 0; i < 10; i++, t_us += 1'000'000) sync.AddSyncPoint(static_cast<uint32_t>(t_us * 4), t_us * 48);
     EXPECT_EQ(sync.GetRateErrorPPB(), 0);
-    t_us += 8'000'000;
-    EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(static_cast<uint32_t>(t_us * 4), t_us * 48 + 48));  // 1 us late.
-    EXPECT_GT(sync.GetRateErrorPPB(), 0);
-    EXPECT_LE(sync.GetRateErrorPPB(), 1'000'000'000 / 8'000'000 + 1);
+    t_us += 1'000'000;  // A pulse missed; this one 1 us late: 500 ppb over the 2 s since the last point.
+    EXPECT_TRUE(sync.AddSyncPoint(static_cast<uint32_t>(t_us * 4), t_us * 48 + 48));
+    EXPECT_EQ(sync.GetRateErrorPPB(), 125);
+    // The first rate after a restart is the measurement itself.
+    sync.Restart();
+    sync.AddSyncPoint(0, 0);
+    sync.AddSyncPoint(4'000'000, 48'000'000 + 480);
+    EXPECT_EQ(sync.GetRateErrorPPB(), 10'000);
 }
 
 TEST(MLATTimeSync, NoTimestampsFarFromTheLastSyncPoint) {
@@ -262,78 +241,96 @@ struct Coprocessor {
     SyncPulsePairing pairing;
     std::mt19937 rng{1};
     double pulse_offset_us = 0;
-    int num_added = 0, num_wrong = 0, num_not_added = 0;
+    int num_added = 0, num_wrong = 0, num_restarts = 0;
 
     double T(double pulse) const { return pulse_offset_us + pulse * 1e6; }
     void Edge(double t_us) { pairing.AddEdge(clocks.Local(t_us) + static_cast<int>(rng() % 3) - 1); }
     void EdgeOf(int pulse) { Edge(T(pulse)); }
     uint64_t CountOf(int pulse) const { return clocks.Mlat(T(pulse)); }
-    // Pulse's count arrives at now_us. True if it made a sync point (always from the pulse's own edge).
+    // Pulse's count arrives at now_us. True if it made a sync point.
     bool Count(int pulse, double now_us) {
         uint32_t edge_local = 0;
-        if (!pairing.Pair(sync, CountOf(pulse), clocks.Local(now_us), edge_local)) {
-            num_not_added++;
-            return false;
-        }
+        if (!pairing.Pair(sync, CountOf(pulse), clocks.Local(now_us), edge_local)) return false;
         uint32_t ticks_off = edge_local - clocks.Local(T(pulse));
         if (ticks_off + 1 > 2) num_wrong++;  // Not within the capture noise of the pulse's edge.
-        EXPECT_EQ(MLATTimeSync::kAdded, sync.AddSyncPoint(edge_local, CountOf(pulse)));
+        if (!sync.AddSyncPoint(edge_local, CountOf(pulse))) num_restarts++;
         num_added++;
         return true;
+    }
+    // Two points from counts 1 ms after their edges.
+    void SyncAt(int pulse) {
+        EdgeOf(pulse);
+        Count(pulse, T(pulse) + 1e3);
+        EdgeOf(pulse + 1);
+        Count(pulse + 1, T(pulse + 1) + 1e3);
+        ASSERT_TRUE(sync.IsSynced());
     }
     int64_t ErrorTicks(double t_us) const {
         return static_cast<int64_t>(sync.ToMLAT48MHzCounts(clocks.Local(t_us)) - clocks.Mlat(t_us));
     }
 };
 
+constexpr double kYoungUs = SyncPulsePairing::kMaxFirstEdgeAgeUs;
+
 }  // namespace
 
-TEST(SyncPulsePairing, TheFirstPointNeedsAYoungEdge) {
+TEST(SyncPulsePairing, TheFirstTwoPointsNeedAYoungEdge) {
     Coprocessor c;
     EXPECT_FALSE(c.Count(0, 50e3));  // No edge yet.
     c.EdgeOf(1);
-    EXPECT_FALSE(c.Count(1, c.T(1) + 300e3));  // 300 ms old: may be a previous pulse's. Wait.
+    EXPECT_FALSE(c.Count(1, c.T(1) + kYoungUs + 50e3));  // Too old: if pulse 1's edge was missed, it's pulse 0's.
     EXPECT_EQ(c.sync.GetNumSyncPoints(), 0);
     c.EdgeOf(2);
-    EXPECT_TRUE(c.Count(2, c.T(2) + 200e3));
-    // From here on the prediction pairs, however late the count.
+    EXPECT_TRUE(c.Count(2, c.T(2) + kYoungUs - 50e3));
     c.EdgeOf(3);
+    EXPECT_FALSE(c.Count(3, c.T(3) + kYoungUs + 50e3));  // No rate yet: a young edge again.
     c.EdgeOf(4);
-    EXPECT_TRUE(c.Count(3, c.T(4) + 900e3));  // Arrives after the next edge.
+    EXPECT_TRUE(c.Count(4, c.T(4) + 10e3));
     EXPECT_TRUE(c.sync.IsSynced());
+    // From here on the prediction pairs, also a count that arrives after the next edge.
+    c.EdgeOf(5);
+    c.EdgeOf(6);
+    EXPECT_TRUE(c.Count(5, c.T(6) + 1e3));
     EXPECT_EQ(c.num_wrong, 0);
+    EXPECT_EQ(c.num_restarts, 0);
 }
 
 TEST(SyncPulsePairing, LateCountsPairWithTheirOwnEdge) {
-    // Under output overload a count arrives up to a few seconds late, after one or more newer edges.
-    for (double delay_us : {1e3, 400e3, 1.1e6, 2.5e6, 3.5e6}) {
+    // Under output overload (RP2040 main loop passes over a second) a count can arrive after the next edge.
+    for (double delay_us : {1e3, 400e3, 990e3, 1.001e6, 1.5e6, 1.99e6}) {
         SCOPED_TRACE(delay_us);
         Coprocessor c;
         c.pulse_offset_us = 123'456;
-        c.EdgeOf(0);
-        c.Count(0, c.T(0) + 1e3);  // First point.
-        int next_edge = 1;
-        for (int pulse = 1; pulse < 300; pulse++) {
+        c.SyncAt(0);
+        int next_edge = 2;
+        for (int pulse = 2; pulse < 300; pulse++) {
             double now = c.T(pulse) + delay_us;
             while (c.T(next_edge) <= now) c.EdgeOf(next_edge++);
-            c.Count(pulse, now);
+            EXPECT_TRUE(c.Count(pulse, now));
+            EXPECT_LE(std::abs(c.ErrorTicks(c.T(pulse) + 500e3)), 36);  // 0.75 us (capture noise here is +-0.25 us).
         }
         EXPECT_EQ(c.num_wrong, 0);
-        EXPECT_EQ(c.num_added, 300);
-        EXPECT_LE(std::abs(c.ErrorTicks(c.T(299) + 0.5e6)), 24);  // 0.5 us.
+        EXPECT_EQ(c.num_restarts, 0);
     }
 }
 
-TEST(SyncPulsePairing, ACountTooLateForTheEdgesKeptPairsWithNone) {
+TEST(SyncPulsePairing, ALateCountWhoseEdgeWasMissedStartsTheFitAgain) {
+    // Pulse 2's edge is missed and its count arrives just after pulse 3's: no kept edge is predicted, and pulse 3's is
+    // young, so the count pairs with it. That point doesn't fit: the fit starts again from it, no timestamps until two
+    // points agree.
     Coprocessor c;
-    for (int pulse = 0; pulse < 10; pulse++) {
-        c.EdgeOf(pulse);
-        EXPECT_TRUE(c.Count(pulse, c.T(pulse) + 1e3));
+    c.SyncAt(0);
+    c.EdgeOf(3);
+    EXPECT_TRUE(c.Count(2, c.T(3) + 1e3));
+    EXPECT_FALSE(c.sync.IsSynced());
+    for (int pulse = 3; pulse < 6; pulse++) {
+        if (pulse > 3) c.EdgeOf(pulse);
+        c.Count(pulse, c.T(pulse) + 2e3);
+        EXPECT_EQ(c.sync.IsSynced(), pulse >= 4);
+        if (c.sync.IsSynced()) EXPECT_LE(std::abs(c.ErrorTicks(c.T(pulse) + 500e3)), 48);
     }
-    for (int pulse = 10; pulse < 16; pulse++) c.EdgeOf(pulse);  // Pulse 10's edge is no longer kept.
-    EXPECT_FALSE(c.Count(10, c.T(15) + 1e3));
-    EXPECT_TRUE(c.Count(15, c.T(15) + 2e3));
-    EXPECT_EQ(c.num_wrong, 0);
+    EXPECT_EQ(c.num_wrong, 1);
+    EXPECT_EQ(c.num_restarts, 2);
 }
 
 TEST(SyncPulsePairing, ARepeatedCountCountsOnce) {
@@ -345,6 +342,7 @@ TEST(SyncPulsePairing, ARepeatedCountCountsOnce) {
     c.EdgeOf(1);
     EXPECT_TRUE(c.Count(1, c.T(1) + 10e3));
     EXPECT_EQ(c.sync.GetNumSyncPoints(), 2);
+    EXPECT_EQ(c.num_restarts, 0);
 }
 
 TEST(SyncPulsePairing, AMissedEdgeGivesNoPoint) {
@@ -353,31 +351,30 @@ TEST(SyncPulsePairing, AMissedEdgeGivesNoPoint) {
         c.EdgeOf(pulse);
         c.Count(pulse, c.T(pulse) + 5e3);
     }
-    // No edge for pulse 5: its count pairs with neither neighbour (a second away), early or late.
+    // No edge for pulse 5: its count pairs with neither kept edge (a second and more away), and the latest is too old
+    // for a new first point.
     EXPECT_FALSE(c.Count(5, c.T(5) + 5e3));
     c.EdgeOf(6);
     c.EdgeOf(7);
     EXPECT_TRUE(c.Count(6, c.T(7) + 5e3));
     EXPECT_TRUE(c.Count(7, c.T(7) + 6e3));
     EXPECT_EQ(c.num_wrong, 0);
+    EXPECT_EQ(c.num_restarts, 0);
     EXPECT_EQ(c.num_added, 7);
 }
 
 TEST(SyncPulsePairing, AnExtraEdgeIsIgnored) {
     Coprocessor c;
-    c.EdgeOf(0);
-    c.Count(0, c.T(0) + 5e3);
-    c.EdgeOf(1);
-    c.Count(1, c.T(1) + 5e3);
+    c.SyncAt(0);
     for (int pulse = 2; pulse < 20; pulse++) {
+        if (pulse % 2) c.Edge(c.T(pulse) - 2e3);  // A glitch 2 ms before the edge...
         c.EdgeOf(pulse);
-        c.Edge(c.T(pulse) + 2e3);  // A glitch 2 ms after the edge, before the count.
-        c.Edge(c.T(pulse) + 500e3);
+        if (pulse % 2 == 0) c.Edge(c.T(pulse) + 2e3);  // ... or after it, before the count.
         EXPECT_TRUE(c.Count(pulse, c.T(pulse) + 600e3));
     }
     EXPECT_EQ(c.num_wrong, 0);
-    // Before the rate is known the tolerance is wider (1 ms + 200 ppm), but still far below a second: an extra edge
-    // 2 ms before the second pulse's doesn't pair.
+    EXPECT_EQ(c.num_restarts, 0);
+    // Before there is a rate, a glitch before the edge doesn't matter either: the count takes the latest edge.
     Coprocessor d;
     d.EdgeOf(0);
     d.Count(0, d.T(0) + 5e3);
@@ -385,67 +382,88 @@ TEST(SyncPulsePairing, AnExtraEdgeIsIgnored) {
     d.EdgeOf(1);
     EXPECT_TRUE(d.Count(1, d.T(1) + 5e3));
     EXPECT_EQ(d.num_wrong, 0);
+    EXPECT_TRUE(d.sync.IsSynced());
+}
+
+TEST(SyncPulsePairing, TwoExtraEdgesCostTwoPointsButGiveNoWrongTimestamp) {
+    // Two glitches after an edge push it out of the two kept: the count takes the latest glitch, which doesn't fit, so
+    // the fit starts again from it; the next point doesn't agree with that one either, the one after does.
+    Coprocessor c;
+    c.SyncAt(0);
+    c.EdgeOf(2);
+    c.Edge(c.T(2) + 100e3);
+    c.Edge(c.T(2) + 150e3);
+    EXPECT_TRUE(c.Count(2, c.T(2) + 160e3));
+    EXPECT_FALSE(c.sync.IsSynced());
+    for (int pulse = 3; pulse < 10; pulse++) {
+        c.EdgeOf(pulse);
+        c.Count(pulse, c.T(pulse) + 5e3);
+        if (c.sync.IsSynced()) EXPECT_LE(std::abs(c.ErrorTicks(c.T(pulse) + 500e3)), 48);
+        EXPECT_EQ(c.sync.IsSynced(), pulse >= 4);
+    }
+    EXPECT_EQ(c.num_wrong, 1);
+    EXPECT_EQ(c.num_restarts, 2);
 }
 
 TEST(SyncPulsePairing, ALocalClockRestartClearsTheEdges) {
     // The CC1312's radio timer restarts with its RF client (sub-GHz receiver restart, mode switch).
     Coprocessor c;
-    for (int pulse = 0; pulse < 5; pulse++) {
-        c.EdgeOf(pulse);
-        c.Count(pulse, c.T(pulse) + 5e3);
-    }
-    c.EdgeOf(5);
+    c.SyncAt(0);
+    c.EdgeOf(2);
     c.clocks.local_start += 0x4321'0000;  // The step.
     c.pairing.Clear();
     c.sync.Restart();
-    EXPECT_FALSE(c.Count(5, c.T(5) + 300e3));  // Its edge was on the old clock.
-    c.EdgeOf(6);
-    EXPECT_TRUE(c.Count(6, c.T(6) + 50e3));  // A young edge: the first point after the restart.
+    EXPECT_FALSE(c.Count(2, c.T(2) + 100e3));  // Its edge was on the old clock.
+    c.EdgeOf(3);
+    EXPECT_TRUE(c.Count(3, c.T(3) + 50e3));  // A young edge: the first point after the restart.
     EXPECT_FALSE(c.sync.IsSynced());
-    c.EdgeOf(7);
-    EXPECT_TRUE(c.Count(7, c.T(7) + 700e3));  // Predicted with the kept rate.
+    c.EdgeOf(4);
+    EXPECT_TRUE(c.Count(4, c.T(4) + 100e3));
     EXPECT_TRUE(c.sync.IsSynced());
-    EXPECT_LE(std::abs(c.ErrorTicks(c.T(7) + 0.5e6)), 24);
+    EXPECT_LE(std::abs(c.ErrorTicks(c.T(4) + 0.5e6)), 24);
     EXPECT_EQ(c.num_wrong, 0);
+    EXPECT_EQ(c.num_restarts, 0);
 }
 
-TEST(SyncPulsePairing, AFirstPointOnTheNextPulsesEdgeNeverGivesTimestamps) {
-    // A first count that arrives just after the next pulse's edge pairs with that edge: all the first point can go by
-    // is a young edge. The second point then doesn't agree with it, and no timestamp goes out until two do.
-    for (double second_delay_us : {5e3, 1.0e6 + 1e3}) {  // The next count in time, or late again.
-        for (bool rate_known : {false, true}) {
-            SCOPED_TRACE(testing::Message() << second_delay_us << " " << rate_known);
-            TwoClocks clocks = {30.0, 0, 5'000'000};
-            auto t = [](int pulse) { return pulse * 1e6 + (pulse * 7919 % 500); };  // Staggered as SyncPulseService.
-            MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-            if (rate_known) {  // E.g. the radio timer restarted.
-                sync.AddSyncPoint(clocks.Local(t(-3)), clocks.Mlat(t(-3)));
-                sync.AddSyncPoint(clocks.Local(t(-2)), clocks.Mlat(t(-2)));
-                sync.Restart();
-            }
-            SyncPulsePairing pairing;
-            pairing.AddEdge(clocks.Local(t(0)));
-            pairing.AddEdge(clocks.Local(t(1)));
-            uint32_t edge = 0;
-            ASSERT_TRUE(pairing.Pair(sync, clocks.Mlat(t(0)), clocks.Local(t(1) + 1e3), edge));
-            EXPECT_EQ(edge, clocks.Local(t(1)));  // Pulse 1's edge for pulse 0's count.
-            sync.AddSyncPoint(edge, clocks.Mlat(t(0)));
-            int num_synced_wrong = 0;
-            int next_edge = 2;
-            for (int pulse = 1; pulse < 8; pulse++) {
-                double arrival = t(pulse) + (pulse == 1 ? second_delay_us : 5e3);
-                while (t(next_edge) <= arrival) pairing.AddEdge(clocks.Local(t(next_edge++)));
-                if (pairing.Pair(sync, clocks.Mlat(t(pulse)), clocks.Local(arrival), edge)) {
-                    sync.AddSyncPoint(edge, clocks.Mlat(t(pulse)));
-                }
-                if (sync.IsSynced() &&
-                    AbsError(sync.ToMLAT48MHzCounts(clocks.Local(arrival)), clocks.Mlat(arrival)) > 48) {
-                    num_synced_wrong++;
-                }
-            }
-            EXPECT_EQ(num_synced_wrong, 0);
-            EXPECT_TRUE(sync.IsSynced());
+namespace {
+
+// Pulses a second apart from first_us. The first num_late counts arrive 1 ms after the next pulse's edge (so a first
+// point pairs with that edge), the others 5 ms after their own. Returns the number of counts after which the fit was
+// synced but its timestamps more than 1 us off.
+int CountsSyncedAPulseOff(double first_us, int num_late) {
+    TwoClocks clocks = {30.0, 0, 5'000'000};
+    auto t = [&](int pulse) { return first_us + pulse * 1e6; };
+    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    SyncPulsePairing pairing;
+    int next_edge = 0, num_off = 0;
+    for (int pulse = 0; pulse < 20; pulse++) {
+        double arrival = pulse < num_late ? t(pulse + 1) + 1e3 : t(pulse) + 5e3;
+        while (t(next_edge) <= arrival) pairing.AddEdge(clocks.Local(t(next_edge++)));
+        uint32_t edge = 0;
+        if (pairing.Pair(sync, clocks.Mlat(t(pulse)), clocks.Local(arrival), edge)) {
+            sync.AddSyncPoint(edge, clocks.Mlat(t(pulse)));
         }
+        if (sync.IsSynced() && AbsError(sync.ToMLAT48MHzCounts(clocks.Local(arrival)), clocks.Mlat(arrival)) > 48) {
+            num_off++;
+        }
+    }
+    EXPECT_TRUE(sync.IsSynced());
+    return num_off;
+}
+
+}  // namespace
+
+TEST(SyncPulsePairing, AFitAPulseOffEndsWithTheFirstCountInTime) {
+    // A first count that arrives just after the next pulse's edge pairs with that edge (all a first point can go by is
+    // a young edge). If the next count is in time, its point doesn't agree and the fit starts again. If it is late in
+    // the same way, the two points are a pulse off but agree, and timestamps are a second off until the first count
+    // that arrives before the next edge: the fit predicts neither kept edge for it, so it starts again from its own
+    // (young) edge. Only with RP2040 main loop passes over a second can a count arrive in those few milliseconds.
+    for (double first_us : {0.0, 12'345.0, 999'999.0}) {
+        EXPECT_EQ(CountsSyncedAPulseOff(first_us, 0), 0);
+        EXPECT_EQ(CountsSyncedAPulseOff(first_us, 1), 0);
+        EXPECT_EQ(CountsSyncedAPulseOff(first_us, 2), 1);
+        EXPECT_EQ(CountsSyncedAPulseOff(first_us, 5), 4);
     }
 }
 

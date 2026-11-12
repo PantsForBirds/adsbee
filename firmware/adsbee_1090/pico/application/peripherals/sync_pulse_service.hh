@@ -13,13 +13,8 @@
  * are allowed again, and stores the MLAT count of the edge. Core 0 hands the latest count to each coprocessor
  * (ObjectDictionary::SyncPulse) on traffic it already has: the ESP32 gets it in every RP2040 status write
  * (GetLastPulse()), the CC1312 in one small un-acked write after its next status read (TakeNewPulse()). Each
- * coprocessor pairs a count with the captured edge whose time its fit predicts closest to it (SyncPulsePairing), so
- * a count may arrive late, twice or not at all.
- *
- * Each interval is longer by 0 to kStaggerUs (from the last count's low bits), so the pulses are never exactly
- * periodic. A fit whose first two points both took the next pulse's edge (each count arriving just after it, see
- * SyncPulsePairing) then misses its later points by hundreds of microseconds, and MLATTimeSync's outlier rule restarts
- * it. With exact 1 s intervals it would stay a pulse off.
+ * coprocessor pairs a count with one of the last two edges it captured (SyncPulsePairing), so a count may arrive late,
+ * twice or not at all.
  *
  * SYNC is also the CC1312 bootloader backdoor (high at reset = bootloader), so the CC1312 driver gates the pulses:
  * Allow() once its application has answered a status read or while it holds the CC1312 in reset, Block() before any
@@ -33,11 +28,7 @@ class SyncPulseService {
 
     static constexpr uint32_t kIntervalMs = ObjectDictionary::kSyncPulseIntervalMs;
     static constexpr uint32_t kIntervalUs = kIntervalMs * 1000;
-    // Well above MLATTimeSync::kMaxResidualUs, well below SyncPulsePairing::kToleranceUs.
-    static constexpr uint32_t kStaggerUs = 500;
-    static_assert(kStaggerUs > 10 * MLATTimeSync::kMaxResidualUs && kStaggerUs < SyncPulsePairing::kToleranceUs);
     static_assert(ObjectDictionary::kSyncPointMaxAgeMs * 1000ull <= MLATTimeSync::kMaxExtrapolationUs);
-    static_assert(ObjectDictionary::kSyncPointMaxAgeMs * 1000ull <= MLATTimeSync::kMaxSyncIntervalUs);
     static_assert(ObjectDictionary::kSyncPointMaxAgeMs > 2 * kIntervalMs);
     static_assert(SyncPulsePairing::kMaxFirstEdgeAgeUs < kIntervalUs);
 
@@ -68,7 +59,7 @@ class SyncPulseService {
     // Sends a pulse when one is due. Call often from the core that owns the MLAT counter (timestamp_us: time_us_32()).
     void Service(uint32_t timestamp_us) {
         if (!allowed_ || emitter_ == nullptr ||
-            (!pulse_now_ && timestamp_us - last_pulse_timestamp_us_ < interval_us_)) {
+            (!pulse_now_ && timestamp_us - last_pulse_timestamp_us_ < kIntervalUs)) {
             return;
         }
         // Checked against Block(): either this sees the pulse blocked, or Block() sees it busy and waits.
@@ -83,8 +74,6 @@ class SyncPulseService {
             Fence();
             seq_ = seq_ + 1;
             last_pulse_timestamp_us_ = timestamp_us;
-            interval_us_ =
-                kIntervalUs + static_cast<uint32_t>(mlat_48mhz_counts / MLATTimeSync::kMLATTicksPerUs) % kStaggerUs;
             pulse_now_ = false;
         }
         Fence();
@@ -145,7 +134,6 @@ class SyncPulseService {
 
     // Pulse core only.
     uint32_t last_pulse_timestamp_us_ = 0;
-    uint32_t interval_us_ = kIntervalUs;  // To the next pulse.
 
     // Core 0 only.
     uint64_t delivered_mlat_48mhz_counts_ = 0;  // Last count given to the CC1312.

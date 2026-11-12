@@ -45,7 +45,7 @@ std::vector<uint32_t> PulsesFrom(S& s, uint32_t start_ms, uint32_t end_ms) {
     return times;
 }
 
-// Pulse times a second apart (plus the stagger, under 1 ms) from first_ms.
+// Pulse times a second apart from first_ms.
 void ExpectOneHertz(const std::vector<uint32_t>& times, uint32_t first_ms, size_t num) {
     ASSERT_EQ(times.size(), num);
     EXPECT_EQ(times[0], first_ms);
@@ -142,122 +142,168 @@ TEST(SyncPulseService, CoreZeroNeverReadsATornCount) {
 }
 
 // The whole path on main loop passes from 10 ms to 2.5 s (output overload): core 1 pulses about every second; core 0
-// hands the latest count to the CC1312 after its status read (handled in its main loop 1 ms later) and to the ESP32 in
-// its status writes (every pass, at most every 100 ms). Counts then arrive late, after the next edge, twice, or not at
-// all. Midway the CC1312 is reset (pulses blocked, then allowed again) and its radio timer restarts.
+// hands the latest count to the CC1312 after its status read (handled in its main loop 0.5-3 ms later) and to the ESP32
+// in its status writes (every pass, at most every 100 ms). Counts then arrive late, after the next edge, twice, or not
+// at all. 1 % of edges are missed and 1 % of pulses bring a glitch edge somewhere in the next second. Every 50 s the
+// CC1312 is reset (pulses blocked for 1.5 s) and its radio timer restarts, so each coprocessor's fit starts many times.
 //
-// Points come from the pulse's own edge, except possibly a first point whose count arrived in the 1 ms after the next
-// edge: the stagger then gets that fit restarted within a few pulses. Timestamps end well under a microsecond.
+// Timestamps, checked every 10 ms while synced, stay within 1 us (rms under 0.2 us; capture noise 0.11 us rms on the
+// CC1312, 0.04 us on the ESP32). Points from a wrong edge (a glitch, or a first count
+// that arrived just after the next edge) only ever start the fit again.
 TEST(SyncPulseService, CoprocessorsSyncOnAnyMainLoopPass) {
-    for (uint32_t pass_ms : {10u, 400u, 1100u, 2500u}) {
-        SCOPED_TRACE(pass_ms);
-        g_num_emitted = 0;
-        S s(&FakeEmit);
-        std::mt19937 rng(pass_ms);
-        struct Copro {
-            const char* name;
-            double ticks_per_us;
-            double ppm;
-            uint32_t local_offset;
-            MLATTimeSync sync;
-            SyncPulsePairing pairing;
-            int num_points = 0, num_wrong = 0, num_off_fit = 0, num_bad_timestamps = 0;
-            uint32_t first_sync_ms = 0;
-            uint32_t Local(double t_us) const {
-                return local_offset +
-                       static_cast<uint32_t>(static_cast<uint64_t>(t_us * ticks_per_us * (1 + ppm * 1e-6)));
-            }
-        };
-        Copro copro[S::kNumSubscribers] = {
-            {"CC1312", 4, -52, 0xFFF0'0000, MLATTimeSync(MLATTimeSync::kMLATTicksPerRATTick, 2)},
-            {"ESP32", 16, 1.6, 0x8000'0000, MLATTimeSync(MLATTimeSync::kMLATTicksPerESP32SystimerTick, 2)},
-        };
-        std::vector<std::pair<uint64_t, double>> pulses;  // MLAT count, true time.
-        auto handle = [&](Copro& c, uint64_t count, double now_us) {
-            uint32_t edge_local = 0;
-            if (!c.pairing.Pair(c.sync, count, c.Local(now_us), edge_local)) return;
-            auto it = std::find_if(pulses.begin(), pulses.end(), [&](auto& p) { return p.first == count; });
-            ASSERT_NE(it, pulses.end());
-            if (static_cast<uint32_t>(edge_local - c.Local(it->second) + 1) > 2) c.num_wrong++;
-            if (c.sync.AddSyncPoint(edge_local, count) != MLATTimeSync::kAdded) c.num_off_fit++;
-            c.num_points++;
-            if (c.sync.IsSynced()) {
-                if (c.first_sync_ms == 0) c.first_sync_ms = static_cast<uint32_t>(now_us / 1000);
-                int64_t error = static_cast<int64_t>(c.sync.ToMLAT48MHzCounts(c.Local(now_us)) - MlatAt(now_us));
-                if (std::abs(error) > 48) c.num_bad_timestamps++;  // Off by more than 1 us.
-            }
-        };
-        bool cc1312_up = true;
-        uint64_t cc1312_pending = 0;  // Written over SPI, handled in the CC1312's main loop 1 ms later.
-        uint32_t cc1312_pending_ms = 0;
-        uint32_t next_pass_ms = 0, last_esp32_status_ms = 0;
-        constexpr uint32_t kEndMs = 400'000, kResetMs = 200'000, kBackMs = 203'000;
-        for (uint32_t t_us = 0; t_us < kEndMs * 1000; t_us += 100) {
-            uint32_t t = t_us / 1000;
-            g_now_us = t_us;
-            int before = g_num_emitted;
-            s.Service(t_us);  // Core 1.
-            if (g_num_emitted != before) {
-                pulses.push_back({s.GetLastPulse().mlat_48mhz_counts, static_cast<double>(t_us)});
+    for (uint32_t seed = 1; seed <= 4; seed++) {
+        for (uint32_t pass_ms : {10u, 400u, 1100u, 2500u}) {
+            SCOPED_TRACE(testing::Message() << pass_ms << " ms passes, seed " << seed);
+            g_num_emitted = 0;
+            S s(&FakeEmit);
+            std::mt19937 rng(pass_ms * 100 + seed);
+            std::normal_distribution<double> noise(0, 1);
+            struct Copro {
+                const char* name;
+                double ticks_per_us;
+                double ppm;
+                double capture_noise_us;  // rms, on top of the tick (t-1185: 0.11 / 0.04 us rms in all).
+                uint32_t local_offset;
+                MLATTimeSync sync;
+                SyncPulsePairing pairing;
+                int num_points = 0, num_wrong = 0, num_restarts = 0, num_starts = 0, num_bad_timestamps = 0;
+                int num_checks = 0, num_synced_checks = 0;
+                double worst_error_us = 0, sum_sq_error_us = 0;
+                uint32_t start_ms = 0, sync_ms_sum = 0, worst_sync_ms = 0;
+                bool was_synced = false;
+                uint32_t Local(double t_us) const {
+                    return local_offset +
+                           static_cast<uint32_t>(static_cast<uint64_t>(t_us * ticks_per_us * (1 + ppm * 1e-6)));
+                }
+            };
+            Copro copro[S::kNumSubscribers] = {
+                {"CC1312", 4, -52, 0.08, 0xFFF0'0000, MLATTimeSync(MLATTimeSync::kMLATTicksPerRATTick, 2)},
+                {"ESP32", 16, 1.6, 0.03, 0x8000'0000, MLATTimeSync(MLATTimeSync::kMLATTicksPerESP32SystimerTick, 2)},
+            };
+            std::vector<std::pair<uint64_t, double>> pulses;  // MLAT count, true time.
+            uint32_t last_point_ms[S::kNumSubscribers] = {};
+            auto handle = [&](Copro& c, uint64_t count, double now_us) {
+                uint32_t edge_local = 0;
+                if (!c.pairing.Pair(c.sync, count, c.Local(now_us), edge_local)) return;
+                auto it = std::find_if(pulses.begin(), pulses.end(), [&](auto& p) { return p.first == count; });
+                ASSERT_NE(it, pulses.end());
+                int32_t ticks_off = static_cast<int32_t>(edge_local - c.Local(it->second));
+                if (std::abs(ticks_off) > 10 * c.ticks_per_us) c.num_wrong++;  // Not this pulse's edge.
+                if (!c.sync.AddSyncPoint(edge_local, count)) c.num_restarts++;
+                c.num_points++;
+                last_point_ms[&c - copro] = static_cast<uint32_t>(now_us / 1000);
+            };
+            // Glitch edges to come: true time, coprocessor.
+            std::vector<std::pair<double, int>> glitches;
+            bool cc1312_up = true;
+            uint64_t cc1312_pending = 0;  // Written over SPI, handled in the CC1312's main loop 0.5-3 ms later.
+            double cc1312_pending_us = 0;
+            uint32_t next_pass_ms = 0, last_esp32_status_ms = 0;
+            constexpr uint32_t kEndMs = 600'000, kResetEveryMs = 50'000, kResetMs = 1'500;
+            for (uint32_t t_us = 0; t_us < kEndMs * 1000; t_us += 100) {
+                uint32_t t = t_us / 1000;
+                g_now_us = t_us;
+                int before = g_num_emitted;
+                s.Service(t_us);  // Core 1.
+                if (g_num_emitted != before) {
+                    pulses.push_back({s.GetLastPulse().mlat_48mhz_counts, static_cast<double>(t_us)});
+                    for (Copro& c : copro) {
+                        if (&c == &copro[0] && !cc1312_up) continue;
+                        if (rng() % 100 == 0) continue;  // Missed edge.
+                        c.pairing.AddEdge(c.Local(t_us + noise(rng) * c.capture_noise_us));
+                        if (rng() % 100 == 0) glitches.push_back({t_us + (rng() % 1'000'000), int(&c - copro)});
+                    }
+                }
+                for (auto it = glitches.begin(); it != glitches.end();) {
+                    if (it->first > t_us) {
+                        ++it;
+                        continue;
+                    }
+                    Copro& c = copro[it->second];
+                    if (&c != &copro[0] || cc1312_up) c.pairing.AddEdge(c.Local(t_us));
+                    it = glitches.erase(it);
+                }
+                if (cc1312_pending != 0 && t_us >= cc1312_pending_us) {
+                    handle(copro[0], cc1312_pending, t_us);
+                    cc1312_pending = 0;
+                }
+                if (t_us % 1000 != 0) continue;
                 for (Copro& c : copro) {
-                    if (&c == &copro[0] && !cc1312_up) continue;
-                    c.pairing.AddEdge(c.Local(t_us) + static_cast<int>(rng() % 3) - 1);  // Capture noise.
+                    // Drivers: a fit with no point for kSyncPointMaxAgeMs is dropped.
+                    if (c.sync.GetNumSyncPoints() > 0 &&
+                        t - last_point_ms[&c - copro] > ObjectDictionary::kSyncPointMaxAgeMs) {
+                        c.sync.Restart();
+                    }
+                    bool up = &c != &copro[0] || cc1312_up;
+                    bool synced = c.sync.IsSynced();
+                    if (!synced && c.was_synced) c.start_ms = t;
+                    if (synced && !c.was_synced) {
+                        uint32_t took = t - c.start_ms;
+                        c.sync_ms_sum += took;
+                        c.worst_sync_ms = std::max(c.worst_sync_ms, took);
+                        c.num_starts++;
+                    }
+                    c.was_synced = synced;
+                    if (t % 10 != 0 || !up || t < 2000) continue;
+                    c.num_checks++;
+                    if (!synced) continue;
+                    c.num_synced_checks++;
+                    double error_us =
+                        (static_cast<double>(c.sync.ToMLAT48MHzCounts(c.Local(t_us))) - MlatAt(t_us)) / 48;
+                    c.worst_error_us = std::max(c.worst_error_us, std::abs(error_us));
+                    c.sum_sq_error_us += error_us * error_us;
+                    if (std::abs(error_us) > 1) c.num_bad_timestamps++;
+                }
+                if (t % kResetEveryMs == kResetEveryMs / 2) {
+                    s.Block();  // CC1312 reset.
+                    s.ReportAbsent(S::kSubscriberCC1312);
+                    cc1312_up = false;
+                    cc1312_pending = 0;
+                }
+                if (!cc1312_up && t % kResetEveryMs == kResetEveryMs / 2 + kResetMs) {  // A new radio timer start.
+                    cc1312_up = true;
+                    copro[0].local_offset += 0x1234'5678;
+                    copro[0].pairing.Clear();
+                    copro[0].sync.Restart();
+                    copro[0].start_ms = t;
+                    copro[0].was_synced = false;
+                }
+                if (t < next_pass_ms) continue;
+                next_pass_ms = t + pass_ms * (90 + rng() % 21) / 100;  // Passes vary by +-10 %.
+                // Core 0 main loop pass.
+                if (cc1312_up) {  // Status read.
+                    s.ReportFlags(S::kSubscriberCC1312,
+                                  copro[0].sync.IsSynced() ? ObjectDictionary::kMLATSyncFlagSynced : 0);
+                    s.Allow();
+                    ObjectDictionary::SyncPulse pulse;
+                    if (s.TakeNewPulse(pulse)) {
+                        cc1312_pending = pulse.mlat_48mhz_counts;
+                        cc1312_pending_us = t_us + 500 + rng() % 2500;
+                    }
+                }
+                if (t - last_esp32_status_ms >= 100 || pass_ms >= 100) {
+                    last_esp32_status_ms = t;
+                    handle(copro[1], s.GetLastPulse().mlat_48mhz_counts, t_us);
                 }
             }
-            if (t_us % 1000 != 0) continue;
-            if (cc1312_pending != 0 && t > cc1312_pending_ms) {
-                handle(copro[0], cc1312_pending, t_us);
-                cc1312_pending = 0;
+            for (Copro& c : copro) {
+                SCOPED_TRACE(c.name);
+                printf(
+                    "    seed %u, %4u ms passes, %-6s: %d pulses, %d points, %d wrong edge, %d restarts, %d syncs "
+                    "(mean %u ms, worst %u ms), timestamps %.1f %% of the time, error rms %.3f us max %.3f us, "
+                    "%d > 1 us\n",
+                    seed, pass_ms, c.name, g_num_emitted.load(), c.num_points, c.num_wrong, c.num_restarts,
+                    c.num_starts, c.num_starts ? c.sync_ms_sum / c.num_starts : 0, c.worst_sync_ms,
+                    100.0 * c.num_synced_checks / c.num_checks, std::sqrt(c.sum_sq_error_us / c.num_synced_checks),
+                    c.worst_error_us, c.num_bad_timestamps);
+                EXPECT_EQ(c.num_bad_timestamps, 0);
+                EXPECT_LT(std::sqrt(c.sum_sq_error_us / c.num_synced_checks), 0.2);
+                // A wrong edge only ever starts the fit again.
+                EXPECT_LE(c.num_wrong, c.num_restarts);
+                EXPECT_TRUE(c.sync.IsSynced());
+                // Timestamps nearly all the time, less the CC1312 resets and, on long passes, the time to sync again.
+                EXPECT_GT(c.num_synced_checks, c.num_checks * (pass_ms <= 400 ? 95 : pass_ms <= 1100 ? 90 : 70) / 100);
             }
-            if (t == kResetMs) {
-                s.Block();  // CC1312 reset.
-                s.ReportAbsent(S::kSubscriberCC1312);
-                cc1312_up = false;
-            }
-            if (t == kBackMs) {  // The radio timer starts from a new value.
-                cc1312_up = true;
-                copro[0].local_offset += 0x1234'5678;
-                copro[0].pairing.Clear();
-                copro[0].sync.Restart();
-            }
-            if (t < next_pass_ms) continue;
-            next_pass_ms = t + pass_ms * (90 + rng() % 21) / 100;  // Passes vary by +-10 %.
-            // Core 0 main loop pass.
-            if (cc1312_up) {  // Status read.
-                s.ReportFlags(S::kSubscriberCC1312,
-                              copro[0].sync.IsSynced() ? ObjectDictionary::kMLATSyncFlagSynced : 0);
-                s.Allow();
-                ObjectDictionary::SyncPulse pulse;
-                if (s.TakeNewPulse(pulse)) {
-                    cc1312_pending = pulse.mlat_48mhz_counts;
-                    cc1312_pending_ms = t;
-                }
-            }
-            if (t - last_esp32_status_ms >= 100 || pass_ms >= 100) {
-                last_esp32_status_ms = t;
-                handle(copro[1], s.GetLastPulse().mlat_48mhz_counts, t_us);
-            }
-        }
-        // A pulse about a second, less the CC1312 reset.
-        EXPECT_NEAR(g_num_emitted, (kEndMs - (kBackMs - kResetMs)) / 1000, 3);
-        for (Copro& c : copro) {
-            SCOPED_TRACE(c.name);
-            printf(
-                "    %u ms passes, %s: %d pulses, %d points, %d wrong edge, %d off the fit, %d bad timestamps, "
-                "synced at %u ms\n",
-                pass_ms, c.name, g_num_emitted.load(), c.num_points, c.num_wrong, c.num_off_fit, c.num_bad_timestamps,
-                c.first_sync_ms);
-            EXPECT_LE(c.num_wrong, 3);  // At most one first point a pulse off, caught within a few pulses.
-            EXPECT_LE(c.num_bad_timestamps, 2);
-            EXPECT_TRUE(c.sync.IsSynced());
-            double t_us = kEndMs * 1000.0 - 300e3;
-            int64_t error = static_cast<int64_t>(c.sync.ToMLAT48MHzCounts(c.Local(t_us)) - MlatAt(t_us));
-            EXPECT_LE(std::abs(error), 24);  // 0.5 us.
-            // Nearly every count delivered gives a point: one a pulse, or one a pass when passes are longer.
-            int num_deliveries = std::min<int>(g_num_emitted, kEndMs / pass_ms);
-            EXPECT_GE(c.num_points, num_deliveries * 8 / 10);
-            // The first point needs a count within 250 ms of its edge: on long passes that takes a few passes.
-            EXPECT_LE(c.first_sync_ms, pass_ms <= 10 ? 2'500u : pass_ms <= 1100 ? 8'000u : 60'000u);
         }
     }
 }
