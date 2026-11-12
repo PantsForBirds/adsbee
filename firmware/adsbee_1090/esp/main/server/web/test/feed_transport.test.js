@@ -111,8 +111,8 @@ test('presets fill protocol, transport, host and port', async () => {
     await FeedEditor.open(5);
     const names = Array.from(FeedEditor.PRESETS, p => p.name);
     assert.deepStrictEqual(Array.from(get('feed-presets').children, c => c.textContent), names);
-    for (const name of ['adsb.fi', 'adsb.lol', 'airplanes.live', 'whereplane', 'EFB tablets', 'Ground station',
-        'Home Assistant']) {
+    for (const name of ['adsb.fi', 'adsb.lol', 'airplanes.live', 'TheAirTraffic', 'whereplane', 'EFB tablets',
+        'Ground station', 'Home Assistant']) {
         assert.ok(names.includes(name), name);
     }
 
@@ -123,6 +123,11 @@ test('presets fill protocol, transport, host and port', async () => {
     FeedEditor.applyPreset(names.indexOf('Ground station'));
     assert.strictEqual(get('feed-port').value, 14550);
     assert.strictEqual(get('feed-transport').value, 'UDP');
+
+    FeedEditor.applyPreset(names.indexOf('TheAirTraffic'));
+    assert.strictEqual(get('feed-uri').value, 'feed.theairtraffic.com');
+    assert.strictEqual(get('feed-port').value, 30004);
+    assert.strictEqual(get('feed-transport').value, 'TCP');
 
     FeedEditor.applyPreset(names.indexOf('whereplane'));
     assert.strictEqual(get('feed-uri').value, 'feed.whereplane.xyz');

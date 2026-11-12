@@ -780,6 +780,7 @@ class FeedEditor {
         { name: 'adsb.fi', protocol: 'BEAST_NO_UAT', transport: 'TCP', host: 'feed.adsb.fi', port: 30004 },
         { name: 'adsb.lol', protocol: 'BEAST_NO_UAT', transport: 'TCP', host: 'feed.adsb.lol', port: 30004 },
         { name: 'airplanes.live', protocol: 'BEAST_NO_UAT', transport: 'TCP', host: 'feed.airplanes.live', port: 30004 },
+        { name: 'TheAirTraffic', protocol: 'BEAST_NO_UAT', transport: 'TCP', host: 'feed.theairtraffic.com', port: 30004 },
         { name: 'whereplane', protocol: 'BEAST', transport: 'TCP', host: 'feed.whereplane.xyz', port: 30004 },
         {
             name: 'EFB tablets', protocol: 'GDL90', transport: 'UDP', host: '192.168.4.255', port: 4000,
