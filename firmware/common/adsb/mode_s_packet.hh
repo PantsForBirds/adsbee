@@ -1,6 +1,7 @@
 #ifndef _ADSB_PACKET_HH_
 #define _ADSB_PACKET_HH_
 
+#include <cstddef>
 #include <cstdint>
 
 #include "buffer_utils.hh"
@@ -17,6 +18,14 @@ class RawModeSPacket {
     static const uint16_t kExtendedSquitterPacketLenBits = 112;
     static const uint16_t kExtendedSquitterPacketLenBytes = kExtendedSquitterPacketLenBits / kBitsPerByte;
     static const uint16_t kExtendedSquitterPacketNumWords32 = 4;  // 112 bits = 3.5 words, round up to 4.
+
+    // flags bits.
+    // mlat_48mhz_64bit_counts is only a coarse receive time (about 1 ms): good for ordering and aging packets, never
+    // for MLAT. Bit 0 is where the bool no_mlat_timestamp used to be.
+    static const uint8_t kFlagNoMlatTimestamp = 1 << 0;
+    // A corrected frame that the aircraft dictionary forwards but keeps out of aircraft data. Tells the ESP32's
+    // dictionary to leave it out too.
+    static const uint8_t kFlagSkipAircraftDictionary = 1 << 1;
 
     RawModeSPacket(const char* rx_string, int16_t source_in = -1, int16_t sigs_dbm_in = INT16_MIN,
                    int16_t sigq_db_in = INT16_MIN, uint64_t mlat_48mhz_64bit_counts = 0);
@@ -37,7 +46,7 @@ class RawModeSPacket {
      * @retval 12MHz timestamp, or 0 (no timestamp, as in the Beast protocol) for a packet without an MLAT timestamp.
      */
     uint64_t GetMLAT12MHzCounter() const {
-        return no_mlat_timestamp ? 0 : (mlat_48mhz_64bit_counts >> 2) & 0xFFFFFFFFFFFF;
+        return (flags & kFlagNoMlatTimestamp) ? 0 : (mlat_48mhz_64bit_counts >> 2) & 0xFFFFFFFFFFFF;
     }
 
     /**
@@ -58,9 +67,7 @@ class RawModeSPacket {
     uint32_t buffer[kMaxPacketLenWords32] = {0};
     uint16_t buffer_len_bytes = 0;
     int8_t source = -1;                    // Source of the ADS-B packet (PIO state machine number).
-    // mlat_48mhz_64bit_counts is only a coarse receive time (about 1 ms): good for ordering and aging packets,
-    // never for MLAT. Fills a padding byte, so the layout is unchanged.
-    bool no_mlat_timestamp = false;
+    uint8_t flags = 0;                     // kFlag* bits. Fills a padding byte, so the layout is unchanged.
     int16_t sigs_dbm = INT16_MIN;          // Signal strength, in dBm.
     int16_t sigq_db = INT16_MIN;           // Signal quality (dB above noise floor), in dB.
     uint64_t mlat_48mhz_64bit_counts = 0;  // High resolution MLAT counter.
@@ -68,6 +75,8 @@ class RawModeSPacket {
 
 // Sent between processors as raw bytes: new fields may only fill padding.
 static_assert(sizeof(RawModeSPacket) == 32);
+static_assert(offsetof(RawModeSPacket, flags) == 19);
+static_assert(offsetof(RawModeSPacket, sigs_dbm) == 20);
 
 class DecodedModeSPacket {
    public:

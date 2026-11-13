@@ -456,3 +456,96 @@ TEST_F(BitErrorCorrection, RandomExtendedSquittersAreRejected) {
     EXPECT_GT(corrected, 10);  // About 5,800 * 100,000 / 2^24 = 34.
     EXPECT_EQ(accepted, 0);
 }
+
+// Corrected frames are forwarded as before; what changes is only whether they update the aircraft.
+TEST_F(BitErrorCorrection, CorrectedRepliesAreForwardedButChangeNoAircraft) {
+    uint32_t frames = Aircraft()->num_frames_received;
+    uint32_t heard_ms = Aircraft()->last_message_timestamp_ms;
+    inc_time_since_boot_ms(1000);
+    // An untracked aircraft 1 address bit away, same altitude, alert and SPI set (flight status 4).
+    RawModeSPacket reply = Raw(kAltitudeReply);
+    reply.buffer[0] = (reply.buffer[0] & ~(0b111u << 24)) | (0b100u << 24);
+    RawModeSPacket neighbor = WithAddressParity(reply, kICAO ^ 0x000100);
+    EXPECT_TRUE(Ingest(neighbor));
+    EXPECT_TRUE(last.is_valid) << "Forwarded as before.";
+    EXPECT_EQ(last.icao_address, kICAO);
+    EXPECT_TRUE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
+    EXPECT_EQ(Aircraft()->num_frames_received, frames);
+    EXPECT_EQ(Aircraft()->last_message_timestamp_ms, heard_ms);
+    EXPECT_FALSE(Aircraft()->HasBitFlag(ModeSAircraft::kBitFlagAlert));
+    EXPECT_FALSE(Aircraft()->HasBitFlag(ModeSAircraft::kBitFlagIdent));
+
+    // A tracked aircraft's own reply with a bit error: forwarded, aircraft unchanged as well.
+    EXPECT_TRUE(Ingest(Flip(Raw(kIdentityReply), {22, 50})));
+    EXPECT_TRUE(last.is_valid);
+    EXPECT_TRUE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
+    EXPECT_EQ(Aircraft()->num_frames_received, frames);
+
+    // Clean replies still update it.
+    EXPECT_TRUE(Ingest(Raw(kAltitudeReply)));
+    EXPECT_FALSE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
+    EXPECT_EQ(Aircraft()->num_frames_received, frames + 1);
+}
+
+TEST_F(BitErrorCorrection, UncheckedOneBitFixesChangeNoAircraft) {
+    inc_time_since_boot_ms(11e3);  // Position older than 10 s: nothing to check the fix against.
+    uint32_t position_ms = Aircraft()->last_position_update_ms;
+    int32_t altitude_ft = Aircraft()->baro_altitude_ft;
+    RawModeSPacket higher = WithME(kNextOddPosition, WithAltitude(ME(kNextOddPosition), 10150));
+    EXPECT_TRUE(Ingest(Flip(higher, {60})));
+    EXPECT_TRUE(last.is_valid) << "Forwarded as before.";
+    EXPECT_TRUE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
+    EXPECT_EQ(Aircraft()->last_position_update_ms, position_ms);
+    EXPECT_EQ(Aircraft()->baro_altitude_ft, altitude_ft);
+
+    // Nor does any other one bit fix the track can't check (velocity older than 10 s): forwarded only.
+    EXPECT_TRUE(Ingest(Flip(Raw(kNextVelocity), {77})));
+    EXPECT_TRUE(last.is_valid);
+    EXPECT_TRUE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
+}
+
+TEST_F(BitErrorCorrection, CheckedOneBitFixesMoveThePosition) {
+    uint32_t position_ms = Aircraft()->last_position_update_ms;
+    inc_time_since_boot_ms(1000);
+    EXPECT_TRUE(Ingest(Flip(Raw(kNextOddPosition), {60})));
+    EXPECT_FALSE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
+    EXPECT_NE(Aircraft()->last_position_update_ms, position_ms);
+}
+
+TEST(BitErrorCorrectionFirstPosition, OneBitFixesDontGiveTheFirstPosition) {
+    AircraftDictionary dictionary;
+    set_time_since_boot_ms(200e3);
+    auto ingest = [&](const RawModeSPacket& raw) {
+        DecodedModeSPacket packet = Decode(raw);
+        packet.raw.mlat_48mhz_64bit_counts = static_cast<uint64_t>(get_time_since_boot_ms()) * 48000;
+        dictionary.IngestDecodedModeSPacket(packet);
+        inc_time_since_boot_ms(500);
+        return packet;
+    };
+    ingest(Raw(kCallsign));
+    ingest(Raw(kEvenPosition));
+    DecodedModeSPacket fixed = ingest(Flip(Raw(kOddPosition), {60}));
+    EXPECT_TRUE(fixed.is_valid);
+    ModeSAircraft* aircraft =
+        dictionary.GetAircraftPtr<ModeSAircraft>(Aircraft::ICAOToUID(kICAO, Aircraft::kAircraftTypeModeS), false);
+    ASSERT_NE(aircraft, nullptr);
+    EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::kBitFlagPositionValid));
+    ingest(Raw(kOddPosition));
+    EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::kBitFlagPositionValid));
+}
+
+// The ESP32 gets frames already corrected: the flag carries the RP2040 dictionary's decision.
+TEST(BitErrorCorrectionForwarded, SkippedFramesChangeNoAircraft) {
+    AircraftDictionary dictionary;
+    set_time_since_boot_ms(300e3);
+    RawModeSPacket raw = Raw(kCallsign);
+    raw.flags = RawModeSPacket::kFlagSkipAircraftDictionary;
+    DecodedModeSPacket packet(raw);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
+    EXPECT_TRUE(packet.is_valid);
+    EXPECT_EQ(dictionary.GetNumAircraft(), 0);
+    raw.flags = 0;
+    packet = DecodedModeSPacket(raw);
+    EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
+    EXPECT_EQ(dictionary.GetNumAircraft(), 1);
+}

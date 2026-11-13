@@ -1805,7 +1805,7 @@ bool WithinStep(int32_t delta, int32_t step, int32_t rate_per_s, uint32_t elapse
 }
 }  // namespace
 
-bool AircraftDictionary::AcceptCorrectedExtendedSquitter(const DecodedModeSPacket& packet) {
+bool AircraftDictionary::AcceptCorrectedExtendedSquitter(DecodedModeSPacket& packet) {
     ModeSADSBPacket es(packet);
     ModeSAircraft::AddressType address_type = ModeSAircraft::GetAddressType(es);
     if (address_type == ModeSAircraft::kAddressTypeInvalid) {
@@ -1817,7 +1817,11 @@ bool AircraftDictionary::AcceptCorrectedExtendedSquitter(const DecodedModeSPacke
         return false;  // Corrected frames never start a track.
     }
     TrackFit fit = CheckAgainstTrack(es, *aircraft);
-    // A one bit fix is only turned down when the track disagrees; a two bit fix needs the track to agree.
+    // Only a fix the track agrees with changes the aircraft. Otherwise a one bit fix is still forwarded unless the
+    // track disagrees; a two bit fix is not.
+    if (fit != kTrackFits) {
+        packet.raw.flags |= RawModeSPacket::kFlagSkipAircraftDictionary;
+    }
     return fit == kTrackFits || (fit == kTrackUnknown && packet.num_corrected_bits < 2);
 }
 
@@ -2069,7 +2073,11 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
                                                                          : kCorrectionExtendedSquitter2Bit]++;
     } else if (config_.enable_address_parity_correction && packet.is_address_parity && !packet.is_valid &&
                !ContainsAircraft(packet.icao_address)) {
-        CorrectAddressParityPacket(packet);
+        // A corrected reply is forwarded but changes no aircraft: it fits an untracked aircraft a bit away, or a
+        // reply with more bit errors, as well as the tracked one.
+        if (CorrectAddressParityPacket(packet)) {
+            packet.raw.flags |= RawModeSPacket::kFlagSkipAircraftDictionary;
+        }
     }
 
     // Validate packet against ICAO addresses in dictionary, or allow it in if it's a DF=11 all call reply
@@ -2125,6 +2133,11 @@ bool AircraftDictionary::IngestDecodedModeSPacket(DecodedModeSPacket& packet) {
                 RawModeSPacket::kExtendedSquitterPacketLenBytes);
 #endif  // ADSB_VERBOSE_PACKET_WARNINGS
             return false;
+    }
+
+    // Forwarded, but no aircraft changes. Also set by the dictionary of the processor that forwarded it.
+    if (packet.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary) {
+        return true;
     }
 
     // Ingest packet.
