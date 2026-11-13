@@ -114,7 +114,7 @@ Here are a few apps that can be used with ADSBee 1090. If you have one that you 
     ADSBee 1090 is still in Beta, and is not advised for use as a primary EFB traffic information device at this time. Feedback and testing is always welcome, but **safety is #1**! If you do fly with an ADSBee 1090, please make sure to use a tested and functional alternative device as your primary source for traffic information.
 
 1. The ADSBee 1090 should be ready to go out-of-the-box for feeding most Electronic Flight Bag (EFB) devices! Power on your ADSBee 1090, and look for a WiFi network titled “ADSBee1090-0240907000001” or something similar (the number varies, as each ADSBee generates a WiFi network with its own unique SSID).
-2. Join the WiFi network with your EFB device. The default password is `yummyflowers`. You will receive a notice that internet is not available, but your device should remain connected. Note that your device will be assigned an IP address on the subnet 192.168.4.X. The ADSBee is the gateway for this network, with an IP address of 192.168.4.1.
+2. Join the WiFi network with your EFB device. The default password is `yummyflowers`. Your device gets an IP address on the subnet 192.168.4.X, and the ADSBee is at 192.168.4.1. The network offers no internet route, so phones and tablets can keep using cellular data for the internet. If your device says the network has no internet, choose to stay connected.
 3. Configure your electronic flight bag app to accept GDL90 traffic information on port 4000 over UDP (this is the default for most apps). You should see aircraft data streaming into the app! Some example screenshots for Avare (a free Android EFB app) are shown below.
 
 !!! note
