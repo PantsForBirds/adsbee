@@ -30,7 +30,8 @@ CCFG.enableBootloader         = true;
 CCFG.enableBootloaderBackdoor = true;
 CCFG.dioBootloaderBackdoor    = 5;
 CCFG.xoscCapArray             = true;
-CCFG.xoscCapArrayDelta        = 0xEC;
+// -3 steps: CC1312 crystal on the RP2040's. ti_devices_config.c also enables the linear delta by hand.
+CCFG.xoscCapArrayDelta        = 0xFD;
 CCFG.ccfgTemplate.$name       = "ti_devices_CCFG_CCFGCC26XXTemplate0";
 
 custom.prop8                                       = ["custom868"];

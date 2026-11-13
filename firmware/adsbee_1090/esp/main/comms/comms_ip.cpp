@@ -131,6 +131,19 @@ static void* FeedBacklogAlloc(size_t num_bytes) {
     return heap_caps_malloc(num_bytes, MALLOC_CAP_8BIT);
 }
 
+// The tail of a batch the socket took only part of. It may go below kFeedBacklogMinInternalFreeBytes, down to the heap
+// floor that drops all feed batches: closing the feed instead loses frames until it has reconnected, and under load
+// that happened tens of times in 5 minutes when the heap dipped below the backlog's floor for a moment.
+static void* FeedBacklogTailAlloc(size_t num_bytes) {
+    if (HardwareCapabilities::HasPSRAM()) {
+        return heap_caps_malloc(num_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (HardwareCapabilities::GetInternalFreeBytes() < kHeapBackPressureThresholdBytes + num_bytes) {
+        return nullptr;
+    }
+    return heap_caps_malloc(num_bytes, MALLOC_CAP_8BIT);
+}
+
 bool CommsManager::IPInit() {
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &ip_event_handler, NULL));
     ip_event_handler_was_initialized_ = true;
@@ -832,6 +845,7 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
          .backlog_capacity_bytes =
              HardwareCapabilities::HasPSRAM() ? kFeedBacklogBytesPSRAM : kFeedBacklogBytesInternal,
          .alloc = FeedBacklogAlloc,
+         .alloc_tail = FeedBacklogTailAlloc,
          .dealloc = heap_caps_free},
         get_time_since_boot_ms());
     feed_wait_budget_ms_[feed_index] = kFeedWaitBudgetMs;
