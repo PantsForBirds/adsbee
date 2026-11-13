@@ -12,7 +12,7 @@ extern CPUMonitor core_1_monitor;
 void RunPendingTestFunctionOnCore1();  // Defined in target_test/hardware_unit_tests.cc.
 #endif
 
-inline void main_core1() {
+inline void __not_in_flash_func(main_core1)() {
 #ifdef ISRS_ON_CORE1
     adsbee.InitISRs();
 #else

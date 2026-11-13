@@ -3,6 +3,7 @@
 #include <cstring>  // For memcmp, memcpy.
 
 #include "comms.hh"
+#include "core1_ram.hh"
 #include "mode_s_bit_errors.hh"
 
 // Uncomment the line below to allow duplicate packets (e.g. for testing).
@@ -34,7 +35,7 @@ bool ModeSPacketDecoder::UpdateLogLoop() {
     return true;
 }
 
-bool ModeSPacketDecoder::UpdateDecoderLoop() {
+bool CORE1_RAM_FUNC(ModeSPacketDecoder::UpdateDecoderLoop)() {
     uint16_t num_packets_to_process = raw_mode_s_packet_in_queue.Length();
     if (num_packets_to_process == 0) {
         return true;  // Nothing to do.
@@ -128,7 +129,7 @@ bool ModeSPacketDecoder::UpdateDecoderLoop() {
     return true;
 }
 
-bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& decoded_packet) {
+bool CORE1_RAM_FUNC(ModeSPacketDecoder::PushPacketIfNotDuplicate)(const DecodedModeSPacket& decoded_packet) {
     const RawModeSPacket& raw = decoded_packet.raw;
     int16_t packet_source = raw.source;
 
@@ -150,8 +151,12 @@ bool ModeSPacketDecoder::PushPacketIfNotDuplicate(const DecodedModeSPacket& deco
         if (delta_counts >= kDuplicatePacketWindow48MHzCounts) {
             continue;
         }
-        if (num_words == 0 || memcmp(last.buffer, raw.buffer, (num_words - 1) * kBytesPerWord) != 0 ||
-            ((last.buffer[num_words - 1] ^ raw.buffer[num_words - 1]) & last_word_mask) != 0) {
+        // Word by word rather than memcmp(), which runs from flash on the RP2040 (see core1_ram.hh).
+        bool same = num_words > 0 && ((last.buffer[num_words - 1] ^ raw.buffer[num_words - 1]) & last_word_mask) == 0;
+        for (uint16_t w = 0; same && w + 1 < num_words; w++) {
+            same = last.buffer[w] == raw.buffer[w];
+        }
+        if (!same) {
             continue;
         }
         // Already seen this exact packet within the duplicate window.
