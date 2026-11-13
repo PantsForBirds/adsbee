@@ -205,7 +205,7 @@ bool SubGHzRadio::Init() {
 }
 
 void SubGHzRadio::StartSyncCapture() {
-    // The RAT restarts with the RF client: keep the measured rate, wait for one pulse to fix the new offset.
+    // The RAT restarts with the RF client: the fit starts again from the next pulses.
     uintptr_t key = HwiP_disable();
     time_sync_.Restart();
     sync_pulse_pairing_.Clear();
@@ -242,8 +242,7 @@ void SubGHzRadio::HandleSyncPulse(const ObjectDictionary::SyncPulse& pulse) {
     uint32_t edge_rat = 0;
     bool paired = sync_pulse_pairing_.Pair(time_sync_, pulse.mlat_48mhz_counts, RF_getCurrentTime(), edge_rat);
     bool was_synced = time_sync_.IsSynced();
-    MLATTimeSync::Result result =
-        paired ? time_sync_.AddSyncPoint(edge_rat, pulse.mlat_48mhz_counts) : MLATTimeSync::kAdded;
+    bool agrees = paired && time_sync_.AddSyncPoint(edge_rat, pulse.mlat_48mhz_counts);
     bool synced = time_sync_.IsSynced();
     HwiP_restore(key);
     if (!paired) {
@@ -251,14 +250,10 @@ void SubGHzRadio::HandleSyncPulse(const ObjectDictionary::SyncPulse& pulse) {
     }
     uint32_t timestamp_ms = get_time_since_boot_ms();
     uint32_t mlat_ms = static_cast<uint32_t>(pulse.mlat_48mhz_counts / 48'000);
-    if (result == MLATTimeSync::kSkipped) {
-        CONSOLE_WARNING("SubGHzRadio::HandleSyncPulse", "Sync pulse at MLAT %lu ms is off the fit: skipped.", mlat_ms);
-        return;
-    }
     last_sync_point_timestamp_ms_ = timestamp_ms;
-    if (result == MLATTimeSync::kRestarted) {
+    if (!agrees) {
         CONSOLE_WARNING("SubGHzRadio::HandleSyncPulse",
-                        "Sync pulse at MLAT %lu ms doesn't fit the previous ones: re-syncing.", mlat_ms);
+                        "Sync pulse at MLAT %lu ms doesn't fit the last one: re-syncing.", mlat_ms);
     } else if (synced && !was_synced) {
         CONSOLE_INFO("SubGHzRadio::HandleSyncPulse",
                      "Sub-GHz timestamps on the MLAT clock %lu ms after the radio timer started (%ld ppb).",

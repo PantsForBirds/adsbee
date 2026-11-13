@@ -71,7 +71,7 @@ class ESP32MLATSync {
     uint64_t last_sync_point_systimer_ = 0;
 
     // Under lock_: the last sync point's outcome, for Update() to log.
-    enum SyncEvent : uint8_t { kSyncEventNone = 0, kSyncEventSynced, kSyncEventSkipped, kSyncEventRestarted };
+    enum SyncEvent : uint8_t { kSyncEventNone = 0, kSyncEventSynced, kSyncEventRestarted };
     SyncEvent sync_event_ = kSyncEventNone;
     uint64_t sync_event_mlat_48mhz_counts_ = 0;
     int32_t sync_event_rate_error_ppb_ = 0;

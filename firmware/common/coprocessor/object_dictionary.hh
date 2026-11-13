@@ -141,8 +141,10 @@ class ObjectDictionary {
     // Crystal drift on a 1090U (t-1185): pulses every second keep the fit at the capture noise (CC1312 0.11 us rms,
     // ESP32 0.04 us rms); every 10 s would add ~0.06 and ~0.1 us rms, more while the crystals warm up after a boot.
     static constexpr uint32_t kSyncPulseIntervalMs = 1000;
-    // A fit this long without a new sync point is dropped (pulses stopped). At most MLATTimeSync::kMaxExtrapolationUs.
-    static constexpr uint32_t kSyncPointMaxAgeMs = 10'000;
+    // A fit this long without a new sync point is dropped (pulses stopped). Above the longest gap between points under
+    // output overload (RP2040 main loop passes of 2.5 s give points up to ~3.75 s apart). At most
+    // MLATTimeSync::kMaxExtrapolationUs.
+    static constexpr uint32_t kSyncPointMaxAgeMs = 5'000;
 
     // MLAT time sync state of a coprocessor (mlat_sync_flags in SubGHzDeviceStatus and ESP32DeviceStatus).
     enum MLATSyncFlag : uint8_t {

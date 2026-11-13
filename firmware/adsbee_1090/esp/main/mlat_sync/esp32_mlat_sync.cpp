@@ -107,12 +107,9 @@ void ESP32MLATSync::HandleSyncPulse(uint64_t mlat_48mhz_counts) {
     uint32_t edge_systimer = 0;
     if (sync_pulse_pairing_.Pair(time_sync_, mlat_48mhz_counts, static_cast<uint32_t>(systimer_now), edge_systimer)) {
         bool was_synced = time_sync_.IsSynced();
-        MLATTimeSync::Result result = time_sync_.AddSyncPoint(edge_systimer, mlat_48mhz_counts);
-        if (result != MLATTimeSync::kSkipped) {
-            last_sync_point_systimer_ = systimer_now - static_cast<uint32_t>(systimer_now - edge_systimer);
-        }
-        SyncEvent event = result == MLATTimeSync::kSkipped       ? kSyncEventSkipped
-                          : result == MLATTimeSync::kRestarted   ? kSyncEventRestarted
+        bool agrees = time_sync_.AddSyncPoint(edge_systimer, mlat_48mhz_counts);
+        last_sync_point_systimer_ = systimer_now - static_cast<uint32_t>(systimer_now - edge_systimer);
+        SyncEvent event = !agrees                                ? kSyncEventRestarted
                           : time_sync_.IsSynced() && !was_synced ? kSyncEventSynced
                                                                  : kSyncEventNone;
         if (event != kSyncEventNone) {
@@ -135,12 +132,9 @@ void ESP32MLATSync::Update() {
         case kSyncEventSynced:
             CONSOLE_INFO("ESP32MLATSync::Update", "Remote ID timestamps on the MLAT clock (%ld ppb).", rate_error_ppb);
             break;
-        case kSyncEventSkipped:
-            CONSOLE_WARNING("ESP32MLATSync::Update", "Sync pulse at MLAT %lu ms is off the fit: skipped.", mlat_ms);
-            break;
         case kSyncEventRestarted:
-            CONSOLE_WARNING("ESP32MLATSync::Update",
-                            "Sync pulse at MLAT %lu ms doesn't fit the previous ones: re-syncing.", mlat_ms);
+            CONSOLE_WARNING("ESP32MLATSync::Update", "Sync pulse at MLAT %lu ms doesn't fit the last one: re-syncing.",
+                            mlat_ms);
             break;
         default:
             break;
