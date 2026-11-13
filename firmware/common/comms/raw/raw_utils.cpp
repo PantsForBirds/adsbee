@@ -6,7 +6,8 @@ uint16_t BuildRawModeSFrame(const RawModeSPacket& packet, char* raw_frame_buf) {
     char data_buf[RawModeSPacket::kExtendedSquitterPacketLenBits / kBitsPerNibble + 1] = {'\0'};
     packet.PrintBuffer(data_buf, sizeof(data_buf));
     return snprintf(raw_frame_buf, kRawModeSFrameMaxNumChars, "#MDS*%s;(%d,%d,%d,%016llX)\r\n", data_buf, packet.source,
-                    packet.sigs_dbm, packet.sigq_db, packet.no_mlat_timestamp ? 0 : packet.mlat_48mhz_64bit_counts);
+                    packet.sigs_dbm, packet.sigq_db,
+                    (packet.flags & RawModeSPacket::kFlagNoMlatTimestamp) ? 0 : packet.mlat_48mhz_64bit_counts);
 }
 
 uint16_t BuildRawUATADSBFrame(const RawUATADSBPacket& packet, char* raw_frame_buf) {

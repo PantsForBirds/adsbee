@@ -1000,10 +1000,10 @@ void ADSBee::ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uin
         }
         RawModeSPacket raw_packet(rx_word_buf, RawModeSPacket::kExtendedSquitterPacketNumWords32);
         raw_packet.mlat_48mhz_64bit_counts = mlat_48mhz_64bit_counts;
-        raw_packet.no_mlat_timestamp = no_mlat_timestamp;
+        raw_packet.flags = no_mlat_timestamp ? RawModeSPacket::kFlagNoMlatTimestamp : 0;
         if (stamps != nullptr && i < MlatPairer::kMaxReadPackets && stamped[i]) {
             raw_packet.mlat_48mhz_64bit_counts = stamps[i];
-            raw_packet.no_mlat_timestamp = false;
+            raw_packet.flags &= ~RawModeSPacket::kFlagNoMlatTimestamp;
         }
         lr2021_frames_since_valid_++;  // Zeroed on any valid decode; feeds the validity watchdog.
         // Record demod + raw frame metrics (valid frames are recorded during dictionary

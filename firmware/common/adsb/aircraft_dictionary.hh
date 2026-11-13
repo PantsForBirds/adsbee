@@ -1651,10 +1651,10 @@ class AircraftDictionary {
 
     /**
      * Whether an extended squitter with corrected bits is kept (forwarded): its aircraft must be tracked, a one bit
-     * correction must not disagree with the track, and a two bit correction must agree with it.
-     * @param[out] apply Whether it may also change the aircraft: a position only when the track agrees.
+     * correction must not disagree with the track, and a two bit correction must agree with it. A kept frame changes
+     * the aircraft only when the track agrees with it; otherwise this sets RawModeSPacket::kFlagSkipAircraftDictionary.
      */
-    bool AcceptCorrectedExtendedSquitter(const DecodedModeSPacket& packet, bool& apply);
+    bool AcceptCorrectedExtendedSquitter(DecodedModeSPacket& packet);
 
     enum TrackFit : uint8_t { kTrackFits, kTrackDisagrees, kTrackUnknown };
     /**

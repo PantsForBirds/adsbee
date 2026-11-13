@@ -469,7 +469,7 @@ TEST_F(BitErrorCorrection, CorrectedRepliesAreForwardedButChangeNoAircraft) {
     EXPECT_TRUE(Ingest(neighbor));
     EXPECT_TRUE(last.is_valid) << "Forwarded as before.";
     EXPECT_EQ(last.icao_address, kICAO);
-    EXPECT_TRUE(last.raw.skip_aircraft_dictionary);
+    EXPECT_TRUE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
     EXPECT_EQ(Aircraft()->num_frames_received, frames);
     EXPECT_EQ(Aircraft()->last_message_timestamp_ms, heard_ms);
     EXPECT_FALSE(Aircraft()->HasBitFlag(ModeSAircraft::kBitFlagAlert));
@@ -478,37 +478,37 @@ TEST_F(BitErrorCorrection, CorrectedRepliesAreForwardedButChangeNoAircraft) {
     // A tracked aircraft's own reply with a bit error: forwarded, aircraft unchanged as well.
     EXPECT_TRUE(Ingest(Flip(Raw(kIdentityReply), {22, 50})));
     EXPECT_TRUE(last.is_valid);
-    EXPECT_TRUE(last.raw.skip_aircraft_dictionary);
+    EXPECT_TRUE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
     EXPECT_EQ(Aircraft()->num_frames_received, frames);
 
     // Clean replies still update it.
     EXPECT_TRUE(Ingest(Raw(kAltitudeReply)));
-    EXPECT_FALSE(last.raw.skip_aircraft_dictionary);
+    EXPECT_FALSE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
     EXPECT_EQ(Aircraft()->num_frames_received, frames + 1);
 }
 
-TEST_F(BitErrorCorrection, UncheckedOneBitFixesDontMoveThePosition) {
+TEST_F(BitErrorCorrection, UncheckedOneBitFixesChangeNoAircraft) {
     inc_time_since_boot_ms(11e3);  // Position older than 10 s: nothing to check the fix against.
     uint32_t position_ms = Aircraft()->last_position_update_ms;
     int32_t altitude_ft = Aircraft()->baro_altitude_ft;
     RawModeSPacket higher = WithME(kNextOddPosition, WithAltitude(ME(kNextOddPosition), 10150));
     EXPECT_TRUE(Ingest(Flip(higher, {60})));
     EXPECT_TRUE(last.is_valid) << "Forwarded as before.";
-    EXPECT_TRUE(last.raw.skip_aircraft_dictionary);
+    EXPECT_TRUE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
     EXPECT_EQ(Aircraft()->last_position_update_ms, position_ms);
     EXPECT_EQ(Aircraft()->baro_altitude_ft, altitude_ft);
 
-
-    // Other one bit fixes the track can't check still apply (velocity older than 10 s).
+    // Nor does any other one bit fix the track can't check (velocity older than 10 s): forwarded only.
     EXPECT_TRUE(Ingest(Flip(Raw(kNextVelocity), {77})));
-    EXPECT_FALSE(last.raw.skip_aircraft_dictionary);
+    EXPECT_TRUE(last.is_valid);
+    EXPECT_TRUE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
 }
 
 TEST_F(BitErrorCorrection, CheckedOneBitFixesMoveThePosition) {
     uint32_t position_ms = Aircraft()->last_position_update_ms;
     inc_time_since_boot_ms(1000);
     EXPECT_TRUE(Ingest(Flip(Raw(kNextOddPosition), {60})));
-    EXPECT_FALSE(last.raw.skip_aircraft_dictionary);
+    EXPECT_FALSE(last.raw.flags & RawModeSPacket::kFlagSkipAircraftDictionary);
     EXPECT_NE(Aircraft()->last_position_update_ms, position_ms);
 }
 
@@ -539,12 +539,12 @@ TEST(BitErrorCorrectionForwarded, SkippedFramesChangeNoAircraft) {
     AircraftDictionary dictionary;
     set_time_since_boot_ms(300e3);
     RawModeSPacket raw = Raw(kCallsign);
-    raw.skip_aircraft_dictionary = true;
+    raw.flags = RawModeSPacket::kFlagSkipAircraftDictionary;
     DecodedModeSPacket packet(raw);
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
     EXPECT_TRUE(packet.is_valid);
     EXPECT_EQ(dictionary.GetNumAircraft(), 0);
-    raw.skip_aircraft_dictionary = false;
+    raw.flags = 0;
     packet = DecodedModeSPacket(raw);
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
     EXPECT_EQ(dictionary.GetNumAircraft(), 1);
