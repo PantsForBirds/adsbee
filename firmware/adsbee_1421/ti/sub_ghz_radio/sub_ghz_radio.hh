@@ -15,6 +15,7 @@ extern "C" {
 
 #include "bsp.hh"
 // #include "buffer_utils.hh"
+#include "adsl_packet.hh"
 #include "comms.hh"
 #include "settings.hh"
 #include "unit_conversions.hh"
@@ -111,6 +112,10 @@ public:
      * @retval True when the RF core also syncs on the UAT ground-uplink sync word (RF_cmdPropRxAdv.syncWord1).
      */
     bool UplinkRxEnabled() const { return mode_ == SettingsManager::kSubGHzRadioModeUATRx; }
+
+    static bool ModeIsADSL(SettingsManager::SubGHzRadioMode mode) {
+        return mode == SettingsManager::kSubGHzRadioModeADSLRx || mode == SettingsManager::kSubGHzRadioModeADSLRx868_4MHz;
+    }
 
     /**
      * User enable/disable of the Sub-GHz receiver (AT+RX_ENABLE). Disabling aborts RX and closes the RF client

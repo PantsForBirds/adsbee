@@ -1,5 +1,6 @@
 #pragma once
 
+#include "adsl_packet.hh"
 #include "mode_s_packet.hh"
 #include "stdint.h"
 #include "uat_packet.hh"
@@ -11,3 +12,10 @@ static const uint16_t kRawUATUplinkFrameMaxNumChars = RawUATUplinkPacket::kUplin
 uint16_t BuildRawModeSFrame(const RawModeSPacket& packet, char* raw_frame_buf);
 uint16_t BuildRawUATADSBFrame(const RawUATADSBPacket& packet, char* raw_frame_buf);
 uint16_t BuildRawUATUplinkFrame(const RawUATUplinkPacket& packet, char* raw_frame_buf);
+static const uint16_t kRawADSLFrameMaxNumChars = RawADSLPacket::kMaxPacketLenBytes * 2 + 50;
+// "#ADL*<length byte .. CRC hex>;(<rssi dBm>,<repaired chips>,<channel 0=868.2 1=868.4>,<timestamp>)", timestamp in
+// 48 MHz MLAT counts like #MDS* and #UAT* lines.
+uint16_t BuildRawADSLFrame(const RawADSLPacket& packet, char* raw_frame_buf);
+static_assert(kRawADSLFrameMaxNumChars <= kRawUATADSBFrameMaxNumChars, "ADS-L lines share the UAT ADS-B line budget.");
+// A packet from the shared short sub-GHz queues and section: a UAT ADS-B or an ADS-L line, by packet.protocol.
+uint16_t BuildRawSubGHzFrame(const RawUATADSBPacket& packet, char* raw_frame_buf);

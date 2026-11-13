@@ -729,15 +729,20 @@ void ADSBee::IngestAndForwardPackets() {
                                                              : timestamp_us * MlatTimebase::kTicksPerUs);
     }
 
-    // Ingest decoded UAT ADS-B packets.
+    // Ingest decoded UAT ADS-B packets, and ADS-L packets that share the queue (raw.protocol).
     DecodedUATADSBPacket decoded_uat_adsb_packet;
     for (uint16_t i = 0; i < num_decoded_uat_adsb &&
                          uat_packet_decoder.decoded_uat_adsb_packet_out_queue.Dequeue(decoded_uat_adsb_packet);
          i++) {
         decoded_uat_adsb_packet.raw.mlat_48mhz_64bit_counts = sub_ghz_time_sync.ToMLAT48MHzCounts(
             static_cast<uint32_t>(decoded_uat_adsb_packet.raw.mlat_48mhz_64bit_counts));
-        aircraft_dictionary.IngestDecodedUATADSBPacket(decoded_uat_adsb_packet);
-        aircraft_dictionary.RecordSubGHzMetrics(0, 1, 0, 0);
+        if (decoded_uat_adsb_packet.raw.protocol == RawUATADSBPacket::kProtocolADSL) {
+            aircraft_dictionary.IngestADSLPacket(RawADSLPacket(decoded_uat_adsb_packet.raw));
+            aircraft_dictionary.RecordADSLMetrics(0, 1);
+        } else {
+            aircraft_dictionary.IngestDecodedUATADSBPacket(decoded_uat_adsb_packet);
+            aircraft_dictionary.RecordSubGHzMetrics(0, 1, 0, 0);
+        }
         if (!comms_manager.uat_adsb_packet_reporting_queue.Enqueue(decoded_uat_adsb_packet.raw)) {
             comms_manager.uat_report_queue_ovf_count++;  // Counted, not logged (see the Mode S queue above).
         }
