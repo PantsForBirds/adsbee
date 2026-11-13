@@ -111,6 +111,7 @@ extern "C" void app_main(void) {
     uint32_t last_heap_diagnostics_timestamp_ms = 0;
     while (1) {
         adsbee_server.Update();
+        esp32_mlat_sync.Update();  // Logs for the SPI task's sync pulse handler.
 
         // Yield to the idle task to avoid a watchdog trigger. Note: Delay must be >= 10ms since 100Hz tick is typical.
         vTaskDelay(1);  // Delay 1 tick (10ms).

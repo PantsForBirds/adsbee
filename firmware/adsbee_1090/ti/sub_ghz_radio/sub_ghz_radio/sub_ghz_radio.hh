@@ -91,24 +91,18 @@ public:
     volatile uint32_t uat_len_mismatch_count = 0;
 
     /**
-     * Sub-GHz packet timestamps go out on the RP2040's 48 MHz MLAT clock. The RP2040 pulses the SYNC line (DIO5) about
-     * once a second and then writes the pulse's MLAT count (kAddrSyncPulse). The radio timer (RAT) captures each rising
+     * Sub-GHz packet timestamps go out on the RP2040's 48 MHz MLAT clock. The RP2040 pulses the SYNC line (DIO5) once a
+     * second and then writes the pulse's MLAT count (kAddrSyncPulse). The radio timer (RAT) captures each rising
      * edge; pairing the two gives a sync point for time_sync_.
      */
-    // Pairs a SyncPulse from the RP2040 with the last captured edge. Main loop only.
+    // Pairs a SyncPulse from the RP2040 with a captured edge (SyncPulsePairing). Main loop only.
     void HandleSyncPulse(const ObjectDictionary::SyncPulse& pulse);
     // Called from the RAT capture callback.
-    void HandleSyncCapture(uint32_t rat) {
-        sync_capture_rat_ = rat;
-        sync_capture_count_ = sync_capture_count_ + 1;
-    }
+    void HandleSyncCapture(uint32_t rat) { sync_pulse_pairing_.AddEdge(rat); }
     // ObjectDictionary::MLATSyncFlag bits for the device status.
     uint8_t GetMLATSyncFlags() const;
 
 private:
-    // A fit this long without a new sync point is dropped (pulses stopped).
-    static constexpr uint32_t kSyncPointMaxAgeMs = 30'000;
-
     // Routes the sync pin to the radio timer and captures its rising edges. The RAT restarts with the RF client, so
     // this also restarts the fit.
     void StartSyncCapture();
@@ -119,9 +113,7 @@ private:
     // Two crystals (CC1312 and RP2040): timestamps start once a second sync point has measured the rate. Read by the RF
     // callback, so changed with interrupts off.
     MLATTimeSync time_sync_ = MLATTimeSync(MLATTimeSync::kMLATTicksPerRATTick, 2);
-    volatile uint32_t sync_capture_rat_ = 0;
-    volatile uint16_t sync_capture_count_ = 0;
-    SyncPulsePairing sync_pulse_pairing_;
+    SyncPulsePairing sync_pulse_pairing_;  // Edges from the RAT capture callback: used with interrupts off.
     uint32_t last_sync_point_timestamp_ms_ = 0;
     uint32_t rat_start_timestamp_ms_ = 0;
 

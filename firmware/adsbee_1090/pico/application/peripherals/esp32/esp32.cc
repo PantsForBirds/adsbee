@@ -68,13 +68,8 @@ bool ESP32::Update() {
         network_utc_ms_of_day = device_status.network_utc_ms_of_day;
         network_utc_timestamp_ms = get_time_since_boot_ms();
         adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberESP32, device_status.mlat_sync_flags);
-        // A lost write only costs this sync point.
-        ObjectDictionary::SyncPulse pulse;
-        if (adsbee.sync_pulse_service.TakeNewPulse(SyncPulseService::kSubscriberESP32, pulse)) {
-            esp32.Write(ObjectDictionary::Address::kAddrSyncPulse, pulse);
-        }
     } else {
-        adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberESP32, 0);
+        adsbee.sync_pulse_service.ReportAbsent(SyncPulseService::kSubscriberESP32);
         if (!esp32.IsLinkDown()) {  // Don't repeat this every pass while the link is down.
             CONSOLE_ERROR("ESP32::Update", "Unable to read ESP32 status.");
         }
@@ -184,6 +179,7 @@ bool ESP32::Update() {
                 .subg_rx_enabled =
                     bsp.has_subg && adsbee.subg_radio_ll.IsEnabled() && settings_manager.settings.subg_rx_enabled,
                 .subg_mode = settings_manager.settings.subg_mode,
+                .sync_pulse = adsbee.sync_pulse_service.GetLastPulse(),
             },
         .subg = adsbee.subg_radio_ll.device_status,
     };
@@ -195,8 +191,6 @@ bool ESP32::Update() {
     last_update_timestamp_ms_ = get_time_since_boot_ms();
     return true;
 }
-
-bool ESP32::UpdateIsDue() { return adsbee.sync_pulse_service.HasNewPulse(SyncPulseService::kSubscriberESP32); }
 
 bool ESP32::SPIGetHandshakePinLevel() { return gpio_get(config_.spi_handshake_pin); }
 
