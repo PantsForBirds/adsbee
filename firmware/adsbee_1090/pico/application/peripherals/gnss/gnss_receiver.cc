@@ -83,14 +83,6 @@ bool GNSSReceiver::Update() {
     // configuration step failed. A valid NMEA fix is still usable in that situation.
     if (!active_) return true;
 
-    // PPS pulses are normally wide relative to the main-loop period, so polling avoids installing a
-    // second RP2040 GPIO callback (the ADS-B demodulator already owns the bank IRQ callback).
-    if (config_.pps_pin != UINT16_MAX) {
-        bool pps_level = gpio_get(config_.pps_pin);
-        if (pps_level && !pps_last_level_) pps_count_++;
-        pps_last_level_ = pps_level;
-    }
-
     uint32_t now_ms = get_time_since_boot_ms();
     // SendInitCommands() may parse NMEA received during its probe, so establish the timestamp
     // before initialization as well as before the normal UART drain below.
@@ -171,6 +163,7 @@ bool GNSSReceiver::Update() {
     while (ReadBufferedByte(c)) {
         CPUMonitor::WorkScope work;
         NMEAParser::SentenceType result = parser_.IngestByte(c);
+        if (result == NMEAParser::kSentenceRMC) LabelPPSEdge();
         // TEMPORARY: also feed the byte to the receiver-specific binary sniffer (UBX for ublox).
         DebugIngestByte(c);
         // TEMPORARY debug instrumentation (remove once root cause found).
@@ -243,6 +236,7 @@ void GNSSReceiver::SuspendForUartHandover() {
     // and skipping avoids stalling the flash path on boards with no GNSS.
     if (!active_ || suspended_) return;
     suspended_ = true;
+    pps_clock_.Invalidate();
     parser_.InvalidateUTC();
     // Stop UART0 RX IRQ activity and discard queued GNSS bytes before the ESP32 flasher re-routes
     // the same peripheral. The flasher uses polling and must have sole ownership of UART0.
@@ -277,7 +271,10 @@ void GNSSReceiver::SetEnable(bool enabled) {
         power_enable_pending_ = false;
         DisableRxInterrupt();
     }
+    if (!enabled && config_.pps_pin != UINT16_MAX) gpio_set_irq_enabled(config_.pps_pin, GPIO_IRQ_EDGE_RISE, false);
     pps_count_ = 0;
+    pps_clock_.Invalidate();
+    if (enabled) EnablePPSInterrupt();
     active_ = enabled;
     if (!enabled) initializing_ = false;
     if (config_.enable_pin == UINT16_MAX) return;  // Not connected.
@@ -285,6 +282,43 @@ void GNSSReceiver::SetEnable(bool enabled) {
     gpio_set_dir(config_.enable_pin, GPIO_OUT);
     // Active low: driving the pin low turns on the high-side power switch (module powered).
     gpio_put(config_.enable_pin, !enabled);
+}
+
+void GNSSReceiver::EnablePPSInterrupt() {
+    if (config_.pps_pin == UINT16_MAX) return;
+    gpio_init(config_.pps_pin);
+    gpio_set_dir(config_.pps_pin, GPIO_IN);
+    gpio_pull_down(config_.pps_pin);
+    if (pps_irq_pin_ != config_.pps_pin) return;
+    gpio_set_irq_enabled(config_.pps_pin, GPIO_IRQ_EDGE_RISE, true);
+    irq_set_enabled(IO_IRQ_BANK0, true);
+}
+
+void GNSSReceiver::InstallPPSIRQHandler(uint pin) {
+    if (pin == UINT16_MAX) return;
+    pps_irq_pin_ = pin;
+    // The handler table is shared by both cores. Run after core 1's ADS-B demodulator callback.
+    gpio_add_raw_irq_handler_with_order_priority(pin, PPSIRQHandler, PICO_SHARED_IRQ_HANDLER_LOWEST_ORDER_PRIORITY);
+}
+
+void GNSSReceiver::PPSIRQHandler() {
+    if (!(gpio_get_irq_event_mask(pps_irq_pin_) & GPIO_IRQ_EDGE_RISE)) return;
+    gpio_acknowledge_irq(pps_irq_pin_, GPIO_IRQ_EDGE_RISE);
+    pps_edge_us_ = time_us_64();
+    pps_count_ = pps_count_ + 1;
+}
+
+void GNSSReceiver::LabelPPSEdge() {
+    uint64_t utc_unix_ms;
+    if (pps_count_ == 0 || !parser_.GetLastUTCUnixMs(utc_unix_ms)) {
+        pps_clock_.Invalidate();
+        return;
+    }
+    // The RP2040 needs two loads to read the ISR's 64-bit timestamp.
+    uint32_t interrupts = save_and_disable_interrupts();
+    uint64_t edge_us = pps_edge_us_;
+    restore_interrupts(interrupts);
+    pps_clock_.Label(edge_us, time_us_64(), utc_unix_ms);
 }
 
 void GNSSReceiver::EnableRxInterrupt() {
@@ -368,5 +402,8 @@ bool GNSSReceiver::HasValidFix() const {
 }
 
 bool GNSSReceiver::GetUTCUnixMs(uint64_t& utc_unix_ms) const {
-    return active_ && !suspended_ && parser_.GetUTCUnixMs(get_time_since_boot_us() / 1000, utc_unix_ms);
+    uint64_t now_us = time_us_64();
+    if (!active_ || suspended_ || !parser_.GetUTCUnixMs(now_us / 1000, utc_unix_ms)) return false;
+    pps_clock_.GetUTCUnixMs(now_us, utc_unix_ms);
+    return true;
 }

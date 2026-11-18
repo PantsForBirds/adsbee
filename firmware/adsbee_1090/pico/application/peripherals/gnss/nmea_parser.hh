@@ -62,6 +62,11 @@ class NMEAParser {
     // Extrapolate a recent dated RMC sample, independently of GGA time and position freshness.
     bool GetUTCUnixMs(uint64_t now_ms, uint64_t& utc_unix_ms) const;
     void InvalidateUTC() { utc_valid_ = false; }
+    // UTC of the last RMC, without extrapolation.
+    bool GetLastUTCUnixMs(uint64_t& utc_unix_ms) const {
+        utc_unix_ms = utc_unix_ms_;
+        return utc_valid_;
+    }
 
     /**
      * Feed a single received byte into the parser.
