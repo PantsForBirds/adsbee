@@ -99,6 +99,9 @@ class GNSSReceiver {
      */
     bool HasValidFix() const;
 
+    // UTC estimated from NMEA reception time, not PPS-disciplined.
+    bool GetUTCUnixMs(uint64_t& utc_unix_ms) const;
+
     /**
      * @retval True if the module responded during Init() (i.e. it is present and configured).
      */

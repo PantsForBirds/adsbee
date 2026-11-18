@@ -94,7 +94,7 @@ bool GNSSReceiver::Update() {
     uint32_t now_ms = get_time_since_boot_ms();
     // SendInitCommands() may parse NMEA received during its probe, so establish the timestamp
     // before initialization as well as before the normal UART drain below.
-    parser_.SetTimestampMs(now_ms);
+    parser_.SetTimestampMs(get_time_since_boot_us() / 1000);
     if (initializing_) {
         uint32_t power_on_delay_ms =
             module_type_ == BSP::kGNSSModuleGeneric ? 0 : kVendorPowerOnDelayMs;
@@ -160,7 +160,7 @@ bool GNSSReceiver::Update() {
     }
 
     // Stamp the parser with the current time so applied fixes carry a freshness timestamp.
-    parser_.SetTimestampMs(now_ms);
+    parser_.SetTimestampMs(get_time_since_boot_us() / 1000);
 
     // Normally the IRQ has already moved every byte into the software ring. Poll the hardware FIFO
     // as a safety net in case an IRQ was missed, masked, or left pending incorrectly.
@@ -243,6 +243,7 @@ void GNSSReceiver::SuspendForUartHandover() {
     // and skipping avoids stalling the flash path on boards with no GNSS.
     if (!active_ || suspended_) return;
     suspended_ = true;
+    parser_.InvalidateUTC();
     // Stop UART0 RX IRQ activity and discard queued GNSS bytes before the ESP32 flasher re-routes
     // the same peripheral. The flasher uses polling and must have sole ownership of UART0.
     DisableRxInterrupt();
@@ -272,6 +273,7 @@ void GNSSReceiver::ResumeAfterUartHandover() {
 
 void GNSSReceiver::SetEnable(bool enabled) {
     if (!enabled) {
+        parser_.InvalidateUTC();
         power_enable_pending_ = false;
         DisableRxInterrupt();
     }
@@ -363,4 +365,8 @@ bool GNSSReceiver::HasValidFix() const {
     const GNSSFix& f = parser_.fix();
     if (!f.valid) return false;
     return (get_time_since_boot_ms() - f.last_update_timestamp_ms) < kFixStaleTimeoutMs;
+}
+
+bool GNSSReceiver::GetUTCUnixMs(uint64_t& utc_unix_ms) const {
+    return active_ && !suspended_ && parser_.GetUTCUnixMs(get_time_since_boot_us() / 1000, utc_unix_ms);
 }
