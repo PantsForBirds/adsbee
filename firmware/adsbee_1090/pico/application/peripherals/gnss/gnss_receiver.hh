@@ -4,6 +4,7 @@
 #include "hardware/irq.h"
 #include "hardware/uart.h"  // For uart_inst_t and UART bring-up in Init().
 #include "nmea_parser.hh"
+#include "pps_clock.hh"
 #include "pico/stdlib.h"  // For gpio_* and tight_loop_contents() used by subclasses/impl.
 #include "settings.hh"
 
@@ -84,7 +85,8 @@ class GNSSReceiver {
     void ResumeAfterUartHandover();
 
     /**
-     * Enable or disable module power via the active-low enable pin. No-op if no enable pin.
+     * Enable or disable the receiver, switching power when an enable pin is connected.
+     * MAX-M10 TX stays disconnected until Update() completes its startup delay.
      */
     void SetEnable(bool enabled);
 
@@ -99,6 +101,9 @@ class GNSSReceiver {
      */
     bool HasValidFix() const;
 
+    // UTC from the last PPS edge when available, otherwise from RMC reception time.
+    bool GetUTCUnixMs(uint64_t& utc_unix_ms) const;
+
     /**
      * @retval True if the module responded during Init() (i.e. it is present and configured).
      */
@@ -106,6 +111,9 @@ class GNSSReceiver {
 
     /** @retval True while the GNSS interface is powered/enabled and should consume UART data. */
     bool IsActive() const { return active_; }
+
+    // Call on core 0 before core 1 starts: core 1's interrupts run the shared handler chain.
+    static void InstallPPSIRQHandler(uint pin);
 
     /** @retval Number of PPS rising edges observed since GNSS was last enabled or disabled. */
     uint32_t pps_count() const { return pps_count_; }
@@ -136,6 +144,9 @@ class GNSSReceiver {
      * receiver's default baud. Interrupt reception is enabled separately after final baud setup.
      */
     void ClaimUart();
+    void ParkTx();
+
+    void EnablePPSInterrupt();
 
     /** Start/stop interrupt-driven UART reception and reset the software RX ring buffer. */
     void EnableRxInterrupt();
@@ -180,10 +191,13 @@ class GNSSReceiver {
     bool notify_pending_ = false;
     bool notify_has_emitted_ = false;
     uint32_t notify_last_timestamp_ms_ = 0;
-    bool pps_last_level_ = false;
     // Shared by all dynamically selected receiver instances and reset on every SetEnable() call.
-    // Updated from the main loop, so no atomic access is required.
-    static inline uint32_t pps_count_ = 0;
+    static inline volatile uint32_t pps_count_ = 0;
+    static inline volatile uint64_t pps_edge_us_ = 0;
+    static inline uint pps_irq_pin_ = UINT16_MAX;
+    static void PPSIRQHandler();
+    void LabelPPSEdge();
+    PPSClock pps_clock_;
 
     // Single-producer (UART ISR), single-consumer (main loop) ring buffer. Monotonic 16-bit indices
     // make all 2048 slots usable; unsigned subtraction remains valid across index wrap.

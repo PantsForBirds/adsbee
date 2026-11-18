@@ -30,7 +30,9 @@ bool CommsManager::Init() {
     uart_set_translate_crlf(config_.comms_uart_handle, false);
     uart_init(config_.comms_uart_handle, SettingsManager::Settings::kDefaultCommsUARTBaudrate);
 
-    gpio_set_function(config_.gnss_uart_tx_pin, GPIO_FUNC_UART);
+    // The saved receiver type is not loaded yet. Its driver claims TX once power is ready.
+    gpio_init(config_.gnss_uart_tx_pin);
+    gpio_disable_pulls(config_.gnss_uart_tx_pin);
     gpio_set_function(config_.gnss_uart_rx_pin, GPIO_FUNC_UART);
     uart_set_translate_crlf(config_.gnss_uart_handle, false);
     uart_init(config_.gnss_uart_handle, SettingsManager::Settings::kDefaultGNSSUARTBaudrate);

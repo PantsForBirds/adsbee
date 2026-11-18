@@ -79,6 +79,8 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_mode_s_bit_error_correction.cc
         test_mode_s_single_bit_filter.cc
         test_nmea_parser.cc
+        test_pps_clock.cc
+        test_time_ping.cc
         ${CMAKE_SOURCE_DIR}/application/peripherals/gnss/nmea_parser.cc
         test_platform.cc
         test_reporting_aircraftjson.cc
@@ -122,6 +124,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         ${ADSBEE_MODULES_DIR}/cppAT/settings # use default settings for testing
         ${ADSBEE_MODULES_DIR}/cppAT/src
         ${CMAKE_SOURCE_DIR}/application/peripherals/gnss
+        ${CMAKE_SOURCE_DIR}/application/comms/at
         ${CMAKE_SOURCE_DIR}/../esp/main/remote_id # ble_adv_watchdog.hh, ble_scan_watchdog.hh
         ${CMAKE_SOURCE_DIR}/../esp/main/mlat_sync # esp32_clock_math.hh
         ${CMAKE_SOURCE_DIR}/application/peripherals # sync_pulse_service.hh

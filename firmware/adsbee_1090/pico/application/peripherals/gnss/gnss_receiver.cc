@@ -6,6 +6,12 @@
 #include "cpu_utils.hh"
 #include "hal.hh"               // For get_time_since_boot_ms().
 
+void GNSSReceiver::ParkTx() {
+    gpio_set_dir(config_.uart_tx_pin, GPIO_IN);
+    gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_SIO);
+    gpio_disable_pulls(config_.uart_tx_pin);
+}
+
 void GNSSReceiver::ClaimUart() {
     // Bring the GNSS UART up to a known state. uart0 is shared with the ESP32 flasher (GPIO 16/17),
     // which calls uart_deinit(uart0) when it finishes; claim the GNSS pins (GPIO 0/1) and
@@ -18,7 +24,12 @@ void GNSSReceiver::ClaimUart() {
     // uart_deinit() first mirrors the clean-peripheral state the ESP32 flasher's DeInit() hands us on
     // the post-flash path (which is why GNSS bring-up is reliable there but flaky on cold boot).
     uart_deinit(config_.uart_handle);
-    gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_UART);
+    if (module_type_ == BSP::kGNSSModuleUbloxMAXM10 && (!active_ || initializing_)) {
+        ParkTx();
+    } else {
+        gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_UART);
+    }
+    gpio_disable_pulls(config_.uart_rx_pin);
     gpio_set_function(config_.uart_rx_pin, GPIO_FUNC_UART);
     uart_set_translate_crlf(config_.uart_handle, false);
     uart_init(config_.uart_handle, GetDefaultBaudrate());
@@ -39,8 +50,6 @@ bool GNSSReceiver::Init() {
         return false;
     }
 
-    active_ = true;
-
     SetEnable(false);
 
     // ClaimUart() already brings the hardware up at GetDefaultBaudrate() so we can talk to the
@@ -48,8 +57,10 @@ bool GNSSReceiver::Init() {
     // argument into settings_manager.settings.baud_rates[kGNSSUART], which would silently overwrite
     // the user-configured/persisted baud rate with the receiver's hardcoded probing default on every
     // boot.
-    ClaimUart();
-    EnableRxInterrupt();
+    if (module_type_ != BSP::kGNSSModuleUbloxMAXM10) {
+        ClaimUart();
+        EnableRxInterrupt();
+    }
 
     // Do not send anything here. Update() starts a generic receiver's passive probe immediately and
     // applies the non-blocking power-on delay only to vendor-specific initialization commands.
@@ -64,7 +75,7 @@ bool GNSSReceiver::Init() {
     notify_has_emitted_ = false;
     notify_last_timestamp_ms_ = 0;
 
-     SetEnable(true);
+    SetEnable(true);
 
     return true;
 }
@@ -83,23 +94,18 @@ bool GNSSReceiver::Update() {
     // configuration step failed. A valid NMEA fix is still usable in that situation.
     if (!active_) return true;
 
-    // PPS pulses are normally wide relative to the main-loop period, so polling avoids installing a
-    // second RP2040 GPIO callback (the ADS-B demodulator already owns the bank IRQ callback).
-    if (config_.pps_pin != UINT16_MAX) {
-        bool pps_level = gpio_get(config_.pps_pin);
-        if (pps_level && !pps_last_level_) pps_count_++;
-        pps_last_level_ = pps_level;
-    }
-
     uint32_t now_ms = get_time_since_boot_ms();
     // SendInitCommands() may parse NMEA received during its probe, so establish the timestamp
     // before initialization as well as before the normal UART drain below.
-    parser_.SetTimestampMs(now_ms);
+    parser_.SetTimestampMs(get_time_since_boot_us() / 1000);
     if (initializing_) {
         uint32_t power_on_delay_ms =
             module_type_ == BSP::kGNSSModuleGeneric ? 0 : kVendorPowerOnDelayMs;
         if (now_ms - power_on_timestamp_ms_ < power_on_delay_ms) return true;
         initializing_ = false;
+        if (module_type_ == BSP::kGNSSModuleUbloxMAXM10) {
+            gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_UART);
+        }
 
         // This is the first communication with the receiver after power was asserted.
         switch (module_type_) {
@@ -160,7 +166,7 @@ bool GNSSReceiver::Update() {
     }
 
     // Stamp the parser with the current time so applied fixes carry a freshness timestamp.
-    parser_.SetTimestampMs(now_ms);
+    parser_.SetTimestampMs(get_time_since_boot_us() / 1000);
 
     // Normally the IRQ has already moved every byte into the software ring. Poll the hardware FIFO
     // as a safety net in case an IRQ was missed, masked, or left pending incorrectly.
@@ -171,6 +177,7 @@ bool GNSSReceiver::Update() {
     while (ReadBufferedByte(c)) {
         CPUMonitor::WorkScope work;
         NMEAParser::SentenceType result = parser_.IngestByte(c);
+        if (result == NMEAParser::kSentenceRMC) LabelPPSEdge();
         // TEMPORARY: also feed the byte to the receiver-specific binary sniffer (UBX for ublox).
         DebugIngestByte(c);
         // TEMPORARY debug instrumentation (remove once root cause found).
@@ -243,6 +250,8 @@ void GNSSReceiver::SuspendForUartHandover() {
     // and skipping avoids stalling the flash path on boards with no GNSS.
     if (!active_ || suspended_) return;
     suspended_ = true;
+    pps_clock_.Invalidate();
+    parser_.InvalidateUTC();
     // Stop UART0 RX IRQ activity and discard queued GNSS bytes before the ESP32 flasher re-routes
     // the same peripheral. The flasher uses polling and must have sole ownership of UART0.
     DisableRxInterrupt();
@@ -264,18 +273,36 @@ void GNSSReceiver::ResumeAfterUartHandover() {
     // through comms_manager.SetBaudRate() here and clobber the persisted setting.
     ClaimUart();
     EnableRxInterrupt();
-    // The module kept running throughout, so no re-power/boot delay is needed. Re-assert only the
-    // runtime message-output config (cheap, non-destructive) so NMEA output resumes.
-    ResendRuntimeConfig();
+    // A running module needs only runtime configuration. Startup retains its original delay.
+    if (!initializing_) ResendRuntimeConfig();
     suspended_ = false;
 }
 
 void GNSSReceiver::SetEnable(bool enabled) {
+    if (module_type_ == BSP::kGNSSModuleUbloxMAXM10) {
+        if (!enabled) {
+            ParkTx();
+            suspended_ = false;
+            healthy_ = false;
+        } else if (!active_) {
+            // Arm reception before power, then leave TX disconnected for the startup interval.
+            initializing_ = true;
+            ClaimUart();
+            EnableRxInterrupt();
+            power_on_timestamp_ms_ = get_time_since_boot_ms();
+            last_init_attempt_timestamp_ms_ = power_on_timestamp_ms_;
+            unhealthy_retry_count_ = 0;
+        }
+    }
     if (!enabled) {
+        parser_.InvalidateUTC();
         power_enable_pending_ = false;
         DisableRxInterrupt();
     }
+    if (!enabled && config_.pps_pin != UINT16_MAX) gpio_set_irq_enabled(config_.pps_pin, GPIO_IRQ_EDGE_RISE, false);
     pps_count_ = 0;
+    pps_clock_.Invalidate();
+    if (enabled) EnablePPSInterrupt();
     active_ = enabled;
     if (!enabled) initializing_ = false;
     if (config_.enable_pin == UINT16_MAX) return;  // Not connected.
@@ -283,6 +310,43 @@ void GNSSReceiver::SetEnable(bool enabled) {
     gpio_set_dir(config_.enable_pin, GPIO_OUT);
     // Active low: driving the pin low turns on the high-side power switch (module powered).
     gpio_put(config_.enable_pin, !enabled);
+}
+
+void GNSSReceiver::EnablePPSInterrupt() {
+    if (config_.pps_pin == UINT16_MAX) return;
+    gpio_init(config_.pps_pin);
+    gpio_set_dir(config_.pps_pin, GPIO_IN);
+    gpio_pull_down(config_.pps_pin);
+    if (pps_irq_pin_ != config_.pps_pin) return;
+    gpio_set_irq_enabled(config_.pps_pin, GPIO_IRQ_EDGE_RISE, true);
+    irq_set_enabled(IO_IRQ_BANK0, true);
+}
+
+void GNSSReceiver::InstallPPSIRQHandler(uint pin) {
+    if (pin == UINT16_MAX) return;
+    pps_irq_pin_ = pin;
+    // The handler table is shared by both cores. Run after core 1's ADS-B demodulator callback.
+    gpio_add_raw_irq_handler_with_order_priority(pin, PPSIRQHandler, PICO_SHARED_IRQ_HANDLER_LOWEST_ORDER_PRIORITY);
+}
+
+void GNSSReceiver::PPSIRQHandler() {
+    if (!(gpio_get_irq_event_mask(pps_irq_pin_) & GPIO_IRQ_EDGE_RISE)) return;
+    gpio_acknowledge_irq(pps_irq_pin_, GPIO_IRQ_EDGE_RISE);
+    pps_edge_us_ = time_us_64();
+    pps_count_ = pps_count_ + 1;
+}
+
+void GNSSReceiver::LabelPPSEdge() {
+    uint64_t utc_unix_ms;
+    if (pps_count_ == 0 || !parser_.GetLastUTCUnixMs(utc_unix_ms)) {
+        pps_clock_.Invalidate();
+        return;
+    }
+    // The RP2040 needs two loads to read the ISR's 64-bit timestamp.
+    uint32_t interrupts = save_and_disable_interrupts();
+    uint64_t edge_us = pps_edge_us_;
+    restore_interrupts(interrupts);
+    pps_clock_.Label(edge_us, time_us_64(), utc_unix_ms);
 }
 
 void GNSSReceiver::EnableRxInterrupt() {
@@ -363,4 +427,11 @@ bool GNSSReceiver::HasValidFix() const {
     const GNSSFix& f = parser_.fix();
     if (!f.valid) return false;
     return (get_time_since_boot_ms() - f.last_update_timestamp_ms) < kFixStaleTimeoutMs;
+}
+
+bool GNSSReceiver::GetUTCUnixMs(uint64_t& utc_unix_ms) const {
+    uint64_t now_us = time_us_64();
+    if (!active_ || suspended_ || !parser_.GetUTCUnixMs(now_us / 1000, utc_unix_ms)) return false;
+    pps_clock_.GetUTCUnixMs(now_us, utc_unix_ms);
+    return true;
 }

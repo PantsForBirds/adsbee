@@ -1,4 +1,5 @@
 #include <cstring>
+#include <string>
 
 #include "gtest/gtest.h"
 #include "nmea_parser.hh"
@@ -142,4 +143,109 @@ TEST(NMEAParser, UnknownSentenceType) {
     NMEAParser parser;
     auto type = FeedSentence(parser, "$GPVTG,084.4,T,,M,022.4,N,041.5,K*6C\r\n");
     EXPECT_EQ(type, NMEAParser::kSentenceUnknown);
+}
+
+TEST(NMEAParser, UTCDateAndFraction) {
+    NMEAParser parser;
+    parser.SetTimestampMs(100);
+    FeedSentence(parser, "$GPRMC,123519.5379,A,4807.038,N,01131.000,E,022.4,084.4,230394,,,A\r\n");
+    uint64_t utc = 0;
+    ASSERT_TRUE(parser.GetUTCUnixMs(123, utc));
+    EXPECT_EQ(utc, 764426119560ULL);
+}
+
+TEST(NMEAParser, UTCMidnightAndFreshnessIndependentOfGGA) {
+    NMEAParser parser;
+    parser.SetTimestampMs(1000);
+    FeedSentence(parser, "$GNRMC,235959.500,A,,,,,,,311226,,,A\r\n");
+    uint64_t utc = 0;
+    ASSERT_TRUE(parser.GetUTCUnixMs(2000, utc));
+    EXPECT_EQ(utc, 1798761600500ULL);
+    parser.SetTimestampMs(5999);
+    FeedSentence(parser, "$GNGGA,000004,,,,,1,08,,1,M,,,,\r\n");
+    ASSERT_TRUE(parser.GetUTCUnixMs(5999, utc));
+    EXPECT_EQ(utc, 1798761604499ULL);
+    EXPECT_FALSE(parser.GetUTCUnixMs(6000, utc));
+    parser.SetTimestampMs(6001);
+    FeedSentence(parser, "$GNRMC,000004.501,A,,,,,,,010127,,,A\r\n");
+    ASSERT_TRUE(parser.GetUTCUnixMs(6001, utc));
+    EXPECT_EQ(utc, 1798761604501ULL);
+}
+
+TEST(NMEAParser, UTCMonotonicClockWrap) {
+    NMEAParser parser;
+    parser.SetTimestampMs(0xFFFFFFF0);
+    FeedSentence(parser, "$GPRMC,000000,A,,,,,,,010100,,,A\r\n");
+    uint64_t utc = 0;
+    ASSERT_TRUE(parser.GetUTCUnixMs(0x100000010ULL, utc));
+    EXPECT_EQ(utc, 946684800032ULL);
+    EXPECT_FALSE(parser.GetUTCUnixMs(0x200000010ULL, utc));
+}
+
+TEST(NMEAParser, UTCGregorianDateAndYearWindow) {
+    struct Sample { const char* date; uint64_t epoch_ms; };
+    for (const auto& sample : {Sample{"290200", 951782400000ULL}, Sample{"010180", 315532800000ULL},
+                               Sample{"311279", 3471206400000ULL}, Sample{"290224", 1709164800000ULL}}) {
+        NMEAParser parser;
+        std::string rmc = std::string("$GPRMC,000000,A,,,,,,,") + sample.date + ",,,A\r\n";
+        FeedSentence(parser, rmc.c_str());
+        uint64_t utc = 0;
+        ASSERT_TRUE(parser.GetUTCUnixMs(0, utc)) << sample.date;
+        EXPECT_EQ(utc, sample.epoch_ms) << sample.date;
+    }
+}
+
+TEST(NMEAParser, UTCRejectsMalformedOrUntrustedSamples) {
+    const char* bad_fields[] = {
+        "000000,A,,,,,,,290223", "000000,A,,,,,,,310426", "000000,A,,,,,,,001026",
+        "000000,A,,,,,,,011326", "000000,A,,,,,,,01102x", "000000,A,,,,,,,",
+        "240000,A,,,,,,,111026", "126000,A,,,,,,,111026", "120061,A,,,,,,,111026",
+        "120000x,A,,,,,,,111026", "120000.,A,,,,,,,111026", "120000.123x,A,,,,,,,111026",
+        ",A,,,,,,,111026", ",V,,,,,,,111026", "120000,V,,,,,,,", "120000,X,,,,,,,111026",
+        "120000,,,,,,,,111026", "120000,AX,,,,,,,111026",
+        "235960,A,,,,,,,311216", "120000,A"
+    };
+    for (const char* fields : bad_fields) {
+        NMEAParser parser;
+        FeedSentence(parser, "$GPRMC,120000,A,,,,,,,111026,,,A\r\n");
+        uint64_t utc = 123;
+        ASSERT_TRUE(parser.GetUTCUnixMs(0, utc));
+        FeedSentence(parser, (std::string("$GPRMC,") + fields + "\r\n").c_str());
+        EXPECT_FALSE(parser.GetUTCUnixMs(0, utc)) << fields;
+    }
+}
+
+// u-blox fills RMC time and date fields only when it considers them valid, also while status is V (no fix).
+TEST(NMEAParser, UTCFromVoidRMCWithoutPosition) {
+    NMEAParser parser;
+    FeedSentence(parser, "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,,,A\r\n");
+    FeedSentence(parser, "$GPRMC,123520,V,5000.000,N,01000.000,E,,,230394,,,N\r\n");
+    uint64_t utc = 0;
+    ASSERT_TRUE(parser.GetUTCUnixMs(0, utc));
+    EXPECT_EQ(utc, 764426120000ULL);
+    EXPECT_NEAR(parser.fix().latitude_deg, 48.1173f, 0.001f);
+    EXPECT_NEAR(parser.fix().longitude_deg, 11.5167f, 0.001f);
+}
+
+TEST(NMEAParser, UTCNeedsDatedRMCAndRejectsBadChecksum) {
+    NMEAParser parser;
+    uint64_t utc = 123;
+    FeedSentence(parser, "$GNGGA,120000,,,,,1,08,,1,M,,,,\r\n");
+    EXPECT_FALSE(parser.GetUTCUnixMs(0, utc));
+    EXPECT_EQ(utc, 123u);
+    FeedSentence(parser, "$GPRMC,120000,A,,,,,,,111026,,,A*00\r\n");
+    EXPECT_FALSE(parser.GetUTCUnixMs(0, utc));
+}
+
+TEST(NMEAParser, UTCInvalidationRequiresNewRMC) {
+    NMEAParser parser;
+    FeedSentence(parser, "$GPRMC,120000,A,,,,,,,111026,,,A\r\n");
+    uint64_t utc;
+    ASSERT_TRUE(parser.GetUTCUnixMs(0, utc));
+    parser.InvalidateUTC();
+    EXPECT_FALSE(parser.GetUTCUnixMs(0, utc));
+    FeedSentence(parser, "$GNGGA,120000,,,,,1,08,,1,M,,,,\r\n");
+    EXPECT_FALSE(parser.GetUTCUnixMs(0, utc));
+    FeedSentence(parser, "$GPRMC,120001,A,,,,,,,111026,,,A\r\n");
+    EXPECT_TRUE(parser.GetUTCUnixMs(0, utc));
 }
