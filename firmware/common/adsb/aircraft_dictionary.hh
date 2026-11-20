@@ -1650,10 +1650,11 @@ class AircraftDictionary {
     // Helper functions for ingesting specific ADS-B packet types, called by IngestModeSADSBPacket.
 
     /**
-     * Whether an extended squitter with corrected bits may update the dictionary: its aircraft must be tracked, a one
-     * bit correction must not disagree with the track, and a two bit correction must agree with it.
+     * Whether an extended squitter with corrected bits is kept (forwarded): its aircraft must be tracked, a one bit
+     * correction must not disagree with the track, and a two bit correction must agree with it. A kept frame changes
+     * the aircraft only when the track agrees with it; otherwise this sets RawModeSPacket::kFlagSkipAircraftDictionary.
      */
-    bool AcceptCorrectedExtendedSquitter(const DecodedModeSPacket& packet);
+    bool AcceptCorrectedExtendedSquitter(DecodedModeSPacket& packet);
 
     enum TrackFit : uint8_t { kTrackFits, kTrackDisagrees, kTrackUnknown };
     /**

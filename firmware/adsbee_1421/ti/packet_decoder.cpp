@@ -49,11 +49,11 @@ void PacketDecoder::DecodeOne(RawModeSPacket& raw_packet, bool df17_mode) {
     // only produces DF >= 16 frames.
     if (!df17_mode && raw_packet.buffer_len_bytes == RawModeSPacket::kExtendedSquitterPacketLenBytes &&
         (raw_packet.buffer[0] >> 27) < 16) {
-        const bool no_mlat_timestamp = raw_packet.no_mlat_timestamp;
+        const uint8_t flags = raw_packet.flags;
         raw_packet = RawModeSPacket(raw_packet.buffer, RawModeSPacket::kSquitterPacketNumWords32,
                                     raw_packet.source, raw_packet.sigs_dbm, raw_packet.sigq_db,
                                     raw_packet.mlat_48mhz_64bit_counts);
-        raw_packet.no_mlat_timestamp = no_mlat_timestamp;
+        raw_packet.flags = flags;
     }
     DecodedModeSPacket decoded_packet(raw_packet);
 
