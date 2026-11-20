@@ -1827,7 +1827,7 @@ bool AircraftDictionary::AcceptCorrectedExtendedSquitter(DecodedModeSPacket& pac
 
 AircraftDictionary::TrackFit AircraftDictionary::CheckAgainstTrack(const ModeSADSBPacket& es,
                                                                    const ModeSAircraft& aircraft) {
-    // Apply the frame to a copy of the aircraft and compare. Integer math only: the RP2040 has no FPU.
+    // Apply the frame to a copy of the aircraft and compare, in fixed point: the RP2040 has no FPU.
     uint32_t now_ms = get_time_since_boot_ms();
     ModeSAircraft trial = aircraft;
     trial.WriteBitFlag(ModeSAircraft::kBitFlagUpdatedBaroAltitude, false);
