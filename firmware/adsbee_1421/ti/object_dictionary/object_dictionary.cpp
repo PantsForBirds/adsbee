@@ -1,7 +1,7 @@
 #include "object_dictionary.hh"
 
 const uint8_t ObjectDictionary::kFirmwareVersionMajor = 0;
-const uint8_t ObjectDictionary::kFirmwareVersionMinor = 4;
+const uint8_t ObjectDictionary::kFirmwareVersionMinor = 5;
 const uint8_t ObjectDictionary::kFirmwareVersionPatch = 0;
 // NOTE: Indicate a final release with RC = 0.
 const uint8_t ObjectDictionary::kFirmwareVersionReleaseCandidate = 3;

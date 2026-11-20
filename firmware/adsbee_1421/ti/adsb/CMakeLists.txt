@@ -5,6 +5,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     ${OPENDRONEID_DIR}/opendroneid.c
     ${ADSBEE_COMMON_DIR}/adsb/mode_s_packet.cpp
     ${ADSBEE_COMMON_DIR}/adsb/uat_packet.cpp
+    ${ADSBEE_COMMON_DIR}/adsb/adsl_packet.cpp
     ${ADSBEE_COMMON_DIR}/adsb/aircraft_dictionary.cpp
     ${ADSBEE_COMMON_DIR}/adsb/decode_utils.cpp
     ${ADSBEE_COMMON_DIR}/adsb/mode_s_packet_decoder.cc

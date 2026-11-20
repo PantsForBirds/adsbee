@@ -559,6 +559,103 @@ inline int16_t WriteAircraftJSONRemoteIDAircraftStr(char buf[], const RemoteIDAi
     return n;
 }
 
+// ADS-L emergency status strings (spec G.1.4), readsb nomenclature where one exists.
+static const char* const kADSLEmergencyStrings[] = {"undefined", "none",     "general", "lifeguard",
+                                                     "nordo",     "unlawful", "downed",  "reserved"};
+// ADS-L address mapping table names (spec F.2.2); manufacturer pages are "manufacturer".
+static inline const char* ADSLAddressMappingToStr(uint8_t amt) {
+    switch (amt) {
+        case DecodedADSLPacket::kAddressMappingRandom:
+            return "random";
+        case DecodedADSLPacket::kAddressMappingICAO:
+            return "icao";
+        case DecodedADSLPacket::kAddressMappingFLARM:
+            return "flarm";
+        case DecodedADSLPacket::kAddressMappingOGN:
+            return "ogn";
+        case DecodedADSLPacket::kAddressMappingFANET:
+            return "fanet";
+        default:
+            return amt >= DecodedADSLPacket::kAddressMappingManufacturerPage0 ? "manufacturer" : "reserved";
+    }
+}
+
+/**
+ * Writes an ADS-L aircraft as a readsb-style JSON object. Non-ICAO addresses get the '~' prefix. ADS-L fields:
+ * "adsl_amt" (address mapping), "adsl_category" (spec G.1.3 code), "adsl_version", "adsl_relayed".
+ */
+inline int16_t WriteAircraftJSONADSLAircraftStr(char buf[], const ADSLAircraft& aircraft, uint32_t timestamp_ms = 0) {
+    int16_t n = 0;
+    const int16_t max = kAircraftJSONMessageStrMaxLen;
+    bool is_icao = aircraft.address_mapping == DecodedADSLPacket::kAddressMappingICAO;
+
+    n += snprintf(buf + n, max - n, "{\"hex\":\"%s%06lx\",\"type\":\"adsl\",\"link\":\"adsl\"", is_icao ? "" : "~",
+                  (unsigned long)(aircraft.address & 0xFFFFFF));
+    n = n < max ? n : max;
+
+    char category_str[4];
+    if (EmitterCategoryToStr(category_str, sizeof(category_str), aircraft.GetEmitterCategory())) {
+        n += snprintf(buf + n, max - n, ",\"category\":\"%s\"", category_str);
+        n = n < max ? n : max;
+    }
+
+    if (aircraft.HasBitFlag(ADSLAircraft::kBitFlagPositionValid)) {
+        n += snprintf(buf + n, max - n, ",\"lat\":%.5f,\"lon\":%.5f", aircraft.latitude_deg, aircraft.longitude_deg);
+        n = n < max ? n : max;
+        if (timestamp_ms != 0) {
+            n += snprintf(buf + n, max - n, ",\"seen_pos\":%.1f",
+                          (timestamp_ms - aircraft.last_position_update_ms) / 1000.0f);
+            n = n < max ? n : max;
+        }
+    }
+    n = AppendAircraftJSONDistanceAndBearing(buf, n, max, aircraft);
+
+    if (aircraft.flight_state == DecodedADSLPacket::kFlightStateOnGround) {
+        n += snprintf(buf + n, max - n, ",\"on_ground\":true");
+        n = n < max ? n : max;
+    }
+    if (aircraft.HasBitFlag(ADSLAircraft::kBitFlagGNSSAltitudeValid)) {
+        n += snprintf(buf + n, max - n, ",\"alt_geom\":%ld", (long)aircraft.gnss_altitude_ft);
+        n = n < max ? n : max;
+    }
+    if (aircraft.HasBitFlag(ADSLAircraft::kBitFlagHorizontalSpeedValid)) {
+        n += snprintf(buf + n, max - n, ",\"gs\":%ld", (long)aircraft.speed_kts);
+        n = n < max ? n : max;
+    }
+    if (aircraft.HasBitFlag(ADSLAircraft::kBitFlagDirectionValid)) {
+        n += snprintf(buf + n, max - n, ",\"track\":%.1f", aircraft.direction_deg);
+        n = n < max ? n : max;
+    }
+    if (aircraft.HasBitFlag(ADSLAircraft::kBitFlagGNSSVerticalRateValid)) {
+        n += snprintf(buf + n, max - n, ",\"geom_rate\":%ld", (long)aircraft.gnss_vertical_rate_fpm);
+        n = n < max ? n : max;
+    }
+
+    n += snprintf(buf + n, max - n, ",\"nic\":%u,\"nac_p\":%u,\"nac_v\":%u,\"sil\":%u,\"gva\":%u,\"sda\":%u",
+                  aircraft.GetNIC(), aircraft.GetNACp(), aircraft.velocity_accuracy, aircraft.source_integrity_level,
+                  aircraft.vertical_accuracy, aircraft.design_assurance);
+    n = n < max ? n : max;
+
+    if (aircraft.emergency > DecodedADSLPacket::kEmergencyNone && aircraft.emergency < 8) {
+        n += snprintf(buf + n, max - n, ",\"emergency\":\"%s\"", kADSLEmergencyStrings[aircraft.emergency]);
+        n = n < max ? n : max;
+    }
+
+    n += snprintf(buf + n, max - n,
+                  ",\"rssi\":%d,\"messages\":%lu,\"adsl_amt\":\"%s\",\"adsl_category\":%u,\"adsl_version\":%u",
+                  aircraft.last_message_signal_strength_dbm, (unsigned long)aircraft.num_frames_received,
+                  ADSLAddressMappingToStr(aircraft.address_mapping), aircraft.category, aircraft.protocol_version);
+    n = n < max ? n : max;
+    if (aircraft.HasBitFlag(ADSLAircraft::kBitFlagRelayed)) {
+        n += snprintf(buf + n, max - n, ",\"adsl_relayed\":true");
+        n = n < max ? n : max;
+    }
+
+    n += snprintf(buf + n, max - n, "}\n");
+    if (n >= max) return -1;  // Buffer overrun.
+    return n;
+}
+
 /**
  * Lists the aircraft the Live Map websocket reports: the preferred entry per ICAO address (one target per aircraft),
  * minus those the report filter (AT+FILTER_DISTANCE_NM, AT+FILTER_ALTITUDE_FT) leaves out.
@@ -615,6 +712,8 @@ inline uint16_t WriteAircraftJSONLiveMapArray(const AircraftDictionary& dictiona
             len = WriteAircraftJSONUATAircraftStr(json_buf, *ac, timestamp_ms);
         } else if (const RemoteIDAircraft* ac = std::get_if<RemoteIDAircraft>(&itr->second); ac) {
             len = WriteAircraftJSONRemoteIDAircraftStr(json_buf, *ac);
+        } else if (const ADSLAircraft* ac = std::get_if<ADSLAircraft>(&itr->second); ac) {
+            len = WriteAircraftJSONADSLAircraftStr(json_buf, *ac, timestamp_ms);
         }
         if (len <= 0 || len + 2 > buf_len) {
             continue;

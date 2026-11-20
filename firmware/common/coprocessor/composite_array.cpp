@@ -34,11 +34,12 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
     packets_to_report.header->num_uat_uplink_packets = 0;
     packets_to_report.header->num_remote_id_packets = 0;
 
-    // Reserve room for a couple of uplink packets up front: Mode S and UAT ADS-B pack first, and under
-    // sustained traffic they would otherwise fill every batch and starve the low-rate uplink queue forever.
-    // Never reserve more than the buffer could actually hold past the header, so a buffer too small for
-    // any uplink still packs Mode S / UAT ADS-B instead of holding space no uplink can use.
+    // One sub-GHz reservation: Mode S packs first and under sustained traffic would otherwise fill every batch and
+    // starve the low-rate sub-GHz queues. It holds a few short packets (UAT ADS-B or ADS-L, which share a queue and a
+    // section) and a couple of uplinks; the short packets pack next and leave the uplinks' share. Never reserve more
+    // than the buffer could hold past the header, so a small buffer still packs Mode S instead of holding unusable room.
     constexpr uint16_t kMaxReservedUplinkPackets = 2;
+    constexpr uint16_t kMaxReservedShortSubGHzPackets = 4;
     uint16_t reserved_uplink_bytes = 0;
     if (uat_uplink_queue) {
         uint16_t max_uplinks_that_fit =
@@ -51,6 +52,17 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         if (num_uplinks > limits.max_uat_uplink_packets) num_uplinks = limits.max_uat_uplink_packets;
         reserved_uplink_bytes = num_uplinks * sizeof(RawUATUplinkPacket);
     }
+    uint16_t reserved_sub_ghz_bytes = reserved_uplink_bytes;
+    if (uat_adsb_queue) {
+        uint16_t room_bytes = buf_len_bytes > sizeof(RawPackets::Header) + reserved_uplink_bytes
+                                  ? buf_len_bytes - sizeof(RawPackets::Header) - reserved_uplink_bytes
+                                  : 0;
+        uint16_t num_short = uat_adsb_queue->Length();
+        if (num_short > kMaxReservedShortSubGHzPackets) num_short = kMaxReservedShortSubGHzPackets;
+        if (num_short > room_bytes / sizeof(RawUATADSBPacket)) num_short = room_bytes / sizeof(RawUATADSBPacket);
+        if (num_short > limits.max_uat_adsb_packets) num_short = limits.max_uat_adsb_packets;
+        reserved_sub_ghz_bytes += num_short * sizeof(RawUATADSBPacket);
+    }
 
     // Fill up the CompositeArray::RawPackets header and associated buffers with as many packets as we can report.
     if (mode_s_queue) {
@@ -58,7 +70,7 @@ CompositeArray::RawPackets CompositeArray::PackRawPacketsBuffer(uint8_t* buf, ui
         RawModeSPacket mode_s_packet;
         packets_to_report.mode_s_packets = reinterpret_cast<RawModeSPacket*>(buf + packets_to_report.len_bytes);
         while (packets_to_report.header->num_mode_s_packets < limits.max_mode_s_packets &&
-               packets_to_report.len_bytes + sizeof(RawModeSPacket) + reserved_uplink_bytes <= buf_len_bytes &&
+               packets_to_report.len_bytes + sizeof(RawModeSPacket) + reserved_sub_ghz_bytes <= buf_len_bytes &&
                mode_s_queue->Dequeue(mode_s_packet)) {
             memcpy(&packets_to_report.mode_s_packets[packets_to_report.header->num_mode_s_packets], &mode_s_packet,
                    sizeof(RawModeSPacket));

@@ -41,3 +41,14 @@ test('adsbee_1090_console has the same store', () => {
     assert.ok(merge(ADSBEE_SRC).includes('kTrueOnlyFields'));
     assert.strictEqual(merge(CONSOLE), merge(ADSBEE_SRC), 'Re-copy AircraftStore.ingest from adsbee.js');
 });
+
+test('ADS-L targets get their own source and key', () => {
+    const store = new AircraftStore();
+    store.ingest(report({ lat: 47.25, lon: 8.5 }));
+    store.ingest({ hex: 'acbe3e', type: 'adsl', link: 'adsl', lat: 47.26, lon: 8.51, alt_geom: 4924 });
+    assert.strictEqual(store.aircraft.get('acbe3e').src, 'adsb_1090');
+    const adsl = store.aircraft.get('adsl-acbe3e');
+    assert.strictEqual(adsl.src, 'adsl');
+    assert.strictEqual(adsl.srcLabel, 'ADS-L');
+    assert.strictEqual(adsl.alt_geom, 4924);
+});

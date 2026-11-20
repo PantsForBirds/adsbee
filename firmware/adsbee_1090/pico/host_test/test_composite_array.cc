@@ -852,3 +852,117 @@ TEST(CompositeArray, FullGroundSegmentsOfUATUplinksReachTheMaster) {
     EXPECT_EQ(RunFullGroundSegments(30, 3), 30 * 32);   // Fast main loop.
     EXPECT_EQ(RunFullGroundSegments(30, 30), 30 * 32);  // Main loop slowed by other work.
 }
+
+namespace {
+
+// A UAT ADS-B packet and an ADS-L packet, as the sub-GHz decoder enqueues them.
+RawUATADSBPacket SubGHzTestUATPacket(uint8_t tag) {
+    RawUATADSBPacket packet;
+    packet.buffer_len_bytes = RawUATADSBPacket::kShortADSBMessageNumBytes;
+    packet.buffer[0] = tag;
+    packet.sigs_dbm = -60;
+    return packet;
+}
+
+RawADSLPacket SubGHzTestADSLPacket(uint8_t tag) {
+    const uint8_t bytes[] = {0x10, tag, 0x02, 0x03};
+    RawADSLPacket packet(bytes, sizeof(bytes), -70, 2, 0x1234);
+    packet.channel = RawADSLPacket::kChannel868_4MHz;
+    return packet;
+}
+
+}  // namespace
+
+TEST(CompositeArray, UATAndADSLShareOneQueueAndSection) {
+    PFBQueue<RawUATADSBPacket> sub_ghz_queue =
+        PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 8, .buffer = nullptr, .overwrite_when_full = false});
+    ASSERT_TRUE(sub_ghz_queue.Enqueue(SubGHzTestUATPacket(1)));
+    ASSERT_TRUE(sub_ghz_queue.Enqueue(SubGHzTestADSLPacket(2)));
+    ASSERT_TRUE(sub_ghz_queue.Enqueue(SubGHzTestUATPacket(3)));
+
+    alignas(4) uint8_t buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    CompositeArray::RawPackets packed =
+        CompositeArray::PackRawPacketsBuffer(buf, sizeof(buf), nullptr, &sub_ghz_queue, nullptr);
+    ASSERT_TRUE(packed.IsValid());
+    EXPECT_EQ(sizeof(CompositeArray::RawPackets::Header), 8u);  // No section of its own for ADS-L.
+    ASSERT_EQ(packed.header->num_uat_adsb_packets, 3);
+
+    PFBQueue<RawUATADSBPacket> out_queue =
+        PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 8, .buffer = nullptr, .overwrite_when_full = false});
+    ASSERT_TRUE(CompositeArray::UnpackRawPacketsBufferToQueues(buf, packed.len_bytes, nullptr, &out_queue, nullptr));
+    RawUATADSBPacket packet;
+    ASSERT_TRUE(out_queue.Dequeue(packet));
+    EXPECT_EQ(packet.protocol, RawUATADSBPacket::kProtocolUATADSB);
+    EXPECT_EQ(packet.buffer[0], 1);
+    ASSERT_TRUE(out_queue.Dequeue(packet));
+    ASSERT_EQ(packet.protocol, RawUATADSBPacket::kProtocolADSL);
+    RawADSLPacket adsl_packet(packet);
+    EXPECT_EQ(adsl_packet.buffer_len_bytes, 4);
+    EXPECT_EQ(adsl_packet.buffer[1], 2);
+    EXPECT_EQ(adsl_packet.channel, RawADSLPacket::kChannel868_4MHz);
+    EXPECT_EQ(adsl_packet.sigs_dbm, -70);
+    EXPECT_EQ(adsl_packet.sigq_bits, 2);
+    EXPECT_EQ(adsl_packet.mlat_48mhz_64bit_counts, 0x1234u);
+    ASSERT_TRUE(out_queue.Dequeue(packet));
+    EXPECT_EQ(packet.protocol, RawUATADSBPacket::kProtocolUATADSB);
+    EXPECT_EQ(packet.buffer[0], 3);
+}
+
+TEST(CompositeArray, ModeSFloodLeavesTheSubGHzReservation) {
+    // Mode S packs first. However many Mode S packets wait, each array keeps room for a few short sub-GHz packets (UAT
+    // ADS-B or ADS-L, whichever the radio receives) and a couple of uplinks.
+    for (bool adsl : {false, true}) {
+        PFBQueue<RawModeSPacket> mode_s_queue =
+            PFBQueue<RawModeSPacket>({.buf_len_num_elements = 200, .buffer = nullptr, .overwrite_when_full = false});
+        PFBQueue<RawUATADSBPacket> sub_ghz_queue =
+            PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 20, .buffer = nullptr, .overwrite_when_full = false});
+        PFBQueue<RawUATUplinkPacket> uplink_queue =
+            PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = 5, .buffer = nullptr, .overwrite_when_full = false});
+        RawModeSPacket mode_s_packet;
+        while (!mode_s_queue.IsFull()) mode_s_queue.Enqueue(mode_s_packet);
+        for (uint8_t i = 0; i < 10; i++) {
+            sub_ghz_queue.Enqueue(adsl ? SubGHzTestADSLPacket(i) : SubGHzTestUATPacket(i));
+        }
+        RawUATUplinkPacket uplink_packet;
+        for (uint8_t i = 0; i < 3; i++) uplink_queue.Enqueue(uplink_packet);
+
+        alignas(4) uint8_t buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+        CompositeArray::RawPackets packed =
+            CompositeArray::PackRawPacketsBuffer(buf, sizeof(buf), &mode_s_queue, &sub_ghz_queue, &uplink_queue);
+        ASSERT_TRUE(packed.IsValid());
+        EXPECT_GT(packed.header->num_mode_s_packets, 0) << adsl;
+        EXPECT_EQ(packed.header->num_uat_adsb_packets, 4) << adsl;
+        EXPECT_EQ(packed.header->num_uat_uplink_packets, 2) << adsl;
+        for (uint16_t i = 0; i < packed.header->num_uat_adsb_packets; i++) {
+            EXPECT_EQ(packed.uat_adsb_packets[i].protocol,
+                      adsl ? RawUATADSBPacket::kProtocolADSL : RawUATADSBPacket::kProtocolUATADSB);
+        }
+
+        // Without uplinks waiting, the short packets keep their share.
+        PFBQueue<RawUATUplinkPacket> no_uplinks =
+            PFBQueue<RawUATUplinkPacket>({.buf_len_num_elements = 2, .buffer = nullptr, .overwrite_when_full = false});
+        packed = CompositeArray::PackRawPacketsBuffer(buf, sizeof(buf), &mode_s_queue, &sub_ghz_queue, &no_uplinks);
+        EXPECT_GT(packed.header->num_mode_s_packets, 0) << adsl;
+        EXPECT_EQ(packed.header->num_uat_adsb_packets, 4) << adsl;
+    }
+}
+
+TEST(CompositeArray, MergeKeepsSubGHzProtocols) {
+    PFBQueue<RawUATADSBPacket> dst_queue =
+        PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 4, .buffer = nullptr, .overwrite_when_full = false});
+    PFBQueue<RawUATADSBPacket> src_queue =
+        PFBQueue<RawUATADSBPacket>({.buf_len_num_elements = 4, .buffer = nullptr, .overwrite_when_full = false});
+    dst_queue.Enqueue(SubGHzTestUATPacket(1));
+    src_queue.Enqueue(SubGHzTestADSLPacket(2));
+    alignas(4) uint8_t dst_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    alignas(4) uint8_t src_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+    CompositeArray::PackRawPacketsBuffer(dst_buf, sizeof(dst_buf), nullptr, &dst_queue, nullptr);
+    CompositeArray::PackRawPacketsBuffer(src_buf, sizeof(src_buf), nullptr, &src_queue, nullptr);
+    ASSERT_TRUE(CompositeArray::MergeRawPacketsBuffers(dst_buf, src_buf));
+    CompositeArray::RawPackets merged;
+    ASSERT_TRUE(CompositeArray::UnpackRawPacketsBuffer(merged, dst_buf, sizeof(dst_buf)));
+    ASSERT_EQ(merged.header->num_uat_adsb_packets, 2);
+    EXPECT_EQ(merged.uat_adsb_packets[0].protocol, RawUATADSBPacket::kProtocolUATADSB);
+    EXPECT_EQ(merged.uat_adsb_packets[1].protocol, RawUATADSBPacket::kProtocolADSL);
+    EXPECT_EQ(merged.uat_adsb_packets[1].channel, RawADSLPacket::kChannel868_4MHz);
+}

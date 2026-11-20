@@ -8,8 +8,15 @@
 static constexpr uint16_t kUATSyncNumBits = 36;
 static constexpr uint16_t kUATSyncNumBytes = CeilBitsToBytes(kUATSyncNumBits);
 
+/**
+ * A UAT ADS-B packet, and the slot every short sub-GHz packet travels in: ADS-L packets (RawADSLPacket) use the same
+ * type, tagged by protocol, so the radio only ever runs one protocol at a time and both share every queue and
+ * CompositeArray section.
+ */
 class RawUATADSBPacket {
    public:
+    enum Protocol : uint8_t { kProtocolUATADSB = 0, kProtocolADSL = 1 };
+
     static const uint64_t kSyncWord = 0b1110'10101100'11011101'10100100'11100010;  // 0xEACDDA4E2
 
     // Split the 36-bit sync word into 32 most-significant bits (used as the Sync word by the MCU), and 4
@@ -69,11 +76,15 @@ class RawUATADSBPacket {
 
     int16_t sigs_dbm = INT16_MIN;          // Signal strength, in dBm.
     int16_t sigq_bits = INT16_MIN;         // Signal quality (num bits corrected by FEC, 0 = best).
+    uint8_t protocol = kProtocolUATADSB;   // Protocol enum.
+    uint8_t channel = 0;                   // ADS-L channel (RawADSLPacket::Channel), 0 for UAT.
     // Receive time (sync word detection) in 48 MHz MLAT counts, on the Mode S time base, or 0 (none: the sub-GHz radio
     // isn't synced yet). The radio timer is converted with MLATTimeSync on the receiving chip (CC1312 at receive, m1421
     // at ingest).
     uint64_t mlat_48mhz_64bit_counts = 0;
 };
+// protocol and channel sit in what was alignment padding, so the size every queue and CompositeArray uses is unchanged.
+static_assert(sizeof(RawUATADSBPacket) == 64, "RawUATADSBPacket must stay 64 bytes.");
 
 /**
  * Picks how many bytes to receive after the first 32 sync word bits, while the packet is still arriving (sub-GHz radio

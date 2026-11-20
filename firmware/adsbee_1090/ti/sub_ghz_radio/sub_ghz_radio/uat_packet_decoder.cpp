@@ -2,6 +2,7 @@
 
 #include <ti/drivers/dpl/HwiP.h>
 
+#include "adsl_packet.hh"
 #include "buffer_utils.hh"
 #include "comms.hh"
 #include "hal.hh"  // get_time_since_boot_ms()
@@ -43,6 +44,10 @@ void UATPacketDecoder::DecodeADSBPackets() {
             break;
         }
         pico_ll.ProcessPendingTransaction();  // Don't keep the RP2040 waiting while a burst is decoded.
+        if (packet.protocol == RawUATADSBPacket::kProtocolADSL) {
+            DecodeADSLPacket(packet);
+            continue;
+        }
         uint16_t packet_len_bytes = packet.buffer_len_bytes;
         // Decode the packet and enqueue the result.
         DecodedUATADSBPacket decoded_packet = DecodedUATADSBPacket(packet);
@@ -70,6 +75,29 @@ void UATPacketDecoder::DecodeADSBPackets() {
             CONSOLE_INFO("UATPacketDecoder::Update", "-[     INVLD] len=%d buf=%s rssi=%d ts=%lu", packet_len_bytes,
                          raw_packet_buffer, packet.sigs_dbm, static_cast<unsigned long>(packet.mlat_48mhz_64bit_counts));
         }
+    }
+}
+
+void UATPacketDecoder::DecodeADSLPacket(const RawUATADSBPacket& packet) {
+    RawADSLPacket adsl_packet = RawADSLPacket(packet);
+    uint16_t num_erasures = adsl_packet.sigq_bits;
+    if (!adsl_packet.RepairErasures()) {
+        CONSOLE_INFO("UATPacketDecoder::Update", "~[     INVLD] len=%d erasures=%d rssi=%d ts=%lu", packet.buffer_len_bytes,
+                     num_erasures, packet.sigs_dbm, (uint32_t)packet.mlat_48mhz_64bit_counts);
+        return;
+    }
+    pico_ll.BlinkSubGLED();
+    object_dictionary.metrics.num_valid_uat_adsb_packets++;
+    char hex[2 * RawADSLPacket::kMaxPacketLenBytes + 1];
+    ByteBufferToHexString(hex, adsl_packet.buffer, adsl_packet.buffer_len_bytes);
+    CONSOLE_INFO("UATPacketDecoder::Update", "~[%dFIXD     ] len=%d buf=%s rssi=%d ch=%d ts=%lu", adsl_packet.sigq_bits,
+                 adsl_packet.buffer_len_bytes, hex, adsl_packet.sigs_dbm, adsl_packet.channel,
+                 (uint32_t)adsl_packet.mlat_48mhz_64bit_counts);
+    uintptr_t key = HwiP_disable();
+    bool enqueued = object_dictionary.raw_uat_adsb_packet_queue.Enqueue(adsl_packet);
+    HwiP_restore(key);
+    if (!enqueued) {
+        CONSOLE_ERROR("UATPacketDecoder::Update", "Failed to enqueue decoded ADS-L packet.");
     }
 }
 

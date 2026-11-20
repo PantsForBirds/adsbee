@@ -23,7 +23,9 @@ const char SettingsManager::kMQTTTransportStrs[SettingsManager::kNumMQTTTranspor
 
 const char SettingsManager::kSubGHzModeStrs[SettingsManager::kNumSubGHzRadioModes]
                                            [SettingsManager::kSubGHzModeStrMaxLen] = {
-                                               "UAT_RX",  // UAT mode (978MHz receiver).
+                                               "UAT_RX",         // UAT mode (978MHz receiver).
+                                               "ADSL_RX",        // ADS-L on 868.2 MHz.
+                                               "ADSL_RX_868_4",  // ADS-L on 868.4 MHz.
 };
 
 const char SettingsManager::RxPosition::kPositionSourceStrs[SettingsManager::RxPosition::kNumPositionSources]
