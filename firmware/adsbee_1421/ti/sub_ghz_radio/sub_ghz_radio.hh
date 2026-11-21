@@ -123,6 +123,13 @@ public:
     bool SetRxEnabled(bool enabled);
     bool RxIsEnabled() const { return rx_requested_; }
 
+    /**
+     * Strict UAT timing (AT+UAT_STRICT_TIMING): when on, sync stamps outside the precise phase classes are set to 0
+     * (unstamped). Takes effect with the next packet.
+     */
+    void SetStrictUATTiming(bool strict) { strict_uat_timing_ = strict; }
+    bool GetStrictUATTiming() const { return strict_uat_timing_; }
+
 #ifdef HARDWARE_UNIT_TESTS
 #ifdef ADSBEE_DEBUG_BUILD
     /**
@@ -193,6 +200,14 @@ public:
     // Counted from the RF callback (SWI context). Reported and reset via AT+RX_STATS.
     volatile uint32_t uat_len_mismatch_count = 0;
 
+    // Receive commands restarted immediately after a missed start (ERROR_PAST_START). Counted from the RF
+    // callback. Reported and reset via AT+RX_STATS.
+    volatile uint32_t rx_start_miss_count = 0;
+
+    // Packets whose sync stamp is imprecise (phase outside the precise classes, or an immediate start). Counted from
+    // the RF callback. Reported and reset via AT+RX_STATS.
+    volatile uint32_t imprecise_stamp_count = 0;
+
 private:
     /**
      * Brings normal RX back up after Resume()/StopCWTest()/StopRssiScan() if the user has it enabled; otherwise
@@ -200,6 +215,14 @@ private:
      * @retval True on success (including "left closed"), false if Init() failed.
      */
     bool RestoreRx();
+
+    /**
+     * Posts the receive command. Main-loop or RF callback context.
+     * @param[in] exact True to start at an exact time (UATRxStart::ChipTiming::lead_rat after now), false to start
+     * immediately.
+     * @retval True if the command was posted.
+     */
+    bool PostPacketRx(bool exact);
 
     SubGHzRadioConfig config_;
 
@@ -215,6 +238,14 @@ private:
     RF_CmdHandle rx_cmd_handle_;
     // Status of a receive command that Update() has to restart, 0 if none. Written by the RF callback.
     volatile uint16_t rx_restart_status_ = 0;
+
+    bool strict_uat_timing_ = false;
+    // Start time and exactness of the posted receive command, and of the one that ended last (the one HandlePacketRx()
+    // reads from). Written by PostPacketRx() and HandleRxCommandEnd().
+    uint32_t rx_start_rat_ = 0;
+    bool rx_start_exact_ = false;
+    uint32_t ended_rx_start_rat_ = 0;
+    bool ended_rx_start_exact_ = false;
 
     uint32_t last_rx_start_timestamp_ms_ = 0;
 };

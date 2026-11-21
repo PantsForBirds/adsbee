@@ -81,6 +81,20 @@ public:
 
     bool rx_enabled = true;
 
+    /**
+     * Strict UAT timing (Settings::uat_strict_timing): when on, sync stamps outside the precise phase classes are set
+     * to 0 (unstamped). Takes effect with the next packet.
+     */
+    void SetStrictUATTiming(bool strict) { strict_uat_timing_ = strict; }
+
+    // Receive commands restarted immediately after a missed start (ERROR_PAST_START). Counted from the RF
+    // callback.
+    volatile uint32_t rx_start_miss_count = 0;
+
+    // Packets whose sync stamp is imprecise (phase outside the precise classes, or an immediate start). Counted from
+    // the RF callback.
+    volatile uint32_t imprecise_stamp_count = 0;
+
     // Failed CMD_PROP_SET_LEN immediate commands (RF_runImmediateCmd status != success), counted from
     // the RF callback (ISR context, no logging there). A nonzero value means packet-length shortening
     // raced the RX command ending -- packets may be truncated or over-read.
@@ -103,6 +117,14 @@ public:
     uint8_t GetMLATSyncFlags() const;
 
 private:
+    /**
+     * Posts the receive command. Main-loop or RF callback context.
+     * @param[in] exact True to start at an exact time (UATRxStart::ChipTiming::lead_rat after now), false to start
+     * immediately.
+     * @retval True if the command was posted.
+     */
+    bool PostPacketRx(bool exact);
+
     // Routes the sync pin to the radio timer and captures its rising edges. The RAT restarts with the RF client, so
     // this also restarts the fit.
     void StartSyncCapture();
@@ -128,6 +150,14 @@ private:
     RF_CmdHandle rx_cmd_handle_;
     // Status of a receive command that Update() has to restart, 0 if none. Written by the RF callback.
     volatile uint16_t rx_restart_status_ = 0;
+
+    bool strict_uat_timing_ = false;
+    // Start time and exactness of the posted receive command, and of the one that ended last (the one HandlePacketRx()
+    // reads from). Written by PostPacketRx() and HandleRxCommandEnd().
+    uint32_t rx_start_rat_ = 0;
+    bool rx_start_exact_ = false;
+    uint32_t ended_rx_start_rat_ = 0;
+    bool ended_rx_start_exact_ = false;
 
     uint32_t last_rx_start_timestamp_ms_ = 0;
 };

@@ -95,6 +95,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_settings_hash.cc
         test_settings_release_blobs.cc
         test_spi_coprocessor.cc
+        test_uat_rx_start.cc
         test_spi_link_gate.cc
         test_at_console_guard.cc
         test_auto_update.cc
