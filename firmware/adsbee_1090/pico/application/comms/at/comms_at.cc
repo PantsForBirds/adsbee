@@ -2373,12 +2373,26 @@ CPP_AT_CALLBACK(CommsManager::ATTLSetCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+extern volatile uint32_t xu_bytes, xu_ok, xu_other_df, xu_bad_crc, xu_framing, xu_other_type, xu_oe, xu_short, xu_t0_ms;
+void XUEnable(bool on);
 CPP_AT_CALLBACK(CommsManager::ATUptimeCallback) {
     switch (op) {
         case '?':
             // Query uptime.
             CPP_AT_CMD_PRINTF("=%u", get_time_since_boot_ms() / kMsPerSec);
             CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':  // t-1261 LAB: AT+UPTIME=XU[,0|1]
+            if (CPP_AT_HAS_ARG(0) && args[0].compare("XU") == 0) {
+                if (CPP_AT_HAS_ARG(1)) XUEnable(args[1].compare("1") == 0);
+                CPP_AT_PRINTF("XU ms=%lu bytes=%lu ok=%lu other_df=%lu bad_crc=%lu framing=%lu short=%lu other_type=%lu "
+                              "oe=%lu drops=%lu\r\n",
+                              (unsigned long)(get_time_since_boot_ms() - xu_t0_ms), (unsigned long)xu_bytes,
+                              (unsigned long)xu_ok, (unsigned long)xu_other_df, (unsigned long)xu_bad_crc,
+                              (unsigned long)xu_framing, (unsigned long)xu_short, (unsigned long)xu_other_type,
+                              (unsigned long)xu_oe, (unsigned long)comms_uart_tx_drop_count);
+                CPP_AT_SILENT_SUCCESS();
+            }
             break;
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
@@ -2928,7 +2942,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTLSetCallback, comms_manager)},
     {.command = "UPTIME",
      .min_args = 0,
-     .max_args = 0,
+     .max_args = 2,
      .help_string = "Get the uptime of the ADSBee 1090 in seconds.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATUptimeCallback, comms_manager)},
     {.command = "WATCHDOG",

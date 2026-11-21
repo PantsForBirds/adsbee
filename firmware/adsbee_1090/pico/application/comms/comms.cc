@@ -219,7 +219,82 @@ int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const ch
     return -1;  // puts failed.
 }
 
-void CommsManager::OnCommsUARTTx() { comms_manager.FillCommsUARTTxFIFO(); }
+// t-1261 LAB: PL011 internal loopback + Beast parser on RX (never for merge).
+volatile uint32_t xu_bytes = 0, xu_ok = 0, xu_other_df = 0, xu_bad_crc = 0, xu_framing = 0, xu_other_type = 0, xu_oe = 0,
+                  xu_short = 0, xu_t0_ms = 0;
+static uint8_t xu_state = 0, xu_type = 0, xu_buf[24], xu_len = 0, xu_need = 0;
+static bool xu_esc = false;
+static uint32_t XUCRC(const uint8_t* b, int n) {
+    uint32_t crc = 0;
+    for (int i = 0; i < n - 3; i++) {
+        crc ^= (uint32_t)b[i] << 16;
+        for (int k = 0; k < 8; k++) crc = (crc & 0x800000) ? ((crc << 1) ^ 0xFFF409) : (crc << 1);
+    }
+    crc &= 0xFFFFFF;
+    return crc ^ (((uint32_t)b[n - 3] << 16) | ((uint32_t)b[n - 2] << 8) | b[n - 1]);
+}
+static void XUFinish() {
+    int n = xu_type == 0x33 ? 14 : 7;
+    const uint8_t* m = xu_buf + 7;
+    uint8_t df = m[0] >> 3;
+    uint32_t r = XUCRC(m, n);
+    if (df == 17 || df == 18 || df == 11) {
+        if (r == 0) xu_ok++; else xu_bad_crc++;
+    } else {
+        xu_other_df++;
+    }
+}
+static void XUByte(uint8_t c) {
+    xu_bytes++;
+    switch (xu_state) {
+        case 0:  // Expect 0x1A.
+            if (c == 0x1A) xu_state = 1; else { xu_framing++; xu_state = 3; }
+            break;
+        case 1:  // Type.
+            if (c == 0x32 || c == 0x33) {
+                xu_type = c; xu_len = 0; xu_need = 7 + (c == 0x33 ? 14 : 7); xu_esc = false; xu_state = 2;
+            } else { xu_other_type++; xu_state = 3; }
+            break;
+        case 2:  // Payload with escapes.
+            if (xu_esc) {
+                xu_esc = false;
+                if (c != 0x1A) { xu_short++; xu_type = 0; if (c == 0x32 || c == 0x33) { xu_type = c; xu_len = 0; xu_need = 7 + (c == 0x33 ? 14 : 7); xu_state = 2; } else { xu_other_type++; xu_state = 3; } break; }
+            } else if (c == 0x1A) { xu_esc = true; break; }
+            xu_buf[xu_len++] = c;
+            if (xu_len == xu_need) { XUFinish(); xu_state = 0; }
+            break;
+        case 3:  // Resync: wait for 0x1A followed by a Mode S type.
+            if (c == 0x1A) xu_state = 1;
+            break;
+    }
+}
+static void XUDrainRx(uart_inst_t* u) {
+    while (uart_is_readable(u)) {
+        uint32_t dr = uart_get_hw(u)->dr;
+        if (dr & UART_UARTDR_OE_BITS) xu_oe++;
+        XUByte(dr & 0xFF);
+    }
+}
+void XUEnable(bool on) {
+    uart_inst_t* u = comms_manager.LabUART();
+    uint32_t irq = save_and_disable_interrupts();
+    if (on) {
+        hw_set_bits(&uart_get_hw(u)->cr, UART_UARTCR_LBE_BITS);
+        while (uart_is_readable(u)) (void)uart_get_hw(u)->dr;
+        xu_bytes = xu_ok = xu_other_df = xu_bad_crc = xu_framing = xu_other_type = xu_oe = xu_short = 0;
+        xu_state = 3; xu_t0_ms = get_time_since_boot_ms();
+        hw_set_bits(&uart_get_hw(u)->imsc, UART_UARTIMSC_RXIM_BITS | UART_UARTIMSC_RTIM_BITS);
+    } else {
+        hw_clear_bits(&uart_get_hw(u)->imsc, UART_UARTIMSC_RXIM_BITS | UART_UARTIMSC_RTIM_BITS);
+        hw_clear_bits(&uart_get_hw(u)->cr, UART_UARTCR_LBE_BITS);
+    }
+    restore_interrupts(irq);
+}
+
+void CommsManager::OnCommsUARTTx() {
+    XUDrainRx(comms_manager.config_.comms_uart_handle);
+    comms_manager.FillCommsUARTTxFIFO();
+}
 
 void CommsManager::FillCommsUARTTxFIFO() {
     uart_hw_t* uart_hw = uart_get_hw(config_.comms_uart_handle);

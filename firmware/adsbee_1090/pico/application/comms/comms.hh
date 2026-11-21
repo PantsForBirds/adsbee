@@ -286,6 +286,7 @@ class CommsManager {
 
     // Report frames dropped because the comms UART TX queue was full.
     uint32_t comms_uart_tx_drop_count = 0;
+    uart_inst_t* LabUART() { return config_.comms_uart_handle; }  // t-1261 LAB
 
    private:
     // AT Functions
