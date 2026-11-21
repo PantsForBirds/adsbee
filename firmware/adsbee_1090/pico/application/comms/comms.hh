@@ -33,6 +33,10 @@ class CommsManager {
     static constexpr uint32_t kNetworkConsoleMinReportingIntervalMs =
         50;  // Report messages to nextwork console at minimum rate of 20Hz.
     static constexpr uint16_t kPrintfBufferMaxSize = 500;
+    // Comms UART output waits here for the TX interrupt. About 0.35 s at 115200 baud.
+    static constexpr uint16_t kCommsUARTTxQueueLen = 4096;
+    // A write that waits for space gives up if the UART takes no byte for this long.
+    static constexpr uint32_t kCommsUARTTxStallTimeoutMs = 50;
 
     static constexpr uint32_t kOTAWriteTimeoutMs = 5000;  // ms until OTA write command exits if all bytes not received.
     static constexpr uint16_t kMaxForceFlushIterations = 3;
@@ -155,13 +159,16 @@ class CommsManager {
     bool iface_puts(SettingsManager::SerialInterface iface, const char* buf);
     /**
      * Writes a buffer that may contain null bytes to a serial interface. The console gets the buffer in one piece: the
-     * USB driver is serviced once per call, and a call per character tops out near 33 kB/s.
+     * USB driver is serviced once per call, and a call per character tops out near 33 kB/s. The comms UART gets it
+     * through its TX queue, which the TX interrupt drains.
      * @param[in] iface SerialInterface to write to.
      * @param[in] buf Bytes to write.
      * @param[in] len Number of bytes to write.
+     * @param[in] wait Comms UART only. If true, wait for queue space (console text). If false (reports), a buffer that
+     * doesn't fit is dropped whole, so a slow UART never stalls the loop or carries a cut frame.
      * @retval True if every byte was accepted.
      */
-    bool iface_write(SettingsManager::SerialInterface iface, const char* buf, uint16_t len);
+    bool iface_write(SettingsManager::SerialInterface iface, const char* buf, uint16_t len, bool wait = true);
 
     // Console output goes to the ESP32 network console only while something on the network reads it, since every
     // byte costs core 0 an SPI write.
@@ -174,7 +181,14 @@ class CommsManager {
 #include "comms_reporting.hh"
 
     inline bool SendBuf(ReportSink sink, const char* buf, uint16_t buf_len, uint16_t num_msgs = 1) {
-        return iface_write(static_cast<SettingsManager::SerialInterface>(sink), buf, buf_len);
+        // Reports never wait for the comms UART: frames that don't fit in its TX queue are dropped and counted.
+        if (iface_write(static_cast<SettingsManager::SerialInterface>(sink), buf, buf_len, false)) {
+            return true;
+        }
+        if (sink == SettingsManager::kCommsUART) {
+            comms_uart_tx_drop_count += num_msgs;
+        }
+        return false;
     }
 
     /**
@@ -270,9 +284,17 @@ class CommsManager {
     PFBQueue<char> esp32_console_tx_queue =
         PFBQueue<char>({.buf_len_num_elements = kNetworkConsoleBufMaxLen, .buffer = esp32_console_tx_queue_buffer_});
 
+    // Report frames dropped because the comms UART TX queue was full.
+    uint32_t comms_uart_tx_drop_count = 0;
+
    private:
     // AT Functions
     bool UpdateAT();
+
+    // Moves bytes from the comms UART TX queue into the UART FIFO, and keeps the TX interrupt on while bytes remain.
+    // Runs in the TX interrupt, and from core 0 code to start a drain.
+    void FillCommsUARTTxFIFO();
+    static void OnCommsUARTTx();
 
     CommsManagerConfig config_;
 
@@ -287,6 +309,11 @@ class CommsManager {
     char esp32_console_rx_queue_buffer_[kNetworkConsoleBufMaxLen];
     char esp32_console_tx_queue_buffer_[kNetworkConsoleBufMaxLen];
     uint32_t last_esp32_console_tx_timestamp_ms_ = 0;  // Timestamp of last network console TX.
+
+    // Outgoing comms UART bytes. Written on core 0 only, read by the TX interrupt (also on core 0).
+    char comms_uart_tx_queue_buffer_[kCommsUARTTxQueueLen];
+    PFBQueue<char> comms_uart_tx_queue_ =
+        PFBQueue<char>({.buf_len_num_elements = kCommsUARTTxQueueLen, .buffer = comms_uart_tx_queue_buffer_});
 
     // Queue for holding new transponder packets before they get reported.
     RawModeSPacket mode_s_packet_reporting_queue_buffer_[kModeSPacketReportingQueueDepth];

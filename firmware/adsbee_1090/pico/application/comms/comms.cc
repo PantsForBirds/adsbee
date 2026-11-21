@@ -5,6 +5,7 @@
 
 #include "cpu_utils.hh"
 #include "esp32.hh"
+#include "hardware/irq.h"
 #include "pico/printf.h"  // For vfctprintf.
 #include "pico/stdlib.h"
 #include "spi_coprocessor.hh"
@@ -29,6 +30,12 @@ bool CommsManager::Init() {
     gpio_set_function(config_.comms_uart_rx_pin, GPIO_FUNC_UART);
     uart_set_translate_crlf(config_.comms_uart_handle, false);
     uart_init(config_.comms_uart_handle, SettingsManager::Settings::kDefaultCommsUARTBaudrate);
+    // TX interrupt when the FIFO drops to 4 bytes, so each one refills most of it. Lowest priority: output can wait.
+    hw_write_masked(&uart_get_hw(config_.comms_uart_handle)->ifls, 0 << UART_UARTIFLS_TXIFLSEL_LSB,
+                    UART_UARTIFLS_TXIFLSEL_BITS);
+    irq_set_exclusive_handler(UART_IRQ_NUM(config_.comms_uart_handle), OnCommsUARTTx);
+    irq_set_priority(UART_IRQ_NUM(config_.comms_uart_handle), PICO_LOWEST_IRQ_PRIORITY);
+    irq_set_enabled(UART_IRQ_NUM(config_.comms_uart_handle), true);
 
     gpio_set_function(config_.gnss_uart_tx_pin, GPIO_FUNC_UART);
     gpio_set_function(config_.gnss_uart_rx_pin, GPIO_FUNC_UART);
@@ -212,11 +219,29 @@ int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const ch
     return -1;  // puts failed.
 }
 
+void CommsManager::OnCommsUARTTx() { comms_manager.FillCommsUARTTxFIFO(); }
+
+void CommsManager::FillCommsUARTTxFIFO() {
+    uart_hw_t* uart_hw = uart_get_hw(config_.comms_uart_handle);
+    uint32_t interrupts = save_and_disable_interrupts();  // Keeps the TX interrupt out when called from core 0 code.
+    char c;
+    while (uart_is_writable(config_.comms_uart_handle) && comms_uart_tx_queue_.Dequeue(c)) {
+        uart_hw->dr = c;
+    }
+    // The interrupt fires when the FIFO level falls through the threshold. Bytes left over mean the FIFO is full, so it
+    // will fire again.
+    if (comms_uart_tx_queue_.IsEmpty()) {
+        hw_clear_bits(&uart_hw->imsc, UART_UARTIMSC_TXIM_BITS);
+    } else {
+        hw_set_bits(&uart_hw->imsc, UART_UARTIMSC_TXIM_BITS);
+    }
+    restore_interrupts(interrupts);
+}
+
 bool CommsManager::iface_putc(SettingsManager::SerialInterface iface, char c) {
     switch (iface) {
         case SettingsManager::kCommsUART:
-            uart_putc_raw(config_.comms_uart_handle, c);
-            return true;  // Function is void so we won't know if it succeeds.
+            return iface_write(iface, &c, 1);
             break;
         case SettingsManager::kGNSSUART:
             uart_putc_raw(config_.gnss_uart_handle, c);
@@ -233,7 +258,27 @@ bool CommsManager::iface_putc(SettingsManager::SerialInterface iface, char c) {
     return false;  // Should never get here.
 }
 
-bool CommsManager::iface_write(SettingsManager::SerialInterface iface, const char* buf, uint16_t len) {
+bool CommsManager::iface_write(SettingsManager::SerialInterface iface, const char* buf, uint16_t len, bool wait) {
+    if (iface == SettingsManager::kCommsUART) {
+        if (!wait && len > comms_uart_tx_queue_.MaxNumElements() - comms_uart_tx_queue_.Length()) {
+            return false;  // No room for the whole buffer.
+        }
+        for (uint16_t i = 0; i < len; i++) {
+            if (comms_uart_tx_queue_.Enqueue(buf[i])) {
+                continue;
+            }
+            // Queue full: make sure it is draining, then wait for space unless the UART has stalled.
+            uint32_t wait_start_ms = get_time_since_boot_ms();
+            do {
+                FillCommsUARTTxFIFO();
+                if (get_time_since_boot_ms() - wait_start_ms > kCommsUARTTxStallTimeoutMs) {
+                    return false;
+                }
+            } while (!comms_uart_tx_queue_.Enqueue(buf[i]));
+        }
+        FillCommsUARTTxFIFO();  // Starts the drain if the UART was idle.
+        return true;
+    }
     if (iface != SettingsManager::kConsole) {
         for (uint16_t i = 0; i < len; i++) {
             if (!iface_putc(iface, buf[i])) {
@@ -288,8 +333,7 @@ bool CommsManager::iface_getc(SettingsManager::SerialInterface iface, char& c) {
 bool CommsManager::iface_puts(SettingsManager::SerialInterface iface, const char* buf) {
     switch (iface) {
         case SettingsManager::kCommsUART:
-            uart_puts(config_.comms_uart_handle, buf);
-            return true;  // Function is void so we won't know if it succeeds.
+            return iface_write(iface, buf, strlen(buf));
             break;
         case SettingsManager::kGNSSUART:
             uart_puts(config_.gnss_uart_handle, buf);
