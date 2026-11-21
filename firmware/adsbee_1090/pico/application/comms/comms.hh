@@ -187,6 +187,7 @@ class CommsManager {
         }
         if (sink == SettingsManager::kCommsUART) {
             comms_uart_tx_drop_count += num_msgs;
+            return true;  // An expected drop, counted above: not a send failure to log every round.
         }
         return false;
     }
