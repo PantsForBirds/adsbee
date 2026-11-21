@@ -17,7 +17,7 @@
 #endif
 
 // Change this when settings format changes! A mismatched version resets all settings to factory defaults on boot.
-static constexpr uint32_t kSettingsVersion = 7;
+static constexpr uint32_t kSettingsVersion = 8;
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 // Leading word of a valid settings blob. Deliberately not 0x00000000 or 0xFFFFFFFF so that blank,
@@ -216,6 +216,9 @@ class SettingsManager {
         // lights them).
         bool led_enabled = true;
 
+        // AT+UAT_STRICT_TIMING, added in version 8: true sets imprecise UAT sync stamps to 0 (unstamped).
+        bool uat_strict_timing = false;
+
         // Integrity check over every preceding byte. Must stay the last member; stamped by Stamp().
         uint32_t crc = 0;
 
@@ -268,27 +271,29 @@ class SettingsManager {
 
     // Older settings versions are today's fields up to a cutoff, then the CRC. Version 6 appended
     // filter_distance_enabled, filter_distance_deci_nm, asterix_sac, asterix_sic and filter_altitude_*; version 7
-    // appended led_enabled.
+    // appended led_enabled; version 8 appended uat_strict_timing.
     static constexpr uint16_t kVersion5SettingsSize = 62;
     static constexpr uint16_t kVersion6SettingsSize = 78;
-    static_assert(kSettingsVersion == 7 &&
+    static constexpr uint16_t kVersion7SettingsSize = 79;
+    static_assert(kSettingsVersion == 8 &&
                       offsetof(Settings, filter_distance_enabled) == kVersion5SettingsSize - sizeof(uint32_t) &&
                       offsetof(Settings, led_enabled) == kVersion6SettingsSize - sizeof(uint32_t) &&
-                      sizeof(Settings) == kVersion6SettingsSize + 1,
+                      offsetof(Settings, uat_strict_timing) == kVersion7SettingsSize - sizeof(uint32_t) &&
+                      sizeof(Settings) == kVersion7SettingsSize + 1,
                   "Settings changed: update MigrateFromOlderVersion.");
 
     /**
-     * Converts a version 5 or 6 settings blob, so a firmware update keeps the user's settings. Fields added since
+     * Converts a version 5, 6 or 7 settings blob, so a firmware update keeps the user's settings. Fields added since
      * take their defaults.
      * @param[in] blob Stored bytes, at least sizeof(Settings) long.
      * @param[out] out Migrated and stamped settings. Untouched unless the blob is an intact older blob.
-     * @retval Version migrated from, or 0 if the blob is not an intact version 5 or 6 blob.
+     * @retval Version migrated from, or 0 if the blob is not an intact version 5, 6 or 7 blob.
      */
     static uint32_t MigrateFromOlderVersion(const uint8_t *blob, Settings &out) {
         static constexpr struct {
             uint32_t version;
             uint16_t size;
-        } kOlderVersions[] = {{5, kVersion5SettingsSize}, {6, kVersion6SettingsSize}};
+        } kOlderVersions[] = {{5, kVersion5SettingsSize}, {6, kVersion6SettingsSize}, {7, kVersion7SettingsSize}};
         uint32_t magic, version;
         memcpy(&magic, blob, sizeof(magic));
         memcpy(&version, blob + sizeof(magic), sizeof(version));

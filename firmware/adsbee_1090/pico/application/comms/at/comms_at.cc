@@ -101,6 +101,25 @@ int32_t CommsManager::ATReadConsole(char* buf, uint16_t max_len, uint32_t timeou
 
 /** AT Command Callback Functions **/
 
+CPP_AT_CALLBACK(CommsManager::ATUATStrictTimingCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d", settings_manager.settings.uat_strict_timing);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (CPP_AT_HAS_ARG(0)) {
+                bool strict;
+                CPP_AT_TRY_ARG2NUM(0, strict);
+                settings_manager.settings.uat_strict_timing = strict;
+                settings_manager.SyncToCoprocessors();  // The CC1312 stamps UAT packets.
+                CPP_AT_SUCCESS();
+            }
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 CPP_AT_CALLBACK(CommsManager::ATAutoUpdateCallback) {
     switch (op) {
         case '?':
@@ -2215,6 +2234,7 @@ static void PrintSettingsJSON() {
                   SettingsManager::EnableStateToATValueStr(adsbee.subg_radio_ll.IsEnabledState()));
     int tl_offset_mv = adsbee.GetTLOffsetMilliVolts();
     CPP_AT_PRINTF("\"TL_OFFSET\":[%d,\"%d dBm\"],", tl_offset_mv, adsbee.AD8313MilliVoltsTodBm(tl_offset_mv));
+    CPP_AT_PRINTF("\"UAT_STRICT_TIMING\":[%d],", s.uat_strict_timing);
     CPP_AT_PRINTF("\"WATCHDOG\":[%lu],", (unsigned long)adsbee.GetWatchdogTimeoutSec());
     CPP_AT_PRINTF("\"WIFI_AP\":[%d,\"%s\",", cns.wifi_ap_enabled, JSONEscapeStr(cns.wifi_ap_ssid, esc, sizeof(esc)));
     CPP_AT_PRINTF("\"%s\",%d],", JSONEscapeStr(cns.wifi_ap_password, esc, sizeof(esc)), cns.wifi_ap_channel);
@@ -2924,6 +2944,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "\tLearn it from received traffic (about 20 minutes).\r\n\tAT+TL_OFFSET=LEARN\r\n"
                     "\tQuery trigger level offset.\r\n\tAT+TL_OFFSET?\r\n\t+TL_OFFSET=<tl_offset_mv>.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTLSetCallback, comms_manager)},
+    {.command = "UAT_STRICT_TIMING",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+UAT_STRICT_TIMING=<enabled>\r\n\t1 sets UAT timestamps that aren't high precision to 0 "
+                    "(unstamped); 0 (default) keeps every timestamp.\r\n\tAT+UAT_STRICT_TIMING?\r\n\tQuery "
+                    "whether strict UAT timing is on.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATUATStrictTimingCallback, comms_manager)},
     {.command = "UPTIME",
      .min_args = 0,
      .max_args = 0,

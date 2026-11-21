@@ -365,6 +365,25 @@ CPP_AT_CALLBACK(CommsManager::ATLEDEnableCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+CPP_AT_CALLBACK(CommsManager::ATUATStrictTimingCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d", settings_manager.settings.uat_strict_timing);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (CPP_AT_HAS_ARG(0)) {
+                bool strict;
+                CPP_AT_TRY_ARG2NUM(0, strict);
+                settings_manager.settings.uat_strict_timing = strict;
+                subg_radio.SetStrictUATTiming(strict);
+                CPP_AT_SUCCESS();
+            }
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 CPP_AT_CALLBACK(CommsManager::ATLogLevelCallback) {
     switch (op) {
         case '?':
@@ -549,7 +568,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             CPP_AT_PRINTF(
                 ",mlat_stamped=%lu,mlat_more_pkts=%lu,mlat_more_edges=%lu,mlat_unpaired=%lu,mlat_orphans=%lu,"
                 "mlat_edge_drops=%lu,mlat_overruns=%lu,mlat_restarts=%lu,mlat_kicks=%lu,mlat_pending_clears=%lu,"
-                "mlat_clear_timeouts=%lu",
+                "mlat_clear_timeouts=%lu,uat_start_misses=%lu,uat_imprecise=%lu",
                 (unsigned long)adsbee.mlat_counters().stamped,
                 (unsigned long)adsbee.mlat_counters().unstamped_more_packets,
                 (unsigned long)adsbee.mlat_counters().unstamped_more_edges,
@@ -558,7 +577,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)adsbee.mlat_counters().dropped_edges, (unsigned long)adsbee.mlat_capture_overruns,
                 (unsigned long)adsbee.mlat_timebase_restarts, (unsigned long)mlat_clear_dma::counters().kicks,
                 (unsigned long)mlat_clear_dma::counters().pending_clears,
-                (unsigned long)mlat_clear_dma::counters().wait_timeouts);
+                (unsigned long)mlat_clear_dma::counters().wait_timeouts,
+                (unsigned long)subg_radio.rx_start_miss_count, (unsigned long)subg_radio.imprecise_stamp_count);
             CPP_AT_PRINTF(
                 ",two_bit_found=%lu,fixed_es_1bit=%lu,fixed_es_2bit=%lu,fixed_ap_1bit=%lu,fixed_ap_2bit=%lu,"
                 "fixes_rejected=%lu,fixes_skipped=%lu\r\n",
@@ -613,6 +633,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.lr2021_validity_reconfig_count = 0;
             adsbee.lr2021.irq_stale_edges = 0;
             subg_radio.uat_len_mismatch_count = 0;
+            subg_radio.rx_start_miss_count = 0;
+            subg_radio.imprecise_stamp_count = 0;
             comms_manager.uat_report_queue_ovf_count = 0;
             adsbee.parse_capture_max_cycles = 0;
             packet_decoder.decode_max_cycles = 0;
@@ -1067,6 +1089,7 @@ static void PrintSettingsJSON() {
                   (int)adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg,
                   (int)adsbee.rx_position.speed_kts, (unsigned)adsbee.rx_position.icao_address);
     CPP_AT_PRINTF("\"SUBG_MODE\":[\"%s\"],", SettingsManager::kSubGHzModeStrs[subg_radio.GetMode()]);
+    CPP_AT_PRINTF("\"UAT_STRICT_TIMING\":[%d],", s.uat_strict_timing);
     CPP_AT_PRINTF("\"WATCHDOG\":[%lu]", (unsigned long)adsbee.GetWatchdogTimeoutSec());
     CPP_AT_PRINTF("}\r\n");
 }
@@ -1738,6 +1761,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "LRLF/LRHF=LR2021 low/high band (150-1100 / 1900-2700 MHz).",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxCWCallback, comms_manager)},
 #endif
+    {.command = "UAT_STRICT_TIMING",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+UAT_STRICT_TIMING=<enabled>\r\n\t1 sets UAT timestamps that aren't high precision to 0 "
+                    "(unstamped); 0 (default) keeps every timestamp.\r\n\tAT+UAT_STRICT_TIMING?\r\n\tQuery "
+                    "whether strict UAT timing is on.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATUATStrictTimingCallback, comms_manager)},
     {.command = "UPTIME",
      .min_args = 0,
      .max_args = 0,

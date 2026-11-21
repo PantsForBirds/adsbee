@@ -130,6 +130,7 @@ bool SettingsManager::Sanitize() {
     }
     changed |= SanitizeString(settings.ntp_server, sizeof(settings.ntp_server), "ntp_server");
     changed |= SanitizeBool(settings.swarm_enabled, "swarm_enabled");
+    changed |= SanitizeBool(settings.uat_strict_timing, "uat_strict_timing");
     changed |= SanitizeString(settings.swarm_server, sizeof(settings.swarm_server), "swarm_server");
     changed |= SanitizeString(settings.swarm_token, sizeof(settings.swarm_token), "swarm_token");
 
@@ -348,6 +349,7 @@ void SettingsManager::Print() {
     RedactPassword(const_cast<char*>(settings.swarm_token), redacted_swarm_token, Settings::kSwarmTokenMaxLen);
     CONSOLE_PRINTF("\tSwarm Reports: %s, %s, token %s\r\n", settings.swarm_enabled ? "ENABLED" : "DISABLED",
                    settings.swarm_server, redacted_swarm_token);
+    CONSOLE_PRINTF("\tStrict UAT Timing: %s\r\n", settings.uat_strict_timing ? "ENABLED" : "DISABLED");
 
 #ifdef ON_PICO
     // Only print serial reporting protocols on master, where we aren't constrained by log message size.
@@ -579,4 +581,7 @@ void SettingsManager::PrintAT() {
     FormatIPv4ConfigArgs(settings.wifi_sta_ipv4, ipv4_config_str, sizeof(ipv4_config_str));
     FormatIPv6ConfigArgs(settings.wifi_sta_ipv6, ipv6_config_str, sizeof(ipv6_config_str));
     CONSOLE_PRINTF("AT+WIFI_STA_IP=IPV4,%s\r\nAT+WIFI_STA_IP=IPV6,%s\r\n", ipv4_config_str, ipv6_config_str);
+
+    // AT+UAT_STRICT_TIMING
+    CONSOLE_PRINTF("AT+UAT_STRICT_TIMING=%d\r\n", settings.uat_strict_timing);
 }

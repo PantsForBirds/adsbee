@@ -55,7 +55,9 @@ TEST(SettingsMigration, LayoutLockedSizes) {
     EXPECT_EQ(sizeof(settings_v17::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v18::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v19::Settings), 1792u);
+    EXPECT_EQ(sizeof(settings_v20::Settings), 1964u);
     EXPECT_EQ(sizeof(SettingsManager::Settings), 1964u);
+    EXPECT_EQ(offsetof(settings_v20::Settings, wifi_sta_ipv6), offsetof(SettingsManager::Settings, wifi_sta_ipv6));
     EXPECT_EQ(offsetof(settings_v19::Settings, swarm_token), offsetof(SettingsManager::Settings, swarm_token));
 
     EXPECT_EQ(sizeof(settings_v14::Settings), 1140u);
@@ -712,7 +714,7 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ntp = dump.find("AT+NTP_SERVER=pool.ntp.org");
     ASSERT_NE(ntp, std::string::npos);
     EXPECT_LT(asterix, ntp);
-    // Then the altitude filter, swarm reports, and static IPv4 and IPv6 last.
+    // Then the altitude filter, swarm reports, and static IPv4 and IPv6.
     EXPECT_LT(ntp, filter_altitude);
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
@@ -726,7 +728,11 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
         EXPECT_EQ(dump.find("AT+", prev + 1), at) << ip_line;
         prev = at;
     }
-    EXPECT_EQ(dump.find("AT+", prev + 1), std::string::npos);
+    // Then strict UAT timing, last.
+    size_t uat_strict_timing = dump.find("AT+UAT_STRICT_TIMING=0\r\n");
+    ASSERT_NE(uat_strict_timing, std::string::npos);
+    EXPECT_EQ(dump.find("AT+", prev + 1), uat_strict_timing);
+    EXPECT_EQ(dump.find("AT+", uat_strict_timing + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
     memcpy(&manager.settings.auto_update_enabled, &raw, 1);
@@ -1362,6 +1368,57 @@ TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
     EXPECT_FALSE(manager.Sanitize());
     EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v19::Settings) - 1, 19, out));
 }
+
+TEST(SettingsMigration, V20ToCurrentKeepsEverythingWithStrictUATTimingOff) {
+    for (uint8_t padding : {uint8_t{0x00}, uint8_t{0x01}, uint8_t{0xFF}}) {
+        SCOPED_TRACE(padding);
+        settings_v15::Settings v15;
+        PopulateV15(v15);
+        settings_v20::Settings v20;
+        memset(&v20, 0, sizeof(v20));
+        memcpy(&v20, &v15, sizeof(v15));
+        v20.settings_version = 20;
+        v20.ip_mode = SettingsManager::kIPModeIPv4;
+        v20.auto_update_enabled = true;
+        v20.filter_distance_enabled = true;
+        v20.filter_distance_deci_nm = 425;
+        strcpy(v20.mqtt_broker.host, "broker.lan");
+        strcpy(v20.ntp_server, "time.lan");
+        v20.swarm_enabled = true;
+        strcpy(v20.swarm_token, "tok123");
+        v20.ethernet_ipv4.is_static = true;
+        v20.ethernet_ipv4.ip[0] = 192;
+        v20.wifi_sta_ipv6.is_static = true;
+        v20.wifi_sta_ipv6.prefix_len = 64;
+        v20.wifi_sta_ipv6.ip[0] = 0x20;
+        uint8_t blob[sizeof(SettingsManager::Settings)];
+        memcpy(blob, &v20, sizeof(v20));
+        blob[offsetof(SettingsManager::Settings, uat_strict_timing)] = padding;  // Tail padding in v20.
+
+        SettingsManager::Settings out;
+        out.uat_strict_timing = true;  // Stale: must not survive.
+        ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 20, out));
+        EXPECT_EQ(out.settings_version, kSettingsVersion);
+        EXPECT_FALSE(out.uat_strict_timing);
+        EXPECT_EQ(memcmp(&out.core_network_settings, &v20.core_network_settings, sizeof(v20.core_network_settings)),
+                  0);
+        EXPECT_STREQ(out.feed_uris[0], "myfeed.example.com");
+        EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
+        EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeIPv4);
+        EXPECT_TRUE(out.auto_update_enabled);
+        EXPECT_TRUE(out.filter_distance_enabled);
+        EXPECT_EQ(out.filter_distance_deci_nm, 425u);
+        EXPECT_STREQ(out.mqtt_broker.host, "broker.lan");
+        EXPECT_STREQ(out.ntp_server, "time.lan");
+        EXPECT_TRUE(out.swarm_enabled);
+        EXPECT_STREQ(out.swarm_token, "tok123");
+        EXPECT_EQ(memcmp(&out.ethernet_ipv4, &v20.ethernet_ipv4, sizeof(v20.ethernet_ipv4)), 0);
+        EXPECT_EQ(memcmp(&out.wifi_sta_ipv6, &v20.wifi_sta_ipv6, sizeof(v20.wifi_sta_ipv6)), 0);
+        EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v20::Settings) - 1, 20, out));
+    }
+}
+
+TEST(Settings, StrictUATTimingOffByDefault) { EXPECT_FALSE(SettingsManager::Settings().uat_strict_timing); }
 
 TEST(SettingsMigration, V18ToCurrentUsesDHCPAndV19Defaults) {
     uint8_t blob[sizeof(SettingsManager::Settings)];

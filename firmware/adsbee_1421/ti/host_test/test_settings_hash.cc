@@ -15,8 +15,8 @@ TEST(SettingsHash, SameSettingsSameHash) {
 TEST(SettingsHash, DefaultSettingsHashIsPinned) {
     // Changes only with the Settings struct or its defaults.
     SM::Settings settings;
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0x64FB12DDu);
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x692A4AABu);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0x7102C14Du);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xCF87D3D8u);
 }
 
 TEST(SettingsHash, MagicAndStoredCRCDoNotCount) {
@@ -57,6 +57,7 @@ TEST(SettingsHash, EverySettingChangesBothHashes) {
                       [](SM::Settings& s) { s.rx_position.source = SM::RxPosition::kPositionSourceGNSS; });
     ExpectChangesBoth("asterix_sac", [](SM::Settings& s) { s.asterix_sac = 25; });
     ExpectChangesBoth("led_enabled", [](SM::Settings& s) { s.led_enabled = false; });
+    ExpectChangesBoth("uat_strict_timing", [](SM::Settings& s) { s.uat_strict_timing = true; });
 }
 
 TEST(SettingsHash, ASTERIXSICCountsOnlyInTheFullHash) {

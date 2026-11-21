@@ -90,6 +90,7 @@ bool SettingsManager::Apply() {
     // subg_radio.Init() runs before Apply() at boot (see main.cpp), so a persisted non-default mode costs one RX
     // restart here; SetMode() is a no-op when the mode is unchanged.
     success &= subg_radio.SetMode(settings.subg_mode);
+    subg_radio.SetStrictUATTiming(settings.uat_strict_timing);
     adsbee.SetWatchdogTimeoutSec(settings.watchdog_timeout_sec);
     adsbee.SetR1090PreambleMode(settings.r1090_preamble_mode);
     adsbee.SetR1090Gain(settings.r1090_gain);
@@ -239,6 +240,7 @@ void SettingsManager::Print() {
     CONSOLE_PRINTF("\t1090 Receiver: %s\r\n", adsbee.Rx1090IsEnabled() ? "ENABLED" : "DISABLED");
     CONSOLE_PRINTF("\tSub-GHz Receiver: %s\r\n", adsbee.RxSubGHzIsEnabled() ? "ENABLED" : "DISABLED");
     CONSOLE_PRINTF("\tSub-GHz Mode: %s\r\n", kSubGHzModeStrs[subg_radio.GetMode()]);
+    CONSOLE_PRINTF("\tStrict UAT Timing: %s\r\n", settings.uat_strict_timing ? "ENABLED" : "DISABLED");
     CONSOLE_PRINTF("\tWatchdog Timeout: %lu seconds\r\n", adsbee.GetWatchdogTimeoutSec());
     CONSOLE_PRINTF("\t1090 Preamble Mode: %s\r\n", kR1090PreambleModeStrs[adsbee.GetR1090PreambleMode()]);
     CONSOLE_PRINTF("\t1090 Gain: %u (0 = auto AGC)\r\n", adsbee.GetR1090Gain());
@@ -359,4 +361,7 @@ void SettingsManager::PrintAT() {
 
     // AT+ASTERIX_SAC_SIC
     CONSOLE_PRINTF("AT+ASTERIX_SAC_SIC=%u,%u\r\n", settings.asterix_sac, settings.asterix_sic);
+
+    // AT+UAT_STRICT_TIMING
+    CONSOLE_PRINTF("AT+UAT_STRICT_TIMING=%d\r\n", settings.uat_strict_timing);
 }

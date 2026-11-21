@@ -127,6 +127,7 @@ class CommsManager {
     CPP_AT_CALLBACK(ATSubGFlashCallback);
     CPP_AT_CALLBACK(ATTLReadCallback);
     CPP_AT_CALLBACK(ATTLSetCallback);
+    CPP_AT_CALLBACK(ATUATStrictTimingCallback);
     CPP_AT_CALLBACK(ATUptimeCallback);
     CPP_AT_CALLBACK(ATWatchdogCallback);
     CPP_AT_CALLBACK(ATWiFiAPCallback);
