@@ -15,8 +15,6 @@
 #include "opendroneid.h"  // Vendored Open Drone ID codec (decode path only).
 #include "unit_conversions.hh"
 
-const float kDegreesPerRadian = 360.0f / (2.0f * M_PI);
-
 // This velocity determines the maximum distance an aircraft can jump between position updates without its new position
 // needing a second sample to confirm it. This catches position reports that return as valid from the CPR decoder but
 // are for an obviously incorrect position.
@@ -1786,15 +1784,17 @@ namespace {
 constexpr uint32_t kCorrectionMaxAgeMs = 60e3;
 constexpr uint32_t kCorrectionMaxReferenceAgeMs = 10e3;  // Older positions and velocities can't check a correction.
 constexpr int32_t kCorrectionAltitudeStepFt = 300;
-constexpr int32_t kCorrectionClimbRateFtPerS = 100;  // 6,000 ft/min.
-constexpr int32_t kCorrectionPositionStepM = 926;    // 0.5 NM.
-constexpr int32_t kCorrectionSpeedMPerS = 370;       // 720 kt.
+constexpr int32_t kCorrectionClimbRateFtPerS = 100;         // 6,000 ft/min.
+constexpr int32_t kCorrectionPositionStepM = 926;           // 0.5 NM.
+constexpr int32_t kCorrectionSpeedMPerS = 370;              // 720 kt.
 constexpr int32_t kCorrectionDeadReckoningErrorMPerS = 60;  // Turns and speed changes since the last velocity.
-constexpr float kMetersPerDegreeLatitude = 111320.0f;
 constexpr int32_t kCorrectionSpeedStepKts = 20;
 constexpr int32_t kCorrectionAccelerationKtsPerS = 5;
 constexpr int32_t kCorrectionDirectionStepDeg = 20;
-constexpr int32_t kCorrectionTurnRateDegPerS = 3;
+constexpr int32_t kCorrectionTurnRateDegPerS = 3;  // A standard rate turn.
+
+// Degrees to 1/65536 turns, truncated. Negative angles wrap.
+inline uint16_t DegToBam16(float deg) { return static_cast<uint16_t>(static_cast<int32_t>(deg * (65536.0f / 360.0f))); }
 
 bool WithinStep(int32_t delta, int32_t step, int32_t rate_per_s, uint32_t elapsed_ms) {
     if (elapsed_ms > kCorrectionMaxAgeMs) {
@@ -1827,13 +1827,15 @@ bool AircraftDictionary::AcceptCorrectedExtendedSquitter(DecodedModeSPacket& pac
 
 AircraftDictionary::TrackFit AircraftDictionary::CheckAgainstTrack(const ModeSADSBPacket& es,
                                                                    const ModeSAircraft& aircraft) {
-    // Apply the frame to a copy of the aircraft and compare.
+    // Apply the frame to a copy of the aircraft and compare, in fixed point: the RP2040 has no FPU.
     uint32_t now_ms = get_time_since_boot_ms();
     ModeSAircraft trial = aircraft;
     trial.WriteBitFlag(ModeSAircraft::kBitFlagUpdatedBaroAltitude, false);
     trial.WriteBitFlag(ModeSAircraft::kBitFlagUpdatedPosition, false);
     trial.WriteBitFlag(ModeSAircraft::kBitFlagUpdatedHorizontalSpeed, false);
     uint16_t type_code = es.type_code;
+
+    // Identification: the callsign and emitter category must match the ones the aircraft already has.
     if (type_code >= ModeSADSBPacket::kTypeCodeAircraftID && type_code < ModeSADSBPacket::kTypeCodeSurfacePosition) {
         if (strlen(aircraft.callsign) < ModeSAircraft::kCallSignMinNumChars) {
             return kTrackUnknown;
@@ -1844,6 +1846,8 @@ AircraftDictionary::TrackFit AircraftDictionary::CheckAgainstTrack(const ModeSAD
                    ? kTrackFits
                    : kTrackDisagrees;
     }
+
+    // Airborne position: needs a recent position and altitude, and the frame must decode to both.
     if (type_code >= ModeSADSBPacket::kTypeCodeAirbornePositionBaroAlt &&
         type_code < ModeSADSBPacket::kTypeCodeAirborneVelocities) {
         uint32_t position_age_ms = now_ms - aircraft.last_position_update_ms;
@@ -1856,33 +1860,42 @@ AircraftDictionary::TrackFit AircraftDictionary::CheckAgainstTrack(const ModeSAD
             !trial.HasBitFlag(ModeSAircraft::kBitFlagBaroAltitudeValid)) {
             return kTrackUnknown;
         }
+        // Altitude: a step plus a climb rate since the last message.
         if (!WithinStep(trial.baro_altitude_ft - aircraft.baro_altitude_ft, kCorrectionAltitudeStepFt,
                         kCorrectionClimbRateFtPerS, now_ms - aircraft.last_message_timestamp_ms)) {
             return kTrackDisagrees;
         }
-        // Expected position: dead reckoning from the last position with a fresh velocity, else the last position.
-        float expected_lat_deg = aircraft.latitude_deg;
-        float expected_lon_deg = aircraft.longitude_deg;
+        // Position: the miss from the dead reckoned position (speed times age along the direction) with a fresh
+        // velocity, else from the last position. The bearing from the last position splits it along and across track.
+        GeoReference last_position(lat2awb(aircraft.latitude_deg), lon2awb(aircraft.longitude_deg));
+        uint32_t distance_m;
+        uint16_t bearing_bam16;
+        CalculateDistanceAndBearing(last_position, lat2awb(trial.latitude_deg), lon2awb(trial.longitude_deg),
+                                    distance_m, bearing_bam16);
+        int64_t along_m = distance_m;
+        int64_t across_m = 0;
         int32_t position_rate_m_per_s = kCorrectionSpeedMPerS;
         if (aircraft.HasBitFlag(ModeSAircraft::kBitFlagHorizontalSpeedValid) &&
             aircraft.HasBitFlag(ModeSAircraft::kBitFlagDirectionValid) &&
             now_ms - aircraft.last_velocity_update_ms <= kCorrectionMaxReferenceAgeMs) {
-            float distance_m = aircraft.speed_kts * (kMetersPerNauticalMile / 3600.0f) * (position_age_ms / 1000.0f);
-            float direction_rad = aircraft.direction_deg / kDegreesPerRadian;
-            float meters_per_degree_longitude =
-                kMetersPerDegreeLatitude * cosf(aircraft.latitude_deg / kDegreesPerRadian);
-            expected_lat_deg += distance_m * cosf(direction_rad) / kMetersPerDegreeLatitude;
-            expected_lon_deg += distance_m * sinf(direction_rad) / meters_per_degree_longitude;
+            int32_t sin_q30, cos_q30;
+            uint16_t off_track_bam16 = bearing_bam16 - DegToBam16(aircraft.direction_deg);
+            SinCosQ30(static_cast<uint32_t>(off_track_bam16) << 16, sin_q30, cos_q30);
+            int64_t dead_reckoning_m =
+                static_cast<int64_t>(aircraft.speed_kts) * kMetersPerNauticalMile * position_age_ms / 3'600'000;
+            along_m = ((distance_m * static_cast<int64_t>(cos_q30) + (1 << 29)) >> 30) - dead_reckoning_m;
+            across_m = (distance_m * static_cast<int64_t>(sin_q30) + (1 << 29)) >> 30;
             position_rate_m_per_s = kCorrectionDeadReckoningErrorMPerS;
         }
-        GeoReference expected(lat2awb(expected_lat_deg), lon2awb(expected_lon_deg));
-        uint32_t distance_m =
-            CalculateDistanceMeters(expected, lat2awb(trial.latitude_deg), lon2awb(trial.longitude_deg));
-        return distance_m <= INT32_MAX && WithinStep(static_cast<int32_t>(distance_m), kCorrectionPositionStepM,
-                                                     position_rate_m_per_s, position_age_ms)
-                   ? kTrackFits
-                   : kTrackDisagrees;
+        // WithinStep's bound on the squared miss, in mm: the step plus the rate times the age (at most 10 s here).
+        int64_t limit_mm = static_cast<int64_t>(kCorrectionPositionStepM) * 1000 +
+                           static_cast<int64_t>(position_rate_m_per_s) * position_age_ms;
+        int64_t miss_m2 = along_m * along_m + across_m * across_m;
+        return miss_m2 <= INT64_MAX / 1'000'000 && miss_m2 * 1'000'000 <= limit_mm * limit_mm ? kTrackFits
+                                                                                              : kTrackDisagrees;
     }
+
+    // Airborne velocity: speed and direction within a step plus a rate of change since the last velocity.
     if (type_code == ModeSADSBPacket::kTypeCodeAirborneVelocities) {
         uint32_t velocity_age_ms = now_ms - aircraft.last_velocity_update_ms;
         if (!aircraft.HasBitFlag(ModeSAircraft::kBitFlagHorizontalSpeedValid) ||
@@ -1893,11 +1906,12 @@ AircraftDictionary::TrackFit AircraftDictionary::CheckAgainstTrack(const ModeSAD
             !trial.HasBitFlag(ModeSAircraft::kBitFlagDirectionValid)) {
             return kTrackUnknown;
         }
-        float turn_deg = fmodf(trial.direction_deg - aircraft.direction_deg + 540.0f, 360.0f) - 180.0f;
-        return WithinStep(trial.speed_kts - aircraft.speed_kts, kCorrectionSpeedStepKts,
-                          kCorrectionAccelerationKtsPerS, velocity_age_ms) &&
-                       WithinStep(static_cast<int32_t>(turn_deg), kCorrectionDirectionStepDeg,
-                                  kCorrectionTurnRateDegPerS, velocity_age_ms)
+        // The turn either way around, -180 to 180 deg, in whole degrees truncated toward zero.
+        int16_t turn_bam16 = static_cast<int16_t>(DegToBam16(trial.direction_deg) - DegToBam16(aircraft.direction_deg));
+        int32_t turn_deg = turn_bam16 * 360 / 65536;
+        return WithinStep(trial.speed_kts - aircraft.speed_kts, kCorrectionSpeedStepKts, kCorrectionAccelerationKtsPerS,
+                          velocity_age_ms) &&
+                       WithinStep(turn_deg, kCorrectionDirectionStepDeg, kCorrectionTurnRateDegPerS, velocity_age_ms)
                    ? kTrackFits
                    : kTrackDisagrees;
     }
