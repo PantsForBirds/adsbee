@@ -181,15 +181,15 @@ class CommsManager {
 #include "comms_reporting.hh"
 
     inline bool SendBuf(ReportSink sink, const char* buf, uint16_t buf_len, uint16_t num_msgs = 1) {
-        // Reports never wait for the comms UART: frames that don't fit in its TX queue are dropped and counted.
+        // Reports never wait: frames an interface can't take now are dropped and counted.
         if (iface_write(static_cast<SettingsManager::SerialInterface>(sink), buf, buf_len, false)) {
             return true;
         }
-        if (sink == SettingsManager::kCommsUART) {
-            comms_uart_tx_drop_count += num_msgs;
-            return true;  // An expected drop, counted above: not a send failure to log every round.
+        if (sink >= SettingsManager::kNumSerialInterfaces) {
+            return false;
         }
-        return false;
+        tx_drop_count[sink] += num_msgs;
+        return true;  // An expected drop, counted above: not a send failure to log every round.
     }
 
     /**
@@ -285,8 +285,10 @@ class CommsManager {
     PFBQueue<char> esp32_console_tx_queue =
         PFBQueue<char>({.buf_len_num_elements = kNetworkConsoleBufMaxLen, .buffer = esp32_console_tx_queue_buffer_});
 
-    // Report frames dropped because the comms UART TX queue was full.
-    uint32_t comms_uart_tx_drop_count = 0;
+    // Report frames dropped per serial interface. Only the comms UART drops today (TX queue full): the GNSS UART
+    // carries no reports, and the USB console can't tell, since the SDK drops output silently when the host doesn't
+    // read.
+    uint32_t tx_drop_count[SettingsManager::kNumSerialInterfaces] = {0};
 
    private:
     // AT Functions
