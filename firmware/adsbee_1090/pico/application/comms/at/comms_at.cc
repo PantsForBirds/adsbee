@@ -489,6 +489,12 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
                           (unsigned long)ram.core_0_stack_peak_bytes, (unsigned long)ram.core_1_stack_peak_bytes);
             CPP_AT_PRINTF("RP2040 Aircraft Dictionary: %u aircraft max\r\n",
                           (unsigned)AircraftDictionary::kMaxNumAircraft);
+            CPP_AT_PRINTF("RP2040 Report frames dropped:");
+            for (uint16_t iface = 0; iface < SettingsManager::kNumSerialInterfaces; iface++) {
+                CPP_AT_PRINTF(" %s %lu", SettingsManager::kSerialInterfaceStrs[iface],
+                              (unsigned long)tx_drop_count[iface]);
+            }
+            CPP_AT_PRINTF("\r\n");
 
             for (uint16_t i = 0; i < SettingsManager::DeviceInfo::kNumOTAKeys; i++) {
                 CPP_AT_PRINTF("OTA Key %d: %s\r\n", i, device_info.ota_keys[i]);
@@ -2634,8 +2640,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "DEVICE_INFO",
      .min_args = 0,
      .max_args = 5,  // TODO: check this value.
-     .help_string = "AT+DEVICE_INFO?\r\n\tQuery device information, including RP2040 RAM use and aircraft "
-                    "dictionary size.",
+     .help_string = "AT+DEVICE_INFO?\r\n\tQuery device information, including RP2040 RAM use, aircraft "
+                    "dictionary size and report frames dropped per serial interface.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATDeviceInfoCallback, comms_manager)},
     {.command = "ETHERNET",
      .min_args = 0,
