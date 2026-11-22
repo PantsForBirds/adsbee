@@ -803,17 +803,17 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
         bool rx_position_available = object_dictionary.composite_device_status.rp2040.rx_position_available;
         bool gnss_utc_time_valid = object_dictionary.composite_device_status.rp2040.gnss_utc_time_valid;
         bool gnss_geoid_separation_valid = object_dictionary.composite_device_status.rp2040.gnss_geoid_separation_valid;
-        float gnss_geoid_separation_m = object_dictionary.composite_device_status.rp2040.gnss_geoid_separation_m;
+        int32_t gnss_geoid_separation_cm = object_dictionary.composite_device_status.rp2040.gnss_geoid_separation_cm;
         bool gnss_altitude_std_dev_valid = object_dictionary.composite_device_status.rp2040.gnss_altitude_std_dev_valid;
-        float gnss_altitude_std_dev_m = object_dictionary.composite_device_status.rp2040.gnss_altitude_std_dev_m;
+        int32_t gnss_altitude_std_dev_cm = object_dictionary.composite_device_status.rp2040.gnss_altitude_std_dev_cm;
 #else
         const SettingsManager::RxPosition& rx_position = adsbee.rx_position;
         bool rx_position_available = adsbee.rx_position_available;
         bool gnss_utc_time_valid = gnss != nullptr && gnss->fix().utc_time_valid;
         bool gnss_geoid_separation_valid = gnss != nullptr && gnss->fix().geoid_separation_valid;
-        float gnss_geoid_separation_m = gnss != nullptr ? gnss->fix().geoid_separation_m : 0.0f;
-        float gnss_altitude_std_dev_m = 0.0f;
-        bool gnss_altitude_std_dev_valid = gnss != nullptr && gnss->GetAltitudeStdDevM(gnss_altitude_std_dev_m);
+        int32_t gnss_geoid_separation_cm = gnss != nullptr ? gnss->fix().geoid_separation_cm : 0;
+        int32_t gnss_altitude_std_dev_cm = 0;
+        bool gnss_altitude_std_dev_valid = gnss != nullptr && gnss->GetAltitudeStdDevCm(gnss_altitude_std_dev_cm);
 #endif
         // Build the ownship report up front: its validity also drives the heartbeat's GPS Position Valid flag.
         // Selecting RX_POSITION=GNSS routes the latest fresh GNSS fix populated by ADSBee::UpdateRxPosition().
@@ -849,9 +849,9 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
         GDL90Reporter::GDL90OwnshipGeometricAltitudeData geo_altitude_data;
         if (GDL90Reporter::BuildOwnshipGeometricAltitudeData(
                 geo_altitude_data, rx_position, rx_position_available, gnss_geoid_separation_valid,
-                gnss_geoid_separation_m,
+                gnss_geoid_separation_cm,
                 gnss_altitude_std_dev_valid
-                    ? GDL90Reporter::VFOMFromAltitudeStdDev(gnss_altitude_std_dev_m)
+                    ? GDL90Reporter::VFOMFromAltitudeStdDevCm(gnss_altitude_std_dev_cm)
                     : GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable)) {
             msg_len = gdl90.WriteGDL90OwnshipGeometricAltitudeMessage(buf, sizeof(buf), geo_altitude_data);
             if (msg_len == 0) {

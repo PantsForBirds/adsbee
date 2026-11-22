@@ -216,11 +216,11 @@ class GDL90Reporter {
 
     /**
      * Convert a receiver's 1 sigma altitude error to a VFOM, which is a 95% bound (1.96 sigma for a normal error),
-     * rounded up to whole meters.
-     * @param[in] std_dev_m Standard deviation of the altitude error, in meters.
-     * @retval VFOM in meters, kVFOMMaxMeters if it does not fit, kVFOMNotAvailable for a negative or NaN input.
+     * rounded up to whole meters. Integer math only.
+     * @param[in] std_dev_cm Standard deviation of the altitude error, in centimeters.
+     * @retval VFOM in meters, kVFOMMaxMeters if it does not fit, kVFOMNotAvailable for a negative input.
      */
-    static uint16_t VFOMFromAltitudeStdDev(float std_dev_m);
+    static uint16_t VFOMFromAltitudeStdDevCm(int32_t std_dev_cm);
 
     /**
      * Populate an Ownship Geometric Altitude message from a GNSS receiver position. Only a GNSS ownship gets one: the
@@ -235,14 +235,14 @@ class GDL90Reporter {
      * @param[in] rx_position Receiver position. gnss_altitude_ft is the GNSS altitude above MSL.
      * @param[in] rx_position_available Whether rx_position currently holds a fresh position.
      * @param[in] geoid_separation_valid Whether the receiver reported a geoid separation.
-     * @param[in] geoid_separation_m Geoid height above the WGS-84 ellipsoid, in meters.
+     * @param[in] geoid_separation_cm Geoid height above the WGS-84 ellipsoid, in centimeters.
      * @param[in] vfom_m Vertical Figure of Merit in meters, or kVFOMNotAvailable.
      * @retval True if a message should be sent: GNSS ownship with a fresh fix and a geoid separation.
      */
     static bool BuildOwnshipGeometricAltitudeData(GDL90OwnshipGeometricAltitudeData& data,
                                                   const SettingsManager::RxPosition& rx_position,
                                                   bool rx_position_available, bool geoid_separation_valid,
-                                                  float geoid_separation_m, uint16_t vfom_m);
+                                                  int32_t geoid_separation_cm, uint16_t vfom_m);
 
     /**
      * Write a GDL90 message for ownship or traffic data. This function calls the version that takes a

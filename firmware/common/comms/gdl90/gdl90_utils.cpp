@@ -1,7 +1,5 @@
 #include "gdl90_utils.hh"
 
-#include <cmath>  // For ceilf, lroundf.
-
 #include "comms.hh"
 
 // Initialize static variables.
@@ -293,30 +291,39 @@ uint16_t GDL90Reporter::WriteGDL90OwnshipGeometricAltitudeMessage(uint8_t* to_bu
     return WriteGDL90Message(to_buf, to_buf_num_bytes, message_buf, kMessageBufLenBytes);
 }
 
-uint16_t GDL90Reporter::VFOMFromAltitudeStdDev(float std_dev_m) {
-    // Written so NaN fails the comparison.
-    if (!(std_dev_m >= 0.0f)) {
+uint16_t GDL90Reporter::VFOMFromAltitudeStdDevCm(int32_t std_dev_cm) {
+    // Above this the VFOM (1.96 sigma) is over 32766 m; also keeps 196 * std_dev_cm within 32 bits.
+    const int32_t kMaxStdDevCm = 2000000;
+    if (std_dev_cm < 0) {
         return GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable;
     }
-    float vfom_m = ceilf(std_dev_m * 1.96f);
-    if (vfom_m >= GDL90OwnshipGeometricAltitudeData::kVFOMMaxMeters) {
+    if (std_dev_cm > kMaxStdDevCm) {
         return GDL90OwnshipGeometricAltitudeData::kVFOMMaxMeters;
     }
-    return static_cast<uint16_t>(vfom_m);
+    // 1.96 sigma in meters, rounded up: 196 * cm / 10000.
+    int32_t vfom_m = (196 * std_dev_cm + 9999) / 10000;
+    return static_cast<uint16_t>(MIN(vfom_m, GDL90OwnshipGeometricAltitudeData::kVFOMMaxMeters));
 }
 
 bool GDL90Reporter::BuildOwnshipGeometricAltitudeData(GDL90OwnshipGeometricAltitudeData& data,
                                                       const SettingsManager::RxPosition& rx_position,
                                                       bool rx_position_available, bool geoid_separation_valid,
-                                                      float geoid_separation_m, uint16_t vfom_m) {
-    const float kFeetPerMeter = 3.28084f;
+                                                      int32_t geoid_separation_cm, uint16_t vfom_m) {
+    // Real geoid separations are within +/-110 m; a larger value is a bad sentence.
+    const int32_t kMaxGeoidSeparationCm = 100000;
+    // Far outside the 16-bit field (+/-163,840 ft); bounds the sum below.
+    const int32_t kMaxAltitudeFt = 1000000;
     data = {};
     if (!rx_position_available || rx_position.source != SettingsManager::RxPosition::kPositionSourceGNSS ||
-        !geoid_separation_valid) {
+        !geoid_separation_valid || geoid_separation_cm > kMaxGeoidSeparationCm ||
+        geoid_separation_cm < -kMaxGeoidSeparationCm) {
         return false;
     }
-    data.geo_altitude_ft =
-        rx_position.gnss_altitude_ft + static_cast<int32_t>(lroundf(geoid_separation_m * kFeetPerMeter));
+    // Centimeters to feet (x 25 / 762), rounded half away from zero.
+    int32_t scaled_cm = geoid_separation_cm * 25;
+    int32_t geoid_separation_ft = (scaled_cm >= 0 ? scaled_cm + 381 : scaled_cm - 381) / 762;
+    int32_t msl_ft = MAX(-kMaxAltitudeFt, MIN(kMaxAltitudeFt, rx_position.gnss_altitude_ft));
+    data.geo_altitude_ft = msl_ft + geoid_separation_ft;
     data.vfom_m = vfom_m;
     return true;
 }

@@ -174,9 +174,9 @@ class ObjectDictionary {
         // For the GDL90 Ownship Geometric Altitude: GGA geoid separation (geoid height above the WGS-84 ellipsoid)
         // and GST altitude error (1 sigma), each valid only when the receiver reports it.
         bool gnss_geoid_separation_valid = false;
-        float gnss_geoid_separation_m = 0.0f;
+        int32_t gnss_geoid_separation_cm = 0;
         bool gnss_altitude_std_dev_valid = false;
-        float gnss_altitude_std_dev_m = 0.0f;
+        int32_t gnss_altitude_std_dev_cm = 0;
         // 1090MHz receiver noise floor estimate (RSSI sampled between packets and low-pass filtered). The trigger
         // level sits at noise_floor_mv + TL offset.
         uint16_t noise_floor_mv = 0;

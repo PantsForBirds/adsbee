@@ -47,10 +47,10 @@ class NMEAParser {
         // GGA geoid separation: height of the geoid (MSL) above the WGS-84 ellipsoid, so height above the ellipsoid
         // = MSL altitude + geoid separation. Not every receiver fills the field.
         bool geoid_separation_valid = false;
-        float geoid_separation_m = 0.0f;
+        int32_t geoid_separation_cm = 0;
         // GST standard deviation of the altitude error (1 sigma). Only sent by receivers configured to output GST.
         bool altitude_std_dev_valid = false;
-        float altitude_std_dev_m = 0.0f;
+        int32_t altitude_std_dev_cm = 0;
         uint32_t altitude_std_dev_timestamp_ms = 0;  // Caller-supplied timestamp of the last GST altitude error.
         float heading_deg = 0.0f;       // Course over ground, degrees from true north.
         int32_t speed_kts = 0;          // Speed over ground, knots.

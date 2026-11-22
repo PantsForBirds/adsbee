@@ -1,5 +1,3 @@
-#include <cmath>  // For NAN.
-
 #include "fec.hh"
 #include "gdl90_utils.hh"
 #include "gtest/gtest.h"
@@ -578,12 +576,17 @@ TEST(GDL90Utils, OwnshipGeometricAltitudeFraming) {
 
 TEST(GDL90Utils, VFOMFromAltitudeStdDev) {
     const uint16_t kNA = GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable;
-    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDev(5.0f), 10);  // 1.96 * 5 = 9.8, rounded up.
-    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDev(0.0f), 0);
-    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDev(1.0f), 2);
-    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDev(20000.0f), 0x7FFE);  // More than 32766 m.
-    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDev(-1.0f), kNA);
-    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDev(NAN), kNA);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(500), 10);  // 1.96 * 5 m = 9.8 m, rounded up.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(0), 0);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(1), 1);    // 0.0196 m rounds up to 1 m.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(100), 2);  // 1.96 m.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(5000), 98);  // Exactly 98 m: not rounded up.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(5001), 99);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(1671000), 32752);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(1671735), 0x7FFE);  // 32766.006 m.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(2000000), 0x7FFE);  // More than 32766 m.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(INT32_MAX), 0x7FFE);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(-1), kNA);
 }
 
 TEST(GDL90Utils, OwnshipGeometricAltitudeFromGNSS) {
@@ -595,20 +598,31 @@ TEST(GDL90Utils, OwnshipGeometricAltitudeFromGNSS) {
     // HAE = MSL + geoid separation: -32.5 m = -106.6 ft -> 1393 ft.
     GDL90Reporter::GDL90OwnshipGeometricAltitudeData data;
     ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, /*rx_position_available=*/true,
-                                                                 /*geoid_separation_valid=*/true, -32.5f, 10));
+                                                                 /*geoid_separation_valid=*/true, -3250, 10));
     EXPECT_EQ(data.geo_altitude_ft, 1393);
     EXPECT_EQ(data.vfom_m, 10);
     EXPECT_FALSE(data.vertical_warning);
 
-    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 46.9f,
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 4690,
                                                                  GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable));
     EXPECT_EQ(data.geo_altitude_ft, 1654);  // 1500 + 153.9.
     EXPECT_EQ(data.vfom_m, GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable);
 
     // No geoid separation: an MSL value would be misread as HAE, so nothing is sent.
-    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, false, 0.0f, 10));
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, false, 0, 10));
     // No fresh fix.
-    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, false, true, -32.5f, 10));
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, false, true, -3250, 10));
+
+    // Geoid separation rounds to the nearest foot: 15 cm = 0.49 ft, 16 cm = 0.52 ft.
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 15, 10));
+    EXPECT_EQ(data.geo_altitude_ft, 1500);
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 16, 10));
+    EXPECT_EQ(data.geo_altitude_ft, 1501);
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, -16, 10));
+    EXPECT_EQ(data.geo_altitude_ft, 1499);
+    // A geoid separation beyond 1 km is a bad sentence.
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 100001, 10));
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, -100001, 10));
 }
 
 TEST(GDL90Utils, OwnshipGeometricAltitudeOnlyForGNSS) {
@@ -622,7 +636,7 @@ TEST(GDL90Utils, OwnshipGeometricAltitudeOnlyForGNSS) {
                         SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO}) {
         rx_position.source = source;
         GDL90Reporter::GDL90OwnshipGeometricAltitudeData data;
-        EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, -32.5f, 10))
+        EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, -3250, 10))
             << "source " << static_cast<int>(source);
     }
 }
