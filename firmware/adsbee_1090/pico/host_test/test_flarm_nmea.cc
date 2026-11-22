@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -24,12 +25,16 @@ std::string Body(const char* sentence, uint16_t len) {
     return std::string(sentence, len - 5);
 }
 
-FLARMNMEAReporter::Ownship GNSSOwnship() {
+uint32_t DegToAWB(double deg) {
+    return static_cast<uint32_t>(static_cast<int64_t>(llround(deg / 360.0 * 4294967296.0)));
+}
+
+// Ownship with a geometric altitude (a tracked aircraft's own ADS-B).
+FLARMNMEAReporter::Ownship Own() {
     FLARMNMEAReporter::Ownship own;
-    own.latitude_deg = 37.4;
-    own.longitude_deg = -122.1;
-    own.gnss_altitude_valid = true;
-    own.gnss_altitude_ft = 1000;
+    own.position.Set(DegToAWB(37.4), DegToAWB(-122.1));
+    own.geometric_altitude_valid = true;
+    own.geometric_altitude_ft = 1000;
     own.track_deg = 271.6f;
     own.speed_kts = 95;
     own.airborne = true;
@@ -39,12 +44,12 @@ FLARMNMEAReporter::Ownship GNSSOwnship() {
 FLARMNMEAReporter::Target Jet() {
     FLARMNMEAReporter::Target t;
     t.id = 0xA1B2C3;
-    t.latitude_deg = 37.45;
-    t.longitude_deg = -122.0;
+    t.lat_awb = DegToAWB(37.45);
+    t.lon_awb = DegToAWB(-122.0);
     t.baro_altitude_valid = true;
     t.baro_altitude_ft = 3500;
-    t.gnss_altitude_valid = true;
-    t.gnss_altitude_ft = 3600;
+    t.geometric_altitude_valid = true;
+    t.geometric_altitude_ft = 3600;
     t.track_valid = true;
     t.track_deg = 359.7f;
     t.speed_valid = true;
@@ -70,10 +75,10 @@ TEST(FLARMNMEA, PFLAUHeartbeatWithoutAlarm) {
 
 TEST(FLARMNMEA, PFLAAMatchesFTD012FieldOrder) {
     char buf[100];
-    const uint16_t len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), GNSSOwnship(), Jet());
-    // 5.56 km north, 8.83 km east; GNSS against GNSS: 2600 ft = 792 m above; track 359.7 -> 0; 250 kt = 129 m/s;
-    // -640 fpm = -3.3 m/s; jet; no-track 0; source ADS-B; RSSI.
-    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5560,8831,792,1,A1B2C3,0,,129,-3.3,9,0,1,-71");
+    const uint16_t len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), Own(), Jet());
+    // 5554 m north, 8848 m east (GeographicLib: 5553.97, 8848.44); geometric against geometric: 2600 ft = 792 m above;
+    // track 359.7 -> 0; 250 kt = 129 m/s; -640 fpm = -3.3 m/s; jet; no-track 0; source ADS-B; RSSI.
+    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5554,8848,792,1,A1B2C3,0,,129,-3.3,9,0,1,-71");
 }
 
 TEST(FLARMNMEA, PFLAAEmptyFieldsAndGroundTargets) {
@@ -85,18 +90,18 @@ TEST(FLARMNMEA, PFLAAEmptyFieldsAndGroundTargets) {
     t.rssi_valid = false;
     t.id_type = FLARMNMEAReporter::kIDTypeRandom;
     t.source = FLARMNMEAReporter::kSourceTISB;
-    uint16_t len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), GNSSOwnship(), t);
-    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5560,8831,792,0,A1B2C3,,,,,9,0,4,");
+    uint16_t len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), Own(), t);
+    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5554,8848,792,0,A1B2C3,,,,,9,0,4,");
 
     // On ground: speed and climb 0.
     t.on_ground = true;
-    len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), GNSSOwnship(), t);
-    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5560,8831,792,0,A1B2C3,,,0,0.0,9,0,4,");
+    len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), Own(), t);
+    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5554,8848,792,0,A1B2C3,,,0,0.0,9,0,4,");
 
     // No FTD-012 source (Remote ID): Source and RSSI omitted.
     t.source = FLARMNMEAReporter::kSourceNone;
-    len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), GNSSOwnship(), t);
-    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5560,8831,792,0,A1B2C3,,,0,0.0,9,0");
+    len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), Own(), t);
+    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5554,8848,792,0,A1B2C3,,,0,0.0,9,0");
 }
 
 TEST(FLARMNMEA, PFLAAMovingSpeedAndClimbLimits) {
@@ -104,68 +109,90 @@ TEST(FLARMNMEA, PFLAAMovingSpeedAndClimbLimits) {
     FLARMNMEAReporter::Target t = Jet();
     t.speed_kts = 0;  // Moving but reporting 0: FTD-012 forces > 0.
     t.vertical_rate_fpm = 99999;
-    uint16_t len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), GNSSOwnship(), t);
-    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5560,8831,792,1,A1B2C3,0,,1,32.7,9,0,1,-71");
+    uint16_t len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), Own(), t);
+    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5554,8848,792,1,A1B2C3,0,,1,32.7,9,0,1,-71");
     t.vertical_rate_fpm = -5;  // -0.03 m/s rounds to 0.0, no "-0.0".
-    len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), GNSSOwnship(), t);
-    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5560,8831,792,1,A1B2C3,0,,1,0.0,9,0,1,-71");
+    len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), Own(), t);
+    EXPECT_EQ(Body(buf, len), "$PFLAA,0,5554,8848,792,1,A1B2C3,0,,1,0.0,9,0,1,-71");
 }
 
 TEST(FLARMNMEA, RelativeAltitudeReference) {
-    int32_t n, e, v;
-    FLARMNMEAReporter::Ownship own = GNSSOwnship();
+    FLARMNMEAReporter::RelativePosition r;
+    FLARMNMEAReporter::Ownship own = Own();
     FLARMNMEAReporter::Target t = Jet();
-    // Ownship baro (its own ADS-B) and target baro: baro against baro.
+    // Ownship with baro and geometric altitudes (its own ADS-B): baro against baro first.
     own.baro_altitude_valid = true;
     own.baro_altitude_ft = 1500;
-    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, n, e, v));
-    EXPECT_EQ(v, 610);  // 2000 ft.
-    // GNSS ownship, target without geometric altitude: target baro against ownship GNSS.
-    own.baro_altitude_valid = false;
-    t.gnss_altitude_valid = false;
-    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, n, e, v));
-    EXPECT_EQ(v, 762);  // 2500 ft.
-    // No common reference.
+    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, r));
+    EXPECT_EQ(r.vertical_m, 610);  // 2000 ft.
+    // Target without baro: geometric against geometric.
     t.baro_altitude_valid = false;
-    EXPECT_FALSE(FLARMNMEAReporter::Relative(own, t, n, e, v));
+    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, r));
+    EXPECT_EQ(r.vertical_m, 792);  // 2600 ft.
+    // Baro is never compared with geometric: target geometric only, ownship baro only.
+    own.geometric_altitude_valid = false;
+    EXPECT_FALSE(FLARMNMEAReporter::Relative(own, t, r));
+    // Target baro only, ownship geometric only.
+    own.baro_altitude_valid = false;
+    own.geometric_altitude_valid = true;
+    t.baro_altitude_valid = true;
+    t.geometric_altitude_valid = false;
+    EXPECT_FALSE(FLARMNMEAReporter::Relative(own, t, r));
     char buf[100];
     EXPECT_EQ(FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), own, t), 0);
+    // A GNSS fix's mean sea level altitude is compared with nothing (traffic geometric altitudes are above the
+    // ellipsoid).
+    own.geometric_altitude_valid = false;
+    own.msl_altitude_valid = true;
+    own.msl_altitude_ft = 1000;
+    t.geometric_altitude_valid = true;
+    EXPECT_FALSE(FLARMNMEAReporter::Relative(own, t, r));
+    // Rounding: 1 ft = 0.3 m -> 0; 2 ft = 0.6 m -> 1; symmetric below.
+    own = Own();
+    t = Jet();
+    t.baro_altitude_valid = false;
+    for (const auto& c :
+         {std::pair<int32_t, int32_t>{1, 0}, {2, 1}, {-2, -1}, {-1, 0}, {120000, 32767}, {-120000, -32768}}) {
+        t.geometric_altitude_ft = own.geometric_altitude_ft + c.first;
+        ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, r));
+        EXPECT_EQ(r.vertical_m, c.second) << c.first;
+    }
 }
 
 TEST(FLARMNMEA, RelativePositionGeometry) {
-    int32_t n, e, v;
-    FLARMNMEAReporter::Ownship own = GNSSOwnship();
-    own.latitude_deg = 60.0;
-    own.longitude_deg = 179.99;
+    FLARMNMEAReporter::RelativePosition r;
+    FLARMNMEAReporter::Ownship own = Own();
+    own.position.Set(DegToAWB(60.0), DegToAWB(179.99));
     FLARMNMEAReporter::Target t = Jet();
-    // 0.02 degrees east across the antimeridian at 60 N: about 1112 m.
-    t.latitude_deg = 60.0;
-    t.longitude_deg = -179.99;
-    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, n, e, v));
-    EXPECT_EQ(n, 0);
-    EXPECT_NEAR(e, 1112, 2);
-    // 0.1 degrees south: about 11.1 km.
-    t.latitude_deg = 59.9;
-    t.longitude_deg = 179.99;
-    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, n, e, v));
-    EXPECT_NEAR(n, -11119, 2);
-    EXPECT_EQ(e, 0);
+    // 0.02 degrees east across the antimeridian at 60 N (GeographicLib: 0.17 m north, 1116.00 m east).
+    t.lat_awb = DegToAWB(60.0);
+    t.lon_awb = DegToAWB(-179.99);
+    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, r));
+    EXPECT_EQ(r.north_m, 0);
+    EXPECT_EQ(r.east_m, 1116);
+    EXPECT_EQ(r.distance_m, 1116u);
+    // 0.1 degrees south (GeographicLib: 11141.14 m).
+    t.lat_awb = DegToAWB(59.9);
+    t.lon_awb = DegToAWB(179.99);
+    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, r));
+    EXPECT_EQ(r.north_m, -11141);
+    EXPECT_EQ(r.east_m, 0);
     // Antipode: beyond the PFLAA range.
-    t.latitude_deg = -60.0;
-    t.longitude_deg = 0.0;
-    EXPECT_FALSE(FLARMNMEAReporter::Relative(own, t, n, e, v));
+    t.lat_awb = DegToAWB(-60.0);
+    t.lon_awb = DegToAWB(0.0);
+    EXPECT_FALSE(FLARMNMEAReporter::Relative(own, t, r));
 }
 
 TEST(FLARMNMEA, LongestPFLAAFits) {
     char buf[100];
-    FLARMNMEAReporter::Ownship own = GNSSOwnship();
-    own.latitude_deg = 0;
-    own.longitude_deg = 0;
-    own.gnss_altitude_ft = 200000;
+    FLARMNMEAReporter::Ownship own = Own();
+    own.position.Set(DegToAWB(0), DegToAWB(0));
+    own.geometric_altitude_ft = 200000;
     FLARMNMEAReporter::Target t = Jet();
-    t.latitude_deg = -89.0;
-    t.longitude_deg = -179.0;
-    t.gnss_altitude_ft = -2000;
+    t.baro_altitude_valid = false;
+    t.lat_awb = DegToAWB(-34.35);  // 14130 km south west.
+    t.lon_awb = DegToAWB(-136.76);
+    t.geometric_altitude_ft = -2000;
     t.track_deg = 359;
     t.speed_kts = 99999;
     t.vertical_rate_fpm = -99999;
@@ -174,13 +201,15 @@ TEST(FLARMNMEA, LongestPFLAAFits) {
     t.rssi_dbm = -100;
     t.id = 0xFFFFFF;
     const uint16_t len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), own, t);
-    EXPECT_EQ(Body(buf, len), "$PFLAA,0,-9896362,-14196479,-32768,1,FFFFFF,359,,32767,-32.7,F,0,4,-100");
+    EXPECT_EQ(Body(buf, len), "$PFLAA,0,-9924651,-10009414,-32768,1,FFFFFF,359,,32767,-32.7,F,0,4,-100");
     EXPECT_LE(len, 82);
 }
 
 TEST(FLARMNMEA, GPRMCAndGPGGA) {
     char buf[100];
-    FLARMNMEAReporter::Ownship own = GNSSOwnship();
+    FLARMNMEAReporter::Ownship own = Own();
+    own.msl_altitude_valid = true;
+    own.msl_altitude_ft = 1000;
     FLARMNMEAReporter::UTCTime utc;
     // No UTC time: no position sentences (XCSoar drops them without a time).
     EXPECT_EQ(FLARMNMEAReporter::WriteGPRMC(buf, sizeof(buf), own, utc), 0);
@@ -202,16 +231,21 @@ TEST(FLARMNMEA, GPRMCAndGPGGA) {
     EXPECT_EQ(Body(buf, len), "$GPGGA,120304.00,3724.0000,N,12206.0000,W,1,,,304.8,M,,M,,");
 
     // Rounding carries into the degrees; southern / eastern hemispheres.
-    own.latitude_deg = -33.99999999;
-    own.longitude_deg = 151.2;
-    own.gnss_altitude_ft = -10;
+    own.position.Set(DegToAWB(-33.99999999), DegToAWB(151.2));
+    own.msl_altitude_ft = -10;
     len = FLARMNMEAReporter::WriteGPGGA(buf, sizeof(buf), own, utc);
     EXPECT_EQ(Body(buf, len), "$GPGGA,120304.00,3400.0000,S,15112.0000,E,1,,,-3.0,M,,M,,");
+    // No MSL altitude: empty. The 180th meridian; a float position is written as the float has it (37.4f is
+    // 37.4000015 deg).
+    own.msl_altitude_valid = false;
+    own.position.Set(FloatDegToAWB(37.4f), DegToAWB(-180.0));
+    len = FLARMNMEAReporter::WriteGPGGA(buf, sizeof(buf), own, utc);
+    EXPECT_EQ(Body(buf, len), "$GPGGA,120304.00,3724.0001,N,18000.0000,W,1,,,,M,,M,,");
 }
 
 TEST(FLARMNMEA, PGRMZOnlyWithBaro) {
     char buf[100];
-    FLARMNMEAReporter::Ownship own = GNSSOwnship();
+    FLARMNMEAReporter::Ownship own = Own();
     EXPECT_EQ(FLARMNMEAReporter::WritePGRMZ(buf, sizeof(buf), own), 0);
     own.baro_altitude_valid = true;
     own.baro_altitude_ft = -120;
@@ -221,7 +255,7 @@ TEST(FLARMNMEA, PGRMZOnlyWithBaro) {
 
 TEST(FLARMNMEA, SmallBufferWritesNothing) {
     char buf[20];
-    EXPECT_EQ(FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), GNSSOwnship(), Jet()), 0);
+    EXPECT_EQ(FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), Own(), Jet()), 0);
 }
 
 TEST(FLARMNMEA, OwnshipFromRxPosition) {
@@ -241,16 +275,34 @@ TEST(FLARMNMEA, OwnshipFromRxPosition) {
     rx.source = SettingsManager::RxPosition::kPositionSourceGNSS;
     EXPECT_FALSE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, false));
     ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true));
-    EXPECT_TRUE(own.gnss_altitude_valid);
+    EXPECT_EQ(own.position.lat_awb, FloatDegToAWB(37.4f));
+    EXPECT_EQ(own.position.lon_awb, FloatDegToAWB(-122.1f));
+    // GNSS: mean sea level for GPGGA, nothing to compare traffic with.
+    EXPECT_TRUE(own.msl_altitude_valid);
+    EXPECT_EQ(own.msl_altitude_ft, 1000);
+    EXPECT_FALSE(own.geometric_altitude_valid);
     EXPECT_FALSE(own.baro_altitude_valid);
     EXPECT_TRUE(own.airborne);
+    // Tracked aircraft: RxPosition's altitudes have no validity flags, so none until the aircraft's own are set.
     rx.source = SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;
     rx.speed_kts = 10;
     ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true));
-    EXPECT_FALSE(own.gnss_altitude_valid);
+    EXPECT_FALSE(own.msl_altitude_valid);
+    EXPECT_FALSE(own.geometric_altitude_valid);
+    EXPECT_FALSE(own.baro_altitude_valid);
+    EXPECT_FALSE(own.airborne);
+    ModeSAircraft ac(0xBEE001);
+    ac.WriteBitFlag(ModeSAircraft::kBitFlagBaroAltitudeValid, true);
+    ac.baro_altitude_ft = 1200;
+    ac.gnss_altitude_ft = 1325;  // Not valid yet.
+    FLARMNMEAReporter::OwnshipAltitudesFromAircraft(own, ac);
     EXPECT_TRUE(own.baro_altitude_valid);
     EXPECT_EQ(own.baro_altitude_ft, 1200);
-    EXPECT_FALSE(own.airborne);
+    EXPECT_FALSE(own.geometric_altitude_valid);
+    ac.WriteBitFlag(ModeSAircraft::kBitFlagGNSSAltitudeValid, true);
+    FLARMNMEAReporter::OwnshipAltitudesFromAircraft(own, ac);
+    EXPECT_TRUE(own.geometric_altitude_valid);
+    EXPECT_EQ(own.geometric_altitude_ft, 1325);
 }
 
 TEST(FLARMNMEA, TargetFromModeSAircraft) {
@@ -273,7 +325,9 @@ TEST(FLARMNMEA, TargetFromModeSAircraft) {
     EXPECT_EQ(t.source, FLARMNMEAReporter::kSourceTISB);
     EXPECT_EQ(t.type, FLARMNMEAReporter::kAircraftTypeGlider);
     EXPECT_TRUE(t.baro_altitude_valid);
-    EXPECT_FALSE(t.gnss_altitude_valid);
+    EXPECT_FALSE(t.geometric_altitude_valid);
+    EXPECT_EQ(t.lat_awb, FloatDegToAWB(37.45f));
+    EXPECT_EQ(t.lon_awb, FloatDegToAWB(-122.0f));
     EXPECT_TRUE(t.vertical_rate_valid);
     EXPECT_EQ(t.vertical_rate_fpm, 500);
     EXPECT_FALSE(t.track_valid);

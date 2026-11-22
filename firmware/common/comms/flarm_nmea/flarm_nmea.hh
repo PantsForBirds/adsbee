@@ -4,6 +4,7 @@
 
 #include "adsb_types.hh"
 #include "aircraft_dictionary.hh"
+#include "geo_utils.hh"
 #include "settings.hh"
 
 /**
@@ -13,6 +14,16 @@
  * ADSBee transmits no FLARM and computes no collision alarms: PFLAU reports TX 0 and alarm level 0, and every PFLAA has
  * alarm level 0. PFLAA positions are relative to ownship, so traffic is sent only while ownship is known (GNSS fix, or
  * the tracked aircraft that matches the configured ICAO address; see GDL90Reporter::IsValidOwnshipSource).
+ *
+ * PFLAA vertical separation never mixes altitude references: baro against baro, else geometric against geometric. ADS-B
+ * and Remote ID geometric altitudes are heights above the WGS-84 ellipsoid (HAE); a GNSS receiver's altitude is above
+ * mean sea level, which differs from HAE by the local geoid height (up to about 100 m), so it is not compared with
+ * them. Baro and geometric altitudes differ by the weather and temperature, so they are compared only through a
+ * measured difference: ADS-B airborne velocity messages carry each aircraft's GNSS minus baro difference, from which
+ * the dictionary derives its geometric altitude. A target with no altitude in ownship's references gets no PFLAA
+ * (FTD-012 defines no "unknown" RelativeVertical, and XCSoar drops a PFLAA without one); it is still counted in PFLAU.
+ *
+ * All arithmetic is integer (positions in AWB, see geo_utils.hh), so it costs the same on the ESP32 and the RP2040.
  *
  * Writers return the sentence length including "$", "*hh" and CR LF, or 0 if nothing was written.
  */
@@ -51,10 +62,11 @@ class FLARMNMEAReporter {
     };
 
     struct Ownship {
-        double latitude_deg = 0;
-        double longitude_deg = 0;
-        bool gnss_altitude_valid = false;
-        int32_t gnss_altitude_ft = 0;  // Mean sea level.
+        GeoReference position;  // Latitude and longitude in AWB, with the trig that every target's Relative() reuses.
+        bool msl_altitude_valid = false;
+        int32_t msl_altitude_ft = 0;  // GNSS altitude above mean sea level, for GPGGA.
+        bool geometric_altitude_valid = false;
+        int32_t geometric_altitude_ft = 0;  // Height above the WGS-84 ellipsoid.
         bool baro_altitude_valid = false;
         int32_t baro_altitude_ft = 0;
         float track_deg = 0;
@@ -65,10 +77,10 @@ class FLARMNMEAReporter {
     struct Target {
         uint32_t id = 0;  // 24 bits.
         IDType id_type = kIDTypeICAO;
-        double latitude_deg = 0;
-        double longitude_deg = 0;
-        bool gnss_altitude_valid = false;
-        int32_t gnss_altitude_ft = 0;
+        uint32_t lat_awb = 0;
+        uint32_t lon_awb = 0;
+        bool geometric_altitude_valid = false;
+        int32_t geometric_altitude_ft = 0;  // Height above the WGS-84 ellipsoid.
         bool baro_altitude_valid = false;
         int32_t baro_altitude_ft = 0;
         bool track_valid = false;
@@ -84,12 +96,26 @@ class FLARMNMEAReporter {
         int16_t rssi_dbm = 0;
     };
 
+    // Ownship-relative position of a target, in meters.
+    struct RelativePosition {
+        int32_t north_m = 0;
+        int32_t east_m = 0;
+        int32_t vertical_m = 0;   // Above ownship.
+        uint32_t distance_m = 0;  // Horizontal, along the surface.
+    };
+
     /**
-     * Ownship from the receiver position.
+     * Ownship from the receiver position. A GNSS fix gives the mean sea level altitude (GPGGA) and no altitude to
+     * compare traffic with. For the tracked aircraft with the configured ICAO address, RxPosition carries altitudes
+     * without validity flags: they are left invalid, and OwnshipAltitudesFromAircraft() sets them from the aircraft.
      * @retval False if the position isn't this aircraft's own (GDL90Reporter::IsValidOwnshipSource) or unavailable.
      */
     static bool OwnshipFromRxPosition(Ownship& own, const SettingsManager::RxPosition& rx_position,
                                       bool rx_position_available);
+
+    // Baro and geometric altitudes of the tracked aircraft that is ownship, as valid as the aircraft has them.
+    static void OwnshipAltitudesFromAircraft(Ownship& own, const ModeSAircraft& aircraft);
+    static void OwnshipAltitudesFromAircraft(Ownship& own, const UATAircraft& aircraft);
 
     /**
      * PFLAA targets from dictionary entries.
@@ -100,13 +126,11 @@ class FLARMNMEAReporter {
     static bool TargetFromAircraft(Target& target, const RemoteIDAircraft& aircraft);
 
     /**
-     * Ownship-relative position. Vertical separation uses baro against baro, else GNSS against GNSS (ADS-B geometric
-     * altitude is height above the ellipsoid, ownship GNSS is above mean sea level: off by the local geoid separation),
-     * else target baro against ownship GNSS.
-     * @retval False without a common altitude reference, or beyond the PFLAA range.
+     * Ownship-relative position: north and east from CalculateNorthEastMeters() (within 0.65 m of the WGS-84 geodesic
+     * up to 20 km), vertical baro against baro, else geometric against geometric (see the class comment).
+     * @retval False without an altitude in a reference ownship has, or beyond the PFLAA range.
      */
-    static bool Relative(const Ownship& own, const Target& target, int32_t& north_m, int32_t& east_m,
-                         int32_t& vertical_m);
+    static bool Relative(const Ownship& own, const Target& target, RelativePosition& relative);
 
     // FLARM aircraft type for an ADS-B emitter category.
     static AircraftType AircraftTypeFromEmitterCategory(ADSBTypes::EmitterCategory category);
@@ -121,7 +145,8 @@ class FLARMNMEAReporter {
     static uint16_t WritePFLAA(char* buf, uint16_t buf_len, const Ownship& own, const Target& target);
     // 0 without a valid UTC time.
     static uint16_t WriteGPRMC(char* buf, uint16_t buf_len, const Ownship& own, const UTCTime& utc);
-    // Fix quality 1. Satellites, HDOP and geoid separation empty. 0 without a valid UTC time.
+    // Fix quality 1. Satellites, HDOP and geoid separation empty; altitude only with an MSL altitude. 0 without a
+    // valid UTC time.
     static uint16_t WriteGPGGA(char* buf, uint16_t buf_len, const Ownship& own, const UTCTime& utc);
     // Barometric altitude in feet. 0 without an ownship baro altitude.
     static uint16_t WritePGRMZ(char* buf, uint16_t buf_len, const Ownship& own);
@@ -130,6 +155,8 @@ class FLARMNMEAReporter {
     // Position, altitudes, track, speed, vertical rate, type and signal, shared by Mode S and UAT aircraft.
     template <typename T>
     static void FillMotion(Target& target, const T& aircraft);
+    template <typename T>
+    static void FillOwnshipAltitudes(Ownship& own, const T& aircraft);
     // Appends "*hh\r\n" to the sentence body in buf, which starts with '$'.
     static uint16_t Finish(char* buf, uint16_t buf_len, int body_len);
 };

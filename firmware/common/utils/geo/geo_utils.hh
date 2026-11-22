@@ -52,6 +52,28 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
                                  uint16_t &bearing_bam16);
 
 /**
+ * Position of a point relative to a reference point, in meters along true north and east: the distance along the
+ * surface split by the initial bearing (an azimuthal equidistant projection centered on the reference, which keeps
+ * every distance from it true). Same distance as CalculateDistanceAndBearing, with the bearing at full resolution; up
+ * to 20 km from the reference, at any latitude, each component is within 0.65 m of the same split of the WGS-84
+ * geodesic (0.5 m of it is the rounding to whole meters).
+ * @param[in] ref Reference point.
+ * @param[in] lat_awb Latitude of the other point, in AWB.
+ * @param[in] lon_awb Longitude of the other point, in AWB.
+ * @param[out] north_m Meters north of the reference, negative to the south.
+ * @param[out] east_m Meters east of the reference, negative to the west.
+ * @param[out] distance_m Distance along the surface, in meters.
+ */
+void CalculateNorthEastMeters(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, int32_t &north_m,
+                              int32_t &east_m, uint32_t &distance_m);
+
+/**
+ * An angle in float degrees as AWB, exactly (to 1 AWB, 8e-8 deg) and without floating point arithmetic: negative
+ * angles wrap, so it serves latitudes and longitudes alike.
+ */
+uint32_t FloatDegToAWB(float deg);
+
+/**
  * Distance from a reference point to another point, in meters. Same accuracy as CalculateDistanceAndBearing.
  */
 uint32_t CalculateDistanceMeters(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb);

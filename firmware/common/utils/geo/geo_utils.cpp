@@ -1,5 +1,7 @@
 #include "geo_utils.hh"
 
+#include <cstring>  // memcpy
+
 #include "awb_utils.h"
 #include "fixedmath/fixed_math.hpp"
 #include "macros.hh"
@@ -102,6 +104,7 @@ inline int32_t Shift(int32_t v, int shift) { return shift >= 0 ? v * (1 << shift
 constexpr int32_t kSemiMajorAxisMeters = 6378137;
 constexpr int32_t kMeridianRadiusEquatorMeters = 6335439;  // a (1 - e^2).
 constexpr int32_t kEccentricitySquaredQ30 = 7188036;
+constexpr int32_t kSecondEccentricitySquaredQ30 = 7236480;  // e^2 / (1 - e^2).
 constexpr uint32_t kHalfMeridianMeters = 20003931;  // Pole to pole.
 constexpr uint32_t kTwoPiQ28 = 1686629713;  // 2 * pi in Q28.
 
@@ -141,8 +144,17 @@ void GeoReference::Set(uint32_t lat_awb_in, uint32_t lon_awb_in) {
     SinCosQ30(lat_awb, sin_lat_q30, cos_lat_q30);
 }
 
-void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, uint32_t &distance_m,
-                                 uint16_t &bearing_bam16) {
+namespace {
+
+/**
+ * CalculateDistanceAndBearing with the bearing at full AWB resolution.
+ * @param[in] ellipsoidal_bearing False: the azimuth on a sphere through both geodetic latitudes, as
+ *            CalculateDistanceAndBearing has always returned (up to 0.2 deg off the ellipsoid's). True: corrected for
+ *            the ellipsoid's shape near the reference (east scaled by N / M against north), to 0.001 deg up to 20 km.
+ * @param[out] distance_q37_m Distance in 2^-37 m, unrounded, so each caller rounds once.
+ */
+void DistanceAndBearingAWB(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, uint64_t &distance_q37_m,
+                           uint32_t &bearing_awb_out, bool ellipsoidal_bearing) {
     // Point B in the reference's east-north-up frame on a unit sphere. Written with half-angle sines so nearby points
     // don't lose precision to cancellation. Signed differences wrap across the antimeridian.
     int32_t dlat = static_cast<int32_t>(lat_awb - ref.lat_awb);
@@ -163,8 +175,8 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
                                       2u * static_cast<uint32_t>(MulQ30(ref.cos_lat_q30, half_t)));
 
     if (east == 0 && north == 0) {
-        distance_m = up > 0 ? 0 : kHalfMeridianMeters;  // Same point or antipode.
-        bearing_bam16 = 0;
+        distance_q37_m = up > 0 ? 0 : static_cast<uint64_t>(kHalfMeridianMeters) << 37;  // Same point or antipode.
+        bearing_awb_out = 0;
         return;
     }
 
@@ -177,9 +189,19 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
         y = -y;
         bearing_awb = 0x80000000u;
     }
+    const uint32_t half_turn = bearing_awb;
     int32_t north_n = x, east_n = y;  // Normalized, for the direction's share of north-south below.
     bearing_awb += CordicAtan2(x, y);
-    bearing_bam16 = static_cast<uint16_t>((bearing_awb + 0x8000u) >> 16);
+    bearing_awb_out = bearing_awb;
+    int32_t sin_mid_lat = MulQ30(ref.sin_lat_q30, cos_half_dlat) + MulQ30(ref.cos_lat_q30, sin_half_dlat);
+    if (ellipsoidal_bearing) {
+        // A meter east spans N / M = 1 + e'^2 cos^2(lat) times the angle of a meter north (prime vertical over meridian
+        // radius of curvature), which the sphere above leaves out. The scaled vector stays below 2^28.5, so CORDIC's
+        // gain keeps it below 2^30.
+        int32_t cos2_mid_lat = kQ30One - MulQ30(sin_mid_lat, sin_mid_lat);
+        int32_t xe = north_n, ye = MulQ30(east_n, kQ30One + MulQ30(kSecondEccentricitySquaredQ30, cos2_mid_lat));
+        bearing_awb_out = half_turn + CordicAtan2(xe, ye);
+    }
 
     // Central angle = atan2(horizontal, up), with both scaled by the CORDIC gain and kept below 2^30.
     int32_t horizontal = Shift(x, -shift - 1);  // gain * |(north, east)|, Q29.
@@ -199,7 +221,6 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
 
     // Radius of curvature in the direction of travel at the mid latitude: N - (N - M) cos^2(bearing), where M (meridian)
     // and N (prime vertical) come from a second order series in w = e^2 sin^2(mid latitude).
-    int32_t sin_mid_lat = MulQ30(ref.sin_lat_q30, cos_half_dlat) + MulQ30(ref.cos_lat_q30, sin_half_dlat);
     int32_t w = MulQ30(MulQ30(sin_mid_lat, sin_mid_lat), kEccentricitySquaredQ30);  // < 2^23
     int32_t w_m = MulQ30(w, kSemiMajorAxisMeters);                                     // a w, meters (< 43 km).
     int32_t w2_m = MulQ30(w, w_m);                                                     // a w^2, meters.
@@ -213,7 +234,47 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
 
     // distance = central angle (rad) * radius = central_angle_awb * 2 pi / 2^32 * radius.
     uint32_t radius_2pi_q5 = static_cast<uint32_t>((static_cast<uint64_t>(radius_m) * kTwoPiQ28) >> 23);  // < 2^31
-    distance_m = static_cast<uint32_t>((static_cast<uint64_t>(central_angle_awb) * radius_2pi_q5 + (1ull << 36)) >> 37);
+    distance_q37_m = static_cast<uint64_t>(central_angle_awb) * radius_2pi_q5;
+}
+
+}  // namespace
+
+void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, uint32_t &distance_m,
+                                 uint16_t &bearing_bam16) {
+    uint64_t distance_q37_m;
+    uint32_t bearing_awb;
+    DistanceAndBearingAWB(ref, lat_awb, lon_awb, distance_q37_m, bearing_awb, false);
+    distance_m = static_cast<uint32_t>((distance_q37_m + (1ull << 36)) >> 37);
+    bearing_bam16 = static_cast<uint16_t>((bearing_awb + 0x8000u) >> 16);
+}
+
+void CalculateNorthEastMeters(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, int32_t &north_m,
+                              int32_t &east_m, uint32_t &distance_m) {
+    uint64_t distance_q37_m;
+    uint32_t bearing_awb;
+    DistanceAndBearingAWB(ref, lat_awb, lon_awb, distance_q37_m, bearing_awb, true);
+    distance_m = static_cast<uint32_t>((distance_q37_m + (1ull << 36)) >> 37);
+    // 1/16 m keeps the product with a Q30 sine below 2^63.
+    const int64_t distance_q4_m = static_cast<int64_t>((distance_q37_m + (1ull << 32)) >> 33);
+    int32_t sin_q30, cos_q30;
+    SinCosQ30(bearing_awb, sin_q30, cos_q30);
+    // Arithmetic shifts round halves up for both signs: each component is rounded once, to 0.5 m.
+    north_m = static_cast<int32_t>((distance_q4_m * cos_q30 + (1ll << 33)) >> 34);
+    east_m = static_cast<int32_t>((distance_q4_m * sin_q30 + (1ll << 33)) >> 34);
+}
+
+uint32_t FloatDegToAWB(float deg) {
+    uint32_t bits;
+    memcpy(&bits, &deg, sizeof(bits));
+    const int exponent = static_cast<int>((bits >> 23) & 0xFFu);
+    if (exponent == 0 || exponent == 0xFF) return 0;  // Zero, subnormal (< 1e-38 deg), infinity or NaN.
+    // |deg| = mantissa 2^(exponent - 150), so deg 2^32 / 360 = mantissa (2^40 / 360) 2^(exponent - 158).
+    const uint64_t mantissa = (bits & 0x7FFFFFu) | 0x800000u;
+    const int shift = 158 - exponent;
+    constexpr uint64_t kAWBPerDegQ8 = 3054198966u;  // 2^40 / 360, rounded down (by 0.04, 1.3e-11 of itself).
+    if (shift <= 0 || shift >= 64) return 0;  // |deg| >= 2^31 (not an angle) or below 1e-9 AWB.
+    const uint32_t awb = static_cast<uint32_t>((mantissa * kAWBPerDegQ8 + (1ull << (shift - 1))) >> shift);
+    return (bits >> 31) ? 0u - awb : awb;
 }
 
 uint32_t CalculateDistanceMeters(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb) {

@@ -661,11 +661,25 @@ void ADSBeeServer::ReportFLARMNMEA() {
     FLARMNMEAReporter::Ownship own;
     const bool have_ownship =
         FLARMNMEAReporter::OwnshipFromRxPosition(own, rp2040_status.rx_position, rp2040_status.rx_position_available);
-    // Our own ADS-B, when ownship comes from it.
+    // Our own ADS-B, when ownship comes from it. Its altitudes come from its entry, which says which are valid.
     const uint32_t ownship_icao =
         have_ownship && rp2040_status.rx_position.source == SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO
             ? rp2040_status.rx_position.icao_address
             : UINT32_MAX;
+    if (ownship_icao != UINT32_MAX) {
+        // The entry the RP2040 took the position from: the most recently heard of Mode S and UAT.
+        const ModeSAircraft* mode_s = aircraft_dictionary.GetAircraftPtr<ModeSAircraft>(
+            Aircraft::ICAOToUID(ownship_icao, Aircraft::kAircraftTypeModeS), false);
+        const UATAircraft* uat = aircraft_dictionary.GetAircraftPtr<UATAircraft>(
+            Aircraft::ICAOToUID(ownship_icao, Aircraft::kAircraftTypeUAT), false);
+        if (mode_s && !mode_s->HasBitFlag(ModeSAircraft::kBitFlagPositionValid)) mode_s = nullptr;
+        if (uat && !uat->HasBitFlag(UATAircraft::kBitFlagPositionValid)) uat = nullptr;
+        if (mode_s && (!uat || mode_s->last_message_timestamp_ms >= uat->last_message_timestamp_ms)) {
+            FLARMNMEAReporter::OwnshipAltitudesFromAircraft(own, *mode_s);
+        } else if (uat) {
+            FLARMNMEAReporter::OwnshipAltitudesFromAircraft(own, *uat);
+        }
+    }
 
     // Reported aircraft, nearest first. Without ownship they are only counted for PFLAU.
     if (have_ownship && flarm_traffic_ == nullptr) {
@@ -688,15 +702,12 @@ void ADSBeeServer::ReportFLARMNMEA() {
             continue;
         }
         num_received++;
-        int32_t north_m, east_m, vertical_m;
+        FLARMNMEAReporter::RelativePosition relative;
         if (traffic == nullptr || num_traffic >= AircraftDictionary::kMaxNumAircraft ||
-            !FLARMNMEAReporter::Relative(own, target, north_m, east_m, vertical_m)) {
+            !FLARMNMEAReporter::Relative(own, target, relative)) {
             continue;
         }
-        traffic[num_traffic++] = {
-            .distance_m = static_cast<uint32_t>(sqrt(static_cast<double>(north_m) * north_m +
-                                                     static_cast<double>(east_m) * east_m)),
-            .entry = &itr.second};
+        traffic[num_traffic++] = {.distance_m = relative.distance_m, .entry = &itr.second};
     }
     if (traffic != nullptr) {
         std::sort(traffic, traffic + num_traffic,
