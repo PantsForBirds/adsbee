@@ -626,9 +626,8 @@ bool ADSBeeServer::ReportGDL90() {
     return true;
 }
 
-namespace {
 // UTC for GPRMC / GPGGA: GNSS time of day, else the ESP32 clock once NTP has set it. The date comes from the clock.
-FLARMNMEAReporter::UTCTime FLARMNMEAUTCTime(const ObjectDictionary::RP2040DeviceStatus& rp2040_status) {
+static FLARMNMEAReporter::UTCTime FLARMNMEAUTCTime(const ObjectDictionary::RP2040DeviceStatus& rp2040_status) {
     FLARMNMEAReporter::UTCTime utc;
     struct timeval tv;
     struct tm tm_utc;
@@ -655,7 +654,6 @@ FLARMNMEAReporter::UTCTime FLARMNMEAUTCTime(const ObjectDictionary::RP2040Device
     }
     return utc;
 }
-}  // namespace
 
 void ADSBeeServer::ReportFLARMNMEA() {
     ble_output.BeginReport();
