@@ -33,10 +33,7 @@ bool CommsManager::Init() {
     uart_set_translate_crlf(config_.comms_uart_handle, false);
     uart_init(config_.comms_uart_handle, SettingsManager::Settings::kDefaultCommsUARTBaudrate);
 
-    gpio_set_function(config_.gnss_uart_tx_pin, GPIO_FUNC_UART);
-    gpio_set_function(config_.gnss_uart_rx_pin, GPIO_FUNC_UART);
-    uart_set_translate_crlf(config_.gnss_uart_handle, false);
-    uart_init(config_.gnss_uart_handle, SettingsManager::Settings::kDefaultGNSSUARTBaudrate);
+    InitGNSSUART();
 
     for (UARTTx& uart : uart_tx_) {
         // TX interrupt when the FIFO drops to 4 bytes, so each one refills most of it.
@@ -54,6 +51,13 @@ bool CommsManager::Init() {
     stdio_set_translate_crlf(&stdio_usb, false);
 
     return true;
+}
+
+void CommsManager::InitGNSSUART() {
+    gpio_set_function(config_.gnss_uart_tx_pin, GPIO_FUNC_UART);
+    gpio_set_function(config_.gnss_uart_rx_pin, GPIO_FUNC_UART);
+    uart_set_translate_crlf(config_.gnss_uart_handle, false);
+    uart_init(config_.gnss_uart_handle, settings_manager.settings.baud_rates[SettingsManager::kGNSSUART]);
 }
 
 bool CommsManager::Update() {

@@ -61,6 +61,12 @@ class CommsManager {
     bool Init();
 
     /**
+     * Brings up the GNSS UART at its configured baud rate. Also needed after an ESP32 flash, which uses the same UART
+     * peripheral; a GNSS receiver re-initializes it again when it resumes.
+     */
+    void InitGNSSUART();
+
+    /**
      * Update the CommsManager. Runs all the update subroutines required for normal operation.
      * @retval True if update succeeded, false otherwise.
      */
