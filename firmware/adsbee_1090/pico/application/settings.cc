@@ -158,10 +158,9 @@ void SettingsManager::CollectLiveSettings() {
     settings.rx_position = adsbee.rx_position;
 
     // Save reporting protocols.
-    comms_manager.GetReportingProtocol(SerialInterface::kCommsUART,
-                                       settings.reporting_protocols[SerialInterface::kCommsUART]);
-    comms_manager.GetReportingProtocol(SerialInterface::kConsole,
-                                       settings.reporting_protocols[SerialInterface::kConsole]);
+    for (uint16_t i = 0; i < SerialInterface::kNumSerialInterfaces; i++) {
+        comms_manager.GetReportingProtocol(static_cast<SerialInterface>(i), settings.reporting_protocols[i]);
+    }
 
     // Save baud rates.
     comms_manager.GetBaudRate(SerialInterface::kCommsUART,
@@ -259,10 +258,9 @@ bool SettingsManager::Apply() {
     adsbee.rx_position = settings.rx_position;
 
     // Apply reporting protocols.
-    comms_manager.SetReportingProtocol(SerialInterface::kCommsUART,
-                                       settings.reporting_protocols[SerialInterface::kCommsUART]);
-    comms_manager.SetReportingProtocol(SerialInterface::kConsole,
-                                       settings.reporting_protocols[SerialInterface::kConsole]);
+    for (uint16_t i = 0; i < SerialInterface::kNumSerialInterfaces; i++) {
+        comms_manager.SetReportingProtocol(static_cast<SerialInterface>(i), settings.reporting_protocols[i]);
+    }
 
     // Apply baud rates.
     comms_manager.SetBaudRate(SerialInterface::kCommsUART,

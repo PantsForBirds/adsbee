@@ -39,9 +39,10 @@ static bool SanitizeString(char* str, size_t size, const char* name, int index =
 }
 
 bool SettingsManager::ProtocolInUse(const Settings& settings, ReportingProtocol protocol) {
-    if (settings.reporting_protocols[SerialInterface::kConsole] == protocol ||
-        settings.reporting_protocols[SerialInterface::kCommsUART] == protocol) {
-        return true;
+    for (uint16_t i = 0; i < SerialInterface::kNumSerialInterfaces; i++) {
+        if (settings.reporting_protocols[i] == protocol) {
+            return true;
+        }
     }
     if (!settings.feeds_enabled) {
         return false;
@@ -355,8 +356,7 @@ void SettingsManager::Print() {
         snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len, "\tReporting Protocols:\r\n");
     CONSOLE_PRINTF("%s", print_buf);
     print_buf_len = 0;
-    for (uint16_t i = 0; i < SerialInterface::kGNSSUART; i++) {
-        // Only report protocols for CONSOLE and COMMS_UART.
+    for (uint16_t i = 0; i < SerialInterface::kNumSerialInterfaces; i++) {
         print_buf_len += snprintf(print_buf + print_buf_len, sizeof(print_buf) - print_buf_len, "\t\t%s: %s\r\n",
                                   kSerialInterfaceStrs[i], kReportingProtocolStrs[settings.reporting_protocols[i]]);
     }
@@ -503,7 +503,7 @@ void SettingsManager::PrintAT() {
     CONSOLE_PRINTF("AT+LOG_LEVEL=%s\r\n", kConsoleLogLevelStrs[settings.log_level]);
 
     // AT+PROTOCOL_OUT
-    for (uint16_t i = 0; i < SerialInterface::kGNSSUART; i++) {
+    for (uint16_t i = 0; i < SerialInterface::kNumSerialInterfaces; i++) {
         CONSOLE_PRINTF("AT+PROTOCOL_OUT=%s,%s\r\n", kSerialInterfaceStrs[i],
                        kReportingProtocolStrs[settings.reporting_protocols[i]]);
     }
