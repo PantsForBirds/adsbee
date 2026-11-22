@@ -44,16 +44,23 @@ SkyDemon, SeeYou Navigator and Enroute read Bluetooth traffic as FLARM NMEA: use
 | `GPRMC`, `GPGGA` | Ownship known and UTC time known (GNSS, or NTP) | Ownship position, speed, track; GNSS altitude (mean sea level) |
 | `PGRMZ` | Ownship from its own ADS-B | Ownship pressure altitude |
 | `PFLAU` | Always | Heartbeat: number of aircraft received, GPS state. `TX` is 0 and there are no alarms |
-| `PFLAA` | Ownship known | One per aircraft, nearest first: position relative to ownship, track, speed, climb, aircraft type, source (ADS-B, ADS-R, TIS-B), signal strength |
+| `PFLAA` | Ownship known, aircraft altitude comparable (below) | One per aircraft, nearest first: position relative to ownship, track, speed, climb, aircraft type, source (ADS-B, ADS-R, TIS-B), signal strength |
 
 FLARM positions are relative to ownship, so traffic needs ownship from `AT+RX_POSITION` source `GNSS` (a GNSS fix) or
 `ICAO` (the tracked aircraft with your own ICAO address). A fixed position or the lowest aircraft is not ownship.
 Without ownship only `PFLAU` goes out, with GPS 0; apps show the device as connected without GPS.
 
-Vertical separation uses pressure altitude against pressure altitude when ownship has one (`ICAO`), else GNSS
-altitude. ADS-B GNSS altitude is above the WGS84 ellipsoid and a GNSS fix is above mean sea level, so with a GNSS
-ownship it is off by the local geoid separation (typically under 50 m). Aircraft with no altitude, and Remote ID
-drones with an `ICAO` ownship, are counted but not sent.
+Vertical separation only compares altitudes with the same reference: pressure altitude against pressure altitude,
+else geometric (GNSS) altitude against geometric altitude. Pressure and GNSS altitudes differ with the weather, so
+they are never subtracted from each other. An `ICAO` ownship has its own pressure altitude and, once its ADS-B
+velocity messages have given its GNSS minus pressure difference, a geometric one too; so has most traffic. A GNSS
+fix gives an altitude above mean sea level, while ADS-B and Remote ID geometric altitudes are above the WGS84
+ellipsoid (they differ by the local geoid height, up to about 100 m), so a `GNSS` ownship has no altitude to compare
+traffic with yet and sends no `PFLAA`. Aircraft without an altitude in one of ownship's references are counted in
+`PFLAU` but get no `PFLAA` (FTD-012 has no "unknown" vertical, and XCSoar drops a `PFLAA` without one).
+
+Horizontal positions are the distance along the WGS84 ellipsoid split into north and east by the direction from
+ownship, within 1 m of the exact geodesic out to 20 km, and computed in integer arithmetic.
 
 ADSBee receives only: it doesn't transmit FLARM and computes no collision alarms. Every alarm level is 0 and `PFLAU`
 reports `TX` 0, which some apps show as "No FLARM transmission".
