@@ -632,9 +632,10 @@ FLARMNMEAReporter::UTCTime FLARMNMEAUTCTime(const ObjectDictionary::RP2040Device
     FLARMNMEAReporter::UTCTime utc;
     struct timeval tv;
     struct tm tm_utc;
-    // Before NTP the clock counts from 1970.
-    const bool clock_set =
-        gettimeofday(&tv, nullptr) == 0 && gmtime_r(&tv.tv_sec, &tm_utc) != nullptr && tm_utc.tm_year + 1900 >= 2025;
+    // The clock holds UTC only once SNTP has synced (it runs while an output uses ASTERIX).
+    NetworkTime::Status sntp;
+    network_time.GetStatus(sntp);
+    const bool clock_set = sntp.synced && gettimeofday(&tv, nullptr) == 0 && gmtime_r(&tv.tv_sec, &tm_utc) != nullptr;
     if (clock_set) {
         utc.date_valid = true;
         utc.year = static_cast<uint16_t>(tm_utc.tm_year + 1900);
@@ -669,11 +670,10 @@ void ADSBeeServer::ReportFLARMNMEA() {
             : UINT32_MAX;
 
     // Reported aircraft, nearest first. Without ownship they are only counted for PFLAU.
-    struct TrafficRef {
-        uint32_t distance_m;
-        const AircraftDictionary::AircraftEntry* entry;
-    };
-    TrafficRef* traffic = have_ownship ? new (std::nothrow) TrafficRef[AircraftDictionary::kMaxNumAircraft] : nullptr;
+    if (have_ownship && flarm_traffic_ == nullptr) {
+        flarm_traffic_ = new (std::nothrow) FLARMTrafficRef[AircraftDictionary::kMaxNumAircraft];
+    }
+    FLARMTrafficRef* traffic = have_ownship ? flarm_traffic_ : nullptr;
     uint16_t num_traffic = 0;
     uint16_t num_received = 0;
     const uint32_t timestamp_ms = get_time_since_boot_ms();
@@ -702,7 +702,7 @@ void ADSBeeServer::ReportFLARMNMEA() {
     }
     if (traffic != nullptr) {
         std::sort(traffic, traffic + num_traffic,
-                  [](const TrafficRef& a, const TrafficRef& b) { return a.distance_m < b.distance_m; });
+                  [](const FLARMTrafficRef& a, const FLARMTrafficRef& b) { return a.distance_m < b.distance_m; });
     }
 
     char sentence[FLARMNMEAReporter::kMaxSentenceLenBytes + 1];
@@ -725,7 +725,6 @@ void ADSBeeServer::ReportFLARMNMEA() {
                    *traffic[i].entry);
         if (!send(FLARMNMEAReporter::WritePFLAA(sentence, sizeof(sentence), own, target))) break;  // Queue full.
     }
-    delete[] traffic;
 }
 
 bool ADSBeeServer::ReportGDL90UplinkDataMessage(const DecodedUATUplinkPacket& uplink_packet) {

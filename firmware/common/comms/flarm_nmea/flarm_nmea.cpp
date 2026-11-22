@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>  // labs
 
 #include "gdl90_utils.hh"
 
