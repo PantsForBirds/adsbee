@@ -101,6 +101,7 @@ class CommsManager {
     CPP_AT_CALLBACK(ATRemoteIDTxCallback);
     CPP_AT_CALLBACK(ATGNSSCallback);
     CPP_AT_CALLBACK(ATGNSSFixCallback);
+    CPP_AT_CALLBACK(ATTimePingCallback);
     CPP_AT_CALLBACK(ATHostnameCallback);
     CPP_AT_CALLBACK(ATIPModeCallback);
     CPP_AT_CALLBACK(ATEthernetIPCallback);

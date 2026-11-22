@@ -115,6 +115,8 @@ int main() {
     // (clearing CS.TS_EN). CPUMonitor::Init() must run after adc_init() to re-enable the temperature sensor bias.
     CPUMonitor::Init();
 
+    GNSSReceiver::InstallPPSIRQHandler(bsp.gnss_pps_pin);
+
 #ifdef ISRS_ON_CORE1
     // Launch Core 1 early so that InitISRs() runs on Core 1, putting PIO interrupts on Core 1.
     LaunchCore1();

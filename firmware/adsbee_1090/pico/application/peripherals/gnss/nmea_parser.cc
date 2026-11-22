@@ -52,10 +52,12 @@ bool ParseUTCTime(const char* field, NMEAParser::GNSSFix& fix) {
     if (hour > 23 || minute > 59 || second > 60) return false;
 
     uint16_t millisecond = 0;
+    if (field[6] != '\0' && field[6] != '.') return false;
     if (field[6] == '.') {
+        if (field[7] == '\0') return false;
         uint16_t scale = 100;
-        for (uint8_t i = 7; field[i] != '\0' && scale > 0; i++, scale /= 10) {
-            if (field[i] < '0' || field[i] > '9') break;
+        for (uint16_t i = 7; field[i] != '\0'; i++, scale /= 10) {
+            if (field[i] < '0' || field[i] > '9') return false;
             millisecond += static_cast<uint16_t>(field[i] - '0') * scale;
         }
     }
@@ -68,7 +70,35 @@ bool ParseUTCTime(const char* field, NMEAParser::GNSSFix& fix) {
     return true;
 }
 
+bool ParseUTCDate(const char* field, uint32_t& days_since_epoch) {
+    if (strlen(field) != 6) return false;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (field[i] < '0' || field[i] > '9') return false;
+    }
+    uint8_t day = (field[0] - '0') * 10 + field[1] - '0';
+    uint8_t month = (field[2] - '0') * 10 + field[3] - '0';
+    uint16_t year = (field[4] - '0') * 10 + field[5] - '0';
+    // NMEA's two-digit year is interpreted within the GNSS era, 1980-2079.
+    year += year >= 80 ? 1900 : 2000;
+    auto leap_year = [](uint16_t y) { return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0); };
+    static constexpr uint8_t month_days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month < 1 || month > 12 || day < 1 ||
+        day > month_days[month - 1] + (month == 2 && leap_year(year))) return false;
+    days_since_epoch = 0;
+    for (uint16_t y = 1970; y < year; y++) days_since_epoch += leap_year(y) ? 366 : 365;
+    for (uint8_t m = 1; m < month; m++) days_since_epoch += month_days[m - 1] + (m == 2 && leap_year(year));
+    days_since_epoch += day - 1;
+    return true;
+}
+
 }  // namespace
+
+bool NMEAParser::GetUTCUnixMs(uint64_t now_ms, uint64_t& utc_unix_ms) const {
+    uint64_t age_ms = now_ms - utc_update_timestamp_ms_;
+    if (!utc_valid_ || age_ms >= kUTCStaleTimeoutMs) return false;
+    utc_unix_ms = utc_unix_ms_ + age_ms;
+    return true;
+}
 
 NMEAParser::SentenceType NMEAParser::IngestByte(char c) {
     if (c == '$') {
@@ -190,10 +220,22 @@ NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t
 //   0: address  1: UTC time  2: status (A=valid, V=void)  3: lat  4: N/S  5: lon  6: E/W
 //   7: speed over ground (knots)  8: course over ground (deg)  9: date  ... (trailing fields vary)
 NMEAParser::SentenceType NMEAParser::ParseRMC(const char* const* fields, uint8_t num_fields) {
-    if (num_fields < 10) return kSentenceMalformed;
+    if (num_fields < 10) {
+        utc_valid_ = false;
+        return kSentenceMalformed;
+    }
 
-    bool status_valid = (fields[2][0] == 'A');
-    ParseUTCTime(fields[1], fix_);
+    bool status_valid = strcmp(fields[2], "A") == 0;
+    bool status_known = status_valid || strcmp(fields[2], "V") == 0;
+    bool time_valid = ParseUTCTime(fields[1], fix_);
+    uint32_t days_since_epoch;
+    // POSIX time cannot represent a leap second. Wait for the next ordinary RMC sample.
+    utc_valid_ = status_known && time_valid && fix_.utc_second < 60 && ParseUTCDate(fields[9], days_since_epoch);
+    if (utc_valid_) {
+        utc_unix_ms_ = (static_cast<uint64_t>(days_since_epoch) * 86400 + fix_.utc_hour * 3600 +
+                        fix_.utc_minute * 60 + fix_.utc_second) * 1000 + fix_.utc_millisecond;
+        utc_update_timestamp_ms_ = timestamp_ms_;
+    }
 
     if (fields[7][0] != '\0') {
         fix_.speed_kts = static_cast<int32_t>(strtof(fields[7], nullptr));

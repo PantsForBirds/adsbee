@@ -28,6 +28,7 @@
 #include "static_ip_config.hh"
 #include "spi_coprocessor.hh"  // For init / de-init before and after flashing ESP32.
 #include "gnss_interface.hh"   // For parking/restoring the GNSS UART around ESP32 flashing.
+#include "time_ping.hh"
 
 #ifdef HARDWARE_UNIT_TESTS
 #include "hardware_unit_tests.hh"
@@ -415,6 +416,19 @@ CPP_AT_CALLBACK(CommsManager::ATGNSSCallback) {
         }
     }
     CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
+CPP_AT_CALLBACK(CommsManager::ATTimePingCallback) {
+    if (op != '=' || !CPP_AT_HAS_ARG(0)) CPP_AT_ERROR("Expected AT+TIME_PING=<echo>.");
+    TimePing ping{args[0]};
+    if (gnss) {
+        ping.epoch_valid = gnss->GetUTCUnixMs(ping.epoch_ms);
+        ping.pps_count = gnss->pps_count();
+    }
+    char reply[TimePing::kReplySize];
+    if (!ping.Format(reply)) CPP_AT_ERROR("Echo must contain 1 to 20 decimal digits.");
+    CPP_AT_PRINTF("%s", reply);
+    CPP_AT_SUCCESS();
 }
 
 CPP_AT_CALLBACK(CommsManager::ATGNSSFixCallback) {
@@ -2742,6 +2756,12 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "Type is optional, when not present the last configured type is reused, default is NONE; GNSS cannot be enabled while the saved type is NONE."
                     "\r\n\tAT+GNSS?\r\n\tQuery the GNSS system state, type, and notification setting",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSCallback, comms_manager)},
+    {.command = "TIME_PING",
+     .min_args = 1,
+     .max_args = 1,
+     .help_string = "AT+TIME_PING=<echo>\r\n\tReturn the decimal echo token (1 to 20 digits), UTC Unix milliseconds, "
+                    "and PPS count. UTC uses PPS when available, falls back to fresh RMC, and is empty without UTC.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTimePingCallback, comms_manager)},
     {.command = "GNSS_FIX",
      .min_args = 0,
      .max_args = 0,

@@ -11,13 +11,6 @@ bool GenericGNSSReceiver::Init() {
     comms_manager.SetBaudRate(SettingsManager::kGNSSUART, GetDefaultBaudrate());
     EnableRxInterrupt();
 
-    if (config_.pps_pin != UINT16_MAX) {
-        gpio_init(config_.pps_pin);
-        gpio_set_dir(config_.pps_pin, GPIO_IN);
-        gpio_pull_down(config_.pps_pin);
-        pps_last_level_ = gpio_get(config_.pps_pin);
-    }
-
     // Arm a non-blocking pre-power delay. Update() will assert module power only after the UART,
     // interrupt handler, and ring buffer have remained ready for the full settling interval.
     initializing_ = false;
