@@ -502,6 +502,20 @@ bool ADSBeeServer::ReportGDL90() {
     comms_manager.WiFiAccessPointSendMessageToAllStations(message);
     message.len = 0;
 
+    // Ownship Geometric Altitude, right after the ownship report (GNSS ownship only).
+    GDL90Reporter::GDL90OwnshipGeometricAltitudeData geo_altitude_data;
+    if (GDL90Reporter::BuildOwnshipGeometricAltitudeData(
+            geo_altitude_data, rp2040_status.rx_position, rp2040_status.rx_position_available,
+            rp2040_status.gnss_geoid_separation_valid, rp2040_status.gnss_geoid_separation_m,
+            rp2040_status.gnss_altitude_std_dev_valid
+                ? GDL90Reporter::VFOMFromAltitudeStdDev(rp2040_status.gnss_altitude_std_dev_m)
+                : GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable)) {
+        message.len = gdl90.WriteGDL90OwnshipGeometricAltitudeMessage(
+            message.data, CommsManager::NetworkMessage::kMaxLenBytes, geo_altitude_data);
+        comms_manager.WiFiAccessPointSendMessageToAllStations(message);
+        message.len = 0;
+    }
+
     // Traffic Reports
     int16_t aircraft_index = -1;  // Just used for error reporting.
     uint8_t aircraft_msg_buf[CommsManager::NetworkMessage::kMaxLenBytes];

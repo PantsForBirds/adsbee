@@ -264,9 +264,11 @@ int32_t UbloxMAXM10::SyncConfigDefaults(uint32_t deadline_ms) {
 }
 
 void UbloxMAXM10::ApplyRuntimeMessageConfig(uint8_t layers) {
-    // Factory default for NMEA message output rates is 0 (off); we need GGA + RMC at 1 Hz.
+    // Factory default for NMEA message output rates is 0 (off); we need GGA + RMC at 1 Hz, plus GST for the
+    // altitude error estimate (GDL90 ownship geometric altitude VFOM).
     CfgValSetU1(kCfgMsgoutNmeaGgaUart1, 1, layers);
     CfgValSetU1(kCfgMsgoutNmeaRmcUart1, 1, layers);
+    CfgValSetU1(kCfgMsgoutNmeaGstUart1, 1, layers);
     // Silence the other NMEA sentences we don't consume, to reduce UART traffic.
     CfgValSetU1(kCfgMsgoutNmeaGsaUart1, 0, layers);
     CfgValSetU1(kCfgMsgoutNmeaGsvUart1, 0, layers);

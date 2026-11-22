@@ -143,6 +143,8 @@ bool ESP32::Update() {
 
     // Send the RP2040's status to the ESP32.
     const NMEAParser::GNSSFix& gnss_fix = gnss->fix();
+    float gnss_altitude_std_dev_m = 0.0f;
+    bool gnss_altitude_std_dev_valid = gnss->GetAltitudeStdDevM(gnss_altitude_std_dev_m);
     uint32_t status_timestamp_ms = get_time_since_boot_ms();
     // UTC at the time of this status, so the ESP32 can read it as its current time.
     static constexpr uint32_t kMsPerDay = 86400000;
@@ -173,6 +175,10 @@ bool ESP32::Update() {
                 .gnss_utc_minute = static_cast<uint8_t>(utc_ms_of_day / 60000 % 60),
                 .gnss_utc_second = static_cast<uint8_t>(utc_ms_of_day / 1000 % 60),
                 .gnss_utc_millisecond = static_cast<uint16_t>(utc_ms_of_day % 1000),
+                .gnss_geoid_separation_valid = gnss_fix.geoid_separation_valid,
+                .gnss_geoid_separation_m = gnss_fix.geoid_separation_m,
+                .gnss_altitude_std_dev_valid = gnss_altitude_std_dev_valid,
+                .gnss_altitude_std_dev_m = gnss_altitude_std_dev_m,
                 .noise_floor_mv = static_cast<uint16_t>(adsbee.GetNoiseFloorMilliVolts()),
                 .noise_floor_dbm = static_cast<int16_t>(adsbee.GetNoiseFloordBm()),
                 .r1090_rx_enabled = adsbee.Receiver1090IsEnabled(),

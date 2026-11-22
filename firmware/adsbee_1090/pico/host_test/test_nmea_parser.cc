@@ -41,6 +41,40 @@ TEST(NMEAParser, ParsesGPGGA) {
     EXPECT_EQ(fix.utc_millisecond, 0);
 }
 
+TEST(NMEAParser, ParsesGGAGeoidSeparation) {
+    NMEAParser parser;
+    FeedSentence(parser, "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n");
+    EXPECT_TRUE(parser.fix().geoid_separation_valid);
+    EXPECT_FLOAT_EQ(parser.fix().geoid_separation_m, 46.9f);
+
+    // Negative separation (geoid below the ellipsoid, as over the US), sentence ending after the units field.
+    FeedSentence(parser, "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,10.0,M,-32.5,M*54\r\n");
+    EXPECT_TRUE(parser.fix().geoid_separation_valid);
+    EXPECT_FLOAT_EQ(parser.fix().geoid_separation_m, -32.5f);
+
+    // A receiver without a geoid model leaves the field empty.
+    EXPECT_EQ(FeedSentence(parser, "$GNGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,,M,,*4C\r\n"),
+              NMEAParser::kSentenceGGA);
+    EXPECT_FALSE(parser.fix().geoid_separation_valid);
+    EXPECT_TRUE(parser.fix().valid);
+}
+
+TEST(NMEAParser, ParsesGSTAltitudeError) {
+    NMEAParser parser;
+    parser.SetTimestampMs(2000);
+    EXPECT_EQ(FeedSentence(parser, "$GNGST,123519.00,7.2,4.1,2.9,79.4,3.1,2.4,5.0*74\r\n"), NMEAParser::kSentenceGST);
+    EXPECT_TRUE(parser.fix().altitude_std_dev_valid);
+    EXPECT_FLOAT_EQ(parser.fix().altitude_std_dev_m, 5.0f);
+    EXPECT_EQ(parser.fix().altitude_std_dev_timestamp_ms, 2000u);
+    EXPECT_FALSE(parser.fix().valid);  // GST carries no position.
+
+    // Without a fix the error fields are empty.
+    parser.SetTimestampMs(3000);
+    EXPECT_EQ(FeedSentence(parser, "$GNGST,123519.00,,,,,,,*6A\r\n"), NMEAParser::kSentenceGST);
+    EXPECT_FALSE(parser.fix().altitude_std_dev_valid);
+    EXPECT_EQ(parser.fix().altitude_std_dev_timestamp_ms, 2000u);
+}
+
 TEST(NMEAParser, ParsesGPRMC) {
     NMEAParser parser;
     auto type = FeedSentence(

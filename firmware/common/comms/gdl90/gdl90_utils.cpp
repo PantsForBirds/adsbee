@@ -1,5 +1,7 @@
 #include "gdl90_utils.hh"
 
+#include <cmath>  // For ceilf, lroundf.
+
 #include "comms.hh"
 
 // Initialize static variables.
@@ -266,6 +268,56 @@ bool GDL90Reporter::BuildOwnshipReportData(GDL90TargetReportData& data,
     data.navigation_accuracy_category_position = 8;
     data.SetMiscIndicator(GDL90TargetReportData::kMiscIndicatorTTIsTrueTrackAngle, false,
                           rx_position.speed_kts > kOwnshipAirborneSpeedKts);
+    return true;
+}
+
+uint16_t GDL90Reporter::WriteGDL90OwnshipGeometricAltitudeMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes,
+                                                                  const GDL90OwnshipGeometricAltitudeData& data) {
+    const uint16_t kMessageBufLenBytes = 5;
+    const int32_t kGeoAltitudeResolutionFt = 5;
+    uint8_t message_buf[kMessageBufLenBytes];
+    message_buf[0] = kGDL90MessageIDOwnshipGeometricAltitude;
+    // aa aa: Geometric altitude as a 16-bit signed integer, resolution 5 ft, rounded to the nearest step (half away
+    // from zero) and clamped to the field.
+    int32_t altitude_5ft = (data.geo_altitude_ft >= 0 ? data.geo_altitude_ft + kGeoAltitudeResolutionFt / 2
+                                                      : data.geo_altitude_ft - kGeoAltitudeResolutionFt / 2) /
+                           kGeoAltitudeResolutionFt;
+    altitude_5ft = MAX(INT16_MIN, MIN(INT16_MAX, altitude_5ft));
+    uint16_t altitude_encoded = static_cast<uint16_t>(static_cast<int16_t>(altitude_5ft));
+    message_buf[1] = altitude_encoded >> 8;
+    message_buf[2] = altitude_encoded & 0xFF;
+    // vv vv: Vertical metrics. Bit 15 = vertical warning, bits 14-0 = VFOM in meters.
+    uint16_t vertical_metrics = (data.vertical_warning ? 0x8000 : 0) | (data.vfom_m & 0x7FFF);
+    message_buf[3] = vertical_metrics >> 8;
+    message_buf[4] = vertical_metrics & 0xFF;
+    return WriteGDL90Message(to_buf, to_buf_num_bytes, message_buf, kMessageBufLenBytes);
+}
+
+uint16_t GDL90Reporter::VFOMFromAltitudeStdDev(float std_dev_m) {
+    // Written so NaN fails the comparison.
+    if (!(std_dev_m >= 0.0f)) {
+        return GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable;
+    }
+    float vfom_m = ceilf(std_dev_m * 1.96f);
+    if (vfom_m >= GDL90OwnshipGeometricAltitudeData::kVFOMMaxMeters) {
+        return GDL90OwnshipGeometricAltitudeData::kVFOMMaxMeters;
+    }
+    return static_cast<uint16_t>(vfom_m);
+}
+
+bool GDL90Reporter::BuildOwnshipGeometricAltitudeData(GDL90OwnshipGeometricAltitudeData& data,
+                                                      const SettingsManager::RxPosition& rx_position,
+                                                      bool rx_position_available, bool geoid_separation_valid,
+                                                      float geoid_separation_m, uint16_t vfom_m) {
+    const float kFeetPerMeter = 3.28084f;
+    data = {};
+    if (!rx_position_available || rx_position.source != SettingsManager::RxPosition::kPositionSourceGNSS ||
+        !geoid_separation_valid) {
+        return false;
+    }
+    data.geo_altitude_ft =
+        rx_position.gnss_altitude_ft + static_cast<int32_t>(lroundf(geoid_separation_m * kFeetPerMeter));
+    data.vfom_m = vfom_m;
     return true;
 }
 

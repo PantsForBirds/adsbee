@@ -97,7 +97,8 @@ static constexpr UbloxCfgDefault kUbloxConfigDefaults[] = {
     // {0x209100c0, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSA_UART1 (U1) = 1
     {0x209100d3, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GST_I2C (U1) = 0
     {0x209100d7, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GST_SPI (U1) = 0
-    {0x209100d4, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GST_UART1 (U1) = 0
+    // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.
+    // {0x209100d4, 0x0ULL, 1},  // CFG-MSGOUT-NMEA_ID_GST_UART1 (U1) = 0
     {0x209100c4, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSV_I2C (U1) = 1
     {0x209100c8, 0x1ULL, 1},  // CFG-MSGOUT-NMEA_ID_GSV_SPI (U1) = 1
     // APP OVERRIDE: set by SendInitCommands() right after this sync; syncing it here toggles it every boot.

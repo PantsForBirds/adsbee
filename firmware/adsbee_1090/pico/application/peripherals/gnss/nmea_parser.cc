@@ -155,12 +155,16 @@ NMEAParser::SentenceType NMEAParser::ParseLine() {
     if (strncmp(type, "RMC", 3) == 0) {
         return ParseRMC(fields, num_fields);
     }
+    if (strncmp(type, "GST", 3) == 0) {
+        return ParseGST(fields, num_fields);
+    }
     return kSentenceUnknown;
 }
 
 // GGA field layout (talker-agnostic):
 //   0: address  1: UTC time  2: lat  3: N/S  4: lon  5: E/W  6: fix quality
-//   7: num satellites  8: HDOP  9: altitude (MSL)  10: altitude units (M)  ...
+//   7: num satellites  8: HDOP  9: altitude (MSL)  10: altitude units (M)  11: geoid separation
+//   12: geoid separation units (M)  ...
 NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t num_fields) {
     if (num_fields < 11) return kSentenceMalformed;
 
@@ -172,6 +176,11 @@ NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t
     if (fields[9][0] != '\0') {
         float altitude_m = strtof(fields[9], nullptr);
         fix_.altitude_ft = static_cast<int32_t>(altitude_m * kMetersToFeet);
+    }
+    // An empty field means the receiver does not know the geoid; older receivers end the sentence before it.
+    fix_.geoid_separation_valid = num_fields > 11 && fields[11][0] != '\0';
+    if (fix_.geoid_separation_valid) {
+        fix_.geoid_separation_m = strtof(fields[11], nullptr);
     }
 
     float lat, lon;
@@ -212,4 +221,20 @@ NMEAParser::SentenceType NMEAParser::ParseRMC(const char* const* fields, uint8_t
         fix_.valid = false;
     }
     return kSentenceRMC;
+}
+
+// GST field layout (talker-agnostic):
+//   0: address  1: UTC time  2: RMS of pseudorange residuals  3: error ellipse semi-major (m)
+//   4: semi-minor (m)  5: orientation (deg)  6: latitude error (m)  7: longitude error (m)
+//   8: altitude error (m)  (all 1 sigma)
+NMEAParser::SentenceType NMEAParser::ParseGST(const char* const* fields, uint8_t num_fields) {
+    if (num_fields < 9) return kSentenceMalformed;
+
+    // Empty while the receiver has no fix.
+    fix_.altitude_std_dev_valid = fields[8][0] != '\0';
+    if (fix_.altitude_std_dev_valid) {
+        fix_.altitude_std_dev_m = strtof(fields[8], nullptr);
+        fix_.altitude_std_dev_timestamp_ms = timestamp_ms_;
+    }
+    return kSentenceGST;
 }

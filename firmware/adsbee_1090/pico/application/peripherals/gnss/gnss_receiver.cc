@@ -364,3 +364,13 @@ bool GNSSReceiver::HasValidFix() const {
     if (!f.valid) return false;
     return (get_time_since_boot_ms() - f.last_update_timestamp_ms) < kFixStaleTimeoutMs;
 }
+
+bool GNSSReceiver::GetAltitudeStdDevM(float& std_dev_m) const {
+    const GNSSFix& f = parser_.fix();
+    if (!HasValidFix() || !f.altitude_std_dev_valid ||
+        get_time_since_boot_ms() - f.altitude_std_dev_timestamp_ms >= kFixStaleTimeoutMs) {
+        return false;
+    }
+    std_dev_m = f.altitude_std_dev_m;
+    return true;
+}

@@ -104,13 +104,15 @@ class SettingsManager {
         PositionSource source = kPositionSourceLowestAircraft;
         float latitude_deg = 0.0;      // Degrees, WGS84
         float longitude_deg = 0.0;     // Degrees, WGS84
-        int32_t gnss_altitude_ft = 0;  // Meters, WGS84
-        int32_t baro_altitude_ft = 0;  // Meters, AMSL
-        float heading_deg = 0.0;       // Degrees from true north
+        // Feet. GNSS source: above MSL (GGA altitude). Aircraft sources: the aircraft's geometric altitude, which
+        // ADS-B references to the WGS-84 ellipsoid. Fixed source: as entered.
+        int32_t gnss_altitude_ft = 0;
+        int32_t baro_altitude_ft = 0;  // Feet, pressure altitude (29.92 inHg). A GNSS source leaves it unchanged.
+        float heading_deg = 0.0;       // Degrees from true north (course over ground for a GNSS source)
         int32_t speed_kts = 0;         // Speed over ground in knots
         uint32_t icao_address =
-            0;  // ICAO address to use for position bootstrap when source is kPositionSourceICAO, or the ICAO of the
-                // lowest plane being tracked when source is kPositionSourceLowestAircraft.
+            0;  // ICAO address to use for position bootstrap when source is kPositionSourceAircraftMatchingICAO, or the
+                // ICAO of the lowest plane being tracked when source is kPositionSourceLowestAircraft.
 
         /**
          * Receiver altitude for AT+FILTER_ALTITUDE_FT's near-receiver mode: the GNSS altitude for a GNSS fix (it has no
