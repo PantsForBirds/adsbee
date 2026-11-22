@@ -119,11 +119,10 @@ void LR2021::TristateInterface() {
 }
 
 void LR2021::RestoreInterface() {
-    // Restore the GPIO-driven pins (NSS, ENABLE) to their driven SysConfig defaults (outputs). The SPI
-    // pins (SCLK/PICO/POCI) are re-muxed to the SPI peripheral by SPI_open() in the following Init(), so
-    // they need no manual restore here.
-    GPIO_resetConfig(config_.gpio_nss);
-    GPIO_resetConfig(config_.gpio_enable);
+    // Take the bus: NSS driven high (deselected), NRESET driven low (Init() releases it). The SysConfig defaults
+    // are inputs so the bus is released from boot. SCLK/PICO are muxed to SPI by SPI_open() in Init().
+    GPIO_setConfig(config_.gpio_nss, GPIO_CFG_OUTPUT_INTERNAL | GPIO_CFG_OUT_STR_MED | GPIO_CFG_OUT_HIGH);
+    GPIO_setConfig(config_.gpio_enable, GPIO_CFG_OUTPUT_INTERNAL | GPIO_CFG_OUT_STR_MED | GPIO_CFG_OUT_LOW);
 }
 
 // Private helpers

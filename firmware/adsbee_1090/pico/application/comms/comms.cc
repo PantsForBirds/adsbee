@@ -5,6 +5,7 @@
 
 #include "cpu_utils.hh"
 #include "esp32.hh"
+#include "pico/printf.h"  // For vfctprintf.
 #include "pico/stdlib.h"
 #include "spi_coprocessor.hh"
 
@@ -171,10 +172,35 @@ int CommsManager::iface_printf(SettingsManager::SerialInterface iface, const cha
 
 int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const char* format, va_list args) {
     char buf[kPrintfBufferMaxSize];
+    va_list args_again;
+    va_copy(args_again, args);
 
     CPUMonitor::WorkScope work;
     // Formatted print to buffer.
     int res = vsnprintf(buf, kPrintfBufferMaxSize, format, args);
+    if (res >= kPrintfBufferMaxSize) {
+        // Too long for buf: format it again with the SDK's streaming printf, writing out buf each time it fills.
+        struct Sink {
+            SettingsManager::SerialInterface iface;
+            char* buf;
+            uint16_t len;
+            bool ok;
+        } sink = {iface, buf, 0, true};
+        vfctprintf(
+            [](char c, void* arg) {
+                Sink* s = static_cast<Sink*>(arg);
+                s->buf[s->len++] = c;
+                if (s->len == kPrintfBufferMaxSize) {
+                    s->ok = comms_manager.iface_write(s->iface, s->buf, s->len) && s->ok;
+                    s->len = 0;
+                }
+            },
+            &sink, format, args_again);
+        va_end(args_again);
+        sink.ok = iface_write(iface, buf, sink.len) && sink.ok;
+        return sink.ok && comms_manager.UpdateNetworkConsole() ? res : -1;
+    }
+    va_end(args_again);
     if (res <= 0) {
         return res;  // vsnprintf failed.
     }

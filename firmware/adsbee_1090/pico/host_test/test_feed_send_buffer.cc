@@ -147,6 +147,86 @@ TEST(FeedSendBuffer, AllocationFailureDropsOrFails) {
     EXPECT_EQ(Write(buf, "bbbb", 2), FeedSendBuffer::kError);
 }
 
+static int num_tail_allocs = 0;
+static size_t last_tail_alloc_bytes = 0;
+static void* CountingTailAlloc(size_t num_bytes) {
+    num_tail_allocs++;
+    last_tail_alloc_bytes = num_bytes;
+    return malloc(num_bytes);
+}
+
+TEST(FeedSendBuffer, CutTailIsKeptWhenThereIsNoBacklogMemory) {
+    FakeFeedSocket sock;
+    FeedSendBuffer buf;
+    FeedSendBuffer::Config config = MakeConfig(sock, 16);
+    config.alloc = FailingAlloc;
+    config.alloc_tail = CountingTailAlloc;
+    num_tail_allocs = 0;
+    buf.Open(config, 0);
+    sock.room = 1;
+    // The socket takes 1 byte: the other 3 are kept in a buffer of their size instead of losing the connection.
+    EXPECT_EQ(Write(buf, "bbbb", 1), FeedSendBuffer::kQueued);
+    EXPECT_EQ(num_tail_allocs, 1);
+    EXPECT_EQ(last_tail_alloc_bytes, 3u);
+    EXPECT_EQ(buf.BacklogLenBytes(), 3);
+    // No room for newer batches until the tail is out: they are dropped whole.
+    EXPECT_FALSE(buf.HasRoomFor(1));
+    EXPECT_EQ(Write(buf, "cccc", 2), FeedSendBuffer::kDropped);
+    sock.room = 100;
+    EXPECT_TRUE(buf.Flush(3));
+    EXPECT_EQ(buf.BacklogLenBytes(), 0);
+    EXPECT_EQ(Write(buf, "dddd", 4), FeedSendBuffer::kSent);
+    EXPECT_EQ(sock.stream, "bbbbdddd");
+}
+
+TEST(FeedSendBuffer, TailAllocIsOnlyForCutBatches) {
+    FakeFeedSocket sock;
+    FeedSendBuffer buf;
+    FeedSendBuffer::Config config = MakeConfig(sock, 16);
+    config.alloc = FailingAlloc;
+    config.alloc_tail = CountingTailAlloc;
+    num_tail_allocs = 0;
+    buf.Open(config, 0);
+    // Nothing went out: the batch is dropped whole, no memory is used.
+    EXPECT_EQ(Write(buf, "aaaa", 1), FeedSendBuffer::kDropped);
+    EXPECT_EQ(num_tail_allocs, 0);
+    // With a backlog available, the tail allocator isn't used either.
+    config.alloc = CountingAlloc;
+    buf.Open(config, 2);
+    sock.room = 1;
+    EXPECT_EQ(Write(buf, "bbbb", 3), FeedSendBuffer::kQueued);
+    EXPECT_EQ(num_tail_allocs, 0);
+    EXPECT_TRUE(buf.HasRoomFor(12));
+}
+
+TEST(FeedSendBuffer, CutTailWithNoMemoryAtAllFails) {
+    FakeFeedSocket sock;
+    FeedSendBuffer buf;
+    FeedSendBuffer::Config config = MakeConfig(sock, 16);
+    config.alloc = FailingAlloc;
+    config.alloc_tail = FailingAlloc;
+    buf.Open(config, 0);
+    sock.room = 1;
+    EXPECT_EQ(Write(buf, "bbbb", 1), FeedSendBuffer::kError);
+}
+
+TEST(FeedSendBuffer, FullBacklogComesBackAfterATailBuffer) {
+    FakeFeedSocket sock;
+    FeedSendBuffer buf;
+    FeedSendBuffer::Config config = MakeConfig(sock, 16);
+    config.alloc = FailingAlloc;
+    config.alloc_tail = CountingTailAlloc;
+    buf.Open(config, 0);
+    sock.room = 2;
+    EXPECT_EQ(Write(buf, "bbbb", 1), FeedSendBuffer::kQueued);
+    sock.room = 2;
+    EXPECT_TRUE(buf.Flush(2));
+    EXPECT_EQ(buf.BacklogLenBytes(), 0);
+    // Freed when sent: the next cut gets the full backlog again once alloc() has memory.
+    EXPECT_TRUE(buf.HasRoomFor(16));
+    EXPECT_EQ(sock.stream, "bbbb");
+}
+
 TEST(FeedSendBuffer, SocketErrors) {
     FakeFeedSocket sock;
     FeedSendBuffer buf;

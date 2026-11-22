@@ -41,6 +41,9 @@ class CommsManager {
     // ~80 ms at 1 Mbaud. Must be a power of two.
     static constexpr uint16_t kUartTxRingBytes = 8192;
     static_assert((kUartTxRingBytes & (kUartTxRingBytes - 1)) == 0, "kUartTxRingBytes must be a power of two.");
+    // Largest piece of the ring handed to one UART2_write. Ring space is freed only when a write completes, so small
+    // pieces free it steadily and keep the bounded wait for space accurate (256 B = 2.6 ms at 1 Mbaud).
+    static constexpr uint16_t kUartTxSegmentMaxBytes = 256;
 
     struct CommsManagerConfig {
         uint8_t uart_index = bsp.kSubGUARTIndex;

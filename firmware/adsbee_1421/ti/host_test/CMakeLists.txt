@@ -52,8 +52,10 @@ target_sources(host_test PRIVATE
     test_packet_decoder.cc
     test_settings.cc
     test_settings_hash.cc
+    test_sync_boot.cc
     test_uplink_tx_budget.cc
 )
+target_compile_definitions(host_test PRIVATE ADSBEE_1421_SYSCFG_DIR="${ADSBEE_1421_TI_DIR}/syscfg")
 
 # mode_s_packet.cpp prints uint32_t with %lX, which warns on 64-bit hosts.
 set_source_files_properties(${ADSBEE_COMMON_DIR}/adsb/mode_s_packet.cpp PROPERTIES COMPILE_OPTIONS -Wno-format)

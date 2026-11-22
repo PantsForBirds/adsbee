@@ -54,6 +54,9 @@ static const uint32_t kFeedBacklogFlushIntervalMs = 5;
 // Bytes a server sends back on a Beast feed are read in chunks of this size, a bounded number per pass.
 static const uint16_t kFeedRecvChunkBytes = 64;
 static const uint16_t kFeedRecvMaxChunksPerPass = 16;
+// While the capabilities answer can still arrive, a feed's socket is read on every pass. After that it is only drained
+// (pings, a late answer) at this interval: a recv() per feed per pass cost CPU time the 5-feed throughput needs.
+static const uint32_t kFeedRecvDrainIntervalMs = 1000;
 
 // #define ENABLE_TCP_SOCKET_RATE_LIMITING
 #ifdef ENABLE_TCP_SOCKET_RATE_LIMITING
@@ -123,6 +126,19 @@ static void* FeedBacklogAlloc(size_t num_bytes) {
     }
     // Internal RAM is shared with WiFi, lwIP and the web server: a feed without a backlog drops whole batches.
     if (HardwareCapabilities::GetInternalFreeBytes() < kFeedBacklogMinInternalFreeBytes) {
+        return nullptr;
+    }
+    return heap_caps_malloc(num_bytes, MALLOC_CAP_8BIT);
+}
+
+// The tail of a batch the socket took only part of. It may go below kFeedBacklogMinInternalFreeBytes, down to the heap
+// floor that drops all feed batches: closing the feed instead loses frames until it has reconnected, and under load
+// that happened tens of times in 5 minutes when the heap dipped below the backlog's floor for a moment.
+static void* FeedBacklogTailAlloc(size_t num_bytes) {
+    if (HardwareCapabilities::HasPSRAM()) {
+        return heap_caps_malloc(num_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (HardwareCapabilities::GetInternalFreeBytes() < kHeapBackPressureThresholdBytes + num_bytes) {
         return nullptr;
     }
     return heap_caps_malloc(num_bytes, MALLOC_CAP_8BIT);
@@ -829,6 +845,7 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
          .backlog_capacity_bytes =
              HardwareCapabilities::HasPSRAM() ? kFeedBacklogBytesPSRAM : kFeedBacklogBytesInternal,
          .alloc = FeedBacklogAlloc,
+         .alloc_tail = FeedBacklogTailAlloc,
          .dealloc = heap_caps_free},
         get_time_since_boot_ms());
     feed_wait_budget_ms_[feed_index] = kFeedWaitBudgetMs;
@@ -878,8 +895,12 @@ void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {
     BeastReporter::CapsSession& caps = feed_caps_[feed_index];
     const bool was_waiting = caps.state() == BeastReporter::CapsSession::kWaiting;
     uint32_t timestamp_ms = get_time_since_boot_ms();
+    if (!was_waiting && timestamp_ms - feed_rx_last_drain_timestamp_ms_[feed_index] < kFeedRecvDrainIntervalMs) {
+        return;
+    }
+    feed_rx_last_drain_timestamp_ms_[feed_index] = timestamp_ms;
     uint8_t buf[kFeedRecvChunkBytes];
-    // Drain every pass, also after the check, so pings can't fill the receive window.
+    // Also drained after the check, so pings can't fill the receive window.
     for (uint16_t chunk = 0; chunk < kFeedRecvMaxChunksPerPass; chunk++) {
         int len = recv(feed_sock_[feed_index], buf, sizeof(buf), MSG_DONTWAIT);
         if (len <= 0) {

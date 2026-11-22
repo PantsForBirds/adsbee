@@ -167,6 +167,12 @@ LR2021 before the `Resume()` calls.
 > **LR2021 bus handoff:** during sleep the CC1314 releases every LR2021 interface pin it normally
 > drives (`LR_CS`, `LR_RESET`, `COPRO_SPI_SCLK`, `COPRO_SPI_PICO`) to high-impedance inputs (with
 > idle-state pulls: CS up, the rest down) so an **external MCU can take control of the LR2021**.
+> The SysConfig defaults are the same pulled inputs, so `Board_init()` drives none of them;
+> `LR2021::RestoreInterface()` makes `LR_CS`/`LR_RESET` outputs only when a receiver config runs with SYNC
+> low. While SYNC is high, `ApplyReceiverConfig()` leaves the bus released (`sync_policy.hh`), so a boot with
+> SYNC high (power-up, brownout, any reset with the backdoor off) never touches the LR2021 and the main loop
+> goes straight to `EnterSyncSleep()`. Keep `ti_drivers_config.c` in sync with the `.syscfg`
+> (`host_test/test_sync_boot.cc` checks the generated pin table).
 > **Host timing contract:** the external MCU must stop driving the LR2021 bus before/as it lowers
 > SYNC — the CC1314 re-drives `LR_CS`/`LR_RESET` and re-muxes the SPI pins as soon as it wakes, so
 > overlapping drive would cause bus contention.

@@ -77,7 +77,7 @@ class ObjectDictionary {
         kAddrLEDBlink = 0x13,  // Force-blink the slave's LED: uint32_t duration_ms, bypasses led_enabled.
         kAddrDeviceIdentity = 0x14,  // SettingsManager::DeviceIdentity, RP2040 to ESP32 on request.
         kAddrESP32FirmwareHash = 0x15,  // SHA-256 of the running ESP32 application (see ESP32FirmwareCheck).
-        kAddrSyncPulse = 0x16,          // SyncPulse, RP2040 to CC1312 and ESP32 after each sync pulse.
+        kAddrSyncPulse = 0x16,          // SyncPulse, RP2040 to CC1312 after each sync pulse.
         kNumAddrs
     };
 
@@ -130,25 +130,26 @@ class ObjectDictionary {
     };
 
     /**
-     * The RP2040 pulses the shared SYNC line about once a second, then writes this to the CC1312 and the ESP32. Each
-     * pairs it with the edge it captured on its own clock to put its packet timestamps on the MLAT time base.
+     * The RP2040 pulses the shared SYNC line once a second and gives each coprocessor the MLAT count of the latest
+     * pulse's edge: the ESP32 in every RP2040 status write (RP2040DeviceStatus::sync_pulse), the CC1312 in one
+     * kAddrSyncPulse write per pulse. Each pairs it with the edge it captured on its own clock (SyncPulsePairing) to
+     * put its packet timestamps on the MLAT time base.
      */
     struct __attribute__((__packed__)) SyncPulse {
-        uint64_t mlat_48mhz_counts = 0;  // RP2040 MLAT counter at the rising edge.
-        uint32_t pulse_num = 0;          // Counts pulses sent since the RP2040 booted.
+        uint64_t mlat_48mhz_counts = 0;  // RP2040 MLAT counter at the rising edge. 0: no pulse yet.
     };
-    // Age limit for pairing a captured edge with its SyncPulse. Pulses are at least kSyncPulseMinIntervalMs apart.
-    static constexpr uint32_t kSyncPulseMaxAgeMs = 250;
-    static constexpr uint32_t kSyncPulseMinIntervalMs = 300;
+    // Crystal drift on a 1090U (t-1185): pulses every second keep the fit at the capture noise (CC1312 0.11 us rms,
+    // ESP32 0.04 us rms); every 10 s would add ~0.06 and ~0.1 us rms, more while the crystals warm up after a boot.
+    static constexpr uint32_t kSyncPulseIntervalMs = 1000;
+    // A fit this long without a new sync point is dropped (pulses stopped). Above the longest gap between points under
+    // output overload (RP2040 main loop passes of 2.5 s give points up to ~3.75 s apart). At most
+    // MLATTimeSync::kMaxExtrapolationUs.
+    static constexpr uint32_t kSyncPointMaxAgeMs = 5'000;
 
     // MLAT time sync state of a coprocessor (mlat_sync_flags in SubGHzDeviceStatus and ESP32DeviceStatus).
     enum MLATSyncFlag : uint8_t {
-        kMLATSyncFlagSynced = 1 << 0,       // Packet timestamps are on the MLAT time base.
-        kMLATSyncFlagPulseWanted = 1 << 1,  // Not synced, and one pulse now makes progress: send it early.
+        kMLATSyncFlagSynced = 1 << 0,  // Packet timestamps are on the MLAT time base.
     };
-    static constexpr uint8_t MLATSyncFlags(bool synced, bool pulse_wanted) {
-        return (synced ? kMLATSyncFlagSynced : 0) | (pulse_wanted ? kMLATSyncFlagPulseWanted : 0);
-    }
 
     struct __attribute__((packed)) RP2040DeviceStatus {
         uint32_t timestamp_ms = 0;
@@ -178,6 +179,7 @@ class ObjectDictionary {
         bool r1090_rx_enabled = false;
         bool subg_rx_enabled = false;  // Sub-GHz radio on and receiving.
         SettingsManager::SubGHzRadioMode subg_mode = SettingsManager::kSubGHzRadioModeUATRx;
+        SyncPulse sync_pulse;  // The latest sync pulse. The ESP32 takes each count once.
     };
 
     struct __attribute__((__packed__)) ESP32DeviceStatus {

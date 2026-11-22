@@ -43,7 +43,7 @@ class ADSBee {
     bool LR2021IsEnabled() const { return lr2021_enabled_; }
 
     // MLAT timestamps, always on: a 1090 packet whose sync event is known for certain carries the 48 MHz time of
-    // that event; every other packet is marked RawModeSPacket::no_mlat_timestamp and carries a coarse receive time.
+    // that event; every other packet is marked RawModeSPacket::kFlagNoMlatTimestamp and carries a coarse receive time.
     // Reported and reset via AT+RX_STATS.
     const MlatPairer::Counters& mlat_counters() const { return mlat_pairer_.counters(); }
     uint32_t mlat_capture_overruns = 0;  // Capture ring overflows: edges lost, nothing stamped across them.
@@ -180,7 +180,7 @@ class ADSBee {
     bool UpdateLR2021();
     // Splits a drained LR2021 RX FIFO payload into per-packet Mode S frames and enqueues them for
     // decoding. rx_buf points at the drain payload (valid until FinishRxDrain() / ReleaseSlot()).
-    // Every packet in the batch gets mlat_48mhz_64bit_counts and no_mlat_timestamp, except packet i with
+    // Every packet in the batch gets mlat_48mhz_64bit_counts and kFlagNoMlatTimestamp, except packet i with
     // stamped[i], which gets stamps[i] as its MLAT timestamp. With MLAT timestamps off the counts are the IRQ-edge
     // time for chain slots and the parse time for loop-drain payloads.
     void ParseLR2021RxFifo(const uint8_t* rx_buf, uint16_t rx_len_bytes, uint64_t mlat_48mhz_64bit_counts,
@@ -191,6 +191,8 @@ class ADSBee {
     // SYNC pin GPIO config: falling-edge wake while asleep, rising-edge sleep request while awake, with the pull
     // from BoardHasSyncPullDown(). All SYNC GPIO_setConfig calls go through here.
     uint32_t SyncPinConfig(bool asleep) const;
+    // Logs the levels of the shared LR2021 bus pins (all inputs while asleep).
+    void LogBusPins(const char* when);
     // Reads the part code from the device info flash and sets board_has_sync_pull_down_.
     void DetectBoardSyncPullDown();
 
@@ -208,10 +210,12 @@ class ADSBee {
     // (settings are loaded before adsbee.Init() in main()) so a device saved with the bus released
     // never drives it at boot.
     bool lr2021_enabled_ = true;
+    // The last receiver config left the bus released because SYNC was high. Cleared by the next config.
+    bool receiver_released_for_sync_ = false;
 
     // MLAT timestamps. mlat_active_: the capture timer and the uDMA clear run, and the loop drain sweep is paired.
     // Not active: receiver down, or DF17 preamble mode (its sync event is not at a fixed place in the frame); every
-    // packet is then marked no_mlat_timestamp.
+    // packet is then marked kFlagNoMlatTimestamp.
     bool mlat_active_ = false;
     // Shortest time between sweep starts while MLAT is active. Edges that arrive while a sweep holds the bus wait
     // for their clear, and a sync event in that wait makes a packet without an edge, which leaves its read

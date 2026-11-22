@@ -217,7 +217,7 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     // Poll sooner than the default interval, and sooner still while UAT packets are arriving, so the CC1312 queues
     // don't fill up at the start of a burst.
     bool UpdateIsDue() override {
-        return more_raw_packets_pending_ || SyncPulseDue() ||
+        return more_raw_packets_pending_ ||
                get_time_since_boot_ms() - last_poll_timestamp_ms_ >=
                    (raw_packets_arriving_ ? kRawPacketPollIntervalMs : kIdlePollIntervalMs);
     }
@@ -580,9 +580,6 @@ class CC1312 : public SPICoprocessorSlaveInterface {
     void AllowSyncPulsesInReset();
 
    private:
-    // True if a sync pulse went out that the CC1312 hasn't been told about.
-    bool SyncPulseDue() const;
-
     CC1312Config config_;
     SettingsManager::EnableState enabled_ = SettingsManager::EnableState::kEnableStateDisabled;
     bool enable_is_external_ = false;
