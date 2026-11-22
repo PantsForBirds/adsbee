@@ -131,9 +131,9 @@ static void* FeedBacklogAlloc(size_t num_bytes) {
     return heap_caps_malloc(num_bytes, MALLOC_CAP_8BIT);
 }
 
-// The tail of a batch the socket took only part of. It may go below kFeedBacklogMinInternalFreeBytes, down to the heap
-// floor that drops all feed batches: closing the feed instead loses frames until it has reconnected, and under load
-// that happened tens of times in 5 minutes when the heap dipped below the backlog's floor for a moment.
+// Room reserved for a batch before it is sent, to hold its tail if the socket takes only part (FeedSendBuffer). It may
+// go below kFeedBacklogMinInternalFreeBytes, down to the heap floor that drops all feed batches. Without it the batch
+// is dropped whole: the stream never carries a cut frame, and low memory never closes the feed.
 static void* FeedBacklogTailAlloc(size_t num_bytes) {
     if (HardwareCapabilities::HasPSRAM()) {
         return heap_caps_malloc(num_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -778,7 +778,7 @@ bool CommsManager::ConnectFeedUDP(uint16_t feed_index) {
 bool CommsManager::SendFeedDatagrams(uint16_t feed_index, const char* buf, uint16_t buf_len, uint16_t num_msgs) {
     feed_send_heap_is_low_ = FeedSendHeapIsLow();
     if (feed_send_heap_is_low_) {
-        feed_num_dropped_msgs_[feed_index] += num_msgs;
+        CountFeedDrops(feed_index, num_msgs);
         return true;
     }
     SettingsManager::ReportingProtocol protocol = settings_manager.settings.feed_protocols[feed_index];
@@ -789,7 +789,7 @@ bool CommsManager::SendFeedDatagrams(uint16_t feed_index, const char* buf, uint1
         if (send(feed_sock_[feed_index], bytes + offset, datagram_len, MSG_DONTWAIT) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM) {
                 // lwIP is briefly out of buffers: the rest of the batch is lost, like a dropped datagram.
-                feed_num_dropped_msgs_[feed_index] += num_msgs;
+                CountFeedDrops(feed_index, num_msgs);
                 return true;
             }
             CONSOLE_ERROR("CommsManager::SendBuf", "Closing UDP feed %d (%s:%d): errno %d (%s).", feed_index,
@@ -981,16 +981,13 @@ bool CommsManager::SendBuf(uint16_t iface, const char* buf, uint16_t buf_len, ui
         case FeedSendBuffer::kDropped:
             // This feed is behind. Its messages are counted and logged by UpdateFeedSendBuffers(); other feeds carry
             // on.
-            feed_num_dropped_msgs_[iface] += num_msgs;
+            CountFeedDrops(iface, num_msgs);
             break;
         case FeedSendBuffer::kError:
         default:
-            // Either the socket failed, or it took part of a batch and there was no memory to keep the rest.
-            CONSOLE_ERROR("CommsManager::SendBuf",
-                          "Closing feed %d (%s:%d): socket error or no backlog memory for a cut %d byte batch (last "
-                          "errno %d, %s).",
-                          iface, settings_manager.settings.feed_uris[iface],
-                          settings_manager.settings.feed_ports[iface], buf_len, errno, strerror(errno));
+            CONSOLE_ERROR("CommsManager::SendBuf", "Closing feed %d (%s:%d): socket error, errno %d (%s).", iface,
+                          settings_manager.settings.feed_uris[iface], settings_manager.settings.feed_ports[iface], errno,
+                          strerror(errno));
             CloseFeedSocket(iface);
             return false;
     }
