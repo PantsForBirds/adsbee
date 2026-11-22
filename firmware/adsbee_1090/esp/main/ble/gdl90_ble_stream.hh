@@ -40,10 +40,7 @@ class GDL90BLEStream {
     bool Push(const uint8_t* buf, uint16_t len, bool droppable = false) {
         const uint16_t limit = droppable ? capacity_ / 2 : capacity_;
         if (len == 0) return true;
-        if (len > limit || count_ > limit - len) {
-            num_dropped_bytes_ += len;
-            return false;
-        }
+        if (len > limit || count_ > limit - len) return false;
         for (uint16_t i = 0; i < len; i++) {
             buf_[(head_ + count_ + i) % capacity_] = buf[i];
         }
@@ -89,7 +86,6 @@ class GDL90BLEStream {
             while (keep < count_ && !EndsMessage(At(keep), in_message)) keep++;
             if (keep < count_) keep++;  // Its end byte.
         }
-        num_dropped_bytes_ += count_ - keep;
         count_ = keep;
     }
 
@@ -101,7 +97,6 @@ class GDL90BLEStream {
 
     uint16_t Size() const { return count_; }
     bool Empty() const { return count_ == 0; }
-    uint32_t NumDroppedBytes() const { return num_dropped_bytes_; }
 
    private:
     uint8_t At(uint16_t i) const { return buf_[(head_ + i) % capacity_]; }
@@ -123,7 +118,6 @@ class GDL90BLEStream {
     uint16_t head_ = 0;
     uint16_t count_ = 0;
     bool head_in_message_ = false;  // Part of the first queued message was consumed already.
-    uint32_t num_dropped_bytes_ = 0;
 };
 
 /**

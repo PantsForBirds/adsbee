@@ -7,7 +7,6 @@ BLEOutput ble_output;
 
 #if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BT_NIMBLE_ENABLED) && defined(CONFIG_BT_NIMBLE_ROLE_PERIPHERAL)
 
-#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <new>
@@ -15,17 +14,12 @@ BLEOutput ble_output;
 #include "ble_host.hh"
 #include "comms.hh"  // comms_manager (network state) + logging.
 #include "esp_mac.h"
-#include "gdl90_ble_stream.hh"
 #include "hal.hh"  // get_time_since_boot_ms.
 #include "hardware_capabilities.hh"
-#include "host/ble_gap.h"
-#include "host/ble_gatt.h"
 #include "host/ble_hs.h"
-#include "host/ble_store.h"
 #include "os/os_mbuf.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
-#include "settings.hh"
 
 namespace {
 
@@ -150,6 +144,16 @@ void Pump() {
 
 int GapEventHandler(struct ble_gap_event* event, void* arg);
 
+// Hands `fields` to set_data (advertising or scan response data), which consumes the mbuf either way.
+bool SetAdvData(const ble_hs_adv_fields& fields, int (*set_data)(uint8_t, struct os_mbuf*)) {
+    struct os_mbuf* om = os_msys_get_pkthdr(BLE_HS_ADV_MAX_SZ, 0);
+    if (om != nullptr && ble_hs_adv_set_fields_mbuf(&fields, om) != 0) {
+        os_mbuf_free_chain(om);
+        om = nullptr;
+    }
+    return om != nullptr && set_data(kAdvInstance, om) == 0;
+}
+
 bool StartAdvertising() {
     if (!BLEHost::IsSynced() || s_advertising || s_conn_handle != BLE_HS_CONN_HANDLE_NONE) return s_advertising;
 
@@ -184,34 +188,18 @@ bool StartAdvertising() {
     fields.uuids128 = &kNUSServiceUUID;
     fields.num_uuids128 = 1;
     fields.uuids128_is_complete = 1;
-    uint8_t buf[BLE_HS_ADV_MAX_SZ];
-    uint8_t len = 0;
-    rc = ble_hs_adv_set_fields(&fields, buf, &len, sizeof(buf));
-    struct os_mbuf* om = rc == 0 ? os_msys_get_pkthdr(len, 0) : nullptr;
-    if (om != nullptr && os_mbuf_append(om, buf, len) != 0) {
-        os_mbuf_free_chain(om);
-        om = nullptr;
-    }
     // ble_gap_ext_adv_set_data consumes the mbuf whether it succeeds or fails.
-    if (om == nullptr || ble_gap_ext_adv_set_data(kAdvInstance, om) != 0) {
+    if (!SetAdvData(fields, ble_gap_ext_adv_set_data)) {
         CONSOLE_ERROR("ble_output", "Failed to set advertising data.");
         return false;
     }
 
-    char name[24];
-    DeviceName(name, sizeof(name));
+    const char* name = ble_svc_gap_device_name();  // Set by RegisterGATTServices().
     memset(&fields, 0, sizeof(fields));
     fields.name = reinterpret_cast<const uint8_t*>(name);
     fields.name_len = strlen(name);
     fields.name_is_complete = 1;
-    len = 0;
-    rc = ble_hs_adv_set_fields(&fields, buf, &len, sizeof(buf));
-    om = rc == 0 ? os_msys_get_pkthdr(len, 0) : nullptr;
-    if (om != nullptr && os_mbuf_append(om, buf, len) != 0) {
-        os_mbuf_free_chain(om);
-        om = nullptr;
-    }
-    if (om == nullptr || ble_gap_ext_adv_rsp_set_data(kAdvInstance, om) != 0) {
+    if (!SetAdvData(fields, ble_gap_ext_adv_rsp_set_data)) {
         CONSOLE_ERROR("ble_output", "Failed to set scan response data.");
         return false;
     }
@@ -311,7 +299,7 @@ bool BLEOutput::RegisterGATTServices() {
     return true;
 }
 
-bool BLEOutput::HasSubscriber() const { return running_ && Subscribed(); }
+bool BLEOutput::HasSubscriber() const { return running() && Subscribed(); }
 
 void BLEOutput::BeginReport() {
     if (!HasSubscriber()) return;
@@ -332,29 +320,24 @@ void BLEOutput::SendTraffic(const uint8_t* buf, uint16_t len, uint16_t index) {
 void BLEOutput::EndTraffic(uint16_t num_aircraft) { rotation_.End(num_aircraft); }
 
 bool BLEOutput::Start(SettingsManager::BLEOutputMode mode) {
-    if (running_) return true;
-    if (s_stream == nullptr) {
-        s_stream = new (std::nothrow) GDL90BLEStream(
-            HardwareCapabilities::HasPSRAM() ? kStreamCapacityBytes : kStreamCapacityBytesNoPSRAM,
-            mode == SettingsManager::kBLEOutputFLARMNMEA ? GDL90BLEStream::kFramingLines
-                                                        : GDL90BLEStream::kFramingGDL90);
-        if (s_stream == nullptr || !s_stream->Valid()) {
-            delete s_stream;
-            s_stream = nullptr;
-            return false;
-        }
-    }
+    if (running()) return true;
+    s_stream = new (std::nothrow) GDL90BLEStream(
+        HardwareCapabilities::HasPSRAM() ? kStreamCapacityBytes : kStreamCapacityBytesNoPSRAM,
+        mode == SettingsManager::kBLEOutputFLARMNMEA ? GDL90BLEStream::kFramingLines : GDL90BLEStream::kFramingGDL90);
     BLEHost::SetListener(BLEHost::kUserBLEOutput, {.on_sync = OnHostSync, .on_reset = OnHostReset});
-    if (!BLEHost::Acquire(BLEHost::kUserBLEOutput)) return false;
+    if (s_stream == nullptr || !s_stream->Valid() || !BLEHost::Acquire(BLEHost::kUserBLEOutput)) {
+        delete s_stream;  // Not kept: the next start may be in the other mode, with the other framing.
+        s_stream = nullptr;
+        return false;
+    }
     s_want = true;
-    running_ = true;
     running_mode_ = mode;
     StartAdvertising();  // Or OnHostSync() does, once the host syncs.
     return true;
 }
 
 void BLEOutput::Stop() {
-    if (!running_) return;
+    if (!running()) return;
     s_want = false;
     StopAdvertising();
     const uint16_t conn_handle = s_conn_handle;
@@ -367,7 +350,6 @@ void BLEOutput::Stop() {
     if (!BLEHost::IsInitialized()) OnHostReset();
     delete s_stream;
     s_stream = nullptr;
-    running_ = false;
     running_mode_ = SettingsManager::kBLEOutputOff;
 }
 
@@ -379,7 +361,7 @@ void BLEOutput::Reconcile() {
         return;
     }
     // A new mode drops the client: its app reads the other format.
-    if (running_ && running_mode_ != mode) Stop();
+    if (running() && running_mode_ != mode) Stop();
     const SettingsManager::Settings& settings = settings_manager.settings;
     const bool remote_id_uses_bluetooth =
         (settings.remote_id_rx_enabled && (settings.remote_id_transports & RemoteIDGuard::kTransportsBLE)) ||
@@ -396,13 +378,9 @@ void BLEOutput::Reconcile() {
         status_ = kBLEOutputStatusBlockedByRAM;
         return;
     }
-    if (!running_) {
-        const uint32_t start_bytes =
-            BLEHost::IsInitialized()
-                ? RemoteIDGuard::kReserveFreeBytes
-                : (HardwareCapabilities::HasPSRAM() ? kMinHeapFreeBytesToStart
-                                                    : RemoteIDGuard::kReserveFreeBytes + kBLEHeapCostBytes);
-        if (HardwareCapabilities::GetInternalFreeBytes() < start_bytes || !Start(mode)) {
+    if (!running()) {
+        if (HardwareCapabilities::GetInternalFreeBytes() < BLEHost::StartFreeBytes(kMinHeapFreeBytesToStart) ||
+            !Start(mode)) {
             status_ = kBLEOutputStatusBlockedByRAM;
             return;
         }
@@ -423,7 +401,7 @@ void BLEOutput::Update() {
         const uint32_t largest_block_bytes =
             heap_caps_get_largest_free_block(HardwareCapabilities::kInternalHeapCaps);
         const bool was_paused = heap_watch_.IsPaused();
-        if (heap_watch_.Update(free_bytes, largest_block_bytes, now_ms, running_) != was_paused) {
+        if (heap_watch_.Update(free_bytes, largest_block_bytes, now_ms, running()) != was_paused) {
             if (heap_watch_.IsPaused()) {
                 CONSOLE_WARNING("ble_output", "Pausing Bluetooth output: %lu Bytes free. Retrying in %lu s.",
                                 (unsigned long)free_bytes, (unsigned long)(heap_watch_.HoldOffMs() / 1000));
@@ -436,7 +414,7 @@ void BLEOutput::Update() {
         }
     }
 
-    if (running_) {
+    if (running()) {
         if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
             status_ = Subscribed() ? kBLEOutputStatusStreaming : kBLEOutputStatusConnected;
         } else {
@@ -460,8 +438,6 @@ void BLEOutput::BeginReport() {}
 void BLEOutput::SendTraffic(const uint8_t*, uint16_t, uint16_t) {}
 void BLEOutput::EndTraffic(uint16_t) {}
 bool BLEOutput::Send(const uint8_t*, uint16_t, bool) { return false; }
-bool BLEOutput::Start(SettingsManager::BLEOutputMode) { return false; }
-void BLEOutput::Stop() {}
 void BLEOutput::Reconcile() {
     status_ = settings_manager.settings.ble_output_mode != SettingsManager::kBLEOutputOff ? kBLEOutputStatusNotInBuild
                                                                                        : kBLEOutputStatusOff;

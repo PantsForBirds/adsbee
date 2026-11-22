@@ -41,9 +41,6 @@ class RemoteIDManager {
     // 1 Hz heap_free_bytes telemetry. Guards measure internal SRAM only (HardwareCapabilities::kInternalHeapCaps).
     static constexpr uint32_t kMinHeapFreeBytesForBLE = 70 * 1024;
     static constexpr uint32_t kMinHeapFreeBytesForWiFiSniffer = 55 * 1024;
-    // Without PSRAM, Bluetooth (controller + host + packet queues, measured ~47 KB on a 1090U) starts only if the heap
-    // stays above RemoteIDGuard::kReserveFreeBytes once it is up, so the heap watch doesn't pause it right away.
-    static constexpr uint32_t kBLEHeapCostBytes = 48 * 1024;
 
     // Packet queue depths (lazily heap-allocated; see class comment). Kept small: after per-source rate limiting the
     // sustained rate is ~1 Hz/drone, and both queues are drained every main-loop / SPI iteration.

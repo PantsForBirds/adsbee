@@ -41,7 +41,7 @@ static bool GDL90ToWiFi() {
 /**
  * Sends framed GDL90 messages to WiFi access point clients and the Bluetooth client.
  * @param[in] droppable True for FIS-B uplinks, which Bluetooth refuses first when its queue fills.
- * @retval False if the WiFi send failed. A full Bluetooth queue shows in its drop count.
+ * @retval False if the WiFi send failed.
  */
 static bool SendGDL90(CommsManager::NetworkMessage& message, bool droppable = false) {
     bool ret = true;
@@ -706,29 +706,24 @@ void ADSBeeServer::ReportFLARMNMEA() {
     }
 
     char sentence[FLARMNMEAReporter::kMaxSentenceLenBytes + 1];
-    uint16_t len;
+    // False only when a written sentence didn't fit in the queue.
+    auto send = [&sentence](uint16_t len) {
+        return len == 0 || ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
+    };
     if (have_ownship) {
         const FLARMNMEAReporter::UTCTime utc = FLARMNMEAUTCTime(rp2040_status);
-        if ((len = FLARMNMEAReporter::WriteGPRMC(sentence, sizeof(sentence), own, utc)) > 0) {
-            ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
-        }
-        if ((len = FLARMNMEAReporter::WritePGRMZ(sentence, sizeof(sentence), own)) > 0) {
-            ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
-        }
-        if ((len = FLARMNMEAReporter::WriteGPGGA(sentence, sizeof(sentence), own, utc)) > 0) {
-            ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
-        }
+        send(FLARMNMEAReporter::WriteGPRMC(sentence, sizeof(sentence), own, utc));
+        send(FLARMNMEAReporter::WritePGRMZ(sentence, sizeof(sentence), own));
+        send(FLARMNMEAReporter::WriteGPGGA(sentence, sizeof(sentence), own, utc));
     }
     // The heartbeat goes before traffic so a full queue never drops it.
     const uint8_t gps = !have_ownship ? 0 : (own.airborne ? 2 : 1);
-    len = FLARMNMEAReporter::WritePFLAU(sentence, sizeof(sentence), num_received, gps);
-    ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len);
+    send(FLARMNMEAReporter::WritePFLAU(sentence, sizeof(sentence), num_received, gps));
 
     for (uint16_t i = 0; i < num_traffic; i++) {
         std::visit([&target](const auto& a) { FLARMNMEAReporter::TargetFromAircraft(target, a); },
                    *traffic[i].entry);
-        len = FLARMNMEAReporter::WritePFLAA(sentence, sizeof(sentence), own, target);
-        if (len > 0 && !ble_output.Send(reinterpret_cast<uint8_t*>(sentence), len)) break;  // Queue full.
+        if (!send(FLARMNMEAReporter::WritePFLAA(sentence, sizeof(sentence), own, target))) break;  // Queue full.
     }
     delete[] traffic;
 }

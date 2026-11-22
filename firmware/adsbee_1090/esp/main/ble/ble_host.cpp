@@ -1,6 +1,13 @@
 #include "ble_host.hh"
 
+#include "hardware_capabilities.hh"
+#include "remote_id_guard.hh"
 #include "sdkconfig.h"
+
+uint32_t BLEHost::StartFreeBytes(uint32_t with_psram_bytes) {
+    if (IsInitialized()) return RemoteIDGuard::kReserveFreeBytes;
+    return HardwareCapabilities::HasPSRAM() ? with_psram_bytes : RemoteIDGuard::kReserveFreeBytes + kHeapCostBytes;
+}
 
 #if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BT_NIMBLE_ENABLED)
 

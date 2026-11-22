@@ -9,17 +9,9 @@
 #include "settings.hh"
 
 /**
- * Bluetooth LE output (AT+BLE_OUTPUT): a GATT server with the two generic serial profiles EFB apps read, the Nordic
- * UART Service (NUS) and the HM-10 / TI CC254x service (FFE0/FFE1). Each characteristic the client subscribes to (NUS
- * TX, FFE1) gets the stream; writes to either service are accepted and ignored.
- *
- * Mode GDL90 streams the GDL90 the WiFi access point broadcasts on UDP port 4000 (heartbeat, ownship, traffic at 1 Hz,
- * FIS-B uplinks as they arrive), framed as on UDP (0x7E flags, byte stuffing, CRC). Mode FLARM_NMEA streams FLARM data
- * port sentences at 1 Hz (ADSBeeServer::ReportFLARMNMEA). Each notification carries whole messages or sentences unless
- * one alone exceeds the payload size.
- *
- * One client at a time. The server shares the NimBLE host with Remote ID (BLEHost). Without PSRAM it runs only with
- * WiFi access point, station and Remote ID over Bluetooth off (BLEOutputAllowed), and under the Remote ID heap reserve.
+ * Bluetooth LE output (AT+BLE_OUTPUT, docs/guides/bluetooth-output.md): GDL90 or FLARM NMEA to one client over the
+ * Nordic UART Service and the HM-10 service (FFE0/FFE1), on the NimBLE host shared with Remote ID (BLEHost). Without
+ * PSRAM it runs only while BLEOutputAllowed() and the Remote ID heap reserve allow.
  */
 class BLEOutput {
    public:
@@ -31,8 +23,7 @@ class BLEOutput {
     // controller can't take yet in the same buffers that HCI commands and Remote ID advertising data need.
     static constexpr int kMinFreeNimBLEBuffers = 4;
     static constexpr uint32_t kAdvRetryIntervalMs = 1000;
-    static constexpr uint32_t kMinHeapFreeBytesToStart = 60 * 1024;
-    static constexpr uint32_t kBLEHeapCostBytes = 48 * 1024;
+    static constexpr uint32_t kMinHeapFreeBytesToStart = 60 * 1024;  // With PSRAM.
     static constexpr uint32_t kBlockedRetryIntervalMs = 10 * 1000;
 
     /**
@@ -88,8 +79,9 @@ class BLEOutput {
     bool Start(SettingsManager::BLEOutputMode mode);
     void Stop();
 
+    bool running() const { return running_mode_ != SettingsManager::kBLEOutputOff; }
+
     std::atomic<bool> apply_pending_ = true;
-    bool running_ = false;
     SettingsManager::BLEOutputMode running_mode_ = SettingsManager::kBLEOutputOff;  // Off while stopped.
     BLEOutputStatus status_ = kBLEOutputStatusOff;
     RemoteIDGuard::HeapWatch heap_watch_;

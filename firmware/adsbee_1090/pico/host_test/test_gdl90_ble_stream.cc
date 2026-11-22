@@ -86,13 +86,12 @@ TEST(GDL90BLEStream, KeepsMessageBoundariesAfterASplit) {
     EXPECT_EQ(chunks[1], Cat({std::vector<uint8_t>(a.begin() + 40, a.end()), b, c}));
 }
 
-TEST(GDL90BLEStream, RefusesWhatDoesNotFitAndCountsIt) {
+TEST(GDL90BLEStream, RefusesWhatDoesNotFit) {
     GDL90BLEStream stream(100);
     auto m = Frame(0x00, 58);  // 60 B
     EXPECT_TRUE(stream.Push(m.data(), m.size()));
     EXPECT_FALSE(stream.Push(m.data(), m.size()));
     EXPECT_EQ(stream.Size(), 60u);
-    EXPECT_EQ(stream.NumDroppedBytes(), 60u);
 }
 
 TEST(GDL90BLEStream, DroppableDataKeepsHalfTheQueueForTraffic) {
@@ -142,7 +141,6 @@ TEST(GDL90BLEStream, DropUnsentKeepsOnlyThePartlySentMessage) {
     stream.Consume(stream.Peek(buf, 20));  // 20 B of a sent.
     stream.DropUnsent();
     EXPECT_EQ(stream.Size(), a.size() - 20);
-    EXPECT_EQ(stream.NumDroppedBytes(), b.size() + c.size());
     ASSERT_TRUE(stream.Push(c.data(), c.size()));
     auto chunks = Drain(stream, 60);
     ASSERT_EQ(chunks.size(), 1u);

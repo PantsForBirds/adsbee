@@ -127,6 +127,9 @@ class FLARMNMEAReporter {
     static uint16_t WritePGRMZ(char* buf, uint16_t buf_len, const Ownship& own);
 
    private:
+    // Position, altitudes, track, speed, vertical rate, type and signal, shared by Mode S and UAT aircraft.
+    template <typename T>
+    static void FillMotion(Target& target, const T& aircraft);
     // Appends "*hh\r\n" to the sentence body in buf, which starts with '$'.
     static uint16_t Finish(char* buf, uint16_t buf_len, int body_len);
 };

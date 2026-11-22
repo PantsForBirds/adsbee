@@ -23,13 +23,8 @@ inline const char* BLEOutputStatusStr(uint8_t status) {
     return status < kBLEOutputStatusNumValues ? kNames[status] : "UNKNOWN";
 }
 
-/**
- * Whether the network and Remote ID settings leave room for the Bluetooth output. Without PSRAM the internal RAM holds
- * neither WiFi access point or station nor Remote ID over Bluetooth next to it (a connected client would push both
- * under the heap reserve). Remote ID keeps the radio then.
- * @param[in] remote_id_uses_bluetooth Remote ID receive or transmit is on with a Bluetooth transport.
- * @retval kBLEOutputStatusAdvertising if it may run, else the blocking status.
- */
+// kBLEOutputStatusAdvertising if the output may run, else what blocks it. Without PSRAM the internal RAM holds neither
+// WiFi nor Remote ID over Bluetooth next to a connected client; Remote ID keeps the radio then.
 inline BLEOutputStatus BLEOutputAllowed(bool has_psram, bool wifi_ap_enabled, bool wifi_sta_enabled,
                                         bool remote_id_uses_bluetooth) {
     if (has_psram) return kBLEOutputStatusAdvertising;

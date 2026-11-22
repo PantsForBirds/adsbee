@@ -63,6 +63,30 @@ bool FLARMNMEAReporter::OwnshipFromRxPosition(Ownship& own, const SettingsManage
     return true;
 }
 
+template <typename T>
+void FLARMNMEAReporter::FillMotion(Target& target, const T& aircraft) {
+    target.latitude_deg = aircraft.latitude_deg;
+    target.longitude_deg = aircraft.longitude_deg;
+    target.baro_altitude_valid = aircraft.HasBitFlag(T::kBitFlagBaroAltitudeValid);
+    target.baro_altitude_ft = aircraft.baro_altitude_ft;
+    target.gnss_altitude_valid = aircraft.HasBitFlag(T::kBitFlagGNSSAltitudeValid);
+    target.gnss_altitude_ft = aircraft.gnss_altitude_ft;
+    target.track_valid = aircraft.HasBitFlag(T::kBitFlagDirectionValid);
+    target.track_deg = aircraft.direction_deg;
+    target.speed_valid = aircraft.HasBitFlag(T::kBitFlagHorizontalSpeedValid);
+    target.speed_kts = aircraft.speed_kts;
+    if (aircraft.HasBitFlag(T::kBitFlagBaroVerticalRateValid)) {
+        target.vertical_rate_valid = true;
+        target.vertical_rate_fpm = aircraft.baro_vertical_rate_fpm;
+    } else if (aircraft.HasBitFlag(T::kBitFlagGNSSVerticalRateValid)) {
+        target.vertical_rate_valid = true;
+        target.vertical_rate_fpm = aircraft.gnss_vertical_rate_fpm;
+    }
+    target.type = AircraftTypeFromEmitterCategory(aircraft.emitter_category);
+    target.rssi_valid = true;
+    target.rssi_dbm = aircraft.last_message_signal_strength_dbm;
+}
+
 bool FLARMNMEAReporter::TargetFromAircraft(Target& target, const ModeSAircraft& aircraft) {
     target = {};
     if (!aircraft.HasBitFlag(ModeSAircraft::kBitFlagPositionValid)) return false;
@@ -90,27 +114,8 @@ bool FLARMNMEAReporter::TargetFromAircraft(Target& target, const ModeSAircraft& 
             target.id_type = kIDTypeRandom;
             break;
     }
-    target.latitude_deg = aircraft.latitude_deg;
-    target.longitude_deg = aircraft.longitude_deg;
-    target.baro_altitude_valid = aircraft.HasBitFlag(ModeSAircraft::kBitFlagBaroAltitudeValid);
-    target.baro_altitude_ft = aircraft.baro_altitude_ft;
-    target.gnss_altitude_valid = aircraft.HasBitFlag(ModeSAircraft::kBitFlagGNSSAltitudeValid);
-    target.gnss_altitude_ft = aircraft.gnss_altitude_ft;
-    target.track_valid = aircraft.HasBitFlag(ModeSAircraft::kBitFlagDirectionValid);
-    target.track_deg = aircraft.direction_deg;
-    target.speed_valid = aircraft.HasBitFlag(ModeSAircraft::kBitFlagHorizontalSpeedValid);
-    target.speed_kts = aircraft.speed_kts;
+    FillMotion(target, aircraft);
     target.on_ground = aircraft.IsOnGround();
-    if (aircraft.HasBitFlag(ModeSAircraft::kBitFlagBaroVerticalRateValid)) {
-        target.vertical_rate_valid = true;
-        target.vertical_rate_fpm = aircraft.baro_vertical_rate_fpm;
-    } else if (aircraft.HasBitFlag(ModeSAircraft::kBitFlagGNSSVerticalRateValid)) {
-        target.vertical_rate_valid = true;
-        target.vertical_rate_fpm = aircraft.gnss_vertical_rate_fpm;
-    }
-    target.type = AircraftTypeFromEmitterCategory(aircraft.emitter_category);
-    target.rssi_valid = true;
-    target.rssi_dbm = aircraft.last_message_signal_strength_dbm;
     return true;
 }
 
@@ -136,27 +141,8 @@ bool FLARMNMEAReporter::TargetFromAircraft(Target& target, const UATAircraft& ai
             target.id_type = kIDTypeRandom;
             break;
     }
-    target.latitude_deg = aircraft.latitude_deg;
-    target.longitude_deg = aircraft.longitude_deg;
-    target.baro_altitude_valid = aircraft.HasBitFlag(UATAircraft::kBitFlagBaroAltitudeValid);
-    target.baro_altitude_ft = aircraft.baro_altitude_ft;
-    target.gnss_altitude_valid = aircraft.HasBitFlag(UATAircraft::kBitFlagGNSSAltitudeValid);
-    target.gnss_altitude_ft = aircraft.gnss_altitude_ft;
-    target.track_valid = aircraft.HasBitFlag(UATAircraft::kBitFlagDirectionValid);
-    target.track_deg = aircraft.direction_deg;
-    target.speed_valid = aircraft.HasBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid);
-    target.speed_kts = aircraft.speed_kts;
+    FillMotion(target, aircraft);
     target.on_ground = !aircraft.HasBitFlag(UATAircraft::kBitFlagIsAirborne);
-    if (aircraft.HasBitFlag(UATAircraft::kBitFlagBaroVerticalRateValid)) {
-        target.vertical_rate_valid = true;
-        target.vertical_rate_fpm = aircraft.baro_vertical_rate_fpm;
-    } else if (aircraft.HasBitFlag(UATAircraft::kBitFlagGNSSVerticalRateValid)) {
-        target.vertical_rate_valid = true;
-        target.vertical_rate_fpm = aircraft.gnss_vertical_rate_fpm;
-    }
-    target.type = AircraftTypeFromEmitterCategory(aircraft.emitter_category);
-    target.rssi_valid = true;
-    target.rssi_dbm = aircraft.last_message_signal_strength_dbm;
     return true;
 }
 

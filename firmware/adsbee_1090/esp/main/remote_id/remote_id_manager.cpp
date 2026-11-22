@@ -42,14 +42,6 @@ static_assert(RemoteIDGuard::kTransportsBLE ==
               (SettingsManager::kRemoteIDTransportBLE4 | SettingsManager::kRemoteIDTransportBLE5Long));
 static_assert(RemoteIDGuard::kTransportWiFiBeacon == SettingsManager::kRemoteIDTransportWiFiBeacon);
 
-// Free heap needed to bring the Bluetooth stack up for receive or transmit. Once the Bluetooth output holds the shared
-// host, its cost is paid: only the reserve is needed.
-static uint32_t BLEStartFreeBytes(uint32_t with_psram_bytes) {
-    if (BLEHost::IsInitialized()) return RemoteIDGuard::kReserveFreeBytes;
-    return HardwareCapabilities::HasPSRAM() ? with_psram_bytes
-                                            : RemoteIDGuard::kReserveFreeBytes + RemoteIDManager::kBLEHeapCostBytes;
-}
-
 uint8_t RemoteIDManager::AllowedTransports() {
     return RemoteIDGuard::AllowedTransports(HardwareCapabilities::HasPSRAM(), comms_manager.wifi_ap_enabled,
                                             comms_manager.wifi_sta_enabled, comms_manager.ethernet_enabled);
@@ -183,7 +175,7 @@ void RemoteIDManager::Reconcile() {
             // Bluetooth isn't compiled into this firmware at all: the user needs a different image.
             status_ |= kStatusNotInBuild;
         } else if (BLEStackUp() ||
-                   HardwareCapabilities::GetInternalFreeBytes() >= BLEStartFreeBytes(kMinHeapFreeBytesForBLE)) {
+                   HardwareCapabilities::GetInternalFreeBytes() >= BLEHost::StartFreeBytes(kMinHeapFreeBytesForBLE)) {
             if (BLEStart(want_coded)) {
                 status_ |= kStatusBLEActive;
                 if (ble_coded_running_) status_ |= kStatusBLECodedPHYActive;
@@ -246,7 +238,7 @@ void RemoteIDManager::ReconcileTx() {
         if (!BluetoothIsSupported()) {
             status_ |= kStatusNotInBuild | kStatusTxBlocked;
         } else if (BLEStackUp() ||
-                   HardwareCapabilities::GetInternalFreeBytes() >= BLEStartFreeBytes(kMinHeapFreeBytesForTx)) {
+                   HardwareCapabilities::GetInternalFreeBytes() >= BLEHost::StartFreeBytes(kMinHeapFreeBytesForTx)) {
             if (!BLETxStart(want_ble_legacy, want_ble_coded)) {
                 status_ |= kStatusTxBlocked;
             }

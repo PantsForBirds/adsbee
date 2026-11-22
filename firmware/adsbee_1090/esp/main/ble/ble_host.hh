@@ -36,6 +36,16 @@ void Release(User user);
 
 bool IsInitialized();
 
+// Heap the controller, host and packet queues take without PSRAM (measured ~47 KB on a 1090U). A user starts only if
+// the heap stays above RemoteIDGuard::kReserveFreeBytes once they are up, so the heap watch doesn't pause it right away.
+constexpr uint32_t kHeapCostBytes = 48 * 1024;
+
+/**
+ * Internal free heap needed to start a Bluetooth user: the reserve once the host is up, else `with_psram_bytes` with
+ * PSRAM or the reserve plus kHeapCostBytes without.
+ */
+uint32_t StartFreeBytes(uint32_t with_psram_bytes);
+
 // True once the host has synced with the controller, so GAP calls are legal.
 bool IsSynced();
 
