@@ -3,8 +3,8 @@
 #include <atomic>
 #include <cstdint>
 
+#include "ble_output_buffers.hh"
 #include "ble_output_status.hh"
-#include "gdl90_ble_stream.hh"
 #include "remote_id_guard.hh"
 #include "settings.hh"
 
@@ -72,6 +72,12 @@ class BLEOutput {
     void SendTraffic(const uint8_t* buf, uint16_t len, uint16_t index);
     void EndTraffic(uint16_t num_aircraft);
 
+    /**
+     * The FLARM NMEA report's traffic list, allocated with the output's queue: null unless the output runs in FLARM
+     * NMEA mode.
+     */
+    FLARMTrafficList* FLARMTraffic() const;
+
     BLEOutputStatus GetStatus() const { return status_; }
 
    private:
@@ -89,6 +95,7 @@ class BLEOutput {
     uint32_t last_heap_watch_ms_ = 0;
     uint32_t last_blocked_retry_ms_ = 0;
     uint32_t last_adv_retry_ms_ = 0;
+    bool alloc_failure_logged_ = false;
 };
 
 extern BLEOutput ble_output;

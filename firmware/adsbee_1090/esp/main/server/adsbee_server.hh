@@ -178,13 +178,6 @@ class ADSBeeServer {
      * PFLAU heartbeat, then PFLAA for each aircraft, nearest first. Without ownship only PFLAU goes out, with GPS 0.
      */
     void ReportFLARMNMEA();
-    // ReportFLARMNMEA's aircraft, nearest first: allocated on the first report with ownship and kept, so the 1 Hz
-    // report doesn't churn the heap. Never allocated without the FLARM NMEA output.
-    struct FLARMTrafficRef {
-        uint32_t distance_m;
-        const AircraftDictionary::AircraftEntry* entry;
-    };
-    FLARMTrafficRef* flarm_traffic_ = nullptr;
 
     /**
      * Sends a GDL90 uplink packet to connected WiFi clients. Does not provide traffic reports.

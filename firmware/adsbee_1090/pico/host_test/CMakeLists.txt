@@ -64,6 +64,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_composite_array.cc
         test_esp32_firmware_check.cc
         test_gdl90_ble_stream.cc
+        test_ble_output_buffers.cc
         test_cpu_utils.cc
         test_crc.cc
         test_mlat_time_sync.cc
@@ -129,7 +130,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         ${CMAKE_SOURCE_DIR}/../esp/main/remote_id # ble_adv_watchdog.hh, ble_scan_watchdog.hh
         ${CMAKE_SOURCE_DIR}/../esp/main/mlat_sync # esp32_clock_math.hh
         ${CMAKE_SOURCE_DIR}/application/peripherals # sync_pulse_service.hh
-        ${CMAKE_SOURCE_DIR}/../esp/main/ble # gdl90_ble_stream.hh
+        ${CMAKE_SOURCE_DIR}/../esp/main/ble # gdl90_ble_stream.hh, ble_output_buffers.hh
         .
         mocks
     )

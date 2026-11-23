@@ -62,7 +62,7 @@ std::atomic<uint16_t> s_mtu = BLE_ATT_MTU_DFLT;
 std::atomic<bool> s_clear_pending = false;  // Drop queued data (the client left or unsubscribed).
 
 // Used on the main task only. Allocated while the server runs.
-GDL90BLEStream* s_stream = nullptr;
+BLEOutputBuffers s_buffers;  // Allocated while the output runs.
 
 int AccessCallback(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt* ctxt, void* arg) {
     // Writes are accepted and dropped. Nothing is readable.
@@ -117,8 +117,8 @@ void DeviceName(char* name, size_t len) {
 
 // Main task: sends queued bytes until the stream is empty or the NimBLE buffers run low.
 void Pump() {
-    if (s_stream == nullptr) return;
-    if (s_clear_pending.exchange(false)) s_stream->Clear();
+    if (!s_buffers.Allocated()) return;
+    if (s_clear_pending.exchange(false)) s_buffers.stream()->Clear();
     const uint16_t conn_handle = s_conn_handle;
     uint16_t handles[2];
     uint8_t num_handles = 0;
@@ -129,7 +129,7 @@ void Pump() {
     if (payload_len > kMaxNotifyPayloadBytes) payload_len = kMaxNotifyPayloadBytes;
     uint8_t chunk[kMaxNotifyPayloadBytes];
     while (os_msys_num_free() >= BLEOutput::kMinFreeNimBLEBuffers + num_handles) {
-        const uint16_t len = s_stream->Peek(chunk, payload_len);
+        const uint16_t len = s_buffers.stream()->Peek(chunk, payload_len);
         if (len == 0) return;
         for (uint8_t i = 0; i < num_handles; i++) {
             struct os_mbuf* om = ble_hs_mbuf_from_flat(chunk, len);
@@ -138,7 +138,7 @@ void Pump() {
                 if (i == 0) return;  // Nothing sent: retried on the next Update().
             }
         }
-        s_stream->Consume(len);
+        s_buffers.stream()->Consume(len);
     }
 }
 
@@ -301,16 +301,20 @@ bool BLEOutput::RegisterGATTServices() {
 
 bool BLEOutput::HasSubscriber() const { return running() && Subscribed(); }
 
+FLARMTrafficList* BLEOutput::FLARMTraffic() const {
+    return running_mode_ == SettingsManager::kBLEOutputFLARMNMEA ? s_buffers.flarm_traffic() : nullptr;
+}
+
 void BLEOutput::BeginReport() {
     if (!HasSubscriber()) return;
-    if (s_clear_pending.exchange(false)) s_stream->Clear();
-    s_stream->DropUnsent();
+    if (s_clear_pending.exchange(false)) s_buffers.stream()->Clear();
+    s_buffers.stream()->DropUnsent();
 }
 
 bool BLEOutput::Send(const uint8_t* buf, uint16_t len, bool droppable) {
     if (!HasSubscriber()) return false;
-    if (s_clear_pending.exchange(false)) s_stream->Clear();
-    return s_stream->Push(buf, len, droppable);
+    if (s_clear_pending.exchange(false)) s_buffers.stream()->Clear();
+    return s_buffers.stream()->Push(buf, len, droppable);
 }
 
 void BLEOutput::SendTraffic(const uint8_t* buf, uint16_t len, uint16_t index) {
@@ -321,13 +325,23 @@ void BLEOutput::EndTraffic(uint16_t num_aircraft) { rotation_.End(num_aircraft);
 
 bool BLEOutput::Start(SettingsManager::BLEOutputMode mode) {
     if (running()) return true;
-    s_stream = new (std::nothrow) GDL90BLEStream(
-        HardwareCapabilities::HasPSRAM() ? kStreamCapacityBytes : kStreamCapacityBytesNoPSRAM,
-        mode == SettingsManager::kBLEOutputFLARMNMEA ? GDL90BLEStream::kFramingLines : GDL90BLEStream::kFramingGDL90);
+    // Allocated per start: the next one may be in the other mode, with the other framing and no FLARM traffic list.
+    if (!s_buffers.Allocate(mode,
+                            HardwareCapabilities::HasPSRAM() ? kStreamCapacityBytes : kStreamCapacityBytesNoPSRAM)) {
+        // Retried while blocked by RAM; logged once until a start succeeds.
+        if (!alloc_failure_logged_) {
+            CONSOLE_ERROR("ble_output",
+                          "Failed to allocate the Bluetooth output buffers (%lu Bytes free, largest %lu).",
+                          (unsigned long)HardwareCapabilities::GetInternalFreeBytes(),
+                          (unsigned long)heap_caps_get_largest_free_block(HardwareCapabilities::kInternalHeapCaps));
+            alloc_failure_logged_ = true;
+        }
+        return false;
+    }
+    alloc_failure_logged_ = false;
     BLEHost::SetListener(BLEHost::kUserBLEOutput, {.on_sync = OnHostSync, .on_reset = OnHostReset});
-    if (s_stream == nullptr || !s_stream->Valid() || !BLEHost::Acquire(BLEHost::kUserBLEOutput)) {
-        delete s_stream;  // Not kept: the next start may be in the other mode, with the other framing.
-        s_stream = nullptr;
+    if (!BLEHost::Acquire(BLEHost::kUserBLEOutput)) {
+        s_buffers.Free();
         return false;
     }
     s_want = true;
@@ -348,8 +362,7 @@ void BLEOutput::Stop() {
     s_clear_pending = false;
     BLEHost::Release(BLEHost::kUserBLEOutput);
     if (!BLEHost::IsInitialized()) OnHostReset();
-    delete s_stream;
-    s_stream = nullptr;
+    s_buffers.Free();
     running_mode_ = SettingsManager::kBLEOutputOff;
 }
 
@@ -434,6 +447,7 @@ void BLEOutput::Update() {
 
 bool BLEOutput::RegisterGATTServices() { return true; }
 bool BLEOutput::HasSubscriber() const { return false; }
+FLARMTrafficList* BLEOutput::FLARMTraffic() const { return nullptr; }
 void BLEOutput::BeginReport() {}
 void BLEOutput::SendTraffic(const uint8_t*, uint16_t, uint16_t) {}
 void BLEOutput::EndTraffic(uint16_t) {}

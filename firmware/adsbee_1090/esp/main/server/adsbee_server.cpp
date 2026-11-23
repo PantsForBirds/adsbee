@@ -682,11 +682,9 @@ void ADSBeeServer::ReportFLARMNMEA() {
     }
 
     // Reported aircraft, nearest first. Without ownship they are only counted for PFLAU.
-    if (have_ownship && flarm_traffic_ == nullptr) {
-        flarm_traffic_ = new (std::nothrow) FLARMTrafficRef[AircraftDictionary::kMaxNumAircraft];
-    }
-    FLARMTrafficRef* traffic = have_ownship ? flarm_traffic_ : nullptr;
-    uint16_t num_traffic = 0;
+    // Allocated with the output (non-null while it streams FLARM NMEA).
+    FLARMTrafficList* traffic = have_ownship ? ble_output.FLARMTraffic() : nullptr;
+    if (traffic != nullptr) traffic->Clear();
     uint16_t num_received = 0;
     const uint32_t timestamp_ms = get_time_since_boot_ms();
     AircraftReportFilter report_filter = aircraft_dictionary.GetReportFilter(settings_manager.settings);
@@ -703,16 +701,10 @@ void ADSBeeServer::ReportFLARMNMEA() {
         }
         num_received++;
         FLARMNMEAReporter::RelativePosition relative;
-        if (traffic == nullptr || num_traffic >= AircraftDictionary::kMaxNumAircraft ||
-            !FLARMNMEAReporter::Relative(own, target, relative)) {
-            continue;
-        }
-        traffic[num_traffic++] = {.distance_m = relative.distance_m, .entry = &itr.second};
+        if (traffic == nullptr || !FLARMNMEAReporter::Relative(own, target, relative)) continue;
+        traffic->Add(relative.distance_m, &itr.second);
     }
-    if (traffic != nullptr) {
-        std::sort(traffic, traffic + num_traffic,
-                  [](const FLARMTrafficRef& a, const FLARMTrafficRef& b) { return a.distance_m < b.distance_m; });
-    }
+    if (traffic != nullptr) traffic->SortNearestFirst();
 
     char sentence[FLARMNMEAReporter::kMaxSentenceLenBytes + 1];
     // False only when a written sentence didn't fit in the queue.
@@ -729,9 +721,10 @@ void ADSBeeServer::ReportFLARMNMEA() {
     const uint8_t gps = !have_ownship ? 0 : (own.airborne ? 2 : 1);
     send(FLARMNMEAReporter::WritePFLAU(sentence, sizeof(sentence), num_received, gps));
 
+    const uint16_t num_traffic = traffic != nullptr ? traffic->Size() : 0;
     for (uint16_t i = 0; i < num_traffic; i++) {
         std::visit([&target](const auto& a) { FLARMNMEAReporter::TargetFromAircraft(target, a); },
-                   *traffic[i].entry);
+                   *(*traffic)[i].entry);
         if (!send(FLARMNMEAReporter::WritePFLAA(sentence, sizeof(sentence), own, target))) break;  // Queue full.
     }
 }
