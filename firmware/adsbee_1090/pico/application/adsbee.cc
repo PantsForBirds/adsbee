@@ -472,7 +472,7 @@ void __time_critical_func(ADSBee::OnDemodBegin)(uint gpio) {
     uint16_t sm_index = gpio < NUM_BANK0_GPIOS ? demod_pin_to_sm_index_[gpio] : kNoDemodStateMachine;
     if (sm_index == kNoDemodStateMachine) {
         if (gpio == pps_pin_) {
-            RecordPPSEdge(mlat_48mhz_64bit_counts);
+            RecordPPSEdge(mlat_48mhz_64bit_counts, mlat_jitter_counts_now);
         }
         return;  // Ignore; wasn't the start of a demod interval for a known SM.
     }
@@ -507,8 +507,13 @@ void __time_critical_func(ADSBee::OnDemodBegin)(uint gpio) {
     capture_active_[sm_index] = true;
 }
 
-void __time_critical_func(ADSBee::RecordPPSEdge)(uint64_t mlat_48mhz_counts) {
+void __time_critical_func(ADSBee::RecordPPSEdge)(uint64_t mlat_48mhz_counts, uint16_t jitter_counts) {
     uint32_t num_edges = pps_num_edges_;
+    if (pps_lab_debounce_us && num_edges > 0 &&
+        time_us_32() - pps_edges_[(num_edges - 1) % kNumPPSEdges].time_us < pps_lab_debounce_us) {
+        return;
+    }
+    pps_edge_jitter_counts_[num_edges % kNumPPSEdges] = jitter_counts;
     PPSClock::Edge& edge = pps_edges_[num_edges % kNumPPSEdges];
     edge.mlat_48mhz_counts = mlat_48mhz_counts - kPPSCaptureDelay48MHzCounts;
     edge.time_us = time_us_32();
@@ -516,12 +521,13 @@ void __time_critical_func(ADSBee::RecordPPSEdge)(uint64_t mlat_48mhz_counts) {
     pps_num_edges_ = num_edges + 1;
 }
 
-uint32_t ADSBee::GetPPSEdges(PPSClock::Edge& latest, PPSClock::Edge& previous) {
+uint32_t ADSBee::GetPPSEdges(PPSClock::Edge& latest, PPSClock::Edge& previous, uint16_t* latest_jitter_counts) {
     uint32_t num_edges;
     do {
         num_edges = pps_num_edges_;
         __dmb();
         latest = pps_edges_[(num_edges - 1) % kNumPPSEdges];
+        if (latest_jitter_counts) *latest_jitter_counts = pps_edge_jitter_counts_[(num_edges - 1) % kNumPPSEdges];
         previous = pps_edges_[(num_edges - 2) % kNumPPSEdges];
         __dmb();
     } while (num_edges != pps_num_edges_);  // An edge came in while reading: read again.

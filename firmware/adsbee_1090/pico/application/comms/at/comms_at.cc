@@ -29,6 +29,7 @@
 #include "settings_hash.hh"
 #include "static_ip_config.hh"
 #include "spi_coprocessor.hh"  // For init / de-init before and after flashing ESP32.
+#include "pps_lab.hh"  // t-1307 LAB.
 #include "gnss_interface.hh"   // For parking/restoring the GNSS UART around ESP32 flashing.
 
 #ifdef HARDWARE_UNIT_TESTS
@@ -466,6 +467,29 @@ CPP_AT_CALLBACK(CommsManager::ATGNSSFixCallback) {
                       static_cast<double>(pps.GetRateErrorPPB()) / 1000.0, static_cast<long>(pps.GetLastResidualNs()),
                       static_cast<unsigned long>(sqrtf(static_cast<float>(pps.GetMeanSquareResidualNs2()))));
     CPP_AT_SILENT_SUCCESS();
+}
+
+// t-1307 LAB: AT+PPS_LAB=<OFF|PWM|PULSES|RESET>, AT+PPS_LAB? prints the capture delay statistics.
+CPP_AT_CALLBACK(CommsManager::ATPPSLabCallback) {
+    if (op == '?') {
+        pps_lab.Print();
+        CPP_AT_SILENT_SUCCESS();
+    }
+    if (op == '=' && CPP_AT_HAS_ARG(0)) {
+        if (args[0].compare("OFF") == 0) {
+            pps_lab.SetMode(PPSLab::kOff);
+        } else if (args[0].compare("PWM") == 0) {
+            pps_lab.SetMode(PPSLab::kPWM);
+        } else if (args[0].compare("PULSES") == 0) {
+            pps_lab.SetMode(PPSLab::kPulses);
+        } else if (args[0].compare("RESET") == 0) {
+            pps_lab.Reset();
+        } else {
+            CPP_AT_ERROR("OFF, PWM, PULSES or RESET.");
+        }
+        CPP_AT_SUCCESS();
+    }
+    CPP_AT_ERROR("AT+PPS_LAB=<OFF|PWM|PULSES|RESET> or AT+PPS_LAB?");
 }
 
 CPP_AT_CALLBACK(CommsManager::ATBootloader) {
@@ -2802,6 +2826,11 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "(1: UTC timestamps available), MLAT clock rate vs GNSS time in ppm, last PPS residual in ns and "
                     "its RMS in ns.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSFixCallback, comms_manager)},
+    {.command = "PPS_LAB",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "t-1307 LAB: AT+PPS_LAB=<OFF|PWM|PULSES|RESET>, AT+PPS_LAB?",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATPPSLabCallback, comms_manager)},
     {.command = "HOSTNAME",
      .min_args = 0,
      .max_args = 1,

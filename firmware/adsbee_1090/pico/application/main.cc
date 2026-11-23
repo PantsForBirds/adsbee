@@ -4,6 +4,7 @@
 
 #include "adsbee.hh"
 #include "comms.hh"
+#include "pps_lab.hh"  // t-1307 LAB.
 #include "core1.hh"  // Functions for runningon core1.
 #include "cpu_utils.hh"
 #include "eeprom.hh"
@@ -240,6 +241,7 @@ int main() {
         comms_manager.Update();
         adsbee.Update();
         gnss->Update();
+        pps_lab.Update();  // t-1307 LAB.
 
         esp32.Update();
 #ifndef ISRS_ON_CORE1
