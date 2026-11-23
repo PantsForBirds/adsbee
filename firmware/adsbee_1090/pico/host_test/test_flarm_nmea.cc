@@ -166,8 +166,8 @@ TEST(FLARMNMEA, RelativeAltitudeReference) {
 TEST(FLARMNMEA, GNSSOwnshipWithGeoidSeparationGetsPFLAA) {
     SettingsManager::RxPosition rx;
     rx.source = SettingsManager::RxPosition::kPositionSourceGNSS;
-    rx.latitude_deg = 37.4f;
-    rx.longitude_deg = -122.1f;
+    rx.latitude_awb = DegToAWB(37.4);
+    rx.longitude_awb = DegToAWB(-122.1);
     rx.gnss_altitude_ft = 1000;  // MSL.
     FLARMNMEAReporter::Ownship own;
     FLARMNMEAReporter::Target t = Jet();
