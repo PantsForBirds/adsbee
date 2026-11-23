@@ -33,9 +33,10 @@ class CommsManager {
     static constexpr uint32_t kNetworkConsoleMinReportingIntervalMs =
         50;  // Report messages to nextwork console at minimum rate of 20Hz.
     static constexpr uint16_t kPrintfBufferMaxSize = 500;
-    // UART output waits in these queues for the TX interrupt. About 0.35 s and 0.09 s at 115200 baud.
+    // UART output waits in these queues for the TX interrupt. About 0.35 s and 0.18 s at 115200 baud. Each must hold
+    // the largest single report send (a 2 kB raw batch), since a send that doesn't fit is dropped whole.
     static constexpr uint16_t kCommsUARTTxQueueLen = 4096;
-    static constexpr uint16_t kGNSSUARTTxQueueLen = 1024;
+    static constexpr uint16_t kGNSSUARTTxQueueLen = 2048;
     // A write that waits for space gives up if the UART takes no byte for this long.
     static constexpr uint32_t kUARTTxStallTimeoutMs = 50;
 
