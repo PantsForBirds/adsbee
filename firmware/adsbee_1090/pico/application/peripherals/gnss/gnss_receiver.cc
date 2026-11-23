@@ -4,6 +4,7 @@
 
 #include "comms.hh"             // For comms_manager (UART I/O + baud) and CONSOLE_* logging.
 #include "cpu_utils.hh"
+#include "geo_utils.hh"
 #include "hal.hh"               // For get_time_since_boot_ms().
 
 void GNSSReceiver::ClaimUart() {
