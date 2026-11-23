@@ -1586,6 +1586,24 @@ class AircraftDictionary {
     inline bool ReferencePositionValid() const { return reference_position_valid_; }
 
     /**
+     * Whether the dictionary measures distance and bearing from this position (latitude and longitude in AWB, as
+     * FloatDegToAWB() gives them for the floats passed to SetReferencePosition()).
+     */
+    inline bool DistanceReferenceIs(uint32_t lat_awb, uint32_t lon_awb) const {
+        return reference_position_valid_ && distance_reference_.lat_awb == lat_awb &&
+               distance_reference_.lon_awb == lon_awb;
+    }
+
+    /**
+     * Whether an entry's distance_m and bearing_bam16 are measured from the current reference position and its current
+     * position. Update() makes every entry current; until the next one, a new position or reference makes it stale.
+     */
+    inline bool DistanceIsCurrent(const AircraftEntry &entry) const {
+        return std::visit(
+            [this](const auto &aircraft) { return aircraft.distance_reference_epoch == reference_epoch_; }, entry);
+    }
+
+    /**
      * Check if the CPR position filter is enabled.
      * @retval True if the filter is enabled, false if it is disabled.
      */
@@ -1757,10 +1775,8 @@ class AircraftDictionary {
     bool reference_position_valid_ = false;  // Set by SetReferencePosition, cleared by ClearReferencePosition.
     int32_t reference_altitude_ft_ = 0;
     bool reference_altitude_valid_ = false;  // Set by SetReferenceAltitudeFt, cleared by ClearReferencePosition.
-    // Receiver position for aircraft distance and bearing. Moving it more than kReferenceMoveThresholdMeters or
-    // clearing it bumps reference_epoch_, and Update() recomputes every aircraft computed in an older epoch or marked
-    // stale by a move.
-    static constexpr uint32_t kReferenceMoveThresholdMeters = 500;
+    // Receiver position for aircraft distance and bearing. Moving it at all (to another AWB) or clearing it bumps
+    // reference_epoch_, and Update() recomputes every aircraft computed in an older epoch or marked stale by a move.
     // Epoch value that marks an aircraft's distance as stale; reference_epoch_ never takes it.
     static constexpr uint16_t kDistanceEpochStale = UINT16_MAX;
     GeoReference distance_reference_;
@@ -1805,8 +1821,13 @@ class AircraftDictionary {
             RecordRange(aircraft);
         } else if (after.latitude_deg != before.latitude_deg || after.longitude_deg != before.longitude_deg) {
             aircraft.distance_reference_epoch = kDistanceEpochStale;
-        } else if (record_in_place && aircraft.distance_reference_epoch == reference_epoch_) {
-            RecordRange(aircraft);  // Confirmed or heard again in place: the distance won't be recomputed.
+        } else if (record_in_place) {
+            // Confirmed or heard again in place. After a receiver move Update() records it with the new distance.
+            if (aircraft.distance_reference_epoch == reference_epoch_) {
+                RecordRange(aircraft);
+            } else {
+                aircraft.distance_reference_epoch = kDistanceEpochStale;
+            }
         }
     }
 

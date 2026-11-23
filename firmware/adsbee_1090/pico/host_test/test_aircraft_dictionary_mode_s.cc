@@ -1896,11 +1896,31 @@ TEST(AircraftDictionary, DistanceAndBearingFromReceiver) {
     EXPECT_FALSE(aircraft->IsBeyondDistance(100000));
     EXPECT_TRUE(aircraft->IsBeyondDistance(50000));
 
-    // Moving the receiver by less than kReferenceMoveThresholdMeters keeps the distances; moving it farther makes
-    // Update() recompute them.
-    dictionary.SetReferencePosition(48.0005f, 18.0f);  // 56 m.
+    // The reference is the exact AWB of the given floats, as FLARM's ownship is.
+    const AircraftDictionary::AircraftEntry& entry = dictionary.dict.begin()->second;
+    EXPECT_TRUE(dictionary.DistanceReferenceIs(FloatDegToAWB(48.0f), FloatDegToAWB(18.0f)));
+    EXPECT_FALSE(dictionary.DistanceReferenceIs(FloatDegToAWB(48.0005f), FloatDegToAWB(18.0f)));
+    EXPECT_TRUE(dictionary.DistanceIsCurrent(entry));
+
+    // Any move of the receiver makes the next Update() recompute every distance: 56 m north takes 56 cos(37.95 deg) =
+    // 44 m off the distance to this aircraft.
+    const uint32_t distance_before_m = aircraft->distance_m;
+    dictionary.SetReferencePosition(48.0005f, 18.0f);
+    EXPECT_FALSE(dictionary.DistanceIsCurrent(entry));
+    EXPECT_EQ(aircraft->distance_m, distance_before_m);  // Until Update().
     dictionary.Update(get_time_since_boot_ms());
-    EXPECT_NEAR(aircraft->distance_m, 84585, 30);
+    EXPECT_TRUE(dictionary.DistanceIsCurrent(entry));
+    EXPECT_NEAR(static_cast<int32_t>(distance_before_m - aircraft->distance_m), 44, 1);
+
+    // The same position again (a FIXED source, or a unit that got no new fix) recomputes nothing.
+    const uint32_t distance_moved_m = aircraft->distance_m;
+    aircraft->distance_m = 1;  // A recompute would overwrite it.
+    dictionary.SetReferencePosition(48.0005f, 18.0f);
+    EXPECT_TRUE(dictionary.DistanceIsCurrent(entry));
+    dictionary.Update(get_time_since_boot_ms());
+    EXPECT_EQ(aircraft->distance_m, 1u);
+    aircraft->distance_m = distance_moved_m;
+
     dictionary.SetReferencePosition(48.5f, 18.6f);
     dictionary.Update(get_time_since_boot_ms());
     EXPECT_NEAR(aircraft->distance_m, 13356, 10);  // Geodesic: 13355.6 m at 35.52 deg.

@@ -1007,6 +1007,44 @@ TEST(SwarmRecorder, DictionaryRecordsUATPositions) {
     dictionary.SetSwarmRecorder(nullptr);
 }
 
+// The receiver's position can change every second (GNSS): distances follow it, but a position isn't recorded again
+// until it is heard again.
+TEST(SwarmRecorder, ReceiverMoveRecomputesWithoutRecordingAgain) {
+    AircraftDictionary dictionary;
+    SwarmRecorder recorder;
+    dictionary.SetSwarmRecorder(&recorder);
+    dictionary.SetReferencePosition(37.0f, -122.0f);
+    inc_time_since_boot_ms(1000);
+    ASSERT_TRUE(dictionary.IngestDecodedUATADSBPacket(UATPosition(0xA12345, 37.3, -122.0, 12000)));
+    inc_time_since_boot_ms(1000);
+    ASSERT_TRUE(dictionary.IngestDecodedUATADSBPacket(UATPosition(0xA12345, 37.31, -122.0, 12000)));
+    dictionary.Update(get_time_since_boot_ms());
+    ASSERT_EQ(recorder.guard.num_positions, 1u);
+    const UATAircraft* aircraft = dictionary.GetAircraftPtr<UATAircraft>(
+        Aircraft::ICAOToUID(0xA12345, Aircraft::kAircraftTypeUAT), false);
+    ASSERT_TRUE(aircraft);
+    const uint32_t distance_m = aircraft->distance_m;
+
+    // The receiver moves 1.1 km north, three times: recomputed every time, recorded never.
+    for (int i = 1; i <= 3; i++) {
+        dictionary.SetReferencePosition(37.0f + 0.01f * i, -122.0f);
+        inc_time_since_boot_ms(1000);
+        dictionary.Update(get_time_since_boot_ms());
+        EXPECT_NEAR(static_cast<int32_t>(distance_m - aircraft->distance_m), 1110 * i, 5);
+    }
+    EXPECT_EQ(recorder.guard.num_positions, 1u);
+
+    // Heard at a new position (1.1 km north) as the receiver moves again: recorded once, from the new receiver
+    // position.
+    dictionary.SetReferencePosition(37.04f, -122.0f);
+    ASSERT_TRUE(dictionary.IngestDecodedUATADSBPacket(UATPosition(0xA12345, 37.32, -122.0, 12000)));
+    EXPECT_EQ(recorder.guard.num_positions, 1u);
+    dictionary.Update(get_time_since_boot_ms());
+    EXPECT_EQ(recorder.guard.num_positions, 2u);
+    EXPECT_NEAR(static_cast<int32_t>(distance_m - aircraft->distance_m), 4440 - 1110, 5);
+    dictionary.SetSwarmRecorder(nullptr);
+}
+
 TEST(SwarmRecorder, DictionaryRecordsDronesAfterTwoLocationMessages) {
     AircraftDictionary dictionary;
     SwarmRecorder recorder;
