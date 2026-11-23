@@ -314,16 +314,6 @@ bool IsDistanceGreaterThan(uint32_t lat_a_awb, uint32_t lon_a_awb, uint32_t lat_
     return CalculateGeoidalDistanceMetersAWB(lat_a_awb, lon_a_awb, lat_b_awb, lon_b_awb) > threshold_m;
 }
 
-uint32_t CalculateGeoidalDistanceMetersDeg(float lat_a_deg, float lon_a_deg, float lat_b_deg, float lon_b_deg) {
-    // Cast floats to signed ints, then to unsigned ints, to avoid undefined behavior with negative floats.
-    uint32_t lat_a_awb = safe_cast_float_to_uint32(INV_RESOLUTION * lat_a_deg);
-    uint32_t lon_a_awb = safe_cast_float_to_uint32(INV_RESOLUTION * lon_a_deg);
-    uint32_t lat_b_awb = safe_cast_float_to_uint32(INV_RESOLUTION * lat_b_deg);
-    uint32_t lon_b_awb = safe_cast_float_to_uint32(INV_RESOLUTION * lon_b_deg);
-
-    return CalculateGeoidalDistanceMetersAWB(lat_a_awb, lon_a_awb, lat_b_awb, lon_b_awb);
-}
-
 #ifndef HAS_FPU
 inline fixedmath::fixed_t wrapped_atan2(fixedmath::fixed_t y, fixedmath::fixed_t x) {
     fixedmath::fixed_t val = fixedmath::func::atan2(y, x);

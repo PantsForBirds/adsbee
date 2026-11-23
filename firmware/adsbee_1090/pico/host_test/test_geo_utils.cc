@@ -68,9 +68,13 @@ TEST(GeoUtils, DistanceEdgeCases) {
                 0.0003 * 336000);
 }
 
-TEST(GeoUtils, CalculateGeoidalDistanceDeg) {
-    EXPECT_NEAR(CalculateGeoidalDistanceMetersDeg(20.35f, -13.78f, 19.35f, -13.78f), 110702, 20);
-    EXPECT_NEAR(CalculateGeoidalDistanceMetersDeg(19.35f, -13.78f, 19.35f, -14.78f), 105070, 20);
+TEST(GeoUtils, CalculateGeoidalDistanceFromFloatDeg) {
+    EXPECT_NEAR(CalculateGeoidalDistanceMetersAWB(FloatDegToAWB(20.35f), FloatDegToAWB(-13.78f), FloatDegToAWB(19.35f),
+                                                  FloatDegToAWB(-13.78f)),
+                110702, 20);
+    EXPECT_NEAR(CalculateGeoidalDistanceMetersAWB(FloatDegToAWB(19.35f), FloatDegToAWB(-13.78f), FloatDegToAWB(19.35f),
+                                                  FloatDegToAWB(-14.78f)),
+                105070, 20);
 }
 
 TEST(GeoUtils, SinCosQ30) {
