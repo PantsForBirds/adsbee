@@ -12,8 +12,10 @@
  * Positions are in Angular Weighted Binary (AWB): a full circle is 2^32, so latitudes -90..90 deg are the signed range
  * -2^30..2^30 and longitude differences wrap across the antimeridian on their own. The central angle and bearing come
  * from exact spherical formulas written without cancellation; the distance multiplies the central angle by the
- * ellipsoid's radius of curvature in the direction of travel at the mid latitude. Error against the WGS-84 geodesic at
- * any latitude: distance < 0.015% + 1 m up to 600 km (< 0.15% up to 5000 km), bearing < 0.2 deg.
+ * ellipsoid's radius of curvature in the direction of travel at the mid latitude, and the bearing is corrected for the
+ * ellipsoid's shape (east against north scaled by N / M). Error against the WGS-84 geodesic at any latitude: distance
+ * < 0.015% + 1 m up to 600 km (< 0.15% up to 5000 km), bearing as BAM16 (rounded to 0.0027 deg) < 0.004 deg from 1 km
+ * to 100 km and < 0.012 deg up to 600 km.
  */
 
 /**

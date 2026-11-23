@@ -201,7 +201,7 @@ TEST(FLARMNMEA, LongestPFLAAFits) {
     t.rssi_dbm = -100;
     t.id = 0xFFFFFF;
     const uint16_t len = FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), own, t);
-    EXPECT_EQ(Body(buf, len), "$PFLAA,0,-9924651,-10009414,-32768,1,FFFFFF,359,,32767,-32.7,F,0,4,-100");
+    EXPECT_EQ(Body(buf, len), "$PFLAA,0,-9924653,-10009412,-32768,1,FFFFFF,359,,32767,-32.7,F,0,4,-100");
     EXPECT_LE(len, 82);
 }
 

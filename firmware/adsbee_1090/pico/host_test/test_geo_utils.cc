@@ -46,7 +46,7 @@ TEST(GeoUtils, DistanceAndBearingMatchGeodesic) {
         EXPECT_NEAR(distance_m, c.distance_m, tolerance_m) << c.lat_a << "," << c.lon_a << " -> " << c.lat_b << ","
                                                            << c.lon_b;
         double bearing_error_deg = fmod(Bam16ToDeg(bearing_bam16) - c.azimuth_deg + 540.0, 360.0) - 180.0;
-        EXPECT_LT(fabs(bearing_error_deg), 0.2) << c.lat_a << "," << c.lon_a << " -> " << c.lat_b << "," << c.lon_b;
+        EXPECT_LT(fabs(bearing_error_deg), 0.012) << c.lat_a << "," << c.lon_a << " -> " << c.lat_b << "," << c.lon_b;
         EXPECT_EQ(distance_m, CalculateGeoidalDistanceMetersAWB(DegToAWB(c.lat_a), DegToAWB(c.lon_a), DegToAWB(c.lat_b),
                                                                 DegToAWB(c.lon_b)));
     }
@@ -80,6 +80,19 @@ TEST(GeoUtils, SinCosQ30) {
         double rad = deg * M_PI / 180.0;
         EXPECT_NEAR(s / 1073741824.0, sin(rad), 5e-9) << deg;
         EXPECT_NEAR(c / 1073741824.0, cos(rad), 5e-9) << deg;
+    }
+}
+
+TEST(GeoUtils, SinCosQ30SmallAngles) {
+    // Below 1/16 rad (3.58 deg) from a quarter turn, SinCosQ30 leaves out the polynomials' highest terms.
+    for (double deg = -4.0; deg <= 4.0; deg += 0.000731) {
+        for (double quarter : {0.0, 90.0, 180.0, -90.0}) {
+            int32_t s, c;
+            SinCosQ30(DegToAWB(quarter + deg), s, c);
+            double rad = (quarter + deg) * M_PI / 180.0;
+            ASSERT_NEAR(s / 1073741824.0, sin(rad), 3e-9) << quarter + deg;
+            ASSERT_NEAR(c / 1073741824.0, cos(rad), 3e-9) << quarter + deg;
+        }
     }
 }
 
@@ -208,6 +221,38 @@ TEST(GeoUtils, NorthEastMatchesGeodesicAtFLARMRanges) {
            max_component_error_m, max_distance_error_m);
 }
 
+TEST(GeoUtils, BearingMatchesGeodesicAtEveryLatitude) {
+    // The stored bearing (BAM16, rounded to 0.0027 deg) against the geodesic's initial azimuth, 200 m to 600 km.
+    std::mt19937 rng(1296);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    double max_error_100km = 0, max_error = 0;
+    for (int i = 0; i < 200000; i++) {
+        double lat = (unit(rng) < 0.5 ? -1 : 1) * 89.5 * unit(rng);
+        double lon = i % 4 == 1 ? 179.9 + 0.2 * unit(rng) : -180.0 + 360.0 * unit(rng);
+        const double range_m = i % 2 ? 200.0 + 99800.0 * unit(rng) : 600000.0 * unit(rng) + 200.0;
+        const double bearing = 2 * M_PI * unit(rng);
+        const double delta = range_m / 6371008.8, phi = lat * M_PI / 180.0;
+        const double phi2 = asin(sin(phi) * cos(delta) + cos(phi) * sin(delta) * cos(bearing));
+        const double lon2 =
+            lon + atan2(sin(bearing) * sin(delta) * cos(phi), cos(delta) - sin(phi) * sin(phi2)) * 180.0 / M_PI;
+        const uint32_t own_lat = DegToAWB(lat), own_lon = DegToAWB(remainder(lon, 360.0));
+        const uint32_t lat_b = DegToAWB(phi2 * 180.0 / M_PI), lon_b = DegToAWB(remainder(lon2, 360.0));
+        double s, azimuth;
+        VincentyInverse(AWBToDeg(own_lat), AWBToDeg(own_lon), AWBToDeg(lat_b), AWBToDeg(lon_b), s, azimuth);
+        uint32_t distance;
+        uint16_t bearing_bam16;
+        CalculateDistanceAndBearing(GeoReference(own_lat, own_lon), lat_b, lon_b, distance, bearing_bam16);
+        const double error = fabs(fmod(Bam16ToDeg(bearing_bam16) - azimuth + 540.0, 360.0) - 180.0);
+        if (s <= 100000.0) max_error_100km = fmax(max_error_100km, error);
+        max_error = fmax(max_error, error);
+        // Below 1 km a position's 1 AWB (9 mm) is worth up to 0.005 deg more.
+        ASSERT_LT(error, s < 1000.0 ? 0.01 : (s <= 100000.0 ? 0.005 : 0.012))
+            << lat << "," << lon << " " << s << " m at " << azimuth;
+    }
+    printf("CalculateDistanceAndBearing bearing: max error %.4f deg to 100 km, %.4f deg to 600 km\n", max_error_100km,
+           max_error);
+}
+
 TEST(GeoUtils, NorthEastAgreesWithDistanceAndBearing) {
     GeoReference ref(DegToAWB(47.3), DegToAWB(8.5));
     int32_t north, east;
@@ -222,9 +267,9 @@ TEST(GeoUtils, NorthEastAgreesWithDistanceAndBearing) {
     EXPECT_EQ(distance, distance2);
     EXPECT_GT(north, 0);
     EXPECT_LT(east, 0);
-    // The ellipsoid's azimuth (GeographicLib: 325.8362 deg), where CalculateDistanceAndBearing keeps the spherical one.
+    // The ellipsoid's azimuth (GeographicLib: 325.8362 deg), from both (the BAM16 bearing to its 0.0027 deg rounding).
     EXPECT_NEAR(atan2(east, north) * 180.0 / M_PI + 360.0, 325.8362, 0.005);
-    EXPECT_NEAR(Bam16ToDeg(bearing), 325.8362, 0.2);
+    EXPECT_NEAR(Bam16ToDeg(bearing), 325.8362, 0.005);
 }
 
 TEST(GeoUtils, FloatDegToAWBIsExact) {
