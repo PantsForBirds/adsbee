@@ -1442,6 +1442,62 @@ class AircraftDictionary {
      */
     bool IsPreferredReportForAddress(uint32_t uid, uint32_t timestamp_ms) const;
 
+    // No ownship among the tracked aircraft: IsOwnship() never matches it.
+    static constexpr uint32_t kNoOwnshipICAOAddress = UINT32_MAX;
+
+    /**
+     * ICAO address of the tracked aircraft that is ownship: the one RX_POSITION=ICAO follows, while it gives the
+     * receiver position. Else kNoOwnshipICAOAddress (GNSS, fixed or lowest-aircraft position, or no position).
+     * @param[in] rx_position SettingsManager::RxPosition (either product's).
+     * @param[in] rx_position_available True while rx_position holds a position.
+     */
+    template <typename RxPositionT>
+    static uint32_t OwnshipICAOAddress(const RxPositionT& rx_position, bool rx_position_available) {
+        return rx_position_available && rx_position.source == RxPositionT::kPositionSourceAircraftMatchingICAO
+                   ? rx_position.icao_address & 0xFFFFFF
+                   : kNoOwnshipICAOAddress;
+    }
+
+    /**
+     * Whether a dictionary entry is ownship: an entry that carries ownship's ICAO address (Mode S from ADS-B, ADS-R,
+     * TIS-B or Mode S replies, or UAT ADS-B or TIS-B). Remote ID and entries without an ICAO address (anonymous,
+     * self-assigned, track files) never are, and nothing is for kNoOwnshipICAOAddress.
+     * @param[in] uid UID of the entry.
+     * @param[in] ownship_icao_address From OwnshipICAOAddress().
+     */
+    static bool IsOwnship(uint32_t uid, uint32_t ownship_icao_address) {
+        if (ownship_icao_address > 0xFFFFFF) return false;
+        const uint32_t address = Aircraft::UIDToICAOAddress(uid);
+        if ((address & 0xFFFFFF) != ownship_icao_address) return false;
+        const uint32_t qualifier = (address & Aircraft::kAddressQualifierMask) >> Aircraft::kAddressQualifierBitShift;
+        switch (Aircraft::UIDToAircraftType(uid)) {
+            case Aircraft::kAircraftTypeModeS:
+                return qualifier == 0;  // AddressToUID() puts non-ICAO address types in the qualifier.
+            case Aircraft::kAircraftTypeUAT:
+                return qualifier == UATAircraft::kADSBTargetWithICAO24BitAddress ||
+                       qualifier == UATAircraft::kTISBTargetWithICAO24BitAddress;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Whether a traffic report (GDL90, FLARM NMEA) covers a dictionary entry: it isn't ownship, the report filter
+     * (AT+FILTER_DISTANCE_NM, AT+FILTER_ALTITUDE_FT) keeps it, and it is the entry reported for its ICAO address.
+     * Whether it has a position is up to the report.
+     * @param[in] uid UID of the entry.
+     * @param[in] entry The entry.
+     * @param[in] timestamp_ms Current local time, in ms.
+     * @param[in] filter From GetReportFilter().
+     * @param[in] ownship_icao_address From OwnshipICAOAddress().
+     */
+    bool IsReportedTraffic(uint32_t uid, const AircraftEntry& entry, uint32_t timestamp_ms,
+                           const AircraftReportFilter& filter, uint32_t ownship_icao_address) const {
+        if (IsOwnship(uid, ownship_icao_address)) return false;
+        if (std::visit([&filter](const auto& a) { return filter.Excludes(a); }, entry)) return false;
+        return IsPreferredReportForAddress(uid, timestamp_ms);
+    }
+
     /**
      * Resolves the aircraft report filters for a reporting round. kAltitudeFilterNearRx uses the receiver
      * altitude from SetReferenceAltitudeFt(); without one it filters nothing.

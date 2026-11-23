@@ -3,6 +3,7 @@
 #include "asterix_utils.hh"
 #include "gtest/gtest.h"
 #include "hal_god_powers.hh"
+#include "settings.hh"
 
 // Frames heard from 1090 MHz TIS-B and ADS-R ground stations, and DF18 CF=0/1 frames re-addressed from the
 // "1090 MHz Riddle" DF17 pair (52.2572 N, 3.9194 E) with a recomputed CRC.
@@ -284,4 +285,71 @@ TEST_F(ContactModes, UATRebroadcastsKeyOnAddressQualifier) {
         WriteAircraftJSONUATAircraftStr(buf, *aircraft);
         EXPECT_NE(std::string(buf).find(std::string("\"type\":\"") + c.type_str + "\""), std::string::npos) << buf;
     }
+}
+
+TEST(Ownship, OnlyEntriesWithOwnshipsICAOAddress) {
+    const uint32_t own = 0xADF011;
+    EXPECT_TRUE(AircraftDictionary::IsOwnship(Aircraft::ICAOToUID(own, Aircraft::kAircraftTypeModeS), own));
+    EXPECT_TRUE(
+        AircraftDictionary::IsOwnship(ModeSAircraft::AddressToUID(own, ModeSAircraft::kAddressTypeTISBICAO), own));
+    EXPECT_TRUE(
+        AircraftDictionary::IsOwnship(ModeSAircraft::AddressToUID(own, ModeSAircraft::kAddressTypeADSRICAO), own));
+    // Non-ICAO addresses with the same 24 bits are other aircraft.
+    for (ModeSAircraft::AddressType type :
+         {ModeSAircraft::kAddressTypeADSBOther, ModeSAircraft::kAddressTypeADSROther,
+          ModeSAircraft::kAddressTypeTISBTrackFile, ModeSAircraft::kAddressTypeTISBOther}) {
+        EXPECT_FALSE(AircraftDictionary::IsOwnship(ModeSAircraft::AddressToUID(own, type), own)) << int(type);
+    }
+    auto uat_uid = [](uint32_t address, UATAircraft::AddressQualifier q) {
+        return Aircraft::ICAOToUID(address | (uint32_t(q) << Aircraft::kAddressQualifierBitShift),
+                                   Aircraft::kAircraftTypeUAT);
+    };
+    EXPECT_TRUE(AircraftDictionary::IsOwnship(uat_uid(own, UATAircraft::kADSBTargetWithICAO24BitAddress), own));
+    EXPECT_TRUE(AircraftDictionary::IsOwnship(uat_uid(own, UATAircraft::kTISBTargetWithICAO24BitAddress), own));
+    EXPECT_FALSE(
+        AircraftDictionary::IsOwnship(uat_uid(own, UATAircraft::kADSBTargetWithSelfAssignedTemporaryAddress), own));
+    EXPECT_FALSE(AircraftDictionary::IsOwnship(uat_uid(own, UATAircraft::kTISBTargetWithTrackFileIdentifier), own));
+    // Remote ID UIDs never carry an ICAO address.
+    EXPECT_FALSE(AircraftDictionary::IsOwnship(Aircraft::ICAOToUID(own, Aircraft::kAircraftTypeRemoteID), own));
+    EXPECT_FALSE(AircraftDictionary::IsOwnship(Aircraft::ICAOToUID(own + 1, Aircraft::kAircraftTypeModeS), own));
+    // Without ownship nothing matches, not even address 000000 (a GNSS ownship's GDL90 participant address).
+    EXPECT_FALSE(AircraftDictionary::IsOwnship(Aircraft::ICAOToUID(0, Aircraft::kAircraftTypeModeS),
+                                               AircraftDictionary::kNoOwnshipICAOAddress));
+    EXPECT_FALSE(AircraftDictionary::IsOwnship(Aircraft::ICAOToUID(0xFFFFFF, Aircraft::kAircraftTypeModeS),
+                                               AircraftDictionary::kNoOwnshipICAOAddress));
+}
+
+TEST(Ownship, ICAOAddressOnlyFromATrackedAircraftPosition) {
+    SettingsManager::RxPosition rx = {};
+    rx.icao_address = 0xADF011;
+    rx.source = SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;
+    EXPECT_EQ(AircraftDictionary::OwnshipICAOAddress(rx, true), 0xADF011u);
+    EXPECT_EQ(AircraftDictionary::OwnshipICAOAddress(rx, false), AircraftDictionary::kNoOwnshipICAOAddress);
+    for (auto source :
+         {SettingsManager::RxPosition::kPositionSourceGNSS, SettingsManager::RxPosition::kPositionSourceFixed,
+          SettingsManager::RxPosition::kPositionSourceLowestAircraft}) {
+        rx.source = source;
+        EXPECT_EQ(AircraftDictionary::OwnshipICAOAddress(rx, true), AircraftDictionary::kNoOwnshipICAOAddress)
+            << int(source);
+    }
+}
+
+TEST_F(ContactModes, ReportedTrafficLeavesOutOwnship) {
+    Ingest(kADF011Even);
+    Ingest(kAnonymousEven);
+    Ingest(kADF011Odd);
+    Ingest(kAnonymousOdd);
+    ModeSAircraft* icao = Get(0xADF011, ModeSAircraft::kAddressTypeADSBICAO);
+    ModeSAircraft* anonymous = Get(0xADF011, ModeSAircraft::kAddressTypeADSBOther);
+    ASSERT_TRUE(icao && anonymous);
+    const uint32_t now_ms = get_time_since_boot_ms();
+    const AircraftReportFilter filter;
+    auto reported = [&](ModeSAircraft* a, uint32_t own) {
+        auto itr = dictionary.dict.find(a->GetUID());
+        return dictionary.IsReportedTraffic(itr->first, itr->second, now_ms, filter, own);
+    };
+    EXPECT_TRUE(reported(icao, AircraftDictionary::kNoOwnshipICAOAddress));
+    EXPECT_TRUE(reported(anonymous, AircraftDictionary::kNoOwnshipICAOAddress));
+    EXPECT_FALSE(reported(icao, 0xADF011));
+    EXPECT_TRUE(reported(anonymous, 0xADF011));  // Another aircraft with the same 24 bits.
 }

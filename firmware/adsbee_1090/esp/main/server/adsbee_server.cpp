@@ -530,20 +530,16 @@ bool ADSBeeServer::ReportGDL90() {
     const bool to_ble = ble_output.StreamsMode(SettingsManager::kBLEOutputGDL90);
     uint32_t timestamp_ms = get_time_since_boot_ms();
     AircraftReportFilter report_filter = aircraft_dictionary.GetReportFilter(settings_manager.settings);
+    const uint32_t ownship_icao =
+        AircraftDictionary::OwnshipICAOAddress(rp2040_status.rx_position, rp2040_status.rx_position_available);
     // Writes the traffic report of one dictionary entry; 0 if it isn't reported.
     auto write_traffic = [&](auto& itr, uint8_t* buf, uint16_t buf_len, bool log) -> uint16_t {
-        if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) {
-            return 0;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
-        }
-        if (std::visit([&report_filter](const auto& a) { return report_filter.Excludes(a); }, itr.second)) {
-            return 0;  // AT+FILTER_DISTANCE_NM, AT+FILTER_ALTITUDE_FT.
+        if (!aircraft_dictionary.IsReportedTraffic(itr.first, itr.second, timestamp_ms, report_filter, ownship_icao)) {
+            return 0;
         }
         if (ModeSAircraft* mode_s_aircraft = get_if<ModeSAircraft>(&(itr.second)); mode_s_aircraft) {
-            if (!mode_s_aircraft->HasBitFlag(ModeSAircraft::kBitFlagPositionValid) ||
-                mode_s_aircraft->icao_address == ownship_data.participant_address) {
-                // Don't report aircraft without a valid position, and ignore ownship position when bootstrapping off a
-                // fixed ICAO.
-                return 0;
+            if (!mode_s_aircraft->HasBitFlag(ModeSAircraft::kBitFlagPositionValid)) {
+                return 0;  // Don't report aircraft without a valid position.
             }
             if (log) {
                 printf("\t#A %s (0x%06lX): %.5f %.5f %ld\r\n", mode_s_aircraft->callsign,
@@ -553,8 +549,7 @@ bool ADSBeeServer::ReportGDL90() {
             return gdl90.WriteGDL90TargetReportMessage(buf, buf_len, *mode_s_aircraft, false);
         }
         if (UATAircraft* uat_aircraft = get_if<UATAircraft>(&(itr.second)); uat_aircraft) {
-            if (!uat_aircraft->HasBitFlag(UATAircraft::kBitFlagPositionValid) ||
-                uat_aircraft->icao_address == ownship_data.participant_address) {
+            if (!uat_aircraft->HasBitFlag(UATAircraft::kBitFlagPositionValid)) {
                 return 0;
             }
             if (log) {
@@ -662,11 +657,10 @@ void ADSBeeServer::ReportFLARMNMEA() {
     const bool have_ownship =
         FLARMNMEAReporter::OwnshipFromRxPosition(own, rp2040_status.rx_position, rp2040_status.rx_position_available);
     // Our own ADS-B, when ownship comes from it. Its altitudes come from its entry, which says which are valid.
-    const uint32_t ownship_icao =
-        have_ownship && rp2040_status.rx_position.source == SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO
-            ? rp2040_status.rx_position.icao_address
-            : UINT32_MAX;
-    if (ownship_icao != UINT32_MAX) {
+    const uint32_t ownship_icao = have_ownship ? AircraftDictionary::OwnshipICAOAddress(
+                                                     rp2040_status.rx_position, rp2040_status.rx_position_available)
+                                               : AircraftDictionary::kNoOwnshipICAOAddress;
+    if (ownship_icao != AircraftDictionary::kNoOwnshipICAOAddress) {
         // The entry the RP2040 took the position from: the most recently heard of Mode S and UAT.
         const ModeSAircraft* mode_s = aircraft_dictionary.GetAircraftPtr<ModeSAircraft>(
             Aircraft::ICAOToUID(ownship_icao, Aircraft::kAircraftTypeModeS), false);
@@ -690,14 +684,12 @@ void ADSBeeServer::ReportFLARMNMEA() {
     AircraftReportFilter report_filter = aircraft_dictionary.GetReportFilter(settings_manager.settings);
     FLARMNMEAReporter::Target target;
     for (auto& itr : aircraft_dictionary.dict) {
-        if (!aircraft_dictionary.IsPreferredReportForAddress(itr.first, timestamp_ms)) continue;
-        if (std::visit([&report_filter](const auto& a) { return report_filter.Excludes(a); }, itr.second)) continue;
+        if (!aircraft_dictionary.IsReportedTraffic(itr.first, itr.second, timestamp_ms, report_filter, ownship_icao)) {
+            continue;
+        }
         if (!std::visit([&target](const auto& a) { return FLARMNMEAReporter::TargetFromAircraft(target, a); },
                         itr.second)) {
             continue;  // No position.
-        }
-        if (Aircraft::UIDToAircraftType(itr.first) != Aircraft::kAircraftTypeRemoteID && target.id == ownship_icao) {
-            continue;
         }
         num_received++;
         FLARMNMEAReporter::RelativePosition relative;
