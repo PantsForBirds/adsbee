@@ -231,7 +231,7 @@ The ADSBee 1090 is intended to interface easily with external modules via UART! 
 4. Connect your external device to the pins on the ADSBee 1090 labeled GND, TX, and RX. Don’t forget to cross over TX and RX as necessary!
 5. Save your settings with `AT+SETTINGS=SAVE`.
 
-The GNSS UART (on the GNSS module connector) works the same way with `GNSS_UART` in place of `COMMS_UART`. A GNSS module on that connector also receives the protocol output.
+The GNSS UART (on the GNSS module connector) works the same way with `GNSS_UART` in place of `COMMS_UART`. A GNSS module on that connector receives only the protocol set for `GNSS_UART`.
 
 ### Connect a Device via USB
 

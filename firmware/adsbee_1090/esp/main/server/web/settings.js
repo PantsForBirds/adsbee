@@ -1277,7 +1277,7 @@ const SETTINGS_SCHEMA_1090 = [
     // ── Reporting ──
     {
         cmd: 'PROTOCOL_OUT', label: 'Output Protocols', group: 'Reporting',
-        help: 'Reporting protocol emitted on each serial interface. A GNSS receiver on the GNSS UART also receives it.',
+        help: 'Reporting protocol emitted on each serial interface. A GNSS receiver on the GNSS UART receives only the protocol set for the GNSS UART.',
         fields: [
             { id: 'CONSOLE', label: 'Console', type: 'enum', options: SETTINGS_PROTOCOLS },
             { id: 'COMMS_UART', label: 'Comms UART', type: 'enum', options: SETTINGS_PROTOCOLS },
