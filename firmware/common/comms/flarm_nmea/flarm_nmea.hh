@@ -17,8 +17,9 @@
  *
  * PFLAA vertical separation never mixes altitude references: baro against baro, else geometric against geometric. ADS-B
  * and Remote ID geometric altitudes are heights above the WGS-84 ellipsoid (HAE); a GNSS receiver's altitude is above
- * mean sea level, which differs from HAE by the local geoid height (up to about 100 m), so it is not compared with
- * them. Baro and geometric altitudes differ by the weather and temperature, so they are compared only through a
+ * mean sea level, which differs from HAE by the local geoid height (up to about 100 m). A GNSS ownship therefore has a
+ * geometric altitude only when the receiver reports its geoid separation (HAE = MSL + separation, as the GDL90 Ownship
+ * Geometric Altitude message, GDL90Reporter::GNSSHeightAboveEllipsoidFt()); without one it is not compared with them. Baro and geometric altitudes differ by the weather and temperature, so they are compared only through a
  * measured difference: ADS-B airborne velocity messages carry each aircraft's GNSS minus baro difference, from which
  * the dictionary derives its geometric altitude. A target with no altitude in ownship's references gets no PFLAA
  * (FTD-012 defines no "unknown" RelativeVertical, and XCSoar drops a PFLAA without one); it is still counted in PFLAU.
@@ -69,6 +70,8 @@ class FLARMNMEAReporter {
         uint32_t lon_awb = 0;
         bool msl_altitude_valid = false;
         int32_t msl_altitude_ft = 0;  // GNSS altitude above mean sea level, for GPGGA.
+        bool geoid_separation_valid = false;
+        int32_t geoid_separation_cm = 0;  // GNSS geoid height above the WGS-84 ellipsoid, for GPGGA.
         bool geometric_altitude_valid = false;
         int32_t geometric_altitude_ft = 0;  // Height above the WGS-84 ellipsoid.
         bool baro_altitude_valid = false;
@@ -111,13 +114,16 @@ class FLARMNMEAReporter {
     };
 
     /**
-     * Ownship from the receiver position. A GNSS fix gives the mean sea level altitude (GPGGA) and no altitude to
-     * compare traffic with. For the tracked aircraft with the configured ICAO address, RxPosition carries altitudes
+     * Ownship from the receiver position. A GNSS fix gives the mean sea level altitude (GPGGA) and, with the receiver's
+     * geoid separation, a geometric altitude (MSL + separation) to compare traffic with; without one, none. For the tracked aircraft with the configured ICAO address, RxPosition carries altitudes
      * without validity flags: they are left invalid, and OwnshipAltitudesFromAircraft() sets them from the aircraft.
+     * @param[in] geoid_separation_valid Whether the GNSS receiver reported a geoid separation (GNSS source only).
+     * @param[in] geoid_separation_cm Geoid height above the WGS-84 ellipsoid, in centimeters.
      * @retval False if the position isn't this aircraft's own (GDL90Reporter::IsValidOwnshipSource) or unavailable.
      */
     static bool OwnshipFromRxPosition(Ownship& own, const SettingsManager::RxPosition& rx_position,
-                                      bool rx_position_available);
+                                      bool rx_position_available, bool geoid_separation_valid = false,
+                                      int32_t geoid_separation_cm = 0);
 
     // Baro and geometric altitudes of the tracked aircraft that is ownship, as valid as the aircraft has them.
     static void OwnshipAltitudesFromAircraft(Ownship& own, const ModeSAircraft& aircraft);
@@ -152,7 +158,8 @@ class FLARMNMEAReporter {
     static uint16_t WritePFLAA(char* buf, uint16_t buf_len, const Ownship& own, const Target& target);
     // 0 without a valid UTC time.
     static uint16_t WriteGPRMC(char* buf, uint16_t buf_len, const Ownship& own, const UTCTime& utc);
-    // Fix quality 1. Satellites, HDOP and geoid separation empty; altitude only with an MSL altitude. 0 without a
+    // Fix quality 1. Satellites and HDOP empty; altitude (MSL) only with an MSL altitude, geoid separation (field 11)
+    // only with one. 0 without a
     // valid UTC time.
     static uint16_t WriteGPGGA(char* buf, uint16_t buf_len, const Ownship& own, const UTCTime& utc);
     // Barometric altitude in feet. 0 without an ownship baro altitude.
