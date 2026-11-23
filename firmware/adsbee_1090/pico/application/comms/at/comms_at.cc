@@ -1899,7 +1899,7 @@ CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
     for (uint16_t iface = 0; iface < SettingsManager::kNumSerialInterfaces; iface++) {
         CPP_AT_PRINTF("%s ", SettingsManager::kSerialInterfaceStrs[iface]);
     }
-    CPP_AT_PRINTF("\r\n\tA GNSS receiver on GNSS_UART receives only the protocol set for GNSS_UART.");
+    CPP_AT_PRINTF("\r\n\tWarning: A GNSS receiver installed on GNSS_UART will receive protocols being reported on GNSS_UART.");
     CPP_AT_PRINTF("\r\n\t<protocol> = ");
     for (uint16_t protocol = 0; protocol < SettingsManager::kNumProtocols; protocol++) {
         CPP_AT_PRINTF("\r\n\t\t%s ", SettingsManager::kReportingProtocolStrs[protocol]);
