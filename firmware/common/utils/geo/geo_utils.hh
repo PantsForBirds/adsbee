@@ -72,20 +72,16 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
                                  uint16_t &bearing_bam16);
 
 /**
- * Position of a point relative to a reference point, in meters along true north and east: the distance along the
- * surface split by the initial bearing (an azimuthal equidistant projection centered on the reference, which keeps
- * every distance from it true). Same distance as CalculateDistanceAndBearing, with the bearing at full resolution; up
- * to 20 km from the reference, at any latitude, each component is within 0.65 m of the same split of the WGS-84
- * geodesic (0.5 m of it is the rounding to whole meters).
- * @param[in] ref Reference point.
- * @param[in] lat_awb Latitude of the other point, in AWB.
- * @param[in] lon_awb Longitude of the other point, in AWB.
- * @param[out] north_m Meters north of the reference, negative to the south.
- * @param[out] east_m Meters east of the reference, negative to the west.
- * @param[out] distance_m Distance along the surface, in meters.
+ * A distance and bearing (as CalculateDistanceAndBearing gives them) split into meters along true north and east: the
+ * azimuthal equidistant projection centered on the reference, which keeps every distance from it true. Each component
+ * is rounded once; against the same split of the WGS-84 geodesic it is off by the distance's rounding (0.5 m) plus the
+ * bearing's (half a BAM16, 0.48 m at 10 km) and error: < 1.2 m up to 10 km and < 1.6 m up to 20 km, at any latitude.
+ * @param[in] distance_m Distance along the surface, in meters.
+ * @param[in] bearing_bam16 Bearing clockwise from north, in 1/65536 turns.
+ * @param[out] north_m Meters north, negative to the south.
+ * @param[out] east_m Meters east, negative to the west.
  */
-void CalculateNorthEastMeters(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, int32_t &north_m,
-                              int32_t &east_m, uint32_t &distance_m);
+void SplitNorthEastMeters(uint32_t distance_m, uint16_t bearing_bam16, int32_t &north_m, int32_t &east_m);
 
 /**
  * An angle in float degrees as AWB, exactly (to 1 AWB, 8e-8 deg) and without floating point arithmetic: negative

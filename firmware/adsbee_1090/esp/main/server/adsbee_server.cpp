@@ -288,17 +288,22 @@ bool ADSBeeServer::Update() {
     }
     if (received_rp2040_metrics ||
         timestamp_ms - last_aircraft_dictionary_update_timestamp_ms_ > kAircraftDictionaryUpdateFallbackIntervalMs) {
-        if (object_dictionary.composite_device_status.rp2040.rx_position_available) {
-            aircraft_dictionary.SetReferencePosition(
-                object_dictionary.composite_device_status.rp2040.rx_position.latitude_deg,
-                object_dictionary.composite_device_status.rp2040.rx_position.longitude_deg);
-            aircraft_dictionary.SetReferenceAltitudeFt(
-                object_dictionary.composite_device_status.rp2040.rx_position.FilterAltitudeFt());
+        // One copy of the receiver position (the RP2040 writes it from the SPI task) for the dictionary's reference
+        // and the FLARM ownship, so the distances FLARM reads are measured from ownship.
+        const SettingsManager::RxPosition rx_position = object_dictionary.composite_device_status.rp2040.rx_position;
+        const bool rx_position_available = object_dictionary.composite_device_status.rp2040.rx_position_available;
+        if (rx_position_available) {
+            aircraft_dictionary.SetReferencePosition(rx_position.latitude_deg, rx_position.longitude_deg);
+            aircraft_dictionary.SetReferenceAltitudeFt(rx_position.FilterAltitudeFt());
         } else {
             aircraft_dictionary.ClearReferencePosition();
         }
 
         aircraft_dictionary.Update(timestamp_ms);
+        // Right after Update(), before any packet moves an aircraft: every entry's distance and bearing is current.
+        if (ble_output.StreamsMode(SettingsManager::kBLEOutputFLARMNMEA)) {
+            ReportFLARMNMEA(rx_position, rx_position_available);
+        }
         last_aircraft_dictionary_update_timestamp_ms_ = timestamp_ms;
         uint32_t heap_free_kb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
         uint32_t heap_total_kb = heap_caps_get_total_size(MALLOC_CAP_8BIT) / 1024;
@@ -435,7 +440,6 @@ bool ADSBeeServer::Update() {
             CONSOLE_ERROR("ADSBeeServer::Update", "Encountered error while reporting GDL90.");
             ret = false;
         }
-        if (ble_output.StreamsMode(SettingsManager::kBLEOutputFLARMNMEA)) ReportFLARMNMEA();
     }
 
     // Broadcast aircraft JSON to connected /aircraft WebSocket clients. A report starts once the last one is done.
@@ -650,16 +654,18 @@ static FLARMNMEAReporter::UTCTime FLARMNMEAUTCTime(const ObjectDictionary::RP204
     return utc;
 }
 
-void ADSBeeServer::ReportFLARMNMEA() {
+void ADSBeeServer::ReportFLARMNMEA(const SettingsManager::RxPosition& rx_position, bool rx_position_available) {
     ble_output.BeginReport();
     const ObjectDictionary::RP2040DeviceStatus& rp2040_status = object_dictionary.composite_device_status.rp2040;
     FLARMNMEAReporter::Ownship own;
-    const bool have_ownship =
-        FLARMNMEAReporter::OwnshipFromRxPosition(own, rp2040_status.rx_position, rp2040_status.rx_position_available);
+    const bool have_ownship = FLARMNMEAReporter::OwnshipFromRxPosition(own, rx_position, rx_position_available);
     // Our own ADS-B, when ownship comes from it. Its altitudes come from its entry, which says which are valid.
-    const uint32_t ownship_icao = have_ownship ? AircraftDictionary::OwnshipICAOAddress(
-                                                     rp2040_status.rx_position, rp2040_status.rx_position_available)
-                                               : AircraftDictionary::kNoOwnshipICAOAddress;
+    const uint32_t ownship_icao = have_ownship
+                                      ? AircraftDictionary::OwnshipICAOAddress(rx_position, rx_position_available)
+                                      : AircraftDictionary::kNoOwnshipICAOAddress;
+    // Traffic positions are the dictionary's distances and bearings, so they must be measured from ownship.
+    const bool distances_from_ownship =
+        have_ownship && aircraft_dictionary.DistanceReferenceIs(own.lat_awb, own.lon_awb);
     if (ownship_icao != AircraftDictionary::kNoOwnshipICAOAddress) {
         // The entry the RP2040 took the position from: the most recently heard of Mode S and UAT.
         const ModeSAircraft* mode_s = aircraft_dictionary.GetAircraftPtr<ModeSAircraft>(
@@ -675,9 +681,10 @@ void ADSBeeServer::ReportFLARMNMEA() {
         }
     }
 
-    // Reported aircraft, nearest first. Without ownship they are only counted for PFLAU.
+    // Reported aircraft, nearest first. Without ownship they are only counted for PFLAU, as is an aircraft whose
+    // distance isn't current (never after Update(), which this report follows).
     // Allocated with the output (non-null while it streams FLARM NMEA).
-    FLARMTrafficList* traffic = have_ownship ? ble_output.FLARMTraffic() : nullptr;
+    FLARMTrafficList* traffic = distances_from_ownship ? ble_output.FLARMTraffic() : nullptr;
     if (traffic != nullptr) traffic->Clear();
     uint16_t num_received = 0;
     const uint32_t timestamp_ms = get_time_since_boot_ms();
@@ -693,7 +700,10 @@ void ADSBeeServer::ReportFLARMNMEA() {
         }
         num_received++;
         FLARMNMEAReporter::RelativePosition relative;
-        if (traffic == nullptr || !FLARMNMEAReporter::Relative(own, target, relative)) continue;
+        if (traffic == nullptr || !aircraft_dictionary.DistanceIsCurrent(itr.second) ||
+            !FLARMNMEAReporter::Relative(own, target, relative)) {
+            continue;
+        }
         traffic->Add(relative.distance_m, &itr.second);
     }
     if (traffic != nullptr) traffic->SortNearestFirst();

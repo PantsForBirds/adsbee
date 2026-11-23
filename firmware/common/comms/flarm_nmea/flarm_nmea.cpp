@@ -24,7 +24,8 @@ bool FLARMNMEAReporter::OwnshipFromRxPosition(Ownship& own, const SettingsManage
                                               bool rx_position_available) {
     own = {};
     if (!rx_position_available || !GDL90Reporter::IsValidOwnshipSource(rx_position.source)) return false;
-    own.position.Set(FloatDegToAWB(rx_position.latitude_deg), FloatDegToAWB(rx_position.longitude_deg));
+    own.lat_awb = FloatDegToAWB(rx_position.latitude_deg);
+    own.lon_awb = FloatDegToAWB(rx_position.longitude_deg);
     if (rx_position.source == SettingsManager::RxPosition::kPositionSourceGNSS) {
         own.msl_altitude_valid = true;
         own.msl_altitude_ft = rx_position.gnss_altitude_ft;
@@ -53,8 +54,9 @@ void FLARMNMEAReporter::OwnshipAltitudesFromAircraft(Ownship& own, const UATAirc
 
 template <typename T>
 void FLARMNMEAReporter::FillMotion(Target& target, const T& aircraft) {
-    target.lat_awb = FloatDegToAWB(aircraft.latitude_deg);
-    target.lon_awb = FloatDegToAWB(aircraft.longitude_deg);
+    target.distance_valid = aircraft.distance_m != Aircraft::kDistanceUnknown;
+    target.distance_m = aircraft.distance_m;
+    target.bearing_bam16 = aircraft.bearing_bam16;
     target.baro_altitude_valid = aircraft.HasBitFlag(T::kBitFlagBaroAltitudeValid);
     target.baro_altitude_ft = aircraft.baro_altitude_ft;
     target.geometric_altitude_valid = aircraft.HasBitFlag(T::kBitFlagGNSSAltitudeValid);
@@ -140,8 +142,9 @@ bool FLARMNMEAReporter::TargetFromAircraft(Target& target, const RemoteIDAircraf
     target.id = aircraft.address & 0xFFFFFF;
     target.id_type = kIDTypeRandom;
     target.source = kSourceNone;
-    target.lat_awb = FloatDegToAWB(aircraft.latitude_deg);
-    target.lon_awb = FloatDegToAWB(aircraft.longitude_deg);
+    target.distance_valid = aircraft.distance_m != Aircraft::kDistanceUnknown;
+    target.distance_m = aircraft.distance_m;
+    target.bearing_bam16 = aircraft.bearing_bam16;
     target.geometric_altitude_valid = aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagGNSSAltitudeValid);
     target.geometric_altitude_ft = aircraft.gnss_altitude_ft;
     target.track_valid = aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagDirectionValid);
@@ -156,6 +159,7 @@ bool FLARMNMEAReporter::TargetFromAircraft(Target& target, const RemoteIDAircraf
 }
 
 bool FLARMNMEAReporter::Relative(const Ownship& own, const Target& target, RelativePosition& relative) {
+    if (!target.distance_valid) return false;
     int32_t delta_ft;
     if (own.baro_altitude_valid && target.baro_altitude_valid) {
         delta_ft = target.baro_altitude_ft - own.baro_altitude_ft;
@@ -164,8 +168,8 @@ bool FLARMNMEAReporter::Relative(const Ownship& own, const Target& target, Relat
     } else {
         return false;
     }
-    CalculateNorthEastMeters(own.position, target.lat_awb, target.lon_awb, relative.north_m, relative.east_m,
-                             relative.distance_m);
+    SplitNorthEastMeters(target.distance_m, target.bearing_bam16, relative.north_m, relative.east_m);
+    relative.distance_m = target.distance_m;
     if (relative.north_m > kMaxRelativeHorizontalM || relative.north_m < -kMaxRelativeHorizontalM ||
         relative.east_m > kMaxRelativeHorizontalM || relative.east_m < -kMaxRelativeHorizontalM) {
         return false;
@@ -255,8 +259,8 @@ uint16_t FLARMNMEAReporter::WritePFLAA(char* buf, uint16_t buf_len, const Ownshi
 uint16_t FLARMNMEAReporter::WriteGPRMC(char* buf, uint16_t buf_len, const Ownship& own, const UTCTime& utc) {
     if (!utc.time_valid) return 0;
     char lat[24], lon[24];
-    WriteNMEALatLon(lat, sizeof(lat), own.position.lat_awb, true);
-    WriteNMEALatLon(lon, sizeof(lon), own.position.lon_awb, false);
+    WriteNMEALatLon(lat, sizeof(lat), own.lat_awb, true);
+    WriteNMEALatLon(lon, sizeof(lon), own.lon_awb, false);
     char date[16] = "";
     if (utc.date_valid) snprintf(date, sizeof(date), "%02u%02u%02u", utc.day, utc.month, utc.year % 100u);
     const int n = snprintf(buf, buf_len, "$GPRMC,%02u%02u%02u.00,A,%s,%s,%ld.0,%d.0,%s,,,A", utc.hour, utc.minute,
@@ -268,8 +272,8 @@ uint16_t FLARMNMEAReporter::WriteGPRMC(char* buf, uint16_t buf_len, const Ownshi
 uint16_t FLARMNMEAReporter::WriteGPGGA(char* buf, uint16_t buf_len, const Ownship& own, const UTCTime& utc) {
     if (!utc.time_valid) return 0;
     char lat[24], lon[24];
-    WriteNMEALatLon(lat, sizeof(lat), own.position.lat_awb, true);
-    WriteNMEALatLon(lon, sizeof(lon), own.position.lon_awb, false);
+    WriteNMEALatLon(lat, sizeof(lat), own.lat_awb, true);
+    WriteNMEALatLon(lon, sizeof(lon), own.lon_awb, false);
     char alt[24] = "";
     if (own.msl_altitude_valid) {
         // Decimeters: 3.048 dm/ft.

@@ -133,7 +133,7 @@ TEST(GeoUtils, IsDistanceGreaterThanAgreesWithDistance) {
 
 /**
  * Vincenty's inverse formula on WGS-84 in double precision (within 0.5 mm of the geodesic away from antipodes):
- * distance (m) and initial azimuth (deg), as the reference for CalculateNorthEastMeters.
+ * distance (m) and initial azimuth (deg), as the reference for CalculateDistanceAndBearing and SplitNorthEastMeters.
  */
 static void VincentyInverse(double lat1_deg, double lon1_deg, double lat2_deg, double lon2_deg, double &s_m,
                             double &azimuth_deg) {
@@ -174,6 +174,10 @@ static void VincentyInverse(double lat1_deg, double lon1_deg, double lat2_deg, d
     azimuth_deg = atan2(cosU2 * sin(lambda), cosU1 * sinU2 - sinU1 * cosU2 * cos(lambda)) / rad;
 }
 
+// North/east error of the stored distance (1 m) and bearing (BAM16) split: the two roundings plus the bearing's error.
+static constexpr double kSplitMaxError10kmM = 1.25;
+static constexpr double kSplitMaxError20kmM = 1.6;
+
 static double AWBToDeg(uint32_t awb) { return static_cast<int32_t>(awb) * (360.0 / 4294967296.0); }
 
 TEST(GeoUtils, VincentyReferenceMatchesGeographicLib) {
@@ -187,11 +191,12 @@ TEST(GeoUtils, VincentyReferenceMatchesGeographicLib) {
 }
 
 TEST(GeoUtils, NorthEastMatchesGeodesicAtFLARMRanges) {
-    // Targets out to 20 km in every direction from ownship anywhere: every latitude band including near the poles,
-    // and longitudes that straddle the antimeridian. Reference: the geodesic distance split by its initial azimuth.
+    // FLARM's PFLAA path: the dictionary's stored distance and BAM16 bearing, split. Targets out to 20 km in every
+    // direction from ownship anywhere: every latitude band including near the poles, and longitudes that straddle the
+    // antimeridian. Reference: the geodesic distance split by its initial azimuth.
     std::mt19937 rng(1293);
     std::uniform_real_distribution<double> unit(0.0, 1.0);
-    double max_component_error_m = 0, max_distance_error_m = 0;
+    double max_component_error_m = 0, max_component_error_10km_m = 0, max_distance_error_m = 0;
     for (int i = 0; i < 200000; i++) {
         double lat = i % 4 == 0 ? (unit(rng) < 0.5 ? -1 : 1) * (80.0 + 9.7 * unit(rng)) : -80.0 + 160.0 * unit(rng);
         double lon = i % 4 == 1 ? 179.9 + 0.2 * unit(rng) : -180.0 + 360.0 * unit(rng);
@@ -208,17 +213,22 @@ TEST(GeoUtils, NorthEastMatchesGeodesicAtFLARMRanges) {
         VincentyInverse(AWBToDeg(own_lat), AWBToDeg(own_lon), AWBToDeg(lat_b), AWBToDeg(lon_b), s, azimuth);
         int32_t north, east;
         uint32_t distance;
-        CalculateNorthEastMeters(GeoReference(own_lat, own_lon), lat_b, lon_b, north, east, distance);
+        uint16_t bearing_bam16;
+        CalculateDistanceAndBearing(GeoReference(own_lat, own_lon), lat_b, lon_b, distance, bearing_bam16);
+        SplitNorthEastMeters(distance, bearing_bam16, north, east);
         const double north_error = north - s * cos(azimuth * M_PI / 180.0);
         const double east_error = east - s * sin(azimuth * M_PI / 180.0);
-        max_component_error_m = fmax(max_component_error_m, fmax(fabs(north_error), fabs(east_error)));
+        const double component_error = fmax(fabs(north_error), fabs(east_error));
+        max_component_error_m = fmax(max_component_error_m, component_error);
+        if (s <= 10000.0) max_component_error_10km_m = fmax(max_component_error_10km_m, component_error);
         max_distance_error_m = fmax(max_distance_error_m, fabs(distance - s));
-        ASSERT_LT(fabs(north_error), 0.65) << lat << "," << lon << " " << range_m << " m at " << bearing;
-        ASSERT_LT(fabs(east_error), 0.65) << lat << "," << lon << " " << range_m << " m at " << bearing;
+        ASSERT_LT(component_error, s <= 10000.0 ? kSplitMaxError10kmM : kSplitMaxError20kmM)
+            << lat << "," << lon << " " << range_m << " m at " << bearing;
         ASSERT_LT(fabs(distance - s), 0.65) << lat << "," << lon << " " << range_m << " m at " << bearing;
     }
-    printf("CalculateNorthEastMeters to 20 km: max north/east error %.3f m, max distance error %.3f m\n",
-           max_component_error_m, max_distance_error_m);
+    printf("Stored distance + BAM16 bearing, split: max north/east error %.3f m to 10 km, %.3f m to 20 km; max "
+           "distance error %.3f m\n",
+           max_component_error_10km_m, max_component_error_m, max_distance_error_m);
 }
 
 TEST(GeoUtils, BearingMatchesGeodesicAtEveryLatitude) {
@@ -253,21 +263,35 @@ TEST(GeoUtils, BearingMatchesGeodesicAtEveryLatitude) {
            max_error);
 }
 
-TEST(GeoUtils, NorthEastAgreesWithDistanceAndBearing) {
-    GeoReference ref(DegToAWB(47.3), DegToAWB(8.5));
+TEST(GeoUtils, SplitNorthEastMeters) {
     int32_t north, east;
-    uint32_t distance, distance2;
-    uint16_t bearing;
-    CalculateNorthEastMeters(ref, DegToAWB(47.3), DegToAWB(8.5), north, east, distance);
+    SplitNorthEastMeters(0, 12345, north, east);
     EXPECT_EQ(north, 0);
     EXPECT_EQ(east, 0);
-    EXPECT_EQ(distance, 0u);
-    CalculateNorthEastMeters(ref, DegToAWB(47.4), DegToAWB(8.4), north, east, distance);
-    CalculateDistanceAndBearing(ref, DegToAWB(47.4), DegToAWB(8.4), distance2, bearing);
-    EXPECT_EQ(distance, distance2);
+    SplitNorthEastMeters(1000, 0, north, east);  // North.
+    EXPECT_EQ(north, 1000);
+    EXPECT_EQ(east, 0);
+    SplitNorthEastMeters(1000, 0x4000, north, east);  // East.
+    EXPECT_EQ(north, 0);
+    EXPECT_EQ(east, 1000);
+    SplitNorthEastMeters(1000, 0x8000, north, east);  // South.
+    EXPECT_EQ(north, -1000);
+    EXPECT_EQ(east, 0);
+    SplitNorthEastMeters(1000, 0xC000, north, east);  // West.
+    EXPECT_EQ(north, 0);
+    EXPECT_EQ(east, -1000);
+    SplitNorthEastMeters(20000000, 0x2000, north, east);  // 45 deg, half the circumference: no overflow.
+    EXPECT_NEAR(north, 14142136, 1);
+    EXPECT_NEAR(east, 14142136, 1);
+
+    // The ellipsoid's azimuth (GeographicLib: 325.8362 deg) survives the split, to the BAM16 rounding (0.0027 deg).
+    GeoReference ref(DegToAWB(47.3), DegToAWB(8.5));
+    uint32_t distance;
+    uint16_t bearing;
+    CalculateDistanceAndBearing(ref, DegToAWB(47.4), DegToAWB(8.4), distance, bearing);
+    SplitNorthEastMeters(distance, bearing, north, east);
     EXPECT_GT(north, 0);
     EXPECT_LT(east, 0);
-    // The ellipsoid's azimuth (GeographicLib: 325.8362 deg), from both (the BAM16 bearing to its 0.0027 deg rounding).
     EXPECT_NEAR(atan2(east, north) * 180.0 / M_PI + 360.0, 325.8362, 0.005);
     EXPECT_NEAR(Bam16ToDeg(bearing), 325.8362, 0.005);
 }

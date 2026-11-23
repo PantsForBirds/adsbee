@@ -158,8 +158,8 @@ void GeoReference::Set(uint32_t lat_awb_in, uint32_t lon_awb_in) {
 namespace {
 
 /**
- * CalculateDistanceAndBearing with the bearing at full AWB resolution.
- * @param[out] distance_q37_m Distance in 2^-37 m, unrounded, so each caller rounds once.
+ * CalculateDistanceAndBearing before rounding.
+ * @param[out] distance_q37_m Distance in 2^-37 m.
  */
 void DistanceAndBearingAWB(const GeoReference& ref, uint32_t lat_awb, uint32_t lon_awb, uint64_t& distance_q37_m,
                            uint32_t& bearing_awb_out) {
@@ -259,19 +259,12 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
     bearing_bam16 = static_cast<uint16_t>((bearing_awb + 0x8000u) >> 16);
 }
 
-void CalculateNorthEastMeters(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, int32_t &north_m,
-                              int32_t &east_m, uint32_t &distance_m) {
-    uint64_t distance_q37_m;
-    uint32_t bearing_awb;
-    DistanceAndBearingAWB(ref, lat_awb, lon_awb, distance_q37_m, bearing_awb);
-    distance_m = static_cast<uint32_t>((distance_q37_m + (1ull << 36)) >> 37);
-    // 1/16 m keeps the product with a Q30 sine below 2^63.
-    const int64_t distance_q4_m = static_cast<int64_t>((distance_q37_m + (1ull << 32)) >> 33);
+void SplitNorthEastMeters(uint32_t distance_m, uint16_t bearing_bam16, int32_t &north_m, int32_t &east_m) {
     int32_t sin_q30, cos_q30;
-    SinCosQ30(bearing_awb, sin_q30, cos_q30);
-    // Arithmetic shifts round halves up for both signs: each component is rounded once, to 0.5 m.
-    north_m = static_cast<int32_t>((distance_q4_m * cos_q30 + (1ll << 33)) >> 34);
-    east_m = static_cast<int32_t>((distance_q4_m * sin_q30 + (1ll << 33)) >> 34);
+    SinCosQ30(static_cast<uint32_t>(bearing_bam16) << 16, sin_q30, cos_q30);
+    // Arithmetic shifts round halves up for both signs.
+    north_m = static_cast<int32_t>((static_cast<int64_t>(distance_m) * cos_q30 + (1ll << 29)) >> 30);
+    east_m = static_cast<int32_t>((static_cast<int64_t>(distance_m) * sin_q30 + (1ll << 29)) >> 30);
 }
 
 uint32_t FloatDegToAWB(float deg) {

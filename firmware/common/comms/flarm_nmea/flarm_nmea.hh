@@ -23,7 +23,10 @@
  * the dictionary derives its geometric altitude. A target with no altitude in ownship's references gets no PFLAA
  * (FTD-012 defines no "unknown" RelativeVertical, and XCSoar drops a PFLAA without one); it is still counted in PFLAU.
  *
- * All arithmetic is integer (positions in AWB, see geo_utils.hh), so it costs the same on the ESP32 and the RP2040.
+ * Traffic positions come from the AircraftDictionary's distance and bearing to each aircraft (one geodesy routine for
+ * every user, see geo_utils.hh), which it measures from the receiver position: the caller passes only targets whose
+ * values are current and measured from ownship (AircraftDictionary::DistanceIsCurrent(), DistanceReferenceIs()). All
+ * arithmetic is integer, so it costs the same on the ESP32 and the RP2040.
  *
  * Writers return the sentence length including "$", "*hh" and CR LF, or 0 if nothing was written.
  */
@@ -62,7 +65,8 @@ class FLARMNMEAReporter {
     };
 
     struct Ownship {
-        GeoReference position;  // Latitude and longitude in AWB, with the trig that every target's Relative() reuses.
+        uint32_t lat_awb = 0;  // FloatDegToAWB() of the receiver position, as the dictionary measures from it.
+        uint32_t lon_awb = 0;
         bool msl_altitude_valid = false;
         int32_t msl_altitude_ft = 0;  // GNSS altitude above mean sea level, for GPGGA.
         bool geometric_altitude_valid = false;
@@ -77,8 +81,10 @@ class FLARMNMEAReporter {
     struct Target {
         uint32_t id = 0;  // 24 bits.
         IDType id_type = kIDTypeICAO;
-        uint32_t lat_awb = 0;
-        uint32_t lon_awb = 0;
+        // The dictionary's distance and bearing from the receiver (Aircraft::distance_m, bearing_bam16).
+        bool distance_valid = false;
+        uint32_t distance_m = 0;
+        uint16_t bearing_bam16 = 0;
         bool geometric_altitude_valid = false;
         int32_t geometric_altitude_ft = 0;  // Height above the WGS-84 ellipsoid.
         bool baro_altitude_valid = false;
@@ -126,9 +132,10 @@ class FLARMNMEAReporter {
     static bool TargetFromAircraft(Target& target, const RemoteIDAircraft& aircraft);
 
     /**
-     * Ownship-relative position: north and east from CalculateNorthEastMeters() (within 0.65 m of the WGS-84 geodesic
-     * up to 20 km), vertical baro against baro, else geometric against geometric (see the class comment).
-     * @retval False without an altitude in a reference ownship has, or beyond the PFLAA range.
+     * Ownship-relative position: north and east split from the target's distance and bearing (SplitNorthEastMeters(),
+     * within 1.2 m of the WGS-84 geodesic to 10 km), vertical baro against baro, else geometric against geometric (see
+     * the class comment).
+     * @retval False without a distance, without an altitude in a reference ownship has, or beyond the PFLAA range.
      */
     static bool Relative(const Ownship& own, const Target& target, RelativePosition& relative);
 
