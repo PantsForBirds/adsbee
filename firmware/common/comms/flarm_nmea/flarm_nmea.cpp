@@ -2,47 +2,13 @@
 
 #include <cstdio>
 
+#include "buffer_utils.hh"  // WriteTenths
 #include "gdl90_utils.hh"
+#include "macros.hh"            // Clamp, DivRound
+#include "unit_conversions.hh"  // FeetToMetersRounded
 
 namespace {
 constexpr int32_t kMaxClimbTenthsMps = 327;  // PFLAA <ClimbRate> range, 32.7 m/s.
-
-int32_t Clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : (v > hi ? hi : v); }
-
-// numerator / denominator rounded half away from zero, for denominator > 0.
-int32_t DivRound(int32_t numerator, int32_t denominator) {
-    return numerator < 0 ? -((-numerator + denominator / 2) / denominator)
-                         : (numerator + denominator / 2) / denominator;
-}
-
-// Feet to meters (0.3048 m/ft, exact), rounded. Clamped to +-200000 ft first so the product fits.
-int32_t FeetToMetersRounded(int32_t ft) { return DivRound(Clamp(ft, -200000, 200000) * 3048, 10000); }
-
-// Whole degrees, 0-359.
-int TrackDeg(float track_deg) {
-    int t = static_cast<int>(track_deg < 0 ? track_deg - 0.5f : track_deg + 0.5f) % 360;
-    return t < 0 ? t + 360 : t;
-}
-
-// "-12.3" from tenths, without "-0.0".
-void WriteTenths(char* buf, size_t len, int32_t tenths) {
-    const int32_t magnitude = tenths < 0 ? -tenths : tenths;
-    snprintf(buf, len, "%s%ld.%ld", tenths < 0 ? "-" : "", static_cast<long>(magnitude / 10),
-             static_cast<long>(magnitude % 10));
-}
-
-// "ddmm.mmmm,N" or "dddmm.mmmm,E" from an AWB angle (signed: negative is south or west).
-void WriteLatLon(char* buf, size_t len, uint32_t awb, bool is_lat) {
-    const bool negative = static_cast<int32_t>(awb) < 0;
-    const char hemisphere = is_lat ? (negative ? 'S' : 'N') : (negative ? 'W' : 'E');
-    const uint32_t magnitude = negative ? 0u - awb : awb;
-    // Ten-thousandths of a minute (360 * 60 * 10000 per turn), rounded once so the carry reaches the degrees.
-    const uint32_t units = static_cast<uint32_t>((static_cast<uint64_t>(magnitude) * 216000000u + (1ull << 31)) >> 32);
-    const unsigned long whole_deg = units / 600000u;
-    const unsigned long rem = units % 600000u;
-    snprintf(buf, len, is_lat ? "%02lu%02lu.%04lu,%c" : "%03lu%02lu.%04lu,%c", whole_deg, rem / 10000, rem % 10000,
-             hemisphere);
-}
 }  // namespace
 
 uint16_t FLARMNMEAReporter::Finish(char* buf, uint16_t buf_len, int body_len) {
@@ -252,7 +218,7 @@ uint16_t FLARMNMEAReporter::WritePFLAA(char* buf, uint16_t buf_len, const Ownshi
     if (!Relative(own, target, relative)) return 0;
 
     char track[8] = "";
-    if (target.track_valid) snprintf(track, sizeof(track), "%d", TrackDeg(target.track_deg));
+    if (target.track_valid) snprintf(track, sizeof(track), "%d", RoundTrackDeg(target.track_deg));
     // FTD-012: 0 on ground, else forced above 0.
     char speed[16] = "";
     if (target.on_ground) {
@@ -289,21 +255,21 @@ uint16_t FLARMNMEAReporter::WritePFLAA(char* buf, uint16_t buf_len, const Ownshi
 uint16_t FLARMNMEAReporter::WriteGPRMC(char* buf, uint16_t buf_len, const Ownship& own, const UTCTime& utc) {
     if (!utc.time_valid) return 0;
     char lat[24], lon[24];
-    WriteLatLon(lat, sizeof(lat), own.position.lat_awb, true);
-    WriteLatLon(lon, sizeof(lon), own.position.lon_awb, false);
+    WriteNMEALatLon(lat, sizeof(lat), own.position.lat_awb, true);
+    WriteNMEALatLon(lon, sizeof(lon), own.position.lon_awb, false);
     char date[16] = "";
     if (utc.date_valid) snprintf(date, sizeof(date), "%02u%02u%02u", utc.day, utc.month, utc.year % 100u);
     const int n = snprintf(buf, buf_len, "$GPRMC,%02u%02u%02u.00,A,%s,%s,%ld.0,%d.0,%s,,,A", utc.hour, utc.minute,
                            utc.second, lat, lon, static_cast<long>(own.speed_kts < 0 ? 0 : own.speed_kts),
-                           TrackDeg(own.track_deg), date);
+                           RoundTrackDeg(own.track_deg), date);
     return Finish(buf, buf_len, n);
 }
 
 uint16_t FLARMNMEAReporter::WriteGPGGA(char* buf, uint16_t buf_len, const Ownship& own, const UTCTime& utc) {
     if (!utc.time_valid) return 0;
     char lat[24], lon[24];
-    WriteLatLon(lat, sizeof(lat), own.position.lat_awb, true);
-    WriteLatLon(lon, sizeof(lon), own.position.lon_awb, false);
+    WriteNMEALatLon(lat, sizeof(lat), own.position.lat_awb, true);
+    WriteNMEALatLon(lon, sizeof(lon), own.position.lon_awb, false);
     char alt[24] = "";
     if (own.msl_altitude_valid) {
         // Decimeters: 3.048 dm/ft.

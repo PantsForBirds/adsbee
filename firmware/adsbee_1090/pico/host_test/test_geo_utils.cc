@@ -266,3 +266,40 @@ TEST(GeoUtils, CalculateTrackAndSpeed_Table) {
     expect_track_and_speed(0, -100, 270.0f, 100);  // Due west
     expect_track_and_speed(100, 100, 45.0f, 141);  // NE diagonal: speed = sqrt(2)*100 ≈ 141
 }
+
+TEST(GeoUtils, RoundTrackDeg) {
+    EXPECT_EQ(RoundTrackDeg(0.0f), 0);
+    EXPECT_EQ(RoundTrackDeg(0.4f), 0);
+    EXPECT_EQ(RoundTrackDeg(0.6f), 1);
+    EXPECT_EQ(RoundTrackDeg(359.4f), 359);
+    EXPECT_EQ(RoundTrackDeg(359.6f), 0);  // Wraps.
+    EXPECT_EQ(RoundTrackDeg(-0.6f), 359);
+    EXPECT_EQ(RoundTrackDeg(-90.0f), 270);
+    EXPECT_EQ(RoundTrackDeg(725.0f), 5);
+}
+
+TEST(GeoUtils, WriteNMEALatLon) {
+    char buf[16];
+    auto awb = [](double deg) {
+        return static_cast<uint32_t>(static_cast<int64_t>(llround(deg / 360.0 * 4294967296.0)));
+    };
+    WriteNMEALatLon(buf, sizeof(buf), awb(37.5), true);
+    EXPECT_STREQ(buf, "3730.0000,N");
+    WriteNMEALatLon(buf, sizeof(buf), awb(-122.25), false);
+    EXPECT_STREQ(buf, "12215.0000,W");
+    WriteNMEALatLon(buf, sizeof(buf), awb(-33.8688), true);
+    EXPECT_STREQ(buf, "3352.1280,S");
+    WriteNMEALatLon(buf, sizeof(buf), awb(151.2093), false);
+    EXPECT_STREQ(buf, "15112.5580,E");
+    WriteNMEALatLon(buf, sizeof(buf), 0, true);
+    EXPECT_STREQ(buf, "0000.0000,N");
+    WriteNMEALatLon(buf, sizeof(buf), 0, false);
+    EXPECT_STREQ(buf, "00000.0000,E");
+    // Rounding carries into the minutes and degrees: one AWB below 11 deg is 10 deg 59.999995'.
+    WriteNMEALatLon(buf, sizeof(buf), awb(11.0) - 1, true);
+    EXPECT_STREQ(buf, "1100.0000,N");
+    WriteNMEALatLon(buf, sizeof(buf), awb(-90.0), true);
+    EXPECT_STREQ(buf, "9000.0000,S");
+    WriteNMEALatLon(buf, sizeof(buf), awb(-180.0), false);  // 0x80000000.
+    EXPECT_STREQ(buf, "18000.0000,W");
+}

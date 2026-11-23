@@ -1,5 +1,6 @@
 #include "geo_utils.hh"
 
+#include <cstdio>  // snprintf
 #include <cstring>  // memcpy
 
 #include "awb_utils.h"
@@ -349,4 +350,16 @@ void CalculateTrackAndSpeedFromNEVelocities(int32_t n_vel_kts, int32_t e_vel_kts
     }
     speed_kts = static_cast<int16_t>(speed_kts_fixed);
 #endif
+}
+
+void WriteNMEALatLon(char* buf, size_t len, uint32_t awb, bool is_lat) {
+    const bool negative = static_cast<int32_t>(awb) < 0;
+    const char hemisphere = is_lat ? (negative ? 'S' : 'N') : (negative ? 'W' : 'E');
+    const uint32_t magnitude = negative ? 0u - awb : awb;
+    // Ten-thousandths of a minute (360 * 60 * 10000 per turn), rounded once so the carry reaches the degrees.
+    const uint32_t units = static_cast<uint32_t>((static_cast<uint64_t>(magnitude) * 216000000u + (1ull << 31)) >> 32);
+    const unsigned long whole_deg = units / 600000u;
+    const unsigned long rem = units % 600000u;
+    snprintf(buf, len, is_lat ? "%02lu%02lu.%04lu,%c" : "%03lu%02lu.%04lu,%c", whole_deg, rem / 10000, rem % 10000,
+             hemisphere);
 }

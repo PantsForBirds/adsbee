@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "fixedmath/fixed_math.hpp"
 #include "stdint.h"
 
@@ -39,6 +41,22 @@ struct GeoReference {
 
 // Bearings are stored in 1/65536 of a turn (binary angle measurement, BAM).
 inline float Bam16ToDeg(uint16_t bearing_bam16) { return bearing_bam16 * (360.0f / 65536.0f); }
+
+// A track or heading rounded to whole degrees, 0-359.
+inline int RoundTrackDeg(float track_deg) {
+    int t = static_cast<int>(track_deg < 0 ? track_deg - 0.5f : track_deg + 0.5f) % 360;
+    return t < 0 ? t + 360 : t;
+}
+
+/**
+ * Writes an AWB latitude or longitude as an NMEA 0183 field pair: "ddmm.mmmm,N" or "dddmm.mmmm,E" (signed AWB:
+ * negative is south or west), rounded to 1/10000 minute.
+ * @param[out] buf Output; 12 characters for a latitude, 13 for a longitude, plus the terminator.
+ * @param[in] len Size of buf.
+ * @param[in] awb Latitude or longitude in AWB.
+ * @param[in] is_lat True for a latitude.
+ */
+void WriteNMEALatLon(char* buf, size_t len, uint32_t awb, bool is_lat);
 
 /**
  * Distance and initial bearing from a reference point to another point.
