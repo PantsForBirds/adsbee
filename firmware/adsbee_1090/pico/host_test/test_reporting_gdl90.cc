@@ -1,6 +1,7 @@
 #include "fec.hh"
 #include "gdl90_utils.hh"
 #include "gtest/gtest.h"
+#include "unit_conversions.hh"
 
 GDL90Reporter gdl90;
 
@@ -623,6 +624,26 @@ TEST(GDL90Utils, OwnshipGeometricAltitudeFromGNSS) {
     // A geoid separation beyond 1 km is a bad sentence.
     EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 100001, 10));
     EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, -100001, 10));
+}
+
+TEST(GDL90Utils, GNSSHeightAboveEllipsoid) {
+    int32_t hae_ft = 0;
+    ASSERT_TRUE(GDL90Reporter::GNSSHeightAboveEllipsoidFt(1500, true, -3250, hae_ft));
+    EXPECT_EQ(hae_ft, 1393);
+    ASSERT_TRUE(GDL90Reporter::GNSSHeightAboveEllipsoidFt(-200, true, 3048, hae_ft));
+    EXPECT_EQ(hae_ft, -100);
+    hae_ft = 7;
+    EXPECT_FALSE(GDL90Reporter::GNSSHeightAboveEllipsoidFt(1500, false, -3250, hae_ft));
+    EXPECT_FALSE(GDL90Reporter::GNSSHeightAboveEllipsoidFt(1500, true, 100001, hae_ft));
+    EXPECT_EQ(hae_ft, 7);  // Untouched without an answer.
+    // Bounded: no overflow from an absurd MSL altitude.
+    ASSERT_TRUE(GDL90Reporter::GNSSHeightAboveEllipsoidFt(INT32_MAX, true, 100000, hae_ft));
+    EXPECT_EQ(hae_ft, 1000000 + 3281);
+    // CentimetersToFeetRounded matches the old x25/762 half-away-from-zero rounding everywhere in range.
+    for (int32_t cm = -100000; cm <= 100000; cm += 7) {
+        const int32_t scaled = cm * 25;
+        EXPECT_EQ(CentimetersToFeetRounded(cm), (scaled >= 0 ? scaled + 381 : scaled - 381) / 762) << cm;
+    }
 }
 
 TEST(GDL90Utils, OwnshipGeometricAltitudeOnlyForGNSS) {

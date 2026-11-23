@@ -539,7 +539,7 @@ bool ADSBeeServer::ReportGDL90() {
                 : GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable)) {
         message.len = gdl90.WriteGDL90OwnshipGeometricAltitudeMessage(
             message.data, CommsManager::NetworkMessage::kMaxLenBytes, geo_altitude_data);
-        comms_manager.WiFiAccessPointSendMessageToAllStations(message);
+        SendGDL90(message);
         message.len = 0;
     }
 
@@ -672,7 +672,10 @@ void ADSBeeServer::ReportFLARMNMEA(const SettingsManager::RxPosition& rx_positio
     ble_output.BeginReport();
     const ObjectDictionary::RP2040DeviceStatus& rp2040_status = object_dictionary.composite_device_status.rp2040;
     FLARMNMEAReporter::Ownship own;
-    const bool have_ownship = FLARMNMEAReporter::OwnshipFromRxPosition(own, rx_position, rx_position_available);
+    const bool have_ownship =
+        FLARMNMEAReporter::OwnshipFromRxPosition(own, rx_position, rx_position_available,
+                                                 rp2040_status.gnss_geoid_separation_valid,
+                                                 rp2040_status.gnss_geoid_separation_cm);
     // Our own ADS-B, when ownship comes from it. Its altitudes come from its entry, which says which are valid.
     const uint32_t ownship_icao = have_ownship
                                       ? AircraftDictionary::OwnshipICAOAddress(rx_position, rx_position_available)

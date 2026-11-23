@@ -166,6 +166,33 @@ TEST(FLARMNMEA, RelativeAltitudeReference) {
     }
 }
 
+TEST(FLARMNMEA, GNSSOwnshipWithGeoidSeparationGetsPFLAA) {
+    SettingsManager::RxPosition rx;
+    rx.source = SettingsManager::RxPosition::kPositionSourceGNSS;
+    rx.latitude_deg = 37.4f;
+    rx.longitude_deg = -122.1f;
+    rx.gnss_altitude_ft = 1000;  // MSL.
+    FLARMNMEAReporter::Ownship own;
+    FLARMNMEAReporter::Target t = Jet();
+    t.baro_altitude_valid = false;  // ADS-B geometric (HAE) only.
+    t.geometric_altitude_ft = 3893;
+    FLARMNMEAReporter::RelativePosition r;
+    // No geoid separation: MSL is never compared with HAE, no PFLAA.
+    ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true));
+    EXPECT_FALSE(FLARMNMEAReporter::Relative(own, t, r));
+    char buf[100];
+    EXPECT_EQ(FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), own, t), 0);
+    // With it: ownship HAE 893 ft, the target 3000 ft above = 914 m.
+    ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true, true, -3250));
+    ASSERT_TRUE(FLARMNMEAReporter::Relative(own, t, r));
+    EXPECT_EQ(r.vertical_m, 914);
+    EXPECT_GT(FLARMNMEAReporter::WritePFLAA(buf, sizeof(buf), own, t), 0);
+    // A baro-only target stays without PFLAA (a GNSS ownship has no baro altitude).
+    t.baro_altitude_valid = true;
+    t.geometric_altitude_valid = false;
+    EXPECT_FALSE(FLARMNMEAReporter::Relative(own, t, r));
+}
+
 TEST(FLARMNMEA, RelativePositionGeometry) {
     FLARMNMEAReporter::RelativePosition r;
     FLARMNMEAReporter::Ownship own = Own();
@@ -238,6 +265,15 @@ TEST(FLARMNMEA, GPRMCAndGPGGA) {
     EXPECT_EQ(Body(buf, len), "$GPRMC,120304.00,A,3724.0000,N,12206.0000,W,95.0,272.0,291026,,,A");
     len = FLARMNMEAReporter::WriteGPGGA(buf, sizeof(buf), own, utc);
     EXPECT_EQ(Body(buf, len), "$GPGGA,120304.00,3724.0000,N,12206.0000,W,1,,,304.8,M,,M,,");
+    // With the geoid separation, field 11 carries it (meters, one decimal); the altitude stays MSL.
+    own.geoid_separation_valid = true;
+    own.geoid_separation_cm = -3254;
+    len = FLARMNMEAReporter::WriteGPGGA(buf, sizeof(buf), own, utc);
+    EXPECT_EQ(Body(buf, len), "$GPGGA,120304.00,3724.0000,N,12206.0000,W,1,,,304.8,M,-32.5,M,,");
+    own.geoid_separation_cm = 4695;
+    len = FLARMNMEAReporter::WriteGPGGA(buf, sizeof(buf), own, utc);
+    EXPECT_EQ(Body(buf, len), "$GPGGA,120304.00,3724.0000,N,12206.0000,W,1,,,304.8,M,47.0,M,,");
+    own.geoid_separation_valid = false;
 
     // Rounding carries into the degrees; southern / eastern hemispheres.
     own.lat_awb = DegToAWB(-33.99999999);
@@ -288,16 +324,31 @@ TEST(FLARMNMEA, OwnshipFromRxPosition) {
     ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true));
     EXPECT_EQ(own.lat_awb, FloatDegToAWB(37.4f));
     EXPECT_EQ(own.lon_awb, FloatDegToAWB(-122.1f));
-    // GNSS: mean sea level for GPGGA, nothing to compare traffic with.
+    // GNSS without a geoid separation: mean sea level for GPGGA, nothing to compare traffic with.
     EXPECT_TRUE(own.msl_altitude_valid);
     EXPECT_EQ(own.msl_altitude_ft, 1000);
     EXPECT_FALSE(own.geometric_altitude_valid);
+    EXPECT_FALSE(own.geoid_separation_valid);
     EXPECT_FALSE(own.baro_altitude_valid);
     EXPECT_TRUE(own.airborne);
+    // GNSS with a geoid separation: HAE = MSL + separation, as GDL90's ID 11 (-32.5 m = -106.6 ft).
+    ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true, true, -3250));
+    EXPECT_TRUE(own.msl_altitude_valid);
+    EXPECT_EQ(own.msl_altitude_ft, 1000);
+    EXPECT_TRUE(own.geometric_altitude_valid);
+    EXPECT_EQ(own.geometric_altitude_ft, 893);
+    EXPECT_TRUE(own.geoid_separation_valid);
+    EXPECT_EQ(own.geoid_separation_cm, -3250);
+    EXPECT_FALSE(own.baro_altitude_valid);
+    // A bad separation (beyond 1 km) gives none.
+    ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true, true, 200000));
+    EXPECT_FALSE(own.geometric_altitude_valid);
+    EXPECT_FALSE(own.geoid_separation_valid);
     // Tracked aircraft: RxPosition's altitudes have no validity flags, so none until the aircraft's own are set.
     rx.source = SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;
     rx.speed_kts = 10;
-    ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true));
+    ASSERT_TRUE(FLARMNMEAReporter::OwnshipFromRxPosition(own, rx, true, true, -3250));  // Separation ignored.
+    EXPECT_FALSE(own.geoid_separation_valid);
     EXPECT_FALSE(own.msl_altitude_valid);
     EXPECT_FALSE(own.geometric_altitude_valid);
     EXPECT_FALSE(own.baro_altitude_valid);

@@ -51,6 +51,20 @@ TEST(GDL90BLEStream, PacksWholeMessagesIntoEachPayload) {
     EXPECT_EQ(chunks[1], traffic);
 }
 
+TEST(GDL90BLEStream, OwnshipGeometricAltitudeFollowsTheOwnshipReport) {
+    // The BLE GDL90 report (ADSBeeServer::ReportGDL90): heartbeat, ownship (ID 10), geometric altitude (ID 11), traffic.
+    GDL90BLEStream stream(1024);
+    auto heartbeat = Frame(0x00, 9);  // 11 B
+    auto ownship = Frame(0x10, 30);   // 32 B
+    auto geo_alt = Frame(0x0B, 7);    // 9 B: ID 11, 4 B payload, CRC.
+    auto traffic = Frame(0x20, 30);   // 32 B
+    for (const auto* m : {&heartbeat, &ownship, &geo_alt, &traffic}) ASSERT_TRUE(stream.Push(m->data(), m->size()));
+    auto chunks = Drain(stream, 60);
+    ASSERT_EQ(chunks.size(), 2u);
+    EXPECT_EQ(chunks[0], Cat({heartbeat, ownship, geo_alt}));  // ID 11 right after ID 10, never split.
+    EXPECT_EQ(chunks[1], traffic);
+}
+
 TEST(GDL90BLEStream, SplitsOnlyMessagesLongerThanAPayload) {
     GDL90BLEStream stream(2048);
     auto uplink = Frame(0x01, 440);  // A FIS-B uplink, 442 B.
