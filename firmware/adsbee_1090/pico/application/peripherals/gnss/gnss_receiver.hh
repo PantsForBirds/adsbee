@@ -103,6 +103,13 @@ class GNSSReceiver {
     bool HasValidFix() const;
 
     /**
+     * Altitude error estimate from the receiver's GST sentence, if one arrived recently with a valid fix.
+     * @param[out] std_dev_cm Standard deviation (1 sigma) of the altitude error, in centimeters.
+     * @retval True if std_dev_cm was written.
+     */
+    bool GetAltitudeStdDevCm(int32_t& std_dev_cm) const;
+
+    /**
      * @retval True if the module responded during Init() (i.e. it is present and configured).
      */
     bool IsHealthy() const { return healthy_; }

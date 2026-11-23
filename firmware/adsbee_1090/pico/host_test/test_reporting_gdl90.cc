@@ -485,6 +485,162 @@ TEST(GDL90Utils, OwnshipReportWithoutPosition) {
     EXPECT_TRUE(GDL90Reporter::IsValidOwnshipSource(SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO));
 }
 
+// Encodes an Ownship Geometric Altitude message and returns the unescaped altitude and vertical metrics words.
+static void WriteGeoAltitude(int32_t geo_altitude_ft, bool vertical_warning, uint16_t vfom_m, uint16_t& altitude_word,
+                             uint16_t& vertical_metrics_word) {
+    GDL90Reporter::GDL90OwnshipGeometricAltitudeData data;
+    data.geo_altitude_ft = geo_altitude_ft;
+    data.vertical_warning = vertical_warning;
+    data.vfom_m = vfom_m;
+    uint8_t buf[GDL90Reporter::kGDL90MessageMaxLenBytes];
+    uint16_t len = gdl90.WriteGDL90OwnshipGeometricAltitudeMessage(buf, sizeof(buf), data);
+    // Undo the escapes so the payload bytes can be read by position.
+    uint8_t unescaped[16];
+    uint16_t num_unescaped = 0;
+    for (uint16_t i = 1; i + 1 < len; i++) {
+        unescaped[num_unescaped++] = buf[i] == 0x7D ? buf[++i] ^ 0x20 : buf[i];
+    }
+    ASSERT_EQ(buf[0], 0x7E);
+    ASSERT_EQ(buf[len - 1], 0x7E);
+    ASSERT_EQ(num_unescaped, 7);  // ID + 4 payload + 2 CRC.
+    EXPECT_EQ(unescaped[0], GDL90Reporter::kGDL90MessageIDOwnshipGeometricAltitude);
+    EXPECT_EQ(gdl90.CalculateGDL90CRC16(unescaped, 5), unescaped[5] | (unescaped[6] << 8));
+    altitude_word = (unescaped[1] << 8) | unescaped[2];
+    vertical_metrics_word = (unescaped[3] << 8) | unescaped[4];
+}
+
+TEST(GDL90Utils, OwnshipGeometricAltitudeEncoding) {
+    const uint16_t kNA = GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable;
+    uint16_t alt, vm;
+    // ICD 3.8 examples: 5 ft resolution, signed.
+    WriteGeoAltitude(1000, false, kNA, alt, vm);
+    EXPECT_EQ(alt, 0x00C8);
+    EXPECT_EQ(vm, 0x7FFF);  // VFOM not available, no warning.
+    WriteGeoAltitude(-1000, false, kNA, alt, vm);
+    EXPECT_EQ(alt, 0xFF38);
+    WriteGeoAltitude(0, false, kNA, alt, vm);
+    EXPECT_EQ(alt, 0x0000);
+
+    // Rounded to the nearest 5 ft step, halves away from zero.
+    WriteGeoAltitude(1002, false, kNA, alt, vm);
+    EXPECT_EQ(alt, 200);
+    WriteGeoAltitude(1003, false, kNA, alt, vm);
+    EXPECT_EQ(alt, 201);
+    WriteGeoAltitude(-1002, false, kNA, alt, vm);
+    EXPECT_EQ(alt, static_cast<uint16_t>(-200));
+    WriteGeoAltitude(-1003, false, kNA, alt, vm);
+    EXPECT_EQ(alt, static_cast<uint16_t>(-201));
+
+    // Clamped to the 16-bit field (+163,835 ft / -163,840 ft).
+    WriteGeoAltitude(163835, false, kNA, alt, vm);
+    EXPECT_EQ(alt, 0x7FFF);
+    WriteGeoAltitude(500000, false, kNA, alt, vm);
+    EXPECT_EQ(alt, 0x7FFF);
+    WriteGeoAltitude(-500000, false, kNA, alt, vm);
+    EXPECT_EQ(alt, 0x8000);
+
+    // Vertical metrics, ICD 3.8 examples.
+    WriteGeoAltitude(1000, false, 10, alt, vm);
+    EXPECT_EQ(vm, 0x000A);
+    WriteGeoAltitude(1000, true, 50, alt, vm);
+    EXPECT_EQ(vm, 0x8032);
+    WriteGeoAltitude(1000, true, kNA, alt, vm);
+    EXPECT_EQ(vm, 0xFFFF);
+    WriteGeoAltitude(1000, false, GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMMaxMeters, alt, vm);
+    EXPECT_EQ(vm, 0x7FFE);
+}
+
+TEST(GDL90Utils, OwnshipGeometricAltitudeFraming) {
+    // 3190 ft = 638 = 0x027E: the 0x7E altitude byte must be escaped.
+    GDL90Reporter::GDL90OwnshipGeometricAltitudeData data;
+    data.geo_altitude_ft = 3190;
+    data.vfom_m = 10;
+    uint8_t buf[GDL90Reporter::kGDL90MessageMaxLenBytes];
+    uint16_t len = gdl90.WriteGDL90OwnshipGeometricAltitudeMessage(buf, sizeof(buf), data);
+    uint8_t unescaped[] = {0x0B, 0x02, 0x7E, 0x00, 0x0A};
+    uint16_t crc = gdl90.CalculateGDL90CRC16(unescaped, sizeof(unescaped));
+    uint8_t expected[16] = {0x7E, 0x0B, 0x02, 0x7D, 0x5E, 0x00, 0x0A};
+    uint16_t n = 7;
+    for (uint8_t b : {static_cast<uint8_t>(crc & 0xFF), static_cast<uint8_t>(crc >> 8)}) {
+        if (b == 0x7E || b == 0x7D) {
+            expected[n++] = 0x7D;
+            expected[n++] = b ^ 0x20;
+        } else {
+            expected[n++] = b;
+        }
+    }
+    expected[n++] = 0x7E;
+    ASSERT_EQ(len, n);
+    EXPECT_EQ(memcmp(buf, expected, n), 0);
+}
+
+TEST(GDL90Utils, VFOMFromAltitudeStdDev) {
+    const uint16_t kNA = GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable;
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(500), 10);  // 1.96 * 5 m = 9.8 m, rounded up.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(0), 0);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(1), 1);    // 0.0196 m rounds up to 1 m.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(100), 2);  // 1.96 m.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(5000), 98);  // Exactly 98 m: not rounded up.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(5001), 99);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(1671000), 32752);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(1671735), 0x7FFE);  // 32766.006 m.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(2000000), 0x7FFE);  // More than 32766 m.
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(INT32_MAX), 0x7FFE);
+    EXPECT_EQ(GDL90Reporter::VFOMFromAltitudeStdDevCm(-1), kNA);
+}
+
+TEST(GDL90Utils, OwnshipGeometricAltitudeFromGNSS) {
+    SettingsManager::RxPosition rx_position;
+    rx_position.source = SettingsManager::RxPosition::kPositionSourceGNSS;
+    rx_position.gnss_altitude_ft = 1500;  // MSL.
+    rx_position.baro_altitude_ft = 1234;
+
+    // HAE = MSL + geoid separation: -32.5 m = -106.6 ft -> 1393 ft.
+    GDL90Reporter::GDL90OwnshipGeometricAltitudeData data;
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, /*rx_position_available=*/true,
+                                                                 /*geoid_separation_valid=*/true, -3250, 10));
+    EXPECT_EQ(data.geo_altitude_ft, 1393);
+    EXPECT_EQ(data.vfom_m, 10);
+    EXPECT_FALSE(data.vertical_warning);
+
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 4690,
+                                                                 GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable));
+    EXPECT_EQ(data.geo_altitude_ft, 1654);  // 1500 + 153.9.
+    EXPECT_EQ(data.vfom_m, GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable);
+
+    // No geoid separation: an MSL value would be misread as HAE, so nothing is sent.
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, false, 0, 10));
+    // No fresh fix.
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, false, true, -3250, 10));
+
+    // Geoid separation rounds to the nearest foot: 15 cm = 0.49 ft, 16 cm = 0.52 ft.
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 15, 10));
+    EXPECT_EQ(data.geo_altitude_ft, 1500);
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 16, 10));
+    EXPECT_EQ(data.geo_altitude_ft, 1501);
+    ASSERT_TRUE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, -16, 10));
+    EXPECT_EQ(data.geo_altitude_ft, 1499);
+    // A geoid separation beyond 1 km is a bad sentence.
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, 100001, 10));
+    EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, -100001, 10));
+}
+
+TEST(GDL90Utils, OwnshipGeometricAltitudeOnlyForGNSS) {
+    SettingsManager::RxPosition rx_position;
+    rx_position.gnss_altitude_ft = 3100;
+    rx_position.baro_altitude_ft = 3000;
+    rx_position.icao_address = 0xBEE001;
+    // The tracked aircraft source has a pressure altitude in the ownship report; none of the others are ownship.
+    for (auto source : {SettingsManager::RxPosition::kPositionSourceNone, SettingsManager::RxPosition::kPositionSourceFixed,
+                        SettingsManager::RxPosition::kPositionSourceLowestAircraft,
+                        SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO}) {
+        rx_position.source = source;
+        GDL90Reporter::GDL90OwnshipGeometricAltitudeData data;
+        EXPECT_FALSE(GDL90Reporter::BuildOwnshipGeometricAltitudeData(data, rx_position, true, true, -3250, 10))
+            << "source " << static_cast<int>(source);
+    }
+}
+
 TEST(GDL90Utils, TrafficReport) {
     // TODO: Add tests here!
 }
