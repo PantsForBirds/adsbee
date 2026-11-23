@@ -1721,6 +1721,7 @@
 <li>Connect your external device to the pins on the ADSBee 1090 labeled GND, TX, and RX. Don’t forget to cross over TX and RX as necessary!</li>
 <li>Save your settings with <code>AT+SETTINGS=SAVE</code>.</li>
 </ol>
+<p>The GNSS UART (on the GNSS module connector) works the same way with <code>GNSS_UART</code> in place of <code>COMMS_UART</code>. Warning: A GNSS receiver installed on <code>GNSS_UART</code> will receive protocols being reported on <code>GNSS_UART</code>.</p>
 <h3 id="connect-a-device-via-usb">Connect a Device via USB<a class="headerlink" href="#connect-a-device-via-usb" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Connect to the <a href="#connect-to-cli">CLI</a>.</li>
