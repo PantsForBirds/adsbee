@@ -18,6 +18,8 @@ constexpr inline uint16_t CeilBitsToBytes(uint16_t bits) { return (bits + kBitsP
 inline int FeetToMeters(int feet) { return feet * 1000 / 3280; }
 // Feet to meters (0.3048 m/ft, exact), rounded. Clamped to +-200000 ft first so the product fits.
 inline int32_t FeetToMetersRounded(int32_t ft) { return DivRound(Clamp(ft, -200000, 200000) * 3048, 10000); }
+// Centimeters to feet (x 25 / 762, exact), rounded. Clamped to +-10000000 cm (100 km) first so the product fits.
+inline int32_t CentimetersToFeetRounded(int32_t cm) { return DivRound(Clamp(cm, -10000000, 10000000) * 25, 762); }
 
 inline int MetersToFeet(int meters) {
     if (meters < INT32_MAX / 328084) {

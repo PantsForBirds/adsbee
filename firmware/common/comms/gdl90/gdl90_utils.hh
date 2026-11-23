@@ -223,6 +223,19 @@ class GDL90Reporter {
     static uint16_t VFOMFromAltitudeStdDevCm(int32_t std_dev_cm);
 
     /**
+     * A GNSS receiver's height above the WGS-84 ellipsoid (HAE) from its altitude above MSL and its geoid separation
+     * (GGA field 11): HAE = MSL + geoid separation. Integer math only. Shared by the GDL90 Ownship Geometric Altitude
+     * message and the FLARM NMEA ownship, so both send the same altitude.
+     * @param[in] msl_altitude_ft GNSS altitude above MSL, feet.
+     * @param[in] geoid_separation_valid Whether the receiver reported a geoid separation.
+     * @param[in] geoid_separation_cm Geoid height above the WGS-84 ellipsoid, in centimeters.
+     * @param[out] hae_ft Height above the ellipsoid, feet.
+     * @retval False without a geoid separation, or with one outside the real +/-110 m (a bad sentence).
+     */
+    static bool GNSSHeightAboveEllipsoidFt(int32_t msl_altitude_ft, bool geoid_separation_valid,
+                                           int32_t geoid_separation_cm, int32_t& hae_ft);
+
+    /**
      * Populate an Ownship Geometric Altitude message from a GNSS receiver position. Only a GNSS ownship gets one: the
      * tracked aircraft source already reports that aircraft's pressure altitude in the ownship report.
      *

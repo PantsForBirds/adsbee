@@ -21,7 +21,8 @@ uint16_t FLARMNMEAReporter::Finish(char* buf, uint16_t buf_len, int body_len) {
 }
 
 bool FLARMNMEAReporter::OwnshipFromRxPosition(Ownship& own, const SettingsManager::RxPosition& rx_position,
-                                              bool rx_position_available) {
+                                              bool rx_position_available, bool geoid_separation_valid,
+                                              int32_t geoid_separation_cm) {
     own = {};
     if (!rx_position_available || !GDL90Reporter::IsValidOwnshipSource(rx_position.source)) return false;
     own.lat_awb = rx_position.latitude_awb;
@@ -29,6 +30,13 @@ bool FLARMNMEAReporter::OwnshipFromRxPosition(Ownship& own, const SettingsManage
     if (rx_position.source == SettingsManager::RxPosition::kPositionSourceGNSS) {
         own.msl_altitude_valid = true;
         own.msl_altitude_ft = rx_position.gnss_altitude_ft;
+        // HAE, comparable with ADS-B and Remote ID geometric altitudes; none without the geoid separation.
+        own.geometric_altitude_valid = GDL90Reporter::GNSSHeightAboveEllipsoidFt(
+            rx_position.gnss_altitude_ft, geoid_separation_valid, geoid_separation_cm, own.geometric_altitude_ft);
+        if (own.geometric_altitude_valid) {
+            own.geoid_separation_valid = true;
+            own.geoid_separation_cm = geoid_separation_cm;
+        }
     }
     own.track_deg = rx_position.heading_deg;
     own.speed_kts = rx_position.speed_kts;
@@ -279,8 +287,12 @@ uint16_t FLARMNMEAReporter::WriteGPGGA(char* buf, uint16_t buf_len, const Ownshi
         // Decimeters: 3.048 dm/ft.
         WriteTenths(alt, sizeof(alt), DivRound(Clamp(own.msl_altitude_ft, -500000, 500000) * 3048, 1000));
     }
-    const int n = snprintf(buf, buf_len, "$GPGGA,%02u%02u%02u.00,%s,%s,1,,,%s,M,,M,,", utc.hour, utc.minute,
-                           utc.second, lat, lon, alt);
+    char sep[24] = "";
+    if (own.geoid_separation_valid) {
+        WriteTenths(sep, sizeof(sep), DivRound(own.geoid_separation_cm, 10));  // Decimeters.
+    }
+    const int n = snprintf(buf, buf_len, "$GPGGA,%02u%02u%02u.00,%s,%s,1,,,%s,M,%s,M,,", utc.hour, utc.minute,
+                           utc.second, lat, lon, alt, sep);
     return Finish(buf, buf_len, n);
 }
 
