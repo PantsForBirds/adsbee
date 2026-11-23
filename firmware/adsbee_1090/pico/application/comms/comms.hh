@@ -33,6 +33,12 @@ class CommsManager {
     static constexpr uint32_t kNetworkConsoleMinReportingIntervalMs =
         50;  // Report messages to nextwork console at minimum rate of 20Hz.
     static constexpr uint16_t kPrintfBufferMaxSize = 500;
+    // UART output waits in these queues for the TX interrupt. About 0.35 s and 0.18 s at 115200 baud. Each must hold
+    // the largest single report send (a 2 kB raw batch), since a send that doesn't fit is dropped whole.
+    static constexpr uint16_t kCommsUARTTxQueueLen = 4096;
+    static constexpr uint16_t kGNSSUARTTxQueueLen = 2048;
+    // A write that waits for space gives up if the UART takes no byte for this long.
+    static constexpr uint32_t kUARTTxStallTimeoutMs = 50;
 
     static constexpr uint32_t kOTAWriteTimeoutMs = 5000;  // ms until OTA write command exits if all bytes not received.
     static constexpr uint16_t kMaxForceFlushIterations = 3;
@@ -54,6 +60,12 @@ class CommsManager {
      * @retval True if initialization succeeded, false otherwise.
      */
     bool Init();
+
+    /**
+     * Brings up the GNSS UART at its configured baud rate. Also needed after an ESP32 flash, which uses the same UART
+     * peripheral; a GNSS receiver re-initializes it again when it resumes.
+     */
+    void InitGNSSUART();
 
     /**
      * Update the CommsManager. Runs all the update subroutines required for normal operation.
@@ -155,13 +167,17 @@ class CommsManager {
     bool iface_puts(SettingsManager::SerialInterface iface, const char* buf);
     /**
      * Writes a buffer that may contain null bytes to a serial interface. The console gets the buffer in one piece: the
-     * USB driver is serviced once per call, and a call per character tops out near 33 kB/s.
+     * USB driver is serviced once per call, and a call per character tops out near 33 kB/s. Each UART gets it through
+     * its TX queue, which its TX interrupt drains.
      * @param[in] iface SerialInterface to write to.
      * @param[in] buf Bytes to write.
      * @param[in] len Number of bytes to write.
+     * @param[in] wait UARTs only. If true, wait for queue space (console text, GNSS configuration). If false
+     * (reports), a buffer that doesn't fit is dropped whole, so a slow UART never stalls the loop or carries a cut
+     * frame.
      * @retval True if every byte was accepted.
      */
-    bool iface_write(SettingsManager::SerialInterface iface, const char* buf, uint16_t len);
+    bool iface_write(SettingsManager::SerialInterface iface, const char* buf, uint16_t len, bool wait = true);
 
     // Console output goes to the ESP32 network console only while something on the network reads it, since every
     // byte costs core 0 an SPI write.
@@ -174,7 +190,15 @@ class CommsManager {
 #include "comms_reporting.hh"
 
     inline bool SendBuf(ReportSink sink, const char* buf, uint16_t buf_len, uint16_t num_msgs = 1) {
-        return iface_write(static_cast<SettingsManager::SerialInterface>(sink), buf, buf_len);
+        // Reports never wait: frames an interface can't take now are dropped and counted.
+        if (iface_write(static_cast<SettingsManager::SerialInterface>(sink), buf, buf_len, false)) {
+            return true;
+        }
+        if (sink >= SettingsManager::kNumSerialInterfaces) {
+            return false;
+        }
+        tx_drop_count[sink] += num_msgs;
+        return true;  // An expected drop, counted above: not a send failure to log every round.
     }
 
     /**
@@ -270,9 +294,26 @@ class CommsManager {
     PFBQueue<char> esp32_console_tx_queue =
         PFBQueue<char>({.buf_len_num_elements = kNetworkConsoleBufMaxLen, .buffer = esp32_console_tx_queue_buffer_});
 
+    // Report frames dropped per serial interface (UART TX queue full). The USB console can't tell, since the SDK drops
+    // output silently when the host doesn't read.
+    uint32_t tx_drop_count[SettingsManager::kNumSerialInterfaces] = {0};
+
    private:
     // AT Functions
     bool UpdateAT();
+
+    // Outgoing bytes of one UART. Written on core 0 only, read by the TX interrupt (also on core 0).
+    struct UARTTx {
+        uart_inst_t* handle;
+        PFBQueue<char> queue;
+    };
+
+    // The TX queue of a UART interface, nullptr for the console.
+    UARTTx* GetUARTTx(SettingsManager::SerialInterface iface);
+    // Moves bytes from a UART's TX queue into its FIFO, and keeps its TX interrupt on while bytes remain.
+    // Runs in the TX interrupt, and from core 0 code to start a drain.
+    void FillUARTTxFIFO(UARTTx& uart);
+    static void OnUARTIRQ();
 
     CommsManagerConfig config_;
 
@@ -287,6 +328,14 @@ class CommsManager {
     char esp32_console_rx_queue_buffer_[kNetworkConsoleBufMaxLen];
     char esp32_console_tx_queue_buffer_[kNetworkConsoleBufMaxLen];
     uint32_t last_esp32_console_tx_timestamp_ms_ = 0;  // Timestamp of last network console TX.
+
+    char comms_uart_tx_queue_buffer_[kCommsUARTTxQueueLen];
+    char gnss_uart_tx_queue_buffer_[kGNSSUARTTxQueueLen];
+    UARTTx uart_tx_[2] = {
+        {config_.comms_uart_handle,
+         PFBQueue<char>({.buf_len_num_elements = kCommsUARTTxQueueLen, .buffer = comms_uart_tx_queue_buffer_})},
+        {config_.gnss_uart_handle,
+         PFBQueue<char>({.buf_len_num_elements = kGNSSUARTTxQueueLen, .buffer = gnss_uart_tx_queue_buffer_})}};
 
     // Queue for holding new transponder packets before they get reported.
     RawModeSPacket mode_s_packet_reporting_queue_buffer_[kModeSPacketReportingQueueDepth];

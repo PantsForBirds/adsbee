@@ -1268,6 +1268,9 @@ TEST(Settings, ProtocolInUseCountsSerialOutputsAndActiveFeeds) {
     s.reporting_protocols[SettingsManager::kCommsUART] = SettingsManager::kASTERIX;
     EXPECT_TRUE(SettingsManager::ProtocolInUse(s, SettingsManager::kASTERIX));
     s.reporting_protocols[SettingsManager::kCommsUART] = SettingsManager::kNoReports;
+    s.reporting_protocols[SettingsManager::kGNSSUART] = SettingsManager::kASTERIX;
+    EXPECT_TRUE(SettingsManager::ProtocolInUse(s, SettingsManager::kASTERIX));
+    s.reporting_protocols[SettingsManager::kGNSSUART] = SettingsManager::kNoReports;
 
     s.feed_protocols[2] = SettingsManager::kASTERIX;
     s.feed_is_active[2] = false;

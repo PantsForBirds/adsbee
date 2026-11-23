@@ -66,7 +66,7 @@ ASTERIX times are seconds since midnight UTC. ADSBee takes UTC from, in order:
 
 1. A GNSS receiver with a valid time (`AT+GNSS`), with the accuracy of its NMEA time messages.
 2. On the ADSBee 1090, SNTP (Simple Network Time Protocol) on the ESP32, polled once an hour from the
-   `AT+NTP_SERVER` host. It runs only while the console, the comms UART or an active feed uses ASTERIX, and needs
+   `AT+NTP_SERVER` host. It runs only while a serial interface (console, comms UART, GNSS UART) or an active feed uses ASTERIX, and needs
    a WiFi station or Ethernet connection. The time counts for 3 h after the last answer from the server.
    `"sntp"` in the device status of the metrics stream (`/metrics`) shows whether it is synced.
 

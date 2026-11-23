@@ -967,6 +967,9 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
     ArrayToJSON(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
                 kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen), "feed_mps",
                 comms_manager.feed_mps, "%u", true);
+    ArrayToJSON(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
+                kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen), "feed_dropped",
+                comms_manager.feed_dropped, "%lu", true);
     // Transport of each feed and the RAM the active feeds take out of this unit's budget.
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
