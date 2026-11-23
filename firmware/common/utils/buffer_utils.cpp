@@ -1,10 +1,11 @@
 #include "buffer_utils.hh"
-#include "core1_ram.hh"
 
 #include <array>
+#include <cstdio>   // For snprintf.
 #include <cstring>  // For strlen.
 
 #include "comms.hh"
+#include "core1_ram.hh"
 #include "macros.hh"  // for MAX
 
 #define BITMASK_32_ALL   0xFFFFFFFF
@@ -210,4 +211,10 @@ void PrintByteBuffer(const char *prefix, const uint8_t *byte_buffer, uint16_t nu
     char hex_string[num_bytes * kNibblesPerByte + 1];
     ByteBufferToHexString(hex_string, byte_buffer, num_bytes);
     CONSOLE_PRINTF("%s %s\r\n", prefix, hex_string);
+}
+
+void WriteTenths(char* buf, size_t len, int32_t tenths) {
+    const int32_t magnitude = tenths < 0 ? -tenths : tenths;
+    snprintf(buf, len, "%s%ld.%ld", tenths < 0 ? "-" : "", static_cast<long>(magnitude / 10),
+             static_cast<long>(magnitude % 10));
 }

@@ -51,3 +51,31 @@ TEST(UnitConversions, DeciNmToMeters) {
     EXPECT_EQ(DeciNmToMeters(1000), 185200u);
     EXPECT_EQ(DeciNmToMeters(100000), 18520000u);
 }
+
+TEST(UnitConversions, ClampAndDivRound) {
+    EXPECT_EQ(Clamp(5, 0, 10), 5);
+    EXPECT_EQ(Clamp(-5, 0, 10), 0);
+    EXPECT_EQ(Clamp(15, 0, 10), 10);
+    EXPECT_EQ(Clamp(INT32_MIN, -3, 3), -3);
+    // Half away from zero.
+    EXPECT_EQ(DivRound(5, 10), 1);
+    EXPECT_EQ(DivRound(4, 10), 0);
+    EXPECT_EQ(DivRound(-5, 10), -1);
+    EXPECT_EQ(DivRound(-4, 10), 0);
+    EXPECT_EQ(DivRound(14, 4), 4);  // 3.5
+    EXPECT_EQ(DivRound(-14, 4), -4);
+    EXPECT_EQ(DivRound(0, 7), 0);
+    static_assert(DivRound(7, 2) == 4 && Clamp(9, 0, 3) == 3, "constexpr");
+}
+
+TEST(UnitConversions, FeetToMetersRounded) {
+    EXPECT_EQ(FeetToMetersRounded(0), 0);
+    EXPECT_EQ(FeetToMetersRounded(1000), 305);    // 304.8
+    EXPECT_EQ(FeetToMetersRounded(-1000), -305);  // Symmetric.
+    EXPECT_EQ(FeetToMetersRounded(10), 3);        // 3.048
+    EXPECT_EQ(FeetToMetersRounded(5), 2);         // 1.524
+    EXPECT_EQ(FeetToMetersRounded(35000), 10668);
+    // Clamped to +-200000 ft (60960 m) so the product never overflows.
+    EXPECT_EQ(FeetToMetersRounded(INT32_MAX), 60960);
+    EXPECT_EQ(FeetToMetersRounded(INT32_MIN), -60960);
+}

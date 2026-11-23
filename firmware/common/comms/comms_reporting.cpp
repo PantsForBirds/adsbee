@@ -811,6 +811,7 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
         // Selecting RX_POSITION=GNSS routes the latest fresh GNSS fix populated by ADSBee::UpdateRxPosition().
         GDL90Reporter::GDL90TargetReportData ownship_data;
         bool have_position = GDL90Reporter::BuildOwnshipReportData(ownship_data, rx_position, rx_position_available);
+        gdl90_ownship_icao_ = AircraftDictionary::OwnshipICAOAddress(rx_position, rx_position_available);
 
         gdl90.gnss_position_valid = have_position;
         gdl90.utc_timing_is_valid = gnss_utc_time_valid;
@@ -856,6 +857,9 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
         }
         if (!aircraft_dictionary.IsPreferredReportForAddress(uid, get_time_since_boot_ms())) {
             continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
+        }
+        if (AircraftDictionary::IsOwnship(uid, gdl90_ownship_icao_)) {
+            continue;  // Sent as the ownship report, like the ESP32's GDL90.
         }
 
         msg_len = 0;

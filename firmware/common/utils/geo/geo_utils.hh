@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "fixedmath/fixed_math.hpp"
 #include "stdint.h"
 
@@ -10,8 +12,10 @@
  * Positions are in Angular Weighted Binary (AWB): a full circle is 2^32, so latitudes -90..90 deg are the signed range
  * -2^30..2^30 and longitude differences wrap across the antimeridian on their own. The central angle and bearing come
  * from exact spherical formulas written without cancellation; the distance multiplies the central angle by the
- * ellipsoid's radius of curvature in the direction of travel at the mid latitude. Error against the WGS-84 geodesic at
- * any latitude: distance < 0.015% + 1 m up to 600 km (< 0.15% up to 5000 km), bearing < 0.2 deg.
+ * ellipsoid's radius of curvature in the direction of travel at the mid latitude, and the bearing is corrected for the
+ * ellipsoid's shape (east against north scaled by N / M). Error against the WGS-84 geodesic at any latitude: distance
+ * < 0.015% + 1 m up to 600 km (< 0.15% up to 5000 km), bearing as BAM16 (rounded to 0.0027 deg) < 0.004 deg from 1 km
+ * to 100 km and < 0.012 deg up to 600 km.
  */
 
 /**
@@ -40,6 +44,22 @@ struct GeoReference {
 // Bearings are stored in 1/65536 of a turn (binary angle measurement, BAM).
 inline float Bam16ToDeg(uint16_t bearing_bam16) { return bearing_bam16 * (360.0f / 65536.0f); }
 
+// A track or heading rounded to whole degrees, 0-359.
+inline int RoundTrackDeg(float track_deg) {
+    int t = static_cast<int>(track_deg < 0 ? track_deg - 0.5f : track_deg + 0.5f) % 360;
+    return t < 0 ? t + 360 : t;
+}
+
+/**
+ * Writes an AWB latitude or longitude as an NMEA 0183 field pair: "ddmm.mmmm,N" or "dddmm.mmmm,E" (signed AWB:
+ * negative is south or west), rounded to 1/10000 minute.
+ * @param[out] buf Output; 12 characters for a latitude, 13 for a longitude, plus the terminator.
+ * @param[in] len Size of buf.
+ * @param[in] awb Latitude or longitude in AWB.
+ * @param[in] is_lat True for a latitude.
+ */
+void WriteNMEALatLon(char* buf, size_t len, uint32_t awb, bool is_lat);
+
 /**
  * Distance and initial bearing from a reference point to another point.
  * @param[in] ref Reference point (start).
@@ -50,6 +70,49 @@ inline float Bam16ToDeg(uint16_t bearing_bam16) { return bearing_bam16 * (360.0f
  */
 void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, uint32_t &distance_m,
                                  uint16_t &bearing_bam16);
+
+/**
+ * A distance and bearing (as CalculateDistanceAndBearing gives them) split into meters along true north and east: the
+ * azimuthal equidistant projection centered on the reference, which keeps every distance from it true. Each component
+ * is rounded once; against the same split of the WGS-84 geodesic it is off by the distance's rounding (0.5 m) plus the
+ * bearing's (half a BAM16, 0.48 m at 10 km) and error: < 1.2 m up to 10 km and < 1.6 m up to 20 km, at any latitude.
+ * @param[in] distance_m Distance along the surface, in meters.
+ * @param[in] bearing_bam16 Bearing clockwise from north, in 1/65536 turns.
+ * @param[out] north_m Meters north, negative to the south.
+ * @param[out] east_m Meters east, negative to the west.
+ */
+void SplitNorthEastMeters(uint32_t distance_m, uint16_t bearing_bam16, int32_t &north_m, int32_t &east_m);
+
+/**
+ * An angle in float degrees as AWB, exactly (to 1 AWB, 8e-8 deg) and without floating point arithmetic: negative
+ * angles wrap, so it serves latitudes and longitudes alike.
+ */
+inline uint32_t FloatDegToAWB(float deg) {
+    uint32_t bits;
+    __builtin_memcpy(&bits, &deg, sizeof(bits));  // Inlined even where memcpy isn't (a call on the ESP32).
+    const int exponent = static_cast<int>((bits >> 23) & 0xFFu);
+    if (exponent == 0 || exponent == 0xFF) return 0;  // Zero, subnormal (< 1e-38 deg), infinity or NaN.
+    // |deg| = mantissa 2^(exponent - 150), so deg 2^32 / 360 = mantissa (2^40 / 360) 2^(exponent - 158).
+    const uint32_t mantissa = (bits & 0x7FFFFFu) | 0x800000u;
+    const int shift = 158 - exponent;
+    constexpr uint32_t kAWBPerDegQ8 = 3054198966u;  // 2^40 / 360, rounded down (by 0.04, 1.3e-11 of itself).
+    if (shift <= 0 || shift >= 64) return 0;  // |deg| >= 2^31 (not an angle) or below 1e-9 AWB.
+    // product / 2^shift, rounded, in 32-bit halves: variable 64-bit shifts are library calls on both targets.
+    const uint64_t product = static_cast<uint64_t>(mantissa) * kAWBPerDegQ8;
+    uint32_t lo = static_cast<uint32_t>(product), hi = static_cast<uint32_t>(product >> 32);
+    uint32_t awb;
+    if (shift < 32) {  // |deg| >= 1.
+        const uint32_t half = 1u << (shift - 1);
+        lo += half;
+        hi += lo < half;
+        awb = (lo >> shift) | (hi << (32 - shift));
+    } else if (shift == 32) {
+        awb = hi + (lo >> 31);
+    } else {
+        awb = (hi + (1u << (shift - 33))) >> (shift - 32);
+    }
+    return (bits >> 31) ? 0u - awb : awb;
+}
 
 /**
  * Distance from a reference point to another point, in meters. Same accuracy as CalculateDistanceAndBearing.
@@ -75,7 +138,5 @@ uint32_t CalculateGeoidalDistanceMetersAWB(uint32_t lat_a_awb, uint32_t lon_a_aw
  */
 bool IsDistanceGreaterThan(uint32_t lat_a_awb, uint32_t lon_a_awb, uint32_t lat_b_awb, uint32_t lon_b_awb,
                            uint32_t threshold_m);
-
-uint32_t CalculateGeoidalDistanceMetersDeg(float lat_a_deg, float lon_a_deg, float lat_b_deg, float lon_b_deg);
 
 void CalculateTrackAndSpeedFromNEVelocities(int32_t n_vel_kts, int32_t e_vel_kts, float &track_deg, int32_t &speed_kts);
