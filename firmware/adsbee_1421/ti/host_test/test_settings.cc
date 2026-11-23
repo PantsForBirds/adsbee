@@ -62,8 +62,8 @@ TEST(Settings, TornOrChangedBlobIsRejected) {
 
 // An older blob is today's struct up to the fields added since, then its CRC, then erased flash. Before version 8 the
 // receiver latitude and longitude were float degrees.
-static void MakeOlderBlob(const SM::Settings& current, uint32_t version, uint16_t size, uint8_t* blob,
-                          size_t blob_len, float latitude_deg = 0.0f, float longitude_deg = 0.0f) {
+static void MakeOlderBlob(const SM::Settings& current, uint32_t version, uint16_t size, uint8_t* blob, size_t blob_len,
+                          float latitude_deg = 0.0f, float longitude_deg = 0.0f) {
     memset(blob, 0xFF, blob_len);
     memcpy(blob, static_cast<const void*>(&current), size - sizeof(uint32_t));
     memcpy(blob + offsetof(SM::Settings, settings_version), &version, sizeof(version));

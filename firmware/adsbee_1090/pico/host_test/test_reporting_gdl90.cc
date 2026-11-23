@@ -1,5 +1,5 @@
-#include "fec.hh"
 #include "awb_test_utils.hh"
+#include "fec.hh"
 #include "gdl90_utils.hh"
 #include "gtest/gtest.h"
 

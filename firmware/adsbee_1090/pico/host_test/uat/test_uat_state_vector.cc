@@ -1,8 +1,8 @@
 #include <cmath>
-#include "awb_test_utils.hh"
 #include <cstring>
 
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "fec.hh"
 #include "gtest/gtest.h"
 #include "hal_god_powers.hh"  // for faking timestamps

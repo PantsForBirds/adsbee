@@ -1,7 +1,7 @@
 #include "aircraft_dictionary.hh"
-#include "awb_test_utils.hh"
 #include "aircraftjson_utils.hh"
 #include "asterix_utils.hh"
+#include "awb_test_utils.hh"
 #include "gtest/gtest.h"
 #include "hal_god_powers.hh"
 #include "settings.hh"

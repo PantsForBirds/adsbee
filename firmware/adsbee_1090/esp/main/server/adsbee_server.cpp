@@ -1175,10 +1175,9 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
              "\"longitude_deg\": %s, \"altitude_ft\": %ld, \"heading_deg\": %.1f, \"speed_kts\": %ld, "
              "\"num_satellites\": %u, \"utc_time\": \"%s\" }",
              rp2040_status.gnss_enabled ? "true" : "false", rp2040_status.gnss_fix_valid ? "true" : "false",
-             gnss_lat_str, gnss_lon_str,
-             static_cast<long>(rp2040_status.gnss_altitude_ft), rp2040_status.gnss_heading_deg,
-             static_cast<long>(rp2040_status.gnss_speed_kts), static_cast<unsigned int>(rp2040_status.gnss_num_satellites),
-             gnss_utc_time);
+             gnss_lat_str, gnss_lon_str, static_cast<long>(rp2040_status.gnss_altitude_ft),
+             rp2040_status.gnss_heading_deg, static_cast<long>(rp2040_status.gnss_speed_kts),
+             static_cast<unsigned int>(rp2040_status.gnss_num_satellites), gnss_utc_time);
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              ", \"subg\": { \"uptime_ms\": %lu, \"user_core_usage_percent\": %u, "

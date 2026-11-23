@@ -10,9 +10,9 @@ bool NASACPRDecoder::DecodeSurfaceLocalCPR(const DecodedPosition& reference_posi
                                            DecodedPosition& decoded_position) {
     // For some reason local_dec doesn't use the struct message format field, so we need to manually tell it whether the
     // incoming packet is odd or even.
-    nasa_cpr::surface::recovered_position result = nasa_cpr::surface::local_dec(
-        message.odd, reference_position.lat_awb, reference_position.lon_awb,
-        {.format = message.odd, .yz = message.lat_cpr, .xz = message.lon_cpr});
+    nasa_cpr::surface::recovered_position result =
+        nasa_cpr::surface::local_dec(message.odd, reference_position.lat_awb, reference_position.lon_awb,
+                                     {.format = message.odd, .yz = message.lat_cpr, .xz = message.lon_cpr});
     decoded_position.lat_awb = result.lat_awb;
     decoded_position.lon_awb = result.lon_awb;
     return result.valid;

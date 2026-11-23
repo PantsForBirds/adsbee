@@ -192,19 +192,17 @@ bool GNSSReceiver::Update() {
         char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
         FormatAWBDeg(lat_str, sizeof(lat_str), f.latitude_awb, 5);
         FormatAWBDeg(lon_str, sizeof(lon_str), f.longitude_awb, 5);
-        CONSOLE_INFO(
-            "GNSSReceiver::Update",
-            "GNSS dbg: healthy=%d rx_bytes=%lu rx_buffered=%u rx_overflow=%lu rx_irqs=%lu rx_polled=%lu "
-            "last_sentence=%d gga=%lu rmc=%lu cksum_fail=%lu | fix: valid=%d q=%u sats=%u lat=%s lon=%s "
-            "age_ms=%lu hasfix=%d\r\n",
-            healthy_, static_cast<unsigned long>(debug_total_rx_bytes_),
-            static_cast<unsigned int>(static_cast<uint16_t>(rx_head_ - rx_tail_)),
-            static_cast<unsigned long>(rx_overflow_count_), static_cast<unsigned long>(rx_irq_count_),
-            static_cast<unsigned long>(rx_polled_byte_count_), static_cast<int>(debug_last_sentence_),
-            static_cast<unsigned long>(debug_gga_count_), static_cast<unsigned long>(debug_rmc_count_),
-            static_cast<unsigned long>(debug_cksum_fail_count_), f.valid, f.fix_quality, f.num_satellites,
-            lat_str, lon_str,
-            static_cast<unsigned long>(now_ms - f.last_update_timestamp_ms), HasValidFix());
+        CONSOLE_INFO("GNSSReceiver::Update",
+                     "GNSS dbg: healthy=%d rx_bytes=%lu rx_buffered=%u rx_overflow=%lu rx_irqs=%lu rx_polled=%lu "
+                     "last_sentence=%d gga=%lu rmc=%lu cksum_fail=%lu | fix: valid=%d q=%u sats=%u lat=%s lon=%s "
+                     "age_ms=%lu hasfix=%d\r\n",
+                     healthy_, static_cast<unsigned long>(debug_total_rx_bytes_),
+                     static_cast<unsigned int>(static_cast<uint16_t>(rx_head_ - rx_tail_)),
+                     static_cast<unsigned long>(rx_overflow_count_), static_cast<unsigned long>(rx_irq_count_),
+                     static_cast<unsigned long>(rx_polled_byte_count_), static_cast<int>(debug_last_sentence_),
+                     static_cast<unsigned long>(debug_gga_count_), static_cast<unsigned long>(debug_rmc_count_),
+                     static_cast<unsigned long>(debug_cksum_fail_count_), f.valid, f.fix_quality, f.num_satellites,
+                     lat_str, lon_str, static_cast<unsigned long>(now_ms - f.last_update_timestamp_ms), HasValidFix());
     }
 
     // TEMPORARY: periodically dump module RF/antenna status (ublox UBX-MON-RF) to diagnose 0-sats.
@@ -234,9 +232,8 @@ bool GNSSReceiver::Update() {
         FormatAWBDeg(lat_str, sizeof(lat_str), f.latitude_awb, 6);
         FormatAWBDeg(lon_str, sizeof(lon_str), f.longitude_awb, 6);
         CONSOLE_INFO("GNSSReceiver::Update", "GNSS_FIX=%d,%s,%s,%ld,%.1f,%ld,%u,%s,%lu", current_fix_valid, lat_str,
-                     lon_str, static_cast<long>(f.altitude_ft), f.heading_deg,
-                     static_cast<long>(f.speed_kts), static_cast<unsigned int>(f.num_satellites), utc_time,
-                     static_cast<unsigned long>(pps_count()));
+                     lon_str, static_cast<long>(f.altitude_ft), f.heading_deg, static_cast<long>(f.speed_kts),
+                     static_cast<unsigned int>(f.num_satellites), utc_time, static_cast<unsigned long>(pps_count()));
         notify_last_emitted_valid_ = current_fix_valid;
         notify_has_emitted_ = true;
         notify_pending_ = false;

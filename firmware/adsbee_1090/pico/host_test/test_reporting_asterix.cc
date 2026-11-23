@@ -1,8 +1,8 @@
 #include <cmath>
-#include "awb_test_utils.hh"
 #include <vector>
 
 #include "asterix_utils.hh"
+#include "awb_test_utils.hh"
 #include "gtest/gtest.h"
 
 using CAT021TargetReport = ASTERIXReporter::CAT021TargetReport;
@@ -209,15 +209,15 @@ TEST(ASTERIXUtils, CAT021RecordMatchesHandEncoding) {
         0xA1, 0xB2, 0xC3,                                // I021/080.
         0x58, 0x78, 0x65,                                // I021/073 12:34:56.789.
         0x16, 0x80,                                      // I021/140 36000 ft.
-        0x31, 0xF3, 0x13, 0xB0,                          // I021/090 NACv 1 NIC 8 | NICbaro 1 SIL 3 NACp 9 | SDA 2 GVA 1 | PIC 11.
-        0x12,                                            // I021/210 version 2, 1090 ES.
-        0x02, 0x80,                                      // I021/070 1200.
-        0x05, 0x79,                                      // I021/145 FL 350.25.
-        0x7F, 0x60,                                      // I021/155 -1000 ft/min.
-        0x08, 0x00, 0xC0, 0x00,                          // I021/160 450 kt, 270 degrees.
-        0x54, 0x13, 0x31, 0xCB, 0x38, 0x20,              // I021/170 "UAL123  ".
-        0x03,                                            // I021/020.
-        0xC4,                                            // I021/132 -60 dBm.
+        0x31, 0xF3, 0x13, 0xB0,              // I021/090 NACv 1 NIC 8 | NICbaro 1 SIL 3 NACp 9 | SDA 2 GVA 1 | PIC 11.
+        0x12,                                // I021/210 version 2, 1090 ES.
+        0x02, 0x80,                          // I021/070 1200.
+        0x05, 0x79,                          // I021/145 FL 350.25.
+        0x7F, 0x60,                          // I021/155 -1000 ft/min.
+        0x08, 0x00, 0xC0, 0x00,              // I021/160 450 kt, 270 degrees.
+        0x54, 0x13, 0x31, 0xCB, 0x38, 0x20,  // I021/170 "UAL123  ".
+        0x03,                                // I021/020.
+        0xC4,                                // I021/132 -60 dBm.
     };
     EXPECT_EQ(Record(r), expected);
 }

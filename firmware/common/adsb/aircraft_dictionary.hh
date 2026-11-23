@@ -1769,8 +1769,9 @@ class AircraftDictionary {
     bool reference_position_valid_ = false;  // Set by SetReferencePosition, cleared by ClearReferencePosition.
     int32_t reference_altitude_ft_ = 0;
     bool reference_altitude_valid_ = false;  // Set by SetReferenceAltitudeFt, cleared by ClearReferencePosition.
-    // Receiver position for aircraft distance and bearing and Mode S surface position decoding. Moving it at all (to another AWB) or clearing it bumps
-    // reference_epoch_, and Update() recomputes every aircraft computed in an older epoch or marked stale by a move.
+    // Receiver position for aircraft distance and bearing and Mode S surface position decoding. Moving it at all (to
+    // another AWB) or clearing it bumps reference_epoch_, and Update() recomputes every aircraft computed in an older
+    // epoch or marked stale by a move.
     // Epoch value that marks an aircraft's distance as stale; reference_epoch_ never takes it.
     static constexpr uint16_t kDistanceEpochStale = UINT16_MAX;
     GeoReference distance_reference_;

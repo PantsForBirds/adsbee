@@ -760,10 +760,12 @@ TEST(NASACPR, AircraftDictionary) {
         char awb_text[kAWBDegStrMaxLen], float_text[16];
         FormatAWBDeg(awb_text, sizeof(awb_text), aircraft_ptr->latitude_awb, 5);
         snprintf(float_text, sizeof(float_text), "%.5f", lat_float);
-        EXPECT_NEAR(strtod(awb_text, nullptr), strtod(float_text, nullptr), kFloatPathUlpDeg + 1.01e-5) << awb_text << " " << float_text;
+        EXPECT_NEAR(strtod(awb_text, nullptr), strtod(float_text, nullptr), kFloatPathUlpDeg + 1.01e-5)
+            << awb_text << " " << float_text;
         FormatAWBDeg(awb_text, sizeof(awb_text), aircraft_ptr->longitude_awb, 5);
         snprintf(float_text, sizeof(float_text), "%.5f", lon_float);
-        EXPECT_NEAR(strtod(awb_text, nullptr), strtod(float_text, nullptr), kFloatPathUlpDeg + 1.01e-5) << awb_text << " " << float_text;
+        EXPECT_NEAR(strtod(awb_text, nullptr), strtod(float_text, nullptr), kFloatPathUlpDeg + 1.01e-5)
+            << awb_text << " " << float_text;
         dictionary.RemoveAircraft(Aircraft::ICAOToUID(0, Aircraft::kAircraftTypeModeS));
     }
 }

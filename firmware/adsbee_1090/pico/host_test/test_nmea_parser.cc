@@ -1,7 +1,7 @@
 #include <cstdio>
-#include "awb_test_utils.hh"
 #include <cstring>
 
+#include "awb_test_utils.hh"
 #include "gtest/gtest.h"
 #include "nmea_parser.hh"
 

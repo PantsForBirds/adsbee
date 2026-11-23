@@ -72,7 +72,7 @@ class GDL90Reporter {
         AddressType address_type =
             kAddressTypeADSBWithICAOAddress;  // Type of address conveyed in Participant Address field.
         uint32_t participant_address = 0;     // 24 bit ICAO address.
-        uint32_t latitude_awb = 0;  // AWB, see geo_utils.hh.
+        uint32_t latitude_awb = 0;            // AWB, see geo_utils.hh.
         uint32_t longitude_awb = 0;
         int32_t altitude_ft = INT32_MIN;            // Encodes as 0xFFF (invalid) when out of [-1000, 101350] ft range.
         uint8_t misc_indicators = 0;                // Default: TT not valid, not extrapolated, not airborne.

@@ -1,9 +1,9 @@
 #include <cstring>
-#include "awb_test_utils.hh"
 #include <string>
 #include <vector>
 
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "fec.hh"
 #include "geo_utils.hh"
 #include "gtest/gtest.h"
@@ -611,9 +611,12 @@ TEST(SwarmReporter, UsablePositionIsFixedOrGNSSAndReal) {
     EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(37.1), DegToAWB(-122.1)));
     EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceGNSS, DegToAWB(-33.9), DegToAWB(151.2)));
     EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(0.0), DegToAWB(10.0)));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(false, P::kPositionSourceGNSS, DegToAWB(37.1), DegToAWB(-122.1)));  // No fix.
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceLowestAircraft, DegToAWB(37.1), DegToAWB(-122.1)));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceAircraftMatchingICAO, DegToAWB(37.1), DegToAWB(-122.1)));
+    EXPECT_FALSE(
+        SwarmReporter::UsablePosition(false, P::kPositionSourceGNSS, DegToAWB(37.1), DegToAWB(-122.1)));  // No fix.
+    EXPECT_FALSE(
+        SwarmReporter::UsablePosition(true, P::kPositionSourceLowestAircraft, DegToAWB(37.1), DegToAWB(-122.1)));
+    EXPECT_FALSE(
+        SwarmReporter::UsablePosition(true, P::kPositionSourceAircraftMatchingICAO, DegToAWB(37.1), DegToAWB(-122.1)));
     EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceNone, DegToAWB(37.1), DegToAWB(-122.1)));
     EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(0.0), DegToAWB(0.0)));
     EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(91.0), DegToAWB(0.0)));

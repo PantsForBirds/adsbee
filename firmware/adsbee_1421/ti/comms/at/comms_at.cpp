@@ -909,9 +909,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
                 "\tICAO: 0x%06X [%s]\r\n",
                 SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
                 adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", lat_str, lon_str,
-                adsbee.rx_position.gnss_altitude_ft,
-                adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts,
-                adsbee.rx_position.icao_address,
+                adsbee.rx_position.gnss_altitude_ft, adsbee.rx_position.baro_altitude_ft,
+                adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts, adsbee.rx_position.icao_address,
                 adsbee.rx_position.source ==
                         SettingsManager::RxPosition::PositionSource::kPositionSourceAircraftMatchingICAO
                     ? "IN USE"
@@ -1076,9 +1075,9 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"RX_POSITION\":[\"%s\",\"%s\",%s,%s,%d,%d,%.1f,%d,\"%06X\"],",
                   SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
                   adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", rx_lat_str, rx_lon_str,
-                  (int)adsbee.rx_position.gnss_altitude_ft,
-                  (int)adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg,
-                  (int)adsbee.rx_position.speed_kts, (unsigned)adsbee.rx_position.icao_address);
+                  (int)adsbee.rx_position.gnss_altitude_ft, (int)adsbee.rx_position.baro_altitude_ft,
+                  adsbee.rx_position.heading_deg, (int)adsbee.rx_position.speed_kts,
+                  (unsigned)adsbee.rx_position.icao_address);
     CPP_AT_PRINTF("\"SUBG_MODE\":[\"%s\"],", SettingsManager::kSubGHzModeStrs[subg_radio.GetMode()]);
     CPP_AT_PRINTF("\"WATCHDOG\":[%lu]", (unsigned long)adsbee.GetWatchdogTimeoutSec());
     CPP_AT_PRINTF("}\r\n");

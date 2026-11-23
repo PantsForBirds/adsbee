@@ -546,8 +546,8 @@ inline int16_t WriteAircraftJSONRemoteIDAircraftStr(char buf[], const RemoteIDAi
         n = n < max ? n : max;
     }
     if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagOperatorPositionValid)) {
-        n = AppendAircraftJSONLatLon(buf, n, max, "rid_operator_lat", "rid_operator_lon", aircraft.operator_latitude_awb,
-                                     aircraft.operator_longitude_awb);
+        n = AppendAircraftJSONLatLon(buf, n, max, "rid_operator_lat", "rid_operator_lon",
+                                     aircraft.operator_latitude_awb, aircraft.operator_longitude_awb);
     }
     if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagHeightValid)) {
         n += snprintf(buf + n, max - n,

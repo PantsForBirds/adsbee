@@ -1635,8 +1635,9 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
     metrics_counter_ = Metrics();  // Use default constructor to clear all values.
 }
 
-bool AircraftDictionary::GetLowestAircraftPosition(uint32_t& latitude_awb, uint32_t& longitude_awb, int32_t& gnss_altitude_ft,
-                                                   int32_t& baro_altitude_ft, float& heading_deg, int32_t& speed_kts) {
+bool AircraftDictionary::GetLowestAircraftPosition(uint32_t& latitude_awb, uint32_t& longitude_awb,
+                                                   int32_t& gnss_altitude_ft, int32_t& baro_altitude_ft,
+                                                   float& heading_deg, int32_t& speed_kts) {
     if (!lowest_aircraft_entry) {
         return false;
     }
@@ -2482,10 +2483,9 @@ bool AircraftDictionary::IngestModeSADSBPacket(const ModeSADSBPacket& packet) {
         case ModeSADSBPacket::kTypeCodeSurfacePosition + 1:  // TC = 6 (Surface Position)
         case ModeSADSBPacket::kTypeCodeSurfacePosition + 2:  // TC = 7 (Surface Position)
         case ModeSADSBPacket::kTypeCodeSurfacePosition + 3:  // TC = 8 (Surface Position)
-            ret = aircraft_ptr->ApplySurfacePositionMessage(packet, distance_reference_.lat_awb,
-                                                            distance_reference_.lon_awb,
-                                                            config_.enable_cpr_position_filter,
-                                                            reference_position_valid_);
+            ret = aircraft_ptr->ApplySurfacePositionMessage(
+                packet, distance_reference_.lat_awb, distance_reference_.lon_awb, config_.enable_cpr_position_filter,
+                reference_position_valid_);
             UpdateDistanceAndBearingIfMoved(*aircraft_ptr, position_before);
             break;
         case ModeSADSBPacket::kTypeCodeAirbornePositionBaroAlt:      // TC = 9 (Airborne Position w/ Baro Altitude)

@@ -1,9 +1,9 @@
 #include <cmath>
-#include "awb_test_utils.hh"
 #include <cstdio>
 #include <cstring>
 #include <string>
 
+#include "awb_test_utils.hh"
 #include "flarm_nmea.hh"
 #include "gtest/gtest.h"
 

@@ -1,7 +1,7 @@
 #include <cstring>
-#include "awb_test_utils.hh"
 #include <new>
 
+#include "awb_test_utils.hh"
 #include "config_hash.hh"
 #include "gtest/gtest.h"
 #include "settings_hash.hh"

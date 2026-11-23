@@ -460,8 +460,8 @@ CPP_AT_CALLBACK(CommsManager::ATGNSSFixCallback) {
     FormatAWBDeg(lat_str, sizeof(lat_str), fix.latitude_awb, 6);
     FormatAWBDeg(lon_str, sizeof(lon_str), fix.longitude_awb, 6);
     CPP_AT_CMD_PRINTF("=%d,%s,%s,%ld,%.1f,%ld,%u,%s,%lu", gnss->HasValidFix(), lat_str, lon_str,
-                      static_cast<long>(fix.altitude_ft), fix.heading_deg,
-                      static_cast<long>(fix.speed_kts), static_cast<unsigned int>(fix.num_satellites), utc_time,
+                      static_cast<long>(fix.altitude_ft), fix.heading_deg, static_cast<long>(fix.speed_kts),
+                      static_cast<unsigned int>(fix.num_satellites), utc_time,
                       static_cast<unsigned long>(gnss->pps_count()));
     CPP_AT_SILENT_SUCCESS();
 }
@@ -2032,9 +2032,8 @@ CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
                 "\tICAO: 0x%06X [%s]\r\n",
                 SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
                 adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", lat_str, lon_str,
-                adsbee.rx_position.gnss_altitude_ft,
-                adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts,
-                adsbee.rx_position.icao_address,
+                adsbee.rx_position.gnss_altitude_ft, adsbee.rx_position.baro_altitude_ft,
+                adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts, adsbee.rx_position.icao_address,
                 adsbee.rx_position.source ==
                         SettingsManager::RxPosition::PositionSource::kPositionSourceAircraftMatchingICAO
                     ? "IN USE"
@@ -2261,9 +2260,9 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"RX_POSITION\":[\"%s\",\"%s\",%s,%s,%d,%d,%.1f,%d,\"%06X\"],",
                   SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
                   adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", rx_lat_str, rx_lon_str,
-                  (int)adsbee.rx_position.gnss_altitude_ft,
-                  (int)adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg,
-                  (int)adsbee.rx_position.speed_kts, (unsigned)adsbee.rx_position.icao_address);
+                  (int)adsbee.rx_position.gnss_altitude_ft, (int)adsbee.rx_position.baro_altitude_ft,
+                  adsbee.rx_position.heading_deg, (int)adsbee.rx_position.speed_kts,
+                  (unsigned)adsbee.rx_position.icao_address);
     CPP_AT_PRINTF("\"SUBG_ENABLE\":[\"%s\"],",
                   SettingsManager::EnableStateToATValueStr(adsbee.subg_radio_ll.IsEnabledState()));
     int tl_offset_mv = adsbee.GetTLOffsetMilliVolts();

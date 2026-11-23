@@ -1,10 +1,9 @@
 #include "settings.hh"
 
-#include "geo_utils.hh"
-
 #include "adsbee.hh"
 #include "comms.hh"
 #include "flash_utils.hh"
+#include "geo_utils.hh"
 #include "sub_ghz_radio.hh"
 
 /* CC1314R10 (CC13X4) flash: 1 MB (0x00000000 - 0x000FFFFF)

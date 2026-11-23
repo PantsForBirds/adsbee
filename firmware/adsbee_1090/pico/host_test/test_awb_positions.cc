@@ -41,7 +41,7 @@ TEST(AWBPositions, AWBToScaledDegIsExactlyRounded) {
     EXPECT_EQ(AWBToDegE7(0x40000000u), 900000000);    // 90 N.
     EXPECT_EQ(AWBToDegE7(0xC0000000u), -900000000);   // 90 S.
     EXPECT_EQ(AWBToDegE7(0x80000000u), -1800000000);  // 180 deg is -180.
-    EXPECT_EQ(AWBToDegE7(0x7FFFFFFFu), 1799999999);  // 179.99999992 deg.
+    EXPECT_EQ(AWBToDegE7(0x7FFFFFFFu), 1799999999);   // 179.99999992 deg.
 }
 
 TEST(AWBPositions, DegE7RoundTrips) {
@@ -119,17 +119,38 @@ TEST(AWBPositions, ParseDegE7) {
         int32_t deg_e7;
     };
     const Case cases[] = {
-        {"37.4", true, 374000000},         {"-122.1", true, -1221000000},     {"+5", true, 50000000},
-        {"0", true, 0},                    {"-0", true, 0},                   {".5", true, 5000000},
-        {"5.", true, 50000000},            {"1e-7", true, 1},                 {"1E2", true, 1000000000},
-        {"1e+2", true, 1000000000},        {"0.00000005", true, 1},           {"-0.00000005", true, -1},
-        {"0.000000049999", true, 0},       {"37.41234567", true, 374123457},  {"5e-20", true, 0},
-        {"180", true, 1800000000},         {"-180.0000000", true, -1800000000}, {"214.7483647", true, INT32_MAX},
-        {"0000000000000000000000037.5", true, 375000000},                     {"37.50000000000000000000001", true, 375000000},
-        {"214.7483648", false, 0},         {"1000", false, 0},                {"", false, 0},
-        {"-", false, 0},                   {".", false, 0},                   {"abc", false, 0},
-        {"1.2.3", false, 0},               {"--1", false, 0},                 {"1e", false, 0},
-        {"37.4 ", false, 0},               {"0x10", false, 0},                {"nan", false, 0},
+        {"37.4", true, 374000000},
+        {"-122.1", true, -1221000000},
+        {"+5", true, 50000000},
+        {"0", true, 0},
+        {"-0", true, 0},
+        {".5", true, 5000000},
+        {"5.", true, 50000000},
+        {"1e-7", true, 1},
+        {"1E2", true, 1000000000},
+        {"1e+2", true, 1000000000},
+        {"0.00000005", true, 1},
+        {"-0.00000005", true, -1},
+        {"0.000000049999", true, 0},
+        {"37.41234567", true, 374123457},
+        {"5e-20", true, 0},
+        {"180", true, 1800000000},
+        {"-180.0000000", true, -1800000000},
+        {"214.7483647", true, INT32_MAX},
+        {"0000000000000000000000037.5", true, 375000000},
+        {"37.50000000000000000000001", true, 375000000},
+        {"214.7483648", false, 0},
+        {"1000", false, 0},
+        {"", false, 0},
+        {"-", false, 0},
+        {".", false, 0},
+        {"abc", false, 0},
+        {"1.2.3", false, 0},
+        {"--1", false, 0},
+        {"1e", false, 0},
+        {"37.4 ", false, 0},
+        {"0x10", false, 0},
+        {"nan", false, 0},
     };
     for (const Case& c : cases) {
         int32_t v = 12345;
@@ -195,10 +216,12 @@ TEST(AWBPositions, GDL90LatLonIsAWBRoundedTo24Bits) {
         uint32_t lat24, lon24;
         GDL90LatLon(frame, len, lat24, lon24);
         // Nearest 24-bit semicircle value of the exact position (ties up), exact in double: deg 2^23 / 180 = AWB / 256.
-        ASSERT_EQ(lat24, static_cast<uint32_t>(static_cast<int64_t>(
-                             std::floor(AWBToDeg(lat_awb) * 8388608.0 / 180.0 + 0.5))) & 0xFFFFFF);
-        ASSERT_EQ(lon24, static_cast<uint32_t>(static_cast<int64_t>(
-                             std::floor(AWBToDeg(lon_awb) * 8388608.0 / 180.0 + 0.5))) & 0xFFFFFF);
+        ASSERT_EQ(lat24,
+                  static_cast<uint32_t>(static_cast<int64_t>(std::floor(AWBToDeg(lat_awb) * 8388608.0 / 180.0 + 0.5))) &
+                      0xFFFFFF);
+        ASSERT_EQ(lon24,
+                  static_cast<uint32_t>(static_cast<int64_t>(std::floor(AWBToDeg(lon_awb) * 8388608.0 / 180.0 + 0.5))) &
+                      0xFFFFFF);
         // Before: truncated float, off by at most one LSB (2.1e-5 deg).
         uint32_t old_lat = OldGDL90(WrapCPRDecodeLatitude(awb2lat(lat_awb)));
         uint32_t old_lon = OldGDL90(WrapCPRDecodeLongitude(awb2lon(lon_awb)));
@@ -283,8 +306,7 @@ TEST(AWBPositions, NMEALatLonToAWB) {
     EXPECT_NEAR(AWBToDeg(parser.fix().latitude_awb), 48.0 + 7.038 / 60, 1e-7);
 
     // Southern and western hemispheres, 8 minute decimals (rounded on the 8th), 3-digit degrees.
-    const char* gga =
-        "$GNGGA,001043.00,3353.61234567,S,15112.34567891,W,1,12,0.9,10.0,M,20.0,M,,*";
+    const char* gga = "$GNGGA,001043.00,3353.61234567,S,15112.34567891,W,1,12,0.9,10.0,M,20.0,M,,*";
     uint8_t checksum = 0;
     for (const char* c = gga + 1; *c != '*'; c++) checksum ^= static_cast<uint8_t>(*c);
     char line[128];

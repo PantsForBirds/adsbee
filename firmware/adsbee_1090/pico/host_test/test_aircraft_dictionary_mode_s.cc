@@ -1,9 +1,9 @@
 #include <algorithm>
-#include "awb_test_utils.hh"
 #include <cstring>
 #include <vector>
 
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "beast_utils.hh"
 #include "decode_utils.hh"  // for location calculation utility functions
 #include "gtest/gtest.h"
@@ -1432,7 +1432,8 @@ TEST(AircraftDictionary, IngestSurfacePositionMessagesOnGround) {
 
     AircraftDictionary::AircraftDictionaryConfig config;
     AircraftDictionary dictionary(config);
-    dictionary.SetReferencePosition(DegToAWB(51.990f), DegToAWB(4.375f));  // Set reference latitude for surface position CPR decoding.
+    dictionary.SetReferencePosition(DegToAWB(51.990f),
+                                    DegToAWB(4.375f));  // Set reference latitude for surface position CPR decoding.
     DecodedModeSPacket packet_0 = DecodedModeSPacket((char*)"8C4841753AAB238733C8CD4020B1");
     DecodedModeSPacket packet_1 = DecodedModeSPacket((char*)"8C4841753A8A35323FAEBDAC702D");
 
