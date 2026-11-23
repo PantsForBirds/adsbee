@@ -1,6 +1,7 @@
 #include <stdio.h>  // for printing
 
 #include <cctype>    // for isalnum
+#include <cmath>     // for sqrtf
 #include <cstring>   // for strcat
 #include <iostream>  // for AT command ingestion
 
@@ -455,10 +456,15 @@ CPP_AT_CALLBACK(CommsManager::ATGNSSFixCallback) {
     if (fix.utc_time_valid) {
         snprintf(utc_time, sizeof(utc_time), "%02u:%02u:%02u", fix.utc_hour, fix.utc_minute, fix.utc_second);
     }
-    CPP_AT_CMD_PRINTF("=%d,%.6f,%.6f,%ld,%.1f,%ld,%u,%s,%lu", gnss->HasValidFix(), fix.latitude_deg,
+    // GNSS time on the MLAT counter: fresh PPS fit, MLAT counter rate vs GNSS time (ppm), last PPS residual and its RMS
+    // (ns).
+    const PPSClock& pps = gnss->pps_clock();
+    CPP_AT_CMD_PRINTF("=%d,%.6f,%.6f,%ld,%.1f,%ld,%u,%s,%lu,%d,%.3f,%ld,%lu", gnss->HasValidFix(), fix.latitude_deg,
                       fix.longitude_deg, static_cast<long>(fix.altitude_ft), fix.heading_deg,
                       static_cast<long>(fix.speed_kts), static_cast<unsigned int>(fix.num_satellites), utc_time,
-                      static_cast<unsigned long>(gnss->pps_count()));
+                      static_cast<unsigned long>(gnss->pps_count()), pps.IsFresh(time_us_32()),
+                      static_cast<double>(pps.GetRateErrorPPB()) / 1000.0, static_cast<long>(pps.GetLastResidualNs()),
+                      static_cast<unsigned long>(sqrtf(static_cast<float>(pps.GetMeanSquareResidualNs2()))));
     CPP_AT_SILENT_SUCCESS();
 }
 
@@ -2791,8 +2797,10 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 0,
      .help_string = "AT+GNSS_FIX?\r\n\tReturn fix validity, latitude and longitude in degrees, altitude in feet, "
-                    "heading in degrees true, groundspeed in knots, active satellites, UTC time, and PPS count "
-                    "since the last GNSS enable or disable operation.",
+                    "heading in degrees true, groundspeed in knots, active satellites, UTC time, PPS count "
+                    "since the last GNSS enable or disable operation, then GNSS time on the MLAT counter: PPS valid "
+                    "(1: UTC timestamps available), MLAT clock rate vs GNSS time in ppm, last PPS residual in ns and "
+                    "its RMS in ns.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSFixCallback, comms_manager)},
     {.command = "HOSTNAME",
      .min_args = 0,

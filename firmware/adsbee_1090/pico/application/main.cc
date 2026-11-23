@@ -244,6 +244,7 @@ int main() {
         esp32.Update();
 #ifndef ISRS_ON_CORE1
         adsbee.sync_pulse_service.Service(time_us_32());  // Needs this core's MLAT counter.
+        adsbee.SyncPPSIRQEnable();
 #endif  // ISRS_ON_CORE1
 
         // Poke the watchdog to keep things alive if the ESP32 is responding or if it's disabled.

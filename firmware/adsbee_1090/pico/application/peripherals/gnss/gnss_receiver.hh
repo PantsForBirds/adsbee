@@ -4,6 +4,7 @@
 #include "hardware/irq.h"
 #include "hardware/uart.h"  // For uart_inst_t and UART bring-up in Init().
 #include "nmea_parser.hh"
+#include "pps_clock.hh"
 #include "pico/stdlib.h"  // For gpio_* and tight_loop_contents() used by subclasses/impl.
 #include "settings.hh"
 
@@ -120,6 +121,19 @@ class GNSSReceiver {
     /** @retval Number of PPS rising edges observed since GNSS was last enabled or disabled. */
     uint32_t pps_count() const { return pps_count_; }
 
+    // GNSS time on the MLAT counter, from the PPS edges (see PPSClock).
+    const PPSClock& pps_clock() const { return pps_clock_; }
+
+    /**
+     * Converts a 48 MHz MLAT count (a Mode S, UAT or Remote ID timestamp) to UTC.
+     * @param[out] unix_seconds UTC seconds since 1970 without leap seconds (POSIX).
+     * @param[out] ns Nanoseconds into that second.
+     * @retval False without a PPS fit, or if the count is more than PPSClock::kHoldoverSeconds from the last PPS.
+     */
+    bool MLATCountsToUTC(uint64_t mlat_48mhz_counts, uint64_t& unix_seconds, uint32_t& ns) const {
+        return pps_clock_.ToUTC(mlat_48mhz_counts, unix_seconds, ns);
+    }
+
    protected:
     /**
      * @retval Receiver-specific default UART baud rate (e.g. factory default for the module).
@@ -150,6 +164,9 @@ class GNSSReceiver {
     /** Start/stop interrupt-driven UART reception and reset the software RX ring buffer. */
     void EnableRxInterrupt();
     void DisableRxInterrupt();
+
+    // Labels the latest PPS edge with the RMC sentence just parsed.
+    void LabelPPSEdge();
 
     /** Pop one byte captured by the UART RX interrupt. */
     bool ReadBufferedByte(char& c);
@@ -194,6 +211,7 @@ class GNSSReceiver {
     // Shared by all dynamically selected receiver instances and reset on every SetEnable() call.
     // Updated from the main loop, so no atomic access is required.
     static inline uint32_t pps_count_ = 0;
+    PPSClock pps_clock_;
 
     // Single-producer (UART ISR), single-consumer (main loop) ring buffer. Monotonic 16-bit indices
     // make all 2048 slots usable; unsigned subtraction remains valid across index wrap.

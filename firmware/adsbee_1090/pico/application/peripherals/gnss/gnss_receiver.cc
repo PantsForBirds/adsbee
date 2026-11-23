@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "adsbee.hh"            // For the PPS edges.
 #include "comms.hh"             // For comms_manager (UART I/O + baud) and CONSOLE_* logging.
 #include "cpu_utils.hh"
 #include "hal.hh"               // For get_time_since_boot_ms().
@@ -171,6 +172,9 @@ bool GNSSReceiver::Update() {
     while (ReadBufferedByte(c)) {
         CPUMonitor::WorkScope work;
         NMEAParser::SentenceType result = parser_.IngestByte(c);
+        if (result == NMEAParser::kSentenceRMC) {
+            LabelPPSEdge();
+        }
         // TEMPORARY: also feed the byte to the receiver-specific binary sniffer (UBX for ublox).
         DebugIngestByte(c);
         // TEMPORARY debug instrumentation (remove once root cause found).
@@ -270,7 +274,18 @@ void GNSSReceiver::ResumeAfterUartHandover() {
     suspended_ = false;
 }
 
+void GNSSReceiver::LabelPPSEdge() {
+    PPSClock::Edge latest, previous;
+    uint32_t num_edges = adsbee.GetPPSEdges(latest, previous);
+    uint64_t unix_seconds = 0;
+    bool rmc_valid = parser_.GetRMCUnixSeconds(unix_seconds);
+    pps_clock_.OnRMC(rmc_valid, parser_.RMCIsLeapSecond(), unix_seconds, num_edges, latest, previous, time_us_32());
+}
+
 void GNSSReceiver::SetEnable(bool enabled) {
+    // The edge interrupt runs while the receiver is enabled (powered or not: the module may be powered externally).
+    adsbee.SetPPSPin(enabled ? config_.pps_pin : UINT16_MAX);
+    pps_clock_.Restart();
     if (!enabled) {
         power_enable_pending_ = false;
         DisableRxInterrupt();

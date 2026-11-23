@@ -68,6 +68,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_cpu_utils.cc
         test_crc.cc
         test_mlat_time_sync.cc
+        test_pps_clock.cc
         test_sync_pulse_service.cc
         test_data_structures.cc
         test_decode_utils.cc
