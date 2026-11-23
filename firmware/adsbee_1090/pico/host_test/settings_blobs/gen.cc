@@ -33,6 +33,9 @@ int main() {
     for (int i = 0; i < 8; i++) s.feed_receiver_ids[1][i] = 0xA0 + i;
     s.mavlink_system_id = 9;
     s.mavlink_component_id = 200;
+    s.rx_position.source = static_cast<decltype(s.rx_position.source)>(1);  // FIXED
+    s.rx_position.latitude_deg = -34.603722f;
+    s.rx_position.longitude_deg = -158.381592f;
     c.UpdateCRC32();
     fwrite(&s, sizeof(s), 1, stdout);
     fprintf(stderr, "version %u size %zu crc 0x%08x\n", (unsigned)s.settings_version, sizeof(s), (unsigned)c.crc32);

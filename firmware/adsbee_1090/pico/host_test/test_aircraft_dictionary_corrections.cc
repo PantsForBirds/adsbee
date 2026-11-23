@@ -5,6 +5,7 @@
 //
 // CORRECTION_VECTORS=<file> runs a file made by correction_vectors/gen.py and prints the counts.
 #include <cmath>
+#include "awb_test_utils.hh"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -90,7 +91,7 @@ uint32_t WrongFields(const ModeSAircraft& a, const ModeSAircraft& r, double* pos
     if (a_pos) {
         // A position only the dictionary under test has, or one away from the reference.
         double d = r.HasBitFlag(ModeSAircraft::kBitFlagPositionValid)
-                       ? DistanceM(a.latitude_deg, a.longitude_deg, r.latitude_deg, r.longitude_deg)
+                       ? DistanceM(AWBToDeg(a.latitude_awb), AWBToDeg(a.longitude_awb), AWBToDeg(r.latitude_awb), AWBToDeg(r.longitude_awb))
                        : 1e9;
         if (d > 100.0) {
             wrong |= 1 << kFieldPosition;

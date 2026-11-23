@@ -65,7 +65,7 @@ class FLARMNMEAReporter {
     };
 
     struct Ownship {
-        uint32_t lat_awb = 0;  // FloatDegToAWB() of the receiver position, as the dictionary measures from it.
+        uint32_t lat_awb = 0;  // Receiver position, as the dictionary measures from it.
         uint32_t lon_awb = 0;
         bool msl_altitude_valid = false;
         int32_t msl_altitude_ft = 0;  // GNSS altitude above mean sea level, for GPGGA.

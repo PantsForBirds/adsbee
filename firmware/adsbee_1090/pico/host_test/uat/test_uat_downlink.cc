@@ -1,4 +1,5 @@
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "buffer_utils.hh"
 #include "fec.hh"
 #include "gtest/gtest.h"
@@ -74,8 +75,8 @@ TEST(UATDecoderTest, DownlinkFrames) {
             if (frame->position_valid) {
                 EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagPositionValid));
                 EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagUpdatedPosition));
-                EXPECT_FLOAT_EQ(aircraft.latitude_deg, frame->lat);
-                EXPECT_FLOAT_EQ(aircraft.longitude_deg, frame->lon);
+                EXPECT_FLOAT_EQ(AWBToDeg(aircraft.latitude_awb), frame->lat);
+                EXPECT_FLOAT_EQ(AWBToDeg(aircraft.longitude_awb), frame->lon);
             } else {
                 EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagPositionValid));
                 EXPECT_FALSE(aircraft.HasBitFlag(UATAircraft::kBitFlagUpdatedPosition));

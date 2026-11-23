@@ -2,12 +2,14 @@
 #include <cstring>
 #include <string>
 
+#include "awb_test_utils.hh"
+#include "geo_utils.hh"
 #include "gtest/gtest.h"
 #include "settings.hh"
 #include "settings_migration.hh"
 
 // Settings blobs written by each release's own Settings struct (settings_blobs/gen.cc), with a WiFi station, hostname,
-// AP, Ethernet and a feed configured. Main must keep all of them across an upgrade.
+// AP, Ethernet, a feed and a fixed receiver position configured. Main must keep all of them across an upgrade.
 
 namespace {
 
@@ -99,5 +101,11 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         EXPECT_EQ(out.feed_receiver_ids[1][7], 0xA7);
         EXPECT_EQ(out.mavlink_system_id, 9);
         EXPECT_EQ(out.mavlink_component_id, 200);
+        // Float degrees before v21, AWB since.
+        EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
+        EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(-34.603722f));
+        EXPECT_EQ(out.rx_position.longitude_awb, FloatDegToAWB(-158.381592f));
+        EXPECT_NEAR(AWBToDeg(out.rx_position.latitude_awb), -34.603722, 1e-6);
+        EXPECT_NEAR(AWBToDeg(out.rx_position.longitude_awb), -158.381592, 1e-5);
     }
 }

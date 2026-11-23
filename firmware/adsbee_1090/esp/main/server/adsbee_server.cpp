@@ -293,7 +293,7 @@ bool ADSBeeServer::Update() {
         const SettingsManager::RxPosition rx_position = object_dictionary.composite_device_status.rp2040.rx_position;
         const bool rx_position_available = object_dictionary.composite_device_status.rp2040.rx_position_available;
         if (rx_position_available) {
-            aircraft_dictionary.SetReferencePosition(rx_position.latitude_deg, rx_position.longitude_deg);
+            aircraft_dictionary.SetReferencePosition(rx_position.latitude_awb, rx_position.longitude_awb);
             aircraft_dictionary.SetReferenceAltitudeFt(rx_position.FilterAltitudeFt());
         } else {
             aircraft_dictionary.ClearReferencePosition();
@@ -560,9 +560,11 @@ bool ADSBeeServer::ReportGDL90() {
                 return 0;  // Don't report aircraft without a valid position.
             }
             if (log) {
-                printf("\t#A %s (0x%06lX): %.5f %.5f %ld\r\n", mode_s_aircraft->callsign,
-                       mode_s_aircraft->icao_address, mode_s_aircraft->latitude_deg, mode_s_aircraft->longitude_deg,
-                       mode_s_aircraft->baro_altitude_ft);
+                char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+                FormatAWBDeg(lat_str, sizeof(lat_str), mode_s_aircraft->latitude_awb, 5);
+                FormatAWBDeg(lon_str, sizeof(lon_str), mode_s_aircraft->longitude_awb, 5);
+                printf("\t#A %s (0x%06lX): %s %s %ld\r\n", mode_s_aircraft->callsign, mode_s_aircraft->icao_address,
+                       lat_str, lon_str, mode_s_aircraft->baro_altitude_ft);
             }
             return gdl90.WriteGDL90TargetReportMessage(buf, buf_len, *mode_s_aircraft, false);
         }
@@ -571,8 +573,11 @@ bool ADSBeeServer::ReportGDL90() {
                 return 0;
             }
             if (log) {
-                printf("\t#U %s (0x%06lX): %.5f %.5f %ld\r\n", uat_aircraft->callsign, uat_aircraft->icao_address,
-                       uat_aircraft->latitude_deg, uat_aircraft->longitude_deg, uat_aircraft->baro_altitude_ft);
+                char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+                FormatAWBDeg(lat_str, sizeof(lat_str), uat_aircraft->latitude_awb, 5);
+                FormatAWBDeg(lon_str, sizeof(lon_str), uat_aircraft->longitude_awb, 5);
+                printf("\t#U %s (0x%06lX): %s %s %ld\r\n", uat_aircraft->callsign, uat_aircraft->icao_address, lat_str,
+                       lon_str, uat_aircraft->baro_altitude_ft);
             }
             return gdl90.WriteGDL90TargetReportMessage(buf, buf_len, *uat_aircraft, false);
         }
@@ -1161,13 +1166,16 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
              "\"noise_floor_mv\": %u }",
              rp2040_status.timestamp_ms, rp2040_status.core_0_usage_percent, rp2040_status.core_1_usage_percent,
              rp2040_status.temperature_deg_c, rp2040_status.noise_floor_dbm, rp2040_status.noise_floor_mv);
+    char gnss_lat_str[kAWBDegStrMaxLen], gnss_lon_str[kAWBDegStrMaxLen];
+    FormatAWBDeg(gnss_lat_str, sizeof(gnss_lat_str), rp2040_status.gnss_latitude_awb, 6);
+    FormatAWBDeg(gnss_lon_str, sizeof(gnss_lon_str), rp2040_status.gnss_longitude_awb, 6);
     snprintf(metrics_message + strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
              kNetworkMetricsMessageMaxLen - strnlen(metrics_message, kNetworkMetricsMessageMaxLen),
-             ", \"gnss\": { \"enabled\": %s, \"fix_valid\": %s, \"latitude_deg\": %.6f, "
-             "\"longitude_deg\": %.6f, \"altitude_ft\": %ld, \"heading_deg\": %.1f, \"speed_kts\": %ld, "
+             ", \"gnss\": { \"enabled\": %s, \"fix_valid\": %s, \"latitude_deg\": %s, "
+             "\"longitude_deg\": %s, \"altitude_ft\": %ld, \"heading_deg\": %.1f, \"speed_kts\": %ld, "
              "\"num_satellites\": %u, \"utc_time\": \"%s\" }",
              rp2040_status.gnss_enabled ? "true" : "false", rp2040_status.gnss_fix_valid ? "true" : "false",
-             rp2040_status.gnss_latitude_deg, rp2040_status.gnss_longitude_deg,
+             gnss_lat_str, gnss_lon_str,
              static_cast<long>(rp2040_status.gnss_altitude_ft), rp2040_status.gnss_heading_deg,
              static_cast<long>(rp2040_status.gnss_speed_kts), static_cast<unsigned int>(rp2040_status.gnss_num_satellites),
              gnss_utc_time);

@@ -154,7 +154,6 @@ uint16_t GDL90Reporter::WriteGDL90UplinkDataMessage(uint8_t* to_buf, uint16_t to
 uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes,
                                                       const GDL90TargetReportData& data, bool ownship) {
     const uint16_t kMessageBufLenBytes = 28;
-    const float kLatLonDegTo24BitFrac = 46603.3777778f;
     const float kHeadingTrackDegTo8BitFrac = 0.71111111111f;
     uint8_t message_buf[kMessageBufLenBytes];
     message_buf[0] = ownship ? kGDL90MessageIDOwnshipReport : kGDL90MessageIDTrafficReport;
@@ -164,13 +163,13 @@ uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t 
     message_buf[2] = (data.participant_address >> 16) & 0xFF;
     message_buf[3] = (data.participant_address >> 8) & 0xFF;
     message_buf[4] = data.participant_address & 0xFF;
-    // ll ll ll: Latitude as a 24-bit signed binary fraction. Resolution = 180/2^23 degrees.
-    int32_t latitude_frac = static_cast<int32_t>(data.latitude_deg * kLatLonDegTo24BitFrac) & 0x00FFFFFF;
+    // ll ll ll: Latitude as a 24-bit signed binary fraction. Resolution = 180/2^23 degrees: AWB rounded to 24 bits.
+    uint32_t latitude_frac = ((data.latitude_awb + 0x80u) >> 8) & 0x00FFFFFF;
     message_buf[5] = (latitude_frac >> 16) & 0xFF;
     message_buf[6] = (latitude_frac >> 8) & 0xFF;
     message_buf[7] = latitude_frac & 0xFF;
     // nn nn nn: Longitude as a 24-bit signed binary fraction. Resolution = 180/2^23 degrees.
-    int32_t longitude_frac = static_cast<int32_t>(data.longitude_deg * kLatLonDegTo24BitFrac) & 0x00FFFFFF;
+    uint32_t longitude_frac = ((data.longitude_awb + 0x80u) >> 8) & 0x00FFFFFF;
     message_buf[8] = (longitude_frac >> 16) & 0xFF;
     message_buf[9] = (longitude_frac >> 8) & 0xFF;
     message_buf[10] = longitude_frac & 0xFF;
@@ -252,8 +251,8 @@ bool GDL90Reporter::BuildOwnshipReportData(GDL90TargetReportData& data,
     }
 
     bool from_tracked_aircraft = rx_position.source == SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;
-    data.latitude_deg = rx_position.latitude_deg;
-    data.longitude_deg = rx_position.longitude_deg;
+    data.latitude_awb = rx_position.latitude_awb;
+    data.longitude_awb = rx_position.longitude_awb;
     // The ownship report altitude is pressure altitude. A GNSS fix carries no baro data, so report it invalid
     // (INT32_MIN encodes as 0xFFF) rather than substituting geometric altitude or a stale value.
     data.altitude_ft = from_tracked_aircraft ? rx_position.baro_altitude_ft : INT32_MIN;
@@ -351,8 +350,8 @@ uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t 
             break;
     }
 
-    data.latitude_deg = aircraft.latitude_deg;
-    data.longitude_deg = aircraft.longitude_deg;
+    data.latitude_awb = aircraft.latitude_awb;
+    data.longitude_awb = aircraft.longitude_awb;
     data.altitude_ft = aircraft.baro_altitude_ft;
     data.direction_deg = aircraft.direction_deg;
 
@@ -409,8 +408,8 @@ uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t 
 
     // NOTE: Traffic Alert Status currently not used.
     data.participant_address = aircraft.icao_address;
-    data.latitude_deg = aircraft.latitude_deg;
-    data.longitude_deg = aircraft.longitude_deg;
+    data.latitude_awb = aircraft.latitude_awb;
+    data.longitude_awb = aircraft.longitude_awb;
     data.altitude_ft = aircraft.baro_altitude_ft;
     data.direction_deg = aircraft.direction_deg;
     switch (aircraft.GetAddressQualifier()) {
@@ -490,8 +489,8 @@ uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t 
     data.participant_address = aircraft.address;
     // Remote ID uses self-assigned (non-ICAO) identifiers.
     data.address_type = GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress;
-    data.latitude_deg = aircraft.latitude_deg;
-    data.longitude_deg = aircraft.longitude_deg;
+    data.latitude_awb = aircraft.latitude_awb;
+    data.longitude_awb = aircraft.longitude_awb;
     // Drones report geometric (WGS84) altitude; GDL90 altitude is nominally pressure altitude, but geometric is the best
     // value we have for a drone.
     data.altitude_ft =

@@ -183,8 +183,7 @@ bool ModeSAircraft::DecodePosition(bool is_airborne, uint32_t ref_lat_awb32, uin
 #endif                 // ADSB_VERBOSE_PACKET_WARNINGS
         return false;  // Aircraft crossed between latitude zones, can't decode from this packet pair.
     }
-    float wrapped_latitude_deg = WrapCPRDecodeLatitude(result.lat_deg);
-    if (wrapped_latitude_deg > 90.0f || wrapped_latitude_deg < -90.0f) {
+    if (!AWBIsLatitude(result.lat_awb)) {
         return false;  // Not a latitude; a corrupted CPR packet got through CRC.
     }
 
@@ -248,8 +247,8 @@ bool ModeSAircraft::DecodePosition(bool is_airborne, uint32_t ref_lat_awb32, uin
 
     WriteBitFlag(BitFlag::kBitFlagPositionValid, true);
     position_address_type = static_cast<AddressType>(cpr_address_type);
-    latitude_deg = wrapped_latitude_deg;
-    longitude_deg = WrapCPRDecodeLongitude(result.lon_deg);
+    latitude_awb = result.lat_awb;
+    longitude_awb = result.lon_awb;
     last_track_update_timestamp_ms = most_recent_received_timestamp_ms;  // Update last track update timestamp.
     last_position_update_ms = get_time_since_boot_ms();
 
@@ -1202,6 +1201,8 @@ UATAircraft::UATAircraft(uint32_t icao_address_in) : icao_address(icao_address_i
 UATAircraft::~UATAircraft() {};
 
 bool UATAircraft::DecodePosition(const DecodedUATADSBPacket::UATStateVector& state_vector, bool filter_position) {
+    const uint32_t candidate_lat_awb32 = UATLatAWBToAWB32(state_vector.latitude_awb);
+    const uint32_t candidate_lon_awb32 = UATLonAWBToAWB32(state_vector.longitude_awb);
 #ifdef FILTER_CPR_POSITIONS
     if (filter_position) {
         // Calculate how far the aircraft has jumped since its last position update, and goof check it against a maximum
@@ -1212,8 +1213,6 @@ bool UATAircraft::DecodePosition(const DecodedUATADSBPacket::UATStateVector& sta
         uint32_t max_distance_meters =
             kCPRPositionFilterVelocityMps * ms_since_last_track_update / 1000;  // mps to meters
 
-        uint32_t candidate_lat_awb32 = UATLatAWBToAWB32(state_vector.latitude_awb);
-        uint32_t candidate_lon_awb32 = UATLonAWBToAWB32(state_vector.longitude_awb);
         uint32_t prev_lat_awb32 = lat_awb32_, prev_lon_awb32 = lon_awb32_;
 
         if (last_message_timestamp_ms <= last_filter_received_timestamp_ms_) {
@@ -1253,8 +1252,8 @@ bool UATAircraft::DecodePosition(const DecodedUATADSBPacket::UATStateVector& sta
 #endif
 
     WriteBitFlag(BitFlag::kBitFlagPositionValid, true);
-    latitude_deg = awb2lat(lat_awb32_);
-    longitude_deg = awb2lon(lon_awb32_);
+    latitude_awb = candidate_lat_awb32;
+    longitude_awb = candidate_lon_awb32;
     last_track_update_timestamp_ms = last_message_timestamp_ms;  // Update last track update timestamp.
     last_position_update_ms = last_message_timestamp_ms;         // Local time for UAT.
     return true;
@@ -1636,7 +1635,7 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
     metrics_counter_ = Metrics();  // Use default constructor to clear all values.
 }
 
-bool AircraftDictionary::GetLowestAircraftPosition(float& latitude_deg, float& longitude_deg, int32_t& gnss_altitude_ft,
+bool AircraftDictionary::GetLowestAircraftPosition(uint32_t& latitude_awb, uint32_t& longitude_awb, int32_t& gnss_altitude_ft,
                                                    int32_t& baro_altitude_ft, float& heading_deg, int32_t& speed_kts) {
     if (!lowest_aircraft_entry) {
         return false;
@@ -1646,8 +1645,8 @@ bool AircraftDictionary::GetLowestAircraftPosition(float& latitude_deg, float& l
         if (!aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid)) {
             return false;
         }
-        latitude_deg = aircraft->latitude_deg;
-        longitude_deg = aircraft->longitude_deg;
+        latitude_awb = aircraft->latitude_awb;
+        longitude_awb = aircraft->longitude_awb;
         gnss_altitude_ft = aircraft->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagGNSSAltitudeValid)
                                ? aircraft->gnss_altitude_ft
                                : INT32_MIN;
@@ -1663,8 +1662,8 @@ bool AircraftDictionary::GetLowestAircraftPosition(float& latitude_deg, float& l
         if (!aircraft->HasBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid)) {
             return false;
         }
-        latitude_deg = aircraft->latitude_deg;
-        longitude_deg = aircraft->longitude_deg;
+        latitude_awb = aircraft->latitude_awb;
+        longitude_awb = aircraft->longitude_awb;
         gnss_altitude_ft = aircraft->HasBitFlag(UATAircraft::BitFlag::kBitFlagGNSSAltitudeValid)
                                ? aircraft->gnss_altitude_ft
                                : INT32_MIN;
@@ -1870,11 +1869,10 @@ AircraftDictionary::TrackFit AircraftDictionary::CheckAgainstTrack(const ModeSAD
         }
         // Position: the miss from the dead reckoned position (speed times age along the direction) with a fresh
         // velocity, else from the last position. The bearing from the last position splits it along and across track.
-        GeoReference last_position(FloatDegToAWB(aircraft.latitude_deg), FloatDegToAWB(aircraft.longitude_deg));
+        GeoReference last_position(aircraft.latitude_awb, aircraft.longitude_awb);
         uint32_t distance_m;
         uint16_t bearing_bam16;
-        CalculateDistanceAndBearing(last_position, FloatDegToAWB(trial.latitude_deg),
-                                    FloatDegToAWB(trial.longitude_deg), distance_m, bearing_bam16);
+        CalculateDistanceAndBearing(last_position, trial.latitude_awb, trial.longitude_awb, distance_m, bearing_bam16);
         int64_t along_m = distance_m;
         int64_t across_m = 0;
         int32_t position_rate_m_per_s = kCorrectionSpeedMPerS;
@@ -2484,8 +2482,8 @@ bool AircraftDictionary::IngestModeSADSBPacket(const ModeSADSBPacket& packet) {
         case ModeSADSBPacket::kTypeCodeSurfacePosition + 1:  // TC = 6 (Surface Position)
         case ModeSADSBPacket::kTypeCodeSurfacePosition + 2:  // TC = 7 (Surface Position)
         case ModeSADSBPacket::kTypeCodeSurfacePosition + 3:  // TC = 8 (Surface Position)
-            ret = aircraft_ptr->ApplySurfacePositionMessage(packet, reference_latitude_awb32_,
-                                                            reference_longitude_awb32_,
+            ret = aircraft_ptr->ApplySurfacePositionMessage(packet, distance_reference_.lat_awb,
+                                                            distance_reference_.lon_awb,
                                                             config_.enable_cpr_position_filter,
                                                             reference_position_valid_);
             UpdateDistanceAndBearingIfMoved(*aircraft_ptr, position_before);
@@ -2621,6 +2619,27 @@ uint32_t RemoteIDAircraft::MACToAddress(const uint8_t mac[6]) {
     return crc24(mac, 6) & 0x00FFFFFFu;
 }
 
+namespace {
+// Location and System (operator) positions as sent, in 1e-7 degrees: the Open Drone ID decoder only gives doubles.
+struct RemoteIDLatLonE7 {
+    int32_t lat = 0, lon = 0;
+    int32_t operator_lat = 0, operator_lon = 0;
+
+    // Reads one 25-byte message; later messages of a type override earlier ones, as in the decoder.
+    void Read(const uint8_t* message) {
+        if (decodeMessageType(message[0]) == ODID_MESSAGETYPE_LOCATION) {
+            const auto* loc = reinterpret_cast<const ODID_Location_encoded*>(message);
+            lat = loc->Latitude;
+            lon = loc->Longitude;
+        } else if (decodeMessageType(message[0]) == ODID_MESSAGETYPE_SYSTEM) {
+            const auto* sys = reinterpret_cast<const ODID_System_encoded*>(message);
+            operator_lat = sys->OperatorLatitude;
+            operator_lon = sys->OperatorLongitude;
+        }
+    }
+};
+}  // namespace
+
 bool AircraftDictionary::IngestRawRemoteIDPacket(const RawRemoteIDPacket& packet) {
     metrics_counter_.raw_remote_id_frames++;
 
@@ -2632,16 +2651,21 @@ bool AircraftDictionary::IngestRawRemoteIDPacket(const RawRemoteIDPacket& packet
     // duration of this call. Both the ESP32 (16 KB main task) and RP2040 main loop have ample stack for it.
     ODID_UAS_Data uas_data;
     odid_initUasData(&uas_data);
+    RemoteIDLatLonE7 lat_lon;
     if (packet.GetIsMessagePack()) {
-        if (decodeMessagePack(&uas_data, reinterpret_cast<const ODID_MessagePack_encoded*>(packet.payload)) !=
-            ODID_SUCCESS) {
+        const auto* pack = reinterpret_cast<const ODID_MessagePack_encoded*>(packet.payload);
+        if (decodeMessagePack(&uas_data, pack) != ODID_SUCCESS) {
             return false;
+        }
+        for (int i = 0; i < pack->MsgPackSize; i++) {
+            lat_lon.Read(pack->Messages[i].rawData);
         }
     } else {
         // A single 25-byte Open Drone ID message. decodeOpenDroneID populates the matching field + valid flag.
         if (decodeOpenDroneID(&uas_data, packet.payload) == ODID_MESSAGETYPE_INVALID) {
             return false;
         }
+        lat_lon.Read(packet.payload);
     }
 
     uint32_t address = RemoteIDAircraft::MACToAddress(packet.source_mac);
@@ -2675,9 +2699,9 @@ bool AircraftDictionary::IngestRawRemoteIDPacket(const RawRemoteIDPacket& packet
         aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagIsAirborne, loc.Status == ODID_STATUS_AIRBORNE);
 
         // Position: ODID uses 0 deg for "invalid / no value". A real UA at exactly (0, 0) is not a realistic case.
-        if (loc.Latitude != 0.0 || loc.Longitude != 0.0) {
-            aircraft->latitude_deg = static_cast<float>(loc.Latitude);
-            aircraft->longitude_deg = static_cast<float>(loc.Longitude);
+        if (lat_lon.lat != 0 || lat_lon.lon != 0) {
+            aircraft->latitude_awb = DegE7ToAWB(lat_lon.lat);
+            aircraft->longitude_awb = DegE7ToAWB(lat_lon.lon);
             aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagPositionValid, true);
         }
         if (loc.Direction != INV_DIR && loc.Direction >= 0.0f && loc.Direction < 360.0f) {
@@ -2705,16 +2729,15 @@ bool AircraftDictionary::IngestRawRemoteIDPacket(const RawRemoteIDPacket& packet
             aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagHeightValid, true);
         }
     }
-    bool position_message = kSwarmRecording && uas_data.LocationValid &&
-                            (uas_data.Location.Latitude != 0.0 || uas_data.Location.Longitude != 0.0);
+    bool position_message = kSwarmRecording && uas_data.LocationValid && (lat_lon.lat != 0 || lat_lon.lon != 0);
     UpdateDistanceAndBearingIfMoved(*aircraft, position_before, position_message);
 
     // System: operator (pilot) location + operator geometric altitude.
     if (uas_data.SystemValid) {
         const ODID_System_data& sys = uas_data.System;
-        if (sys.OperatorLatitude != 0.0 || sys.OperatorLongitude != 0.0) {
-            aircraft->operator_latitude_deg = static_cast<float>(sys.OperatorLatitude);
-            aircraft->operator_longitude_deg = static_cast<float>(sys.OperatorLongitude);
+        if (lat_lon.operator_lat != 0 || lat_lon.operator_lon != 0) {
+            aircraft->operator_latitude_awb = DegE7ToAWB(lat_lon.operator_lat);
+            aircraft->operator_longitude_awb = DegE7ToAWB(lat_lon.operator_lon);
             aircraft->WriteBitFlag(RemoteIDAircraft::kBitFlagOperatorPositionValid, true);
         }
         if (sys.OperatorAltitudeGeo != INV_ALT) {
@@ -2767,20 +2790,11 @@ bool AircraftDictionary::RemoveOldestAircraft() {
     return true;
 }
 
-void AircraftDictionary::SetReferencePosition(float latitude_deg, float longitude_deg) {
-    // Distances are measured from the exact AWB of the given position, before the longitude is remapped below.
-    const uint32_t distance_lat_awb = FloatDegToAWB(latitude_deg);
-    const uint32_t distance_lon_awb = FloatDegToAWB(longitude_deg);
-    reference_latitude_awb32_ = lat2awb(latitude_deg);
-    // Remap longitudes from (-180,180) to (0, 360)
-    if (longitude_deg < 0.0f) {
-        longitude_deg += 360.0f;
-    }
-    reference_longitude_awb32_ = lon2awb(longitude_deg);
+void AircraftDictionary::SetReferencePosition(uint32_t latitude_awb, uint32_t longitude_awb) {
     // Any move makes the next Update() recompute every aircraft's distance and bearing.
-    if (!reference_position_valid_ || distance_lat_awb != distance_reference_.lat_awb ||
-        distance_lon_awb != distance_reference_.lon_awb) {
-        distance_reference_.Set(distance_lat_awb, distance_lon_awb);
+    if (!reference_position_valid_ || latitude_awb != distance_reference_.lat_awb ||
+        longitude_awb != distance_reference_.lon_awb) {
+        distance_reference_.Set(latitude_awb, longitude_awb);
         BumpReferenceEpoch();
     }
     reference_position_valid_ = true;
@@ -2807,8 +2821,8 @@ void AircraftDictionary::UpdateDistanceAndBearing(Aircraft &aircraft, bool posit
         aircraft.distance_m = Aircraft::kDistanceUnknown;
         return;
     }
-    CalculateDistanceAndBearing(distance_reference_, FloatDegToAWB(aircraft.latitude_deg),
-                                FloatDegToAWB(aircraft.longitude_deg), aircraft.distance_m, aircraft.bearing_bam16);
+    CalculateDistanceAndBearing(distance_reference_, aircraft.latitude_awb, aircraft.longitude_awb, aircraft.distance_m,
+                                aircraft.bearing_bam16);
 }
 
 bool ModeSAircraft::SetCPRLatLon(uint32_t n_lat_cpr, uint32_t n_lon_cpr, bool odd, uint32_t received_timestamp_ms) {

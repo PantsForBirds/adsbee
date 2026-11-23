@@ -1,4 +1,5 @@
 #include <cmath>
+#include "awb_test_utils.hh"
 #include <vector>
 
 #include "asterix_utils.hh"
@@ -31,8 +32,8 @@ ModeSAircraft AirborneModeSAircraft() {
     ModeSAircraft aircraft(0xA1B2C3);
     aircraft.WriteBitFlag(ModeSAircraft::kBitFlagIsAirborne, true);
     aircraft.WriteBitFlag(ModeSAircraft::kBitFlagPositionValid, true);
-    aircraft.latitude_deg = 37.4f;
-    aircraft.longitude_deg = -122.1f;
+    aircraft.latitude_awb = DegToAWB(37.4f);
+    aircraft.longitude_awb = DegToAWB(-122.1f);
     aircraft.last_position_update_ms = 1000;
     aircraft.WriteBitFlag(ModeSAircraft::kBitFlagBaroAltitudeValid, true);
     aircraft.baro_altitude_ft = 35025;
@@ -166,8 +167,8 @@ TEST(ASTERIXUtils, CAT021RecordMatchesHandEncoding) {
     r.has_service_id = true;
     r.service_id = 1;
     r.has_position = true;
-    r.latitude_deg = 37.4;
-    r.longitude_deg = -122.1;
+    r.latitude_awb = DegToAWB(37.4);
+    r.longitude_awb = DegToAWB(-122.1);
     r.position_time_of_day = kTimeOfDayTicks;
     r.address = 0xA1B2C3;
     r.has_geometric_height = true;
@@ -204,7 +205,7 @@ TEST(ASTERIXUtils, CAT021RecordMatchesHandEncoding) {
         0x00,                                            // I021/040 ATP 0, ARC 25 ft.
         0x01, 0x23,                                      // I021/161 track 291.
         0x01,                                            // I021/015 service 1.
-        0x0D, 0x4C, 0x3B, 0x2A, 0xD4, 0x96, 0x2F, 0xC9,  // I021/131 37.4, -122.1.
+        0x0D, 0x4C, 0x3B, 0x2A, 0xD4, 0x96, 0x2F, 0xCA,  // I021/131 37.4, -122.1 (from AWB, rounded).
         0xA1, 0xB2, 0xC3,                                // I021/080.
         0x58, 0x78, 0x65,                                // I021/073 12:34:56.789.
         0x16, 0x80,                                      // I021/140 36000 ft.
@@ -259,8 +260,8 @@ TEST(ASTERIXUtils, CAT021ClampsAndRangeChecks) {
     r.has_amplitude = true;
     r.amplitude_dbm = -200;
     r.has_position = true;
-    r.latitude_deg = -90.0;
-    r.longitude_deg = 180.0;
+    r.latitude_awb = DegToAWB(-90.0);
+    r.longitude_awb = DegToAWB(180.0);
     std::vector<uint8_t> rec = Record(r);
     // FSPEC FRN 1, 2, 7 | 11, 12 | 17 | 24, 26 | none | 38.
     ASSERT_EQ(rec.size(), 6u + 2 + 1 + 8 + 3 + 3 + 1 + 2 + 4 + 1);
@@ -270,7 +271,7 @@ TEST(ASTERIXUtils, CAT021ClampsAndRangeChecks) {
     EXPECT_EQ(rec[3], 0x29);
     size_t i = 6 + 2 + 1;
     EXPECT_EQ(std::vector<uint8_t>(rec.begin() + i, rec.begin() + i + 8),
-              (std::vector<uint8_t>{0xE0, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00}));  // -90, 180.
+              (std::vector<uint8_t>{0xE0, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00}));  // -90, -180 (= 180).
     i += 8 + 3 + 3 + 1;
     EXPECT_EQ(rec[i], 0xBF);  // Range exceeded, largest climb.
     EXPECT_EQ(rec[i + 1], 0xFF);
@@ -302,8 +303,8 @@ TEST(ASTERIXUtils, BuildCAT021ReportFromModeSAircraft) {
     EXPECT_FALSE(r.on_ground);
     EXPECT_EQ(r.service_id, ASTERIXReporter::kServiceID1090ES);
     EXPECT_TRUE(r.has_position);
-    EXPECT_NEAR(r.latitude_deg, 37.4, 1e-5);
-    EXPECT_NEAR(r.longitude_deg, -122.1, 1e-5);
+    EXPECT_NEAR(AWBToDeg(r.latitude_awb), 37.4, 1e-5);
+    EXPECT_NEAR(AWBToDeg(r.longitude_awb), -122.1, 1e-5);
     EXPECT_EQ(r.position_time_of_day, kTimeOfDayTicks);
     EXPECT_TRUE(r.has_velocity_time);
     EXPECT_EQ(r.velocity_time_of_day, kTimeOfDayTicks + 64);
@@ -394,8 +395,8 @@ TEST(ASTERIXUtils, BuildCAT021ReportFromUATAircraft) {
     UATAircraft aircraft(0xA00001);
     aircraft.WriteBitFlag(UATAircraft::kBitFlagIsAirborne, true);
     aircraft.WriteBitFlag(UATAircraft::kBitFlagPositionValid, true);
-    aircraft.latitude_deg = 40.0f;
-    aircraft.longitude_deg = -105.0f;
+    aircraft.latitude_awb = DegToAWB(40.0f);
+    aircraft.longitude_awb = DegToAWB(-105.0f);
     aircraft.last_position_update_ms = 2000;
     aircraft.WriteBitFlag(UATAircraft::kBitFlagHorizontalSpeedValid, true);
     aircraft.WriteBitFlag(UATAircraft::kBitFlagDirectionValid, true);

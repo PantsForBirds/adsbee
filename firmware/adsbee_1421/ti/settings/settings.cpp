@@ -1,5 +1,7 @@
 #include "settings.hh"
 
+#include "geo_utils.hh"
+
 #include "adsbee.hh"
 #include "comms.hh"
 #include "flash_utils.hh"
@@ -272,8 +274,11 @@ void SettingsManager::Print() {
     CONSOLE_PRINTF("\tReceiver Position:\r\n");
     CONSOLE_PRINTF("\t\tSource: %s [%s]\r\n", RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
                    adsbee.rx_position_available ? "OK" : "NOT AVAILABLE");
-    CONSOLE_PRINTF("\t\tLatitude: %.6f deg\r\n", adsbee.rx_position.latitude_deg);
-    CONSOLE_PRINTF("\t\tLongitude: %.6f deg\r\n", adsbee.rx_position.longitude_deg);
+    char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+    FormatAWBDeg(lat_str, sizeof(lat_str), adsbee.rx_position.latitude_awb, 6);
+    FormatAWBDeg(lon_str, sizeof(lon_str), adsbee.rx_position.longitude_awb, 6);
+    CONSOLE_PRINTF("\t\tLatitude: %s deg\r\n", lat_str);
+    CONSOLE_PRINTF("\t\tLongitude: %s deg\r\n", lon_str);
     CONSOLE_PRINTF("\t\tGNSS Altitude: %d ft\r\n", adsbee.rx_position.gnss_altitude_ft);
     CONSOLE_PRINTF("\t\tBarometric Altitude: %d ft\r\n", adsbee.rx_position.baro_altitude_ft);
     CONSOLE_PRINTF("\t\tHeading: %.1f deg\r\n", adsbee.rx_position.heading_deg);
@@ -334,13 +339,16 @@ void SettingsManager::PrintAT() {
 
     // AT+RX_POSITION: reconstruct only the args the selected source accepts.
     switch (adsbee.rx_position.source) {
-        case RxPosition::PositionSource::kPositionSourceFixed:
-            CONSOLE_PRINTF("AT+RX_POSITION=%s,%.6f,%.6f,%d,%d,%.1f,%d\r\n",
-                           RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
-                           adsbee.rx_position.latitude_deg, adsbee.rx_position.longitude_deg,
+        case RxPosition::PositionSource::kPositionSourceFixed: {
+            char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+            FormatAWBDeg(lat_str, sizeof(lat_str), adsbee.rx_position.latitude_awb, 6);
+            FormatAWBDeg(lon_str, sizeof(lon_str), adsbee.rx_position.longitude_awb, 6);
+            CONSOLE_PRINTF("AT+RX_POSITION=%s,%s,%s,%d,%d,%.1f,%d\r\n",
+                           RxPosition::kPositionSourceStrs[adsbee.rx_position.source], lat_str, lon_str,
                            adsbee.rx_position.gnss_altitude_ft, adsbee.rx_position.baro_altitude_ft,
                            adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts);
             break;
+        }
         case RxPosition::PositionSource::kPositionSourceAircraftMatchingICAO:
             CONSOLE_PRINTF("AT+RX_POSITION=%s,%06X\r\n",
                            RxPosition::kPositionSourceStrs[adsbee.rx_position.source],

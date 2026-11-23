@@ -219,8 +219,11 @@ size_t SwarmReporter::BuildBody(char* buf, size_t buf_size, const AutoUpdatePlat
     w.Printf("\"period\":{\"start_uptime_s\":%lu,\"len_s\":%lu},", (unsigned long)pending_start_s_,
              (unsigned long)pending_len_s_);
     if (state_.rx_position_valid) {
-        w.Printf("\"rx_position\":{\"lat\":%.5f,\"lon\":%.5f,\"alt_m\":%ld,\"source\":\"", state_.latitude_deg,
-                 state_.longitude_deg, (long)state_.altitude_m);
+        char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+        FormatAWBDeg(lat_str, sizeof(lat_str), state_.latitude_awb, 5);
+        FormatAWBDeg(lon_str, sizeof(lon_str), state_.longitude_awb, 5);
+        w.Printf("\"rx_position\":{\"lat\":%s,\"lon\":%s,\"alt_m\":%ld,\"source\":\"", lat_str, lon_str,
+                 (long)state_.altitude_m);
         w.Safe(state_.rx_position_source);
         w.Printf("\"},");
     }

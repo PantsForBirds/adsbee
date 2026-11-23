@@ -1,4 +1,5 @@
 #include <cmath>
+#include "awb_test_utils.hh"
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -23,10 +24,6 @@ std::string Body(const char* sentence, uint16_t len) {
     snprintf(hex, sizeof(hex), "%02X", checksum);
     EXPECT_EQ(std::string(sentence + len - 4, 2), hex);
     return std::string(sentence, len - 5);
-}
-
-uint32_t DegToAWB(double deg) {
-    return static_cast<uint32_t>(static_cast<int64_t>(llround(deg / 360.0 * 4294967296.0)));
 }
 
 // A target's distance and bearing from ownship, as the dictionary stores them for an aircraft at lat, lon.
@@ -272,8 +269,8 @@ TEST(FLARMNMEA, SmallBufferWritesNothing) {
 TEST(FLARMNMEA, OwnshipFromRxPosition) {
     FLARMNMEAReporter::Ownship own;
     SettingsManager::RxPosition rx;
-    rx.latitude_deg = 37.4f;
-    rx.longitude_deg = -122.1f;
+    rx.latitude_awb = DegToAWB(37.4f);
+    rx.longitude_awb = DegToAWB(-122.1f);
     rx.gnss_altitude_ft = 1000;
     rx.baro_altitude_ft = 1200;
     rx.speed_kts = 95;
@@ -323,8 +320,8 @@ TEST(FLARMNMEA, TargetFromModeSAircraft) {
     ac.WriteBitFlag(ModeSAircraft::kBitFlagPositionValid, true);
     ac.WriteBitFlag(ModeSAircraft::kBitFlagBaroAltitudeValid, true);
     ac.WriteBitFlag(ModeSAircraft::kBitFlagGNSSVerticalRateValid, true);
-    ac.latitude_deg = 37.45f;
-    ac.longitude_deg = -122.0f;
+    ac.latitude_awb = DegToAWB(37.45f);
+    ac.longitude_awb = DegToAWB(-122.0f);
     ac.baro_altitude_ft = 3500;
     ac.gnss_vertical_rate_fpm = 500;
     ac.emitter_category = ADSBTypes::kEmitterCategoryGliderSailplane;

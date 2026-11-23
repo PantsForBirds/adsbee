@@ -69,8 +69,8 @@ class ConfigHasher {
             return;
         }
         if (position.source == RxPosition::kPositionSourceFixed) {
-            AddFloat(position.latitude_deg);
-            AddFloat(position.longitude_deg);
+            AddU32(position.latitude_awb);
+            AddU32(position.longitude_awb);
             AddI32(position.gnss_altitude_ft);
             AddI32(position.baro_altitude_ft);
             AddFloat(position.heading_deg);
