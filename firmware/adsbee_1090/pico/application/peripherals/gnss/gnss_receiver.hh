@@ -19,6 +19,9 @@
  */
 class GNSSReceiver {
    public:
+    // Reads the UART RX FIFO into the receiver's ring. Called by CommsManager's UART interrupt handler.
+    static void RxIRQHandler();
+
     using GNSSFix = NMEAParser::GNSSFix;
 
     // A fix is considered current only if it was updated within this window.
@@ -194,8 +197,6 @@ class GNSSReceiver {
     volatile uint32_t rx_irq_count_ = 0;
     uint32_t rx_polled_byte_count_ = 0;
     static inline GNSSReceiver* rx_irq_owner_ = nullptr;
-    static inline bool rx_irq_handler_installed_[2] = {false, false};
-    static void RxIRQHandler();
 
     // TEMPORARY debug instrumentation for diagnosing "GNSS NOT AVAILABLE". Remove once root cause
     // is found. Tracks whether bytes are arriving and what the parser is producing.

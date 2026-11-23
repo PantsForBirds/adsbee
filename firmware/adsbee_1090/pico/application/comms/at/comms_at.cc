@@ -1847,8 +1847,7 @@ CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
 CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
     switch (op) {
         case '?':
-            // Print out reporting protocols for CONSOLE and COMMS_UART.
-            for (uint16_t iface = 0; iface < SettingsManager::SerialInterface::kGNSSUART; iface++) {
+            for (uint16_t iface = 0; iface < SettingsManager::SerialInterface::kNumSerialInterfaces; iface++) {
                 CPP_AT_CMD_PRINTF(
                     "=%s,%s", SettingsManager::kSerialInterfaceStrs[iface],
                     SettingsManager::kReportingProtocolStrs[settings_manager.settings.reporting_protocols[iface]]);
@@ -1861,9 +1860,9 @@ CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
                 CPP_AT_ERROR("Requires two arguments: AT+PROTOCOL=<iface>,<protocol>.");
             }
 
-            // Match the selected serial interface. Don't allow selection of the GNSS interface.
+            // Match the selected serial interface.
             SettingsManager::SerialInterface selected_iface = SettingsManager::SerialInterface::kNumSerialInterfaces;
-            for (uint16_t iface = 0; iface < SettingsManager::SerialInterface::kGNSSUART; iface++) {
+            for (uint16_t iface = 0; iface < SettingsManager::SerialInterface::kNumSerialInterfaces; iface++) {
                 if (args[0].compare(SettingsManager::kSerialInterfaceStrs[iface]) == 0) {
                     selected_iface = static_cast<SettingsManager::SerialInterface>(iface);
                     break;
@@ -1897,9 +1896,10 @@ CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
 CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
     CPP_AT_PRINTF("\tSet the reporting protocol used on a given serial interface:\r\n");
     CPP_AT_PRINTF("\tAT+PROTOCOL_OUT=<iface>,<protocol>\r\n\t<iface> = ");
-    for (uint16_t iface = 0; iface < SettingsManager::kGNSSUART; iface++) {
+    for (uint16_t iface = 0; iface < SettingsManager::kNumSerialInterfaces; iface++) {
         CPP_AT_PRINTF("%s ", SettingsManager::kSerialInterfaceStrs[iface]);
     }
+    CPP_AT_PRINTF("\r\n\tWarning: A GNSS receiver installed on GNSS_UART will receive protocols being reported on GNSS_UART.");
     CPP_AT_PRINTF("\r\n\t<protocol> = ");
     for (uint16_t protocol = 0; protocol < SettingsManager::kNumProtocols; protocol++) {
         CPP_AT_PRINTF("\r\n\t\t%s ", SettingsManager::kReportingProtocolStrs[protocol]);
@@ -2200,9 +2200,10 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"LOG_LEVEL\":[\"%s\"],", SettingsManager::kConsoleLogLevelStrs[s.log_level]);
     CPP_AT_PRINTF("\"MAVLINK_ID\":[%d,%d],", s.mavlink_system_id, s.mavlink_component_id);
     CPP_AT_PRINTF("\"NTP_SERVER\":[\"%s\"],", s.ntp_server);
-    CPP_AT_PRINTF("\"PROTOCOL_OUT\":[\"%s\",\"%s\"],",
+    CPP_AT_PRINTF("\"PROTOCOL_OUT\":[\"%s\",\"%s\",\"%s\"],",
                   SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kConsole]],
-                  SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kCommsUART]]);
+                  SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kCommsUART]],
+                  SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kGNSSUART]]);
     CPP_AT_PRINTF("\"REMOTE_ID\":[%d,%u,\"0x%02X\",%d],", s.remote_id_rx_enabled, s.remote_id_transports,
                   esp32_ll.remote_id_status, RemoteIDAllowedTransports());
     CPP_AT_PRINTF("\"REMOTE_ID_TX\":[%d,%u,\"%s\",", s.remote_id_tx_enabled, s.remote_id_tx_transports,

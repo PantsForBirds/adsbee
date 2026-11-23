@@ -285,12 +285,14 @@ void GNSSReceiver::SetEnable(bool enabled) {
     gpio_put(config_.enable_pin, !enabled);
 }
 
+// CommsManager owns the UART interrupt and its TX bit (the TX queue); only the RX bits are changed here.
+static constexpr uint32_t kUartRxIrqBits = UART_UARTIMSC_RXIM_BITS | UART_UARTIMSC_RTIM_BITS;
+
 void GNSSReceiver::EnableRxInterrupt() {
     const uint irq_num = config_.uart_handle == uart0 ? UART0_IRQ : UART1_IRQ;
-    const uint irq_index = config_.uart_handle == uart0 ? 0 : 1;
 
     irq_set_enabled(irq_num, false);
-    uart_set_irq_enables(config_.uart_handle, false, false);
+    hw_clear_bits(&uart_get_hw(config_.uart_handle)->imsc, kUartRxIrqBits);
     rx_head_ = 0;
     rx_tail_ = 0;
     rx_overflow_count_ = 0;
@@ -298,22 +300,22 @@ void GNSSReceiver::EnableRxInterrupt() {
     rx_polled_byte_count_ = 0;
     rx_irq_owner_ = this;
 
-    if (!rx_irq_handler_installed_[irq_index]) {
-        irq_set_exclusive_handler(irq_num, RxIRQHandler);
-        rx_irq_handler_installed_[irq_index] = true;
-    }
-    uart_set_irq_enables(config_.uart_handle, true, false);
+    // RX interrupt from 4 bytes in the FIFO, or after a pause with fewer (receive timeout).
+    hw_write_masked(&uart_get_hw(config_.uart_handle)->ifls, 0 << UART_UARTIFLS_RXIFLSEL_LSB,
+                    UART_UARTIFLS_RXIFLSEL_BITS);
+    hw_set_bits(&uart_get_hw(config_.uart_handle)->imsc, kUartRxIrqBits);
     irq_set_enabled(irq_num, true);
 }
 
 void GNSSReceiver::DisableRxInterrupt() {
     if (rx_irq_owner_ != this) return;
     const uint irq_num = config_.uart_handle == uart0 ? UART0_IRQ : UART1_IRQ;
-    uart_set_irq_enables(config_.uart_handle, false, false);
     irq_set_enabled(irq_num, false);
+    hw_clear_bits(&uart_get_hw(config_.uart_handle)->imsc, kUartRxIrqBits);
     rx_irq_owner_ = nullptr;
     rx_head_ = 0;
     rx_tail_ = 0;
+    irq_set_enabled(irq_num, true);  // Still drains the GNSS UART's TX queue.
 }
 
 bool GNSSReceiver::ReadBufferedByte(char& c) {
