@@ -130,4 +130,12 @@ uint16_t ByteBufferToBase64String(char *base64_string, const uint8_t *byte_buffe
  * @param[in] byte_buffer Pointer to the input byte buffer.
  * @param[in] num_bytes Number of bytes to print from the input buffer.
  */
+/**
+ * Writes a number of tenths as a decimal string: "-12.3", "0.5", never "-0.0".
+ * @param[out] buf Output.
+ * @param[in] len Size of buf.
+ * @param[in] tenths The value times 10.
+ */
+void WriteTenths(char* buf, size_t len, int32_t tenths);
+
 void PrintByteBuffer(const char *prefix, const uint8_t *byte_buffer, uint16_t num_bytes);

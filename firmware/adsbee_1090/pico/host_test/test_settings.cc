@@ -712,7 +712,7 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ntp = dump.find("AT+NTP_SERVER=pool.ntp.org");
     ASSERT_NE(ntp, std::string::npos);
     EXPECT_LT(asterix, ntp);
-    // Then the altitude filter, swarm reports, and static IPv4 and IPv6 last.
+    // Then the altitude filter, swarm reports, static IPv4 and IPv6, and GDL90 over Bluetooth last.
     EXPECT_LT(ntp, filter_altitude);
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
@@ -726,11 +726,94 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
         EXPECT_EQ(dump.find("AT+", prev + 1), at) << ip_line;
         prev = at;
     }
-    EXPECT_EQ(dump.find("AT+", prev + 1), std::string::npos);
+    size_t ble_output = dump.find("AT+BLE_OUTPUT=OFF\r\n");
+    ASSERT_NE(ble_output, std::string::npos);
+    EXPECT_EQ(dump.find("AT+", prev + 1), ble_output);
+    EXPECT_EQ(dump.find("AT+", ble_output + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
     memcpy(&manager.settings.auto_update_enabled, &raw, 1);
     EXPECT_TRUE(manager.Sanitize());
+}
+
+TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndLeavesBLEOutputOff) {
+    // A v19 blob as rc10 and rc11 wrote it, 0xFF after it as Load() reads erased flash there.
+    static SettingsManager::Settings v19;
+    v19 = SettingsManager::Settings();
+    v19.settings_version = 19;
+    strcpy(v19.core_network_settings.hostname, "hangar-bee");
+    v19.core_network_settings.UpdateCRC32();
+    v19.filter_distance_enabled = true;
+    v19.filter_distance_deci_nm = 1234;
+    v19.feed_transports[2] = SettingsManager::kFeedTransportMQTT;
+    strcpy(v19.mqtt_broker.host, "broker.example.com");
+    v19.asterix_sic = 7;
+    v19.filter_altitude_mode = kAltitudeFilterBetween;
+    v19.swarm_enabled = true;
+    strcpy(v19.swarm_token, "tok-1234");
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memset(blob, 0xFF, sizeof(blob));
+    memcpy(blob, &v19, offsetof(settings_v19::Settings, swarm_token) + sizeof(settings_v19::Settings::swarm_token));
+
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
+    EXPECT_TRUE(out.core_network_settings.IsValid());
+    EXPECT_STREQ(out.core_network_settings.hostname, "hangar-bee");
+    EXPECT_TRUE(out.filter_distance_enabled);
+    EXPECT_EQ(out.filter_distance_deci_nm, 1234u);
+    EXPECT_EQ(out.feed_transports[2], SettingsManager::kFeedTransportMQTT);
+    EXPECT_STREQ(out.mqtt_broker.host, "broker.example.com");
+    EXPECT_EQ(out.asterix_sic, 7);
+    EXPECT_EQ(out.filter_altitude_mode, kAltitudeFilterBetween);
+    EXPECT_TRUE(out.swarm_enabled);
+    EXPECT_STREQ(out.swarm_token, "tok-1234");
+    settings_manager.settings = out;
+    EXPECT_FALSE(settings_manager.Sanitize());
+}
+
+TEST(SettingsMigration, V18ToCurrentLeavesBLEOutputOff) {
+    settings_v18::Settings v18;
+    memset(&v18, 0, sizeof(v18));
+    v18.settings_version = 18;
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
+    ASSERT_TRUE(SettingsMigrator::Migrate(reinterpret_cast<const uint8_t*>(&v18), sizeof(v18), 18, out));
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
+}
+
+TEST(Settings, BLEOutputDefaultsOffAndRoundTripsItsModeNames) {
+    SettingsManager::Settings s;
+    EXPECT_EQ(s.ble_output_mode, SettingsManager::kBLEOutputOff);
+    // Stored values are append-only: they must never move.
+    EXPECT_EQ(SettingsManager::kBLEOutputOff, 0);
+    EXPECT_EQ(SettingsManager::kBLEOutputGDL90, 1);
+    EXPECT_EQ(SettingsManager::kBLEOutputFLARMNMEA, 2);
+    for (uint8_t i = 0; i < SettingsManager::kNumBLEOutputModes; i++) {
+        SettingsManager::BLEOutputMode mode;
+        ASSERT_TRUE(SettingsManager::BLEOutputModeFromStr(SettingsManager::BLEOutputModeToStr(i), mode));
+        EXPECT_EQ(mode, i);
+    }
+    SettingsManager::BLEOutputMode mode = SettingsManager::kBLEOutputGDL90;
+    EXPECT_TRUE(SettingsManager::BLEOutputModeFromStr("gdl90", mode));
+    EXPECT_FALSE(SettingsManager::BLEOutputModeFromStr("NMEA", mode));
+    EXPECT_EQ(mode, SettingsManager::kBLEOutputGDL90);
+}
+
+TEST(SettingsManager, SanitizeTurnsAnUnknownBLEOutputModeOff) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+    s.core_network_settings.UpdateCRC32();
+    s.ble_output_mode = static_cast<SettingsManager::BLEOutputMode>(SettingsManager::kNumBLEOutputModes);
+    EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_EQ(s.ble_output_mode, SettingsManager::kBLEOutputOff);
+    // Erased flash in the tail padding, as v20 (0.10.0-rc1) left it.
+    uint8_t erased = 0xFF;
+    memcpy(&s.ble_output_mode, &erased, 1);
+    EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_EQ(s.ble_output_mode, SettingsManager::kBLEOutputOff);
 }
 
 TEST(SettingsMigration, V15ToCurrentPreservesAllFieldsAndDefaultsIPMode) {
@@ -1326,6 +1409,7 @@ TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
     SettingsManager::Settings out;
     out.ethernet_ipv4.is_static = true;  // Stale: must not survive.
     out.wifi_sta_ipv6.is_static = true;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
     ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
     EXPECT_EQ(out.settings_version, kSettingsVersion);
     EXPECT_EQ(memcmp(&out.core_network_settings, &v19.core_network_settings, sizeof(v19.core_network_settings)), 0);
@@ -1359,11 +1443,59 @@ TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
     IPv6Config slaac;
     EXPECT_EQ(memcmp(&out.ethernet_ipv6, &slaac, sizeof(slaac)), 0);
     EXPECT_EQ(memcmp(&out.wifi_sta_ipv6, &slaac, sizeof(slaac)), 0);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);  // New in v21.
 
     SettingsManager manager;
     manager.settings = out;
     EXPECT_FALSE(manager.Sanitize());
     EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v19::Settings) - 1, 19, out));
+}
+
+TEST(SettingsMigration, V20ToCurrentKeepsEverythingAndLeavesBLEOutputOff) {
+    // A v20 blob as 0.10.0-rc1 wrote it, with static IPs and the tail padding byte as erased flash.
+    static SettingsManager::Settings v20;
+    v20 = SettingsManager::Settings();
+    v20.settings_version = 20;
+    strcpy(v20.core_network_settings.hostname, "hangar-bee");
+    v20.core_network_settings.UpdateCRC32();
+    v20.feeds_enabled = true;
+    strcpy(v20.feed_uris[1], "feed.example.com");
+    v20.swarm_enabled = true;
+    strcpy(v20.swarm_token, "tok-1234");
+    IPv4Config& ip4 = v20.wifi_sta_ipv4;
+    ip4.is_static = true;
+    ASSERT_TRUE(ParseIPv4Addr("192.168.1.42", 12, ip4.ip));
+    ASSERT_TRUE(ParseIPv4Addr("255.255.255.0", 13, ip4.netmask));
+    ASSERT_TRUE(ParseIPv4Addr("192.168.1.1", 11, ip4.gateway));
+    IPv6Config& ip6 = v20.ethernet_ipv6;
+    ip6.is_static = true;
+    ip6.prefix_len = 64;
+    ASSERT_TRUE(ParseIPv6Addr("fd00::7", 7, ip6.ip));
+    ASSERT_EQ(ValidateIPv4Config(ip4), nullptr);
+    ASSERT_EQ(ValidateIPv6Config(ip6), nullptr);
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memcpy(blob, &v20, sizeof(blob));
+    blob[offsetof(SettingsManager::Settings, ble_output_mode)] = 0xFF;
+
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;  // Stale: must not survive.
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 20, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);  // New in v21.
+    // Every v20 byte after the version is kept.
+    const size_t v20_end = offsetof(settings_v20::Settings, wifi_sta_ipv6) + sizeof(settings_v20::IPv6Config);
+    EXPECT_EQ(memcmp(reinterpret_cast<const uint8_t*>(&out) + 4, blob + 4, v20_end - 4), 0);
+    EXPECT_STREQ(out.core_network_settings.hostname, "hangar-bee");
+    EXPECT_TRUE(out.wifi_sta_ipv4.is_static);
+    EXPECT_EQ(out.wifi_sta_ipv4.ip[3], 42);
+    EXPECT_TRUE(out.ethernet_ipv6.is_static);
+    EXPECT_EQ(out.ethernet_ipv6.prefix_len, 64);
+    EXPECT_STREQ(out.swarm_token, "tok-1234");
+
+    SettingsManager manager;
+    manager.settings = out;
+    EXPECT_FALSE(manager.Sanitize());
+    EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v20::Settings) - 1, 20, out));
 }
 
 TEST(SettingsMigration, V18ToCurrentUsesDHCPAndV19Defaults) {

@@ -1576,8 +1576,11 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
                     aircraft.UpdateMetrics();
                     if (aircraft.distance_reference_epoch != reference_epoch_) {
                         using T = std::remove_reference_t<decltype(aircraft)>;
+                        // A new position goes into the range map. One measured again only because the receiver moved
+                        // (every second for a GNSS receiver) wasn't heard again, so it doesn't count again.
+                        const bool new_position = aircraft.distance_reference_epoch == kDistanceEpochStale;
                         UpdateDistanceAndBearing(aircraft, aircraft.HasBitFlag(T::kBitFlagPositionValid));
-                        RecordRange(aircraft);
+                        if (new_position) RecordRange(aircraft);
                     }
                 },
                 it->second);
@@ -1867,11 +1870,11 @@ AircraftDictionary::TrackFit AircraftDictionary::CheckAgainstTrack(const ModeSAD
         }
         // Position: the miss from the dead reckoned position (speed times age along the direction) with a fresh
         // velocity, else from the last position. The bearing from the last position splits it along and across track.
-        GeoReference last_position(lat2awb(aircraft.latitude_deg), lon2awb(aircraft.longitude_deg));
+        GeoReference last_position(FloatDegToAWB(aircraft.latitude_deg), FloatDegToAWB(aircraft.longitude_deg));
         uint32_t distance_m;
         uint16_t bearing_bam16;
-        CalculateDistanceAndBearing(last_position, lat2awb(trial.latitude_deg), lon2awb(trial.longitude_deg),
-                                    distance_m, bearing_bam16);
+        CalculateDistanceAndBearing(last_position, FloatDegToAWB(trial.latitude_deg),
+                                    FloatDegToAWB(trial.longitude_deg), distance_m, bearing_bam16);
         int64_t along_m = distance_m;
         int64_t across_m = 0;
         int32_t position_rate_m_per_s = kCorrectionSpeedMPerS;
@@ -2765,16 +2768,19 @@ bool AircraftDictionary::RemoveOldestAircraft() {
 }
 
 void AircraftDictionary::SetReferencePosition(float latitude_deg, float longitude_deg) {
+    // Distances are measured from the exact AWB of the given position, before the longitude is remapped below.
+    const uint32_t distance_lat_awb = FloatDegToAWB(latitude_deg);
+    const uint32_t distance_lon_awb = FloatDegToAWB(longitude_deg);
     reference_latitude_awb32_ = lat2awb(latitude_deg);
     // Remap longitudes from (-180,180) to (0, 360)
     if (longitude_deg < 0.0f) {
         longitude_deg += 360.0f;
     }
     reference_longitude_awb32_ = lon2awb(longitude_deg);
-    if (!reference_position_valid_ ||
-        IsDistanceGreaterThan(distance_reference_.lat_awb, distance_reference_.lon_awb, reference_latitude_awb32_,
-                              reference_longitude_awb32_, kReferenceMoveThresholdMeters)) {
-        distance_reference_.Set(reference_latitude_awb32_, reference_longitude_awb32_);
+    // Any move makes the next Update() recompute every aircraft's distance and bearing.
+    if (!reference_position_valid_ || distance_lat_awb != distance_reference_.lat_awb ||
+        distance_lon_awb != distance_reference_.lon_awb) {
+        distance_reference_.Set(distance_lat_awb, distance_lon_awb);
         BumpReferenceEpoch();
     }
     reference_position_valid_ = true;
@@ -2801,9 +2807,8 @@ void AircraftDictionary::UpdateDistanceAndBearing(Aircraft &aircraft, bool posit
         aircraft.distance_m = Aircraft::kDistanceUnknown;
         return;
     }
-    CalculateDistanceAndBearing(distance_reference_, safe_cast_float_to_uint32(INV_RESOLUTION * aircraft.latitude_deg),
-                                safe_cast_float_to_uint32(INV_RESOLUTION * aircraft.longitude_deg), aircraft.distance_m,
-                                aircraft.bearing_bam16);
+    CalculateDistanceAndBearing(distance_reference_, FloatDegToAWB(aircraft.latitude_deg),
+                                FloatDegToAWB(aircraft.longitude_deg), aircraft.distance_m, aircraft.bearing_bam16);
 }
 
 bool ModeSAircraft::SetCPRLatLon(uint32_t n_lat_cpr, uint32_t n_lon_cpr, bool odd, uint32_t received_timestamp_ms) {
