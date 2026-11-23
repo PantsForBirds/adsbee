@@ -291,7 +291,8 @@ class ADSBee {
      * Last two PPS edges, stamped on the MLAT counter (the edge itself: the capture delay is taken off). Core 0.
      * @retval Number of edges stamped so far (0: latest and previous are not set).
      */
-    uint32_t GetPPSEdges(PPSClock::Edge& latest, PPSClock::Edge& previous);
+    uint32_t GetPPSEdges(PPSClock::Edge& latest, PPSClock::Edge& previous, uint16_t* latest_jitter_counts = nullptr);
+    volatile uint32_t pps_lab_debounce_us = 0;  // t-1307 LAB: ignore edges this soon after the last one.
 
     /**
      * ISR for PIO0 IRQ0: a preamble matcher is about 43us into a message. Samples RSSI, drops captures of noise and
@@ -648,7 +649,8 @@ class ADSBee {
     PPSClock::Edge pps_edges_[kNumPPSEdges];
     volatile uint32_t pps_num_edges_ = 0;
     void ApplyPPSPin();
-    void RecordPPSEdge(uint64_t mlat_48mhz_counts);
+    void RecordPPSEdge(uint64_t mlat_48mhz_counts, uint16_t jitter_counts);
+    uint16_t pps_edge_jitter_counts_[kNumPPSEdges] = {};  // t-1307 LAB.
 
     /** 978MHz Receiver Parameters **/
 };
