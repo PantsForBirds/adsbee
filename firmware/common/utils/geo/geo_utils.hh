@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <string_view>
 
-#include "fixedmath/fixed_math.hpp"
 #include "stdint.h"
 
 /**
