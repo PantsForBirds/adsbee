@@ -267,20 +267,6 @@ void SplitNorthEastMeters(uint32_t distance_m, uint16_t bearing_bam16, int32_t &
     east_m = static_cast<int32_t>((static_cast<int64_t>(distance_m) * sin_q30 + (1ll << 29)) >> 30);
 }
 
-uint32_t FloatDegToAWB(float deg) {
-    uint32_t bits;
-    memcpy(&bits, &deg, sizeof(bits));
-    const int exponent = static_cast<int>((bits >> 23) & 0xFFu);
-    if (exponent == 0 || exponent == 0xFF) return 0;  // Zero, subnormal (< 1e-38 deg), infinity or NaN.
-    // |deg| = mantissa 2^(exponent - 150), so deg 2^32 / 360 = mantissa (2^40 / 360) 2^(exponent - 158).
-    const uint64_t mantissa = (bits & 0x7FFFFFu) | 0x800000u;
-    const int shift = 158 - exponent;
-    constexpr uint64_t kAWBPerDegQ8 = 3054198966u;  // 2^40 / 360, rounded down (by 0.04, 1.3e-11 of itself).
-    if (shift <= 0 || shift >= 64) return 0;  // |deg| >= 2^31 (not an angle) or below 1e-9 AWB.
-    const uint32_t awb = static_cast<uint32_t>((mantissa * kAWBPerDegQ8 + (1ull << (shift - 1))) >> shift);
-    return (bits >> 31) ? 0u - awb : awb;
-}
-
 uint32_t CalculateDistanceMeters(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb) {
     uint32_t distance_m;
     uint16_t bearing_bam16;

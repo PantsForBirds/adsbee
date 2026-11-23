@@ -87,7 +87,32 @@ void SplitNorthEastMeters(uint32_t distance_m, uint16_t bearing_bam16, int32_t &
  * An angle in float degrees as AWB, exactly (to 1 AWB, 8e-8 deg) and without floating point arithmetic: negative
  * angles wrap, so it serves latitudes and longitudes alike.
  */
-uint32_t FloatDegToAWB(float deg);
+inline uint32_t FloatDegToAWB(float deg) {
+    uint32_t bits;
+    __builtin_memcpy(&bits, &deg, sizeof(bits));  // Inlined even where memcpy isn't (a call on the ESP32).
+    const int exponent = static_cast<int>((bits >> 23) & 0xFFu);
+    if (exponent == 0 || exponent == 0xFF) return 0;  // Zero, subnormal (< 1e-38 deg), infinity or NaN.
+    // |deg| = mantissa 2^(exponent - 150), so deg 2^32 / 360 = mantissa (2^40 / 360) 2^(exponent - 158).
+    const uint32_t mantissa = (bits & 0x7FFFFFu) | 0x800000u;
+    const int shift = 158 - exponent;
+    constexpr uint32_t kAWBPerDegQ8 = 3054198966u;  // 2^40 / 360, rounded down (by 0.04, 1.3e-11 of itself).
+    if (shift <= 0 || shift >= 64) return 0;  // |deg| >= 2^31 (not an angle) or below 1e-9 AWB.
+    // product / 2^shift, rounded, in 32-bit halves: variable 64-bit shifts are library calls on both targets.
+    const uint64_t product = static_cast<uint64_t>(mantissa) * kAWBPerDegQ8;
+    uint32_t lo = static_cast<uint32_t>(product), hi = static_cast<uint32_t>(product >> 32);
+    uint32_t awb;
+    if (shift < 32) {  // |deg| >= 1.
+        const uint32_t half = 1u << (shift - 1);
+        lo += half;
+        hi += lo < half;
+        awb = (lo >> shift) | (hi << (32 - shift));
+    } else if (shift == 32) {
+        awb = hi + (lo >> 31);
+    } else {
+        awb = (hi + (1u << (shift - 33))) >> (shift - 32);
+    }
+    return (bits >> 31) ? 0u - awb : awb;
+}
 
 /**
  * Distance from a reference point to another point, in meters. Same accuracy as CalculateDistanceAndBearing.
