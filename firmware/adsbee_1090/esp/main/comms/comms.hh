@@ -278,6 +278,8 @@ class CommsManager {
 
     // Feed statistics (messages per second).
     uint16_t feed_mps[SettingsManager::Settings::kMaxNumFeeds] = {0};
+    // Messages each feed dropped since boot: the feed was behind or memory was low. The stream stays whole.
+    uint32_t feed_dropped[SettingsManager::Settings::kMaxNumFeeds] = {0};
 
     PFBQueue<RawModeSPacket> raw_mode_s_packet_reporting_queue = PFBQueue<RawModeSPacket>(
         {.buf_len_num_elements = kMaxNumModeSPackets, .buffer = raw_mode_s_packet_reporting_queue_buffer_});
@@ -492,7 +494,11 @@ class CommsManager {
     // Written by IPWANTask, read by the main task. Relaxed: it only gates queueing, and no other data is published
     // through it (the Remote ID packets reach IPWANTask by the WAN queue).
     std::atomic<bool> feeds_take_remote_id_ = false;
-    uint32_t feed_num_dropped_msgs_[SettingsManager::Settings::kMaxNumFeeds] = {0};
+    uint32_t feed_num_dropped_msgs_[SettingsManager::Settings::kMaxNumFeeds] = {0};  // Since the last drop log.
+    void CountFeedDrops(uint16_t feed_index, uint16_t num_msgs) {
+        feed_num_dropped_msgs_[feed_index] += num_msgs;
+        feed_dropped[feed_index] += num_msgs;
+    }
     // Time IPWANTask may still spend waiting for room on each feed (see kFeedWaitBudgetMs).
     uint16_t feed_wait_budget_ms_[SettingsManager::Settings::kMaxNumFeeds] = {0};
     uint32_t feed_wait_budget_last_refill_timestamp_ms_ = 0;
@@ -527,6 +533,8 @@ class CommsManager {
     uint16_t mavlink1_report_uid_index_ = 0;
     uint16_t mavlink2_report_uid_index_ = 0;
     uint16_t gdl90_report_uid_index_ = 0;
+    // Ownship of the round (AircraftDictionary::OwnshipICAOAddress()), set with its ownship report.
+    uint32_t gdl90_ownship_icao_ = UINT32_MAX;
 
     // Per-protocol "round active" flags. Set by UpdateReporting when a new round starts;
     // cleared by each Report* function when it finishes sending its footer/delimiter.

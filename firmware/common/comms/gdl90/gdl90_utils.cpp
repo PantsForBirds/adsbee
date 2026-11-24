@@ -1,6 +1,7 @@
 #include "gdl90_utils.hh"
 
 #include "comms.hh"
+#include "unit_conversions.hh"  // CentimetersToFeetRounded
 
 // Initialize static variables.
 const uint16_t GDL90Reporter::kGDL90CRC16Table[] = {
@@ -266,6 +267,67 @@ bool GDL90Reporter::BuildOwnshipReportData(GDL90TargetReportData& data,
     data.navigation_accuracy_category_position = 8;
     data.SetMiscIndicator(GDL90TargetReportData::kMiscIndicatorTTIsTrueTrackAngle, false,
                           rx_position.speed_kts > kOwnshipAirborneSpeedKts);
+    return true;
+}
+
+uint16_t GDL90Reporter::WriteGDL90OwnshipGeometricAltitudeMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes,
+                                                                  const GDL90OwnshipGeometricAltitudeData& data) {
+    const uint16_t kMessageBufLenBytes = 5;
+    const int32_t kGeoAltitudeResolutionFt = 5;
+    uint8_t message_buf[kMessageBufLenBytes];
+    message_buf[0] = kGDL90MessageIDOwnshipGeometricAltitude;
+    // aa aa: Geometric altitude as a 16-bit signed integer, resolution 5 ft, rounded to the nearest step (half away
+    // from zero) and clamped to the field.
+    const int32_t altitude_5ft = Clamp(DivRound(data.geo_altitude_ft, kGeoAltitudeResolutionFt), INT16_MIN, INT16_MAX);
+    uint16_t altitude_encoded = static_cast<uint16_t>(static_cast<int16_t>(altitude_5ft));
+    message_buf[1] = altitude_encoded >> 8;
+    message_buf[2] = altitude_encoded & 0xFF;
+    // vv vv: Vertical metrics. Bit 15 = vertical warning, bits 14-0 = VFOM in meters.
+    uint16_t vertical_metrics = (data.vertical_warning ? 0x8000 : 0) | (data.vfom_m & 0x7FFF);
+    message_buf[3] = vertical_metrics >> 8;
+    message_buf[4] = vertical_metrics & 0xFF;
+    return WriteGDL90Message(to_buf, to_buf_num_bytes, message_buf, kMessageBufLenBytes);
+}
+
+uint16_t GDL90Reporter::VFOMFromAltitudeStdDevCm(int32_t std_dev_cm) {
+    // Above this the VFOM (1.96 sigma) is over 32766 m; also keeps 196 * std_dev_cm within 32 bits.
+    const int32_t kMaxStdDevCm = 2000000;
+    if (std_dev_cm < 0) {
+        return GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable;
+    }
+    if (std_dev_cm > kMaxStdDevCm) {
+        return GDL90OwnshipGeometricAltitudeData::kVFOMMaxMeters;
+    }
+    // 1.96 sigma in meters, rounded up: 196 * cm / 10000.
+    int32_t vfom_m = (196 * std_dev_cm + 9999) / 10000;
+    return static_cast<uint16_t>(MIN(vfom_m, GDL90OwnshipGeometricAltitudeData::kVFOMMaxMeters));
+}
+
+bool GDL90Reporter::GNSSHeightAboveEllipsoidFt(int32_t msl_altitude_ft, bool geoid_separation_valid,
+                                               int32_t geoid_separation_cm, int32_t& hae_ft) {
+    // Real geoid separations are within +/-110 m; a larger value is a bad sentence.
+    const int32_t kMaxGeoidSeparationCm = 100000;
+    // Far outside the 16-bit GDL90 field (+/-163,840 ft); bounds the sum below.
+    const int32_t kMaxAltitudeFt = 1000000;
+    if (!geoid_separation_valid || geoid_separation_cm > kMaxGeoidSeparationCm ||
+        geoid_separation_cm < -kMaxGeoidSeparationCm) {
+        return false;
+    }
+    hae_ft = Clamp(msl_altitude_ft, -kMaxAltitudeFt, kMaxAltitudeFt) + CentimetersToFeetRounded(geoid_separation_cm);
+    return true;
+}
+
+bool GDL90Reporter::BuildOwnshipGeometricAltitudeData(GDL90OwnshipGeometricAltitudeData& data,
+                                                      const SettingsManager::RxPosition& rx_position,
+                                                      bool rx_position_available, bool geoid_separation_valid,
+                                                      int32_t geoid_separation_cm, uint16_t vfom_m) {
+    data = {};
+    if (!rx_position_available || rx_position.source != SettingsManager::RxPosition::kPositionSourceGNSS ||
+        !GNSSHeightAboveEllipsoidFt(rx_position.gnss_altitude_ft, geoid_separation_valid, geoid_separation_cm,
+                                    data.geo_altitude_ft)) {
+        return false;
+    }
+    data.vfom_m = vfom_m;
     return true;
 }
 

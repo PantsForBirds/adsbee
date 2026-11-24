@@ -334,6 +334,8 @@ class CommsManager {
     uint16_t mavlink1_report_uid_index_ = 0;
     uint16_t mavlink2_report_uid_index_ = 0;
     uint16_t gdl90_report_uid_index_ = 0;
+    // Ownship of the round (AircraftDictionary::OwnshipICAOAddress()), set with its ownship report.
+    uint32_t gdl90_ownship_icao_ = UINT32_MAX;
     uint16_t aircraftjson_report_uid_index_ = 0;
     uint16_t asterix_report_uid_index_ = 0;
 

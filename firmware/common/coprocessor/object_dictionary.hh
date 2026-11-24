@@ -162,7 +162,7 @@ class ObjectDictionary {
         bool gnss_fix_valid = false;
         float gnss_latitude_deg = 0.0f;
         float gnss_longitude_deg = 0.0f;
-        int32_t gnss_altitude_ft = 0;
+        int32_t gnss_altitude_ft = 0;  // Feet above MSL (GGA altitude).
         float gnss_heading_deg = 0.0f;
         int32_t gnss_speed_kts = 0;
         uint8_t gnss_num_satellites = 0;
@@ -171,6 +171,12 @@ class ObjectDictionary {
         uint8_t gnss_utc_minute = 0;
         uint8_t gnss_utc_second = 0;
         uint16_t gnss_utc_millisecond = 0;
+        // For the GDL90 Ownship Geometric Altitude: GGA geoid separation (geoid height above the WGS-84 ellipsoid)
+        // and GST altitude error (1 sigma), each valid only when the receiver reports it.
+        bool gnss_geoid_separation_valid = false;
+        int32_t gnss_geoid_separation_cm = 0;
+        bool gnss_altitude_std_dev_valid = false;
+        int32_t gnss_altitude_std_dev_cm = 0;
         // 1090MHz receiver noise floor estimate (RSSI sampled between packets and low-pass filtered). The trigger
         // level sits at noise_floor_mv + TL offset.
         uint16_t noise_floor_mv = 0;
@@ -219,6 +225,7 @@ class ObjectDictionary {
         uint32_t network_utc_ms_of_day = 0;
 
         uint8_t mlat_sync_flags = 0;  // MLATSyncFlag bits, for Remote ID timestamps.
+        uint8_t ble_output_status = 0;  // BLEOutputStatus.
     };
 
     enum ESP32HardwareCapability : uint8_t {

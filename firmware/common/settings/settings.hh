@@ -118,6 +118,14 @@ class SettingsManager {
     };
     static constexpr uint16_t kIPModeStrMaxLen = 4;  // Longest AT string ("IPV4", "DUAL", "IPV6").
 
+    // What the ESP32 streams to one Bluetooth LE client (AT+BLE_OUTPUT). Append new modes; never renumber.
+    enum BLEOutputMode : uint8_t {
+        kBLEOutputOff = 0,
+        kBLEOutputGDL90 = 1,      // The GDL90 the WiFi access point sends on UDP port 4000.
+        kBLEOutputFLARMNMEA = 2,  // FLARM data port sentences (PFLAU, PFLAA, GPRMC, GPGGA) for gliding apps.
+        kNumBLEOutputModes
+    };
+
     // Mode setting for the Sub-GHz radio.
     enum SubGHzRadioMode : uint8_t {
         kSubGHzRadioModeUATRx = 0,  // UAT mode (978MHz receiver).
@@ -151,13 +159,15 @@ class SettingsManager {
         PositionSource source = kPositionSourceLowestAircraft;
         float latitude_deg = 0.0;      // Degrees, WGS84
         float longitude_deg = 0.0;     // Degrees, WGS84
-        int32_t gnss_altitude_ft = 0;  // Meters, WGS84
-        int32_t baro_altitude_ft = 0;  // Meters, AMSL
-        float heading_deg = 0.0;       // Degrees from true north
+        // Feet. GNSS source: above MSL (GGA altitude). Aircraft sources: the aircraft's geometric altitude, which
+        // ADS-B references to the WGS-84 ellipsoid. Fixed source: as entered.
+        int32_t gnss_altitude_ft = 0;
+        int32_t baro_altitude_ft = 0;  // Feet, pressure altitude (29.92 inHg). A GNSS source leaves it unchanged.
+        float heading_deg = 0.0;       // Degrees from true north (course over ground for a GNSS source)
         int32_t speed_kts = 0;         // Speed over ground in knots
         uint32_t icao_address =
-            0;  // ICAO address to use for position bootstrap when source is kPositionSourceICAO, or the ICAO of the
-                // lowest plane being tracked when source is kPositionSourceLowestAircraft.
+            0;  // ICAO address to use for position bootstrap when source is kPositionSourceAircraftMatchingICAO, or the
+                // ICAO of the lowest plane being tracked when source is kPositionSourceLowestAircraft.
 
         /**
          * Whether a position resolved from `source` describes THIS device, and may therefore be broadcast as our own
@@ -447,8 +457,10 @@ class SettingsManager {
         IPv6Config ethernet_ipv6;
         IPv6Config wifi_sta_ipv6;
 
-        // AT+UAT_STRICT_TIMING: true sets UAT timestamps that aren't high precision to 0 (unstamped). Sits in what was
-        // wifi_sta_ipv6's tail padding.
+        // Bluetooth LE output (AT+BLE_OUTPUT), a BLEOutputMode. Off by default. New in v21, in v20's tail padding.
+        BLEOutputMode ble_output_mode = kBLEOutputOff;
+
+        // AT+UAT_STRICT_TIMING: true sets UAT timestamps that aren't high precision to 0 (unstamped). New in v21.
         bool uat_strict_timing = false;
 
         /**
@@ -770,6 +782,32 @@ class SettingsManager {
         return false;
     }
 
+    static inline const char* BLEOutputModeToStr(uint8_t mode) {
+        switch (mode) {
+            case kBLEOutputGDL90:
+                return "GDL90";
+            case kBLEOutputFLARMNMEA:
+                return "FLARM_NMEA";
+            case kBLEOutputOff:
+            default:
+                return "OFF";
+        }
+    }
+
+    /**
+     * Parses an AT command Bluetooth output mode string (OFF, GDL90 or FLARM_NMEA, case-insensitive).
+     * @retval True if `str` named a mode and `mode` was written.
+     */
+    static inline bool BLEOutputModeFromStr(const char* str, BLEOutputMode& mode) {
+        for (uint8_t i = 0; i < kNumBLEOutputModes; i++) {
+            if (strcasecmp(str, BLEOutputModeToStr(i)) == 0) {
+                mode = static_cast<BLEOutputMode>(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Parses an AT command feed transport string (TCP, UDP or MQTT, case-insensitive).
      * @retval True if `str` named a transport and `transport` was written.
@@ -916,7 +954,7 @@ extern SettingsManager settings_manager;
 // Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
 static_assert(kSettingsVersion == 21,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
-static_assert(sizeof(SettingsManager::Settings) == 1964,
+static_assert(sizeof(SettingsManager::Settings) == 1968,
               "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");
 static_assert(alignof(SettingsManager::Settings) == 4, "Settings alignment changed. See the comment above.");
 static_assert(sizeof(SettingsManager::Settings::CoreNetworkSettings) == 240,
@@ -958,6 +996,7 @@ static_assert(offsetof(SettingsManager::Settings, wifi_sta_ipv4) == 1810, "Setti
 static_assert(sizeof(IPv6Config) == 66, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, ethernet_ipv6) == 1831, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, wifi_sta_ipv6) == 1897, "Settings layout changed. See above.");
-static_assert(offsetof(SettingsManager::Settings, uat_strict_timing) == 1963, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, ble_output_mode) == 1963, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, uat_strict_timing) == 1964, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */

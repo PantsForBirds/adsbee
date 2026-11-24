@@ -40,6 +40,33 @@ bool ParseLatLon(const char* coord, const char* hemi, float& out_deg) {
 
 constexpr float kMetersToFeet = 3.28084f;
 
+// Parse a decimal field (e.g. "-32.57") into hundredths, rounded half away from zero, without floating point.
+// Returns false if the field is empty or not a number.
+bool ParseHundredths(const char* field, int32_t& out_hundredths) {
+    if (field == nullptr || field[0] == '\0') return false;
+    bool negative = field[0] == '-';
+    const char* p = (field[0] == '-' || field[0] == '+') ? field + 1 : field;
+    int32_t value = 0;
+    bool has_digit = false;
+    for (; *p >= '0' && *p <= '9'; p++) {
+        if (value > INT32_MAX / 1000) return false;  // Leaves room for the fraction digits below.
+        value = value * 10 + (*p - '0');
+        has_digit = true;
+    }
+    int32_t fraction = 0;  // Thousandths, for rounding.
+    if (*p == '.') {
+        p++;
+        for (int32_t scale = 100; *p >= '0' && *p <= '9'; p++, scale /= 10) {
+            fraction += (*p - '0') * scale;
+            has_digit = true;
+        }
+    }
+    if (!has_digit || *p != '\0') return false;
+    value = value * 100 + (fraction + 5) / 10;
+    out_hundredths = negative ? -value : value;
+    return true;
+}
+
 bool ParseUTCTime(const char* field, NMEAParser::GNSSFix& fix) {
     if (field == nullptr || strlen(field) < 6) return false;
     for (uint8_t i = 0; i < 6; i++) {
@@ -155,12 +182,16 @@ NMEAParser::SentenceType NMEAParser::ParseLine() {
     if (strncmp(type, "RMC", 3) == 0) {
         return ParseRMC(fields, num_fields);
     }
+    if (strncmp(type, "GST", 3) == 0) {
+        return ParseGST(fields, num_fields);
+    }
     return kSentenceUnknown;
 }
 
 // GGA field layout (talker-agnostic):
 //   0: address  1: UTC time  2: lat  3: N/S  4: lon  5: E/W  6: fix quality
-//   7: num satellites  8: HDOP  9: altitude (MSL)  10: altitude units (M)  ...
+//   7: num satellites  8: HDOP  9: altitude (MSL)  10: altitude units (M)  11: geoid separation
+//   12: geoid separation units (M)  ...
 NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t num_fields) {
     if (num_fields < 11) return kSentenceMalformed;
 
@@ -173,6 +204,8 @@ NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t
         float altitude_m = strtof(fields[9], nullptr);
         fix_.altitude_ft = static_cast<int32_t>(altitude_m * kMetersToFeet);
     }
+    // An empty field means the receiver does not know the geoid; older receivers end the sentence before it.
+    fix_.geoid_separation_valid = num_fields > 11 && ParseHundredths(fields[11], fix_.geoid_separation_cm);
 
     float lat, lon;
     if (fix_quality > 0 && ParseLatLon(fields[2], fields[3], lat) && ParseLatLon(fields[4], fields[5], lon)) {
@@ -212,4 +245,19 @@ NMEAParser::SentenceType NMEAParser::ParseRMC(const char* const* fields, uint8_t
         fix_.valid = false;
     }
     return kSentenceRMC;
+}
+
+// GST field layout (talker-agnostic):
+//   0: address  1: UTC time  2: RMS of pseudorange residuals  3: error ellipse semi-major (m)
+//   4: semi-minor (m)  5: orientation (deg)  6: latitude error (m)  7: longitude error (m)
+//   8: altitude error (m)  (all 1 sigma)
+NMEAParser::SentenceType NMEAParser::ParseGST(const char* const* fields, uint8_t num_fields) {
+    if (num_fields < 9) return kSentenceMalformed;
+
+    // Empty while the receiver has no fix.
+    fix_.altitude_std_dev_valid = ParseHundredths(fields[8], fix_.altitude_std_dev_cm);
+    if (fix_.altitude_std_dev_valid) {
+        fix_.altitude_std_dev_timestamp_ms = timestamp_ms_;
+    }
+    return kSentenceGST;
 }

@@ -19,6 +19,9 @@
  */
 class GNSSReceiver {
    public:
+    // Reads the UART RX FIFO into the receiver's ring. Called by CommsManager's UART interrupt handler.
+    static void RxIRQHandler();
+
     using GNSSFix = NMEAParser::GNSSFix;
 
     // A fix is considered current only if it was updated within this window.
@@ -98,6 +101,13 @@ class GNSSReceiver {
      *         signal the application uses to decide whether GNSS position is usable.
      */
     bool HasValidFix() const;
+
+    /**
+     * Altitude error estimate from the receiver's GST sentence, if one arrived recently with a valid fix.
+     * @param[out] std_dev_cm Standard deviation (1 sigma) of the altitude error, in centimeters.
+     * @retval True if std_dev_cm was written.
+     */
+    bool GetAltitudeStdDevCm(int32_t& std_dev_cm) const;
 
     /**
      * @retval True if the module responded during Init() (i.e. it is present and configured).
@@ -194,8 +204,6 @@ class GNSSReceiver {
     volatile uint32_t rx_irq_count_ = 0;
     uint32_t rx_polled_byte_count_ = 0;
     static inline GNSSReceiver* rx_irq_owner_ = nullptr;
-    static inline bool rx_irq_handler_installed_[2] = {false, false};
-    static void RxIRQHandler();
 
     // TEMPORARY debug instrumentation for diagnosing "GNSS NOT AVAILABLE". Remove once root cause
     // is found. Tracks whether bytes are arriving and what the parser is producing.

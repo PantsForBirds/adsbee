@@ -34,15 +34,24 @@ class NMEAParser {
         kSentenceUnknown,       // Complete sentence with a type we don't decode.
         kSentenceChecksumFail,  // Complete sentence but checksum did not match.
         kSentenceMalformed,     // Complete sentence but could not be parsed.
+        kSentenceGST,           // GST parsed and applied.
     };
 
-    // Decoded GNSS fix, merged across GGA (altitude / satellites / fix quality) and RMC
-    // (position / speed / course / validity).
+    // Decoded GNSS fix, merged across GGA (altitude / satellites / fix quality), RMC
+    // (position / speed / course / validity) and GST (error estimates).
     struct GNSSFix {
         bool valid = false;             // True if the last position-bearing sentence reported a fix.
         float latitude_deg = 0.0f;      // WGS84 degrees, north positive.
         float longitude_deg = 0.0f;     // WGS84 degrees, east positive.
         int32_t altitude_ft = 0;        // MSL altitude, feet (converted from meters).
+        // GGA geoid separation: height of the geoid (MSL) above the WGS-84 ellipsoid, so height above the ellipsoid
+        // = MSL altitude + geoid separation. Not every receiver fills the field.
+        bool geoid_separation_valid = false;
+        int32_t geoid_separation_cm = 0;
+        // GST standard deviation of the altitude error (1 sigma). Only sent by receivers configured to output GST.
+        bool altitude_std_dev_valid = false;
+        int32_t altitude_std_dev_cm = 0;
+        uint32_t altitude_std_dev_timestamp_ms = 0;  // Caller-supplied timestamp of the last GST altitude error.
         float heading_deg = 0.0f;       // Course over ground, degrees from true north.
         int32_t speed_kts = 0;          // Speed over ground, knots.
         uint8_t num_satellites = 0;     // Satellites used in the GGA fix.
@@ -81,6 +90,7 @@ class NMEAParser {
     SentenceType ParseLine();
     SentenceType ParseGGA(const char* const* fields, uint8_t num_fields);
     SentenceType ParseRMC(const char* const* fields, uint8_t num_fields);
+    SentenceType ParseGST(const char* const* fields, uint8_t num_fields);
 
     char line_buf_[kLineBufMaxLen];  // Accumulated sentence body (between '$' and '*').
     uint16_t line_len_ = 0;

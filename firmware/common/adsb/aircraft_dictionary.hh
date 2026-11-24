@@ -1442,6 +1442,62 @@ class AircraftDictionary {
      */
     bool IsPreferredReportForAddress(uint32_t uid, uint32_t timestamp_ms) const;
 
+    // No ownship among the tracked aircraft: IsOwnship() never matches it.
+    static constexpr uint32_t kNoOwnshipICAOAddress = UINT32_MAX;
+
+    /**
+     * ICAO address of the tracked aircraft that is ownship: the one RX_POSITION=ICAO follows, while it gives the
+     * receiver position. Else kNoOwnshipICAOAddress (GNSS, fixed or lowest-aircraft position, or no position).
+     * @param[in] rx_position SettingsManager::RxPosition (either product's).
+     * @param[in] rx_position_available True while rx_position holds a position.
+     */
+    template <typename RxPositionT>
+    static uint32_t OwnshipICAOAddress(const RxPositionT& rx_position, bool rx_position_available) {
+        return rx_position_available && rx_position.source == RxPositionT::kPositionSourceAircraftMatchingICAO
+                   ? rx_position.icao_address & 0xFFFFFF
+                   : kNoOwnshipICAOAddress;
+    }
+
+    /**
+     * Whether a dictionary entry is ownship: an entry that carries ownship's ICAO address (Mode S from ADS-B, ADS-R,
+     * TIS-B or Mode S replies, or UAT ADS-B or TIS-B). Remote ID and entries without an ICAO address (anonymous,
+     * self-assigned, track files) never are, and nothing is for kNoOwnshipICAOAddress.
+     * @param[in] uid UID of the entry.
+     * @param[in] ownship_icao_address From OwnshipICAOAddress().
+     */
+    static bool IsOwnship(uint32_t uid, uint32_t ownship_icao_address) {
+        if (ownship_icao_address > 0xFFFFFF) return false;
+        const uint32_t address = Aircraft::UIDToICAOAddress(uid);
+        if ((address & 0xFFFFFF) != ownship_icao_address) return false;
+        const uint32_t qualifier = (address & Aircraft::kAddressQualifierMask) >> Aircraft::kAddressQualifierBitShift;
+        switch (Aircraft::UIDToAircraftType(uid)) {
+            case Aircraft::kAircraftTypeModeS:
+                return qualifier == 0;  // AddressToUID() puts non-ICAO address types in the qualifier.
+            case Aircraft::kAircraftTypeUAT:
+                return qualifier == UATAircraft::kADSBTargetWithICAO24BitAddress ||
+                       qualifier == UATAircraft::kTISBTargetWithICAO24BitAddress;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Whether a traffic report (GDL90, FLARM NMEA) covers a dictionary entry: it isn't ownship, the report filter
+     * (AT+FILTER_DISTANCE_NM, AT+FILTER_ALTITUDE_FT) keeps it, and it is the entry reported for its ICAO address.
+     * Whether it has a position is up to the report.
+     * @param[in] uid UID of the entry.
+     * @param[in] entry The entry.
+     * @param[in] timestamp_ms Current local time, in ms.
+     * @param[in] filter From GetReportFilter().
+     * @param[in] ownship_icao_address From OwnshipICAOAddress().
+     */
+    bool IsReportedTraffic(uint32_t uid, const AircraftEntry& entry, uint32_t timestamp_ms,
+                           const AircraftReportFilter& filter, uint32_t ownship_icao_address) const {
+        if (IsOwnship(uid, ownship_icao_address)) return false;
+        if (std::visit([&filter](const auto& a) { return filter.Excludes(a); }, entry)) return false;
+        return IsPreferredReportForAddress(uid, timestamp_ms);
+    }
+
     /**
      * Resolves the aircraft report filters for a reporting round. kAltitudeFilterNearRx uses the receiver
      * altitude from SetReferenceAltitudeFt(); without one it filters nothing.
@@ -1528,6 +1584,24 @@ class AircraftDictionary {
      * @retval True if SetReferencePosition has been called and not subsequently cleared.
      */
     inline bool ReferencePositionValid() const { return reference_position_valid_; }
+
+    /**
+     * Whether the dictionary measures distance and bearing from this position (latitude and longitude in AWB, as
+     * FloatDegToAWB() gives them for the floats passed to SetReferencePosition()).
+     */
+    inline bool DistanceReferenceIs(uint32_t lat_awb, uint32_t lon_awb) const {
+        return reference_position_valid_ && distance_reference_.lat_awb == lat_awb &&
+               distance_reference_.lon_awb == lon_awb;
+    }
+
+    /**
+     * Whether an entry's distance_m and bearing_bam16 are measured from the current reference position and its current
+     * position. Update() makes every entry current; until the next one, a new position or reference makes it stale.
+     */
+    inline bool DistanceIsCurrent(const AircraftEntry &entry) const {
+        return std::visit(
+            [this](const auto &aircraft) { return aircraft.distance_reference_epoch == reference_epoch_; }, entry);
+    }
 
     /**
      * Check if the CPR position filter is enabled.
@@ -1701,10 +1775,8 @@ class AircraftDictionary {
     bool reference_position_valid_ = false;  // Set by SetReferencePosition, cleared by ClearReferencePosition.
     int32_t reference_altitude_ft_ = 0;
     bool reference_altitude_valid_ = false;  // Set by SetReferenceAltitudeFt, cleared by ClearReferencePosition.
-    // Receiver position for aircraft distance and bearing. Moving it more than kReferenceMoveThresholdMeters or
-    // clearing it bumps reference_epoch_, and Update() recomputes every aircraft computed in an older epoch or marked
-    // stale by a move.
-    static constexpr uint32_t kReferenceMoveThresholdMeters = 500;
+    // Receiver position for aircraft distance and bearing. Moving it at all (to another AWB) or clearing it bumps
+    // reference_epoch_, and Update() recomputes every aircraft computed in an older epoch or marked stale by a move.
     // Epoch value that marks an aircraft's distance as stale; reference_epoch_ never takes it.
     static constexpr uint16_t kDistanceEpochStale = UINT16_MAX;
     GeoReference distance_reference_;
@@ -1749,8 +1821,13 @@ class AircraftDictionary {
             RecordRange(aircraft);
         } else if (after.latitude_deg != before.latitude_deg || after.longitude_deg != before.longitude_deg) {
             aircraft.distance_reference_epoch = kDistanceEpochStale;
-        } else if (record_in_place && aircraft.distance_reference_epoch == reference_epoch_) {
-            RecordRange(aircraft);  // Confirmed or heard again in place: the distance won't be recomputed.
+        } else if (record_in_place) {
+            // Confirmed or heard again in place. After a receiver move Update() records it with the new distance.
+            if (aircraft.distance_reference_epoch == reference_epoch_) {
+                RecordRange(aircraft);
+            } else {
+                aircraft.distance_reference_epoch = kDistanceEpochStale;
+            }
         }
     }
 

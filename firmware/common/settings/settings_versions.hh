@@ -722,6 +722,17 @@ struct MQTTBroker {
     char websocket_path[kMQTTWebSocketPathMaxLen + 1];
 };
 
+struct __attribute__((packed)) RxPosition {
+    uint8_t source;
+    float latitude_deg;
+    float longitude_deg;
+    int32_t gnss_altitude_ft;
+    int32_t baro_altitude_ft;
+    float heading_deg;
+    int32_t speed_kts;
+    uint32_t icao_address;
+};
+
 struct IPv4Config {
     bool is_static;
     uint8_t ip[4];
@@ -738,18 +749,8 @@ struct IPv6Config {
     uint8_t dns[2][16];
 };
 
-struct __attribute__((packed)) RxPosition {
-    uint8_t source;
-    float latitude_deg;
-    float longitude_deg;
-    int32_t gnss_altitude_ft;
-    int32_t baro_altitude_ft;
-    float heading_deg;
-    int32_t speed_kts;
-    uint32_t icao_address;
-};
-
-// Byte-identical copy of the v20 Settings layout. Enum members are stored as their underlying integer types.
+// Byte-identical copy of the v20 Settings layout (every adsbee_1090 release tagged with kSettingsVersion == 20:
+// 0.10.0-rc1). Enum members are stored as their underlying integer types.
 struct alignas(4) Settings {
     uint32_t settings_version;
     CoreNetworkSettings core_network_settings;
@@ -788,7 +789,7 @@ struct alignas(4) Settings {
     uint8_t ip_mode;
     WiFiNetwork wifi_sta_extra_networks[kWiFiSTANumExtraNetworks];
     bool auto_update_enabled;
-    bool filter_distance_enabled;  // Added in v19.
+    bool filter_distance_enabled;
     uint32_t filter_distance_deci_nm;
     uint8_t feed_transports[kMaxNumFeeds];
     MQTTBroker mqtt_broker;
@@ -811,6 +812,8 @@ struct alignas(4) Settings {
 static_assert(sizeof(CoreNetworkSettings) == 240, "v20 CoreNetworkSettings must be 240 bytes.");
 static_assert(sizeof(RxPosition) == 29, "v20 RxPosition must be 29 bytes.");
 static_assert(sizeof(MQTTBroker) == 230, "v20 MQTTBroker must be 230 bytes.");
+static_assert(sizeof(IPv4Config) == 21, "v20 IPv4Config must be 21 bytes.");
+static_assert(sizeof(IPv6Config) == 66, "v20 IPv6Config must be 66 bytes.");
 static_assert(sizeof(Settings) == 1964, "v20 Settings must be 1964 bytes.");
 static_assert(offsetof(Settings, core_network_settings) == 4, "v20 CoreNetworkSettings offset drift.");
 static_assert(offsetof(Settings, led_enabled) == 260, "v20 led_enabled offset drift.");
@@ -841,8 +844,7 @@ static_assert(offsetof(Settings, filter_altitude_b_ft) == 1656, "v20 filter_alti
 static_assert(offsetof(Settings, swarm_enabled) == 1660, "v20 swarm_enabled offset drift.");
 static_assert(offsetof(Settings, swarm_server) == 1661, "v20 swarm_server offset drift.");
 static_assert(offsetof(Settings, swarm_token) == 1725, "v20 swarm_token offset drift.");
-static_assert(sizeof(IPv4Config) == 21, "v20 IPv4Config must be 21 bytes.");
-static_assert(sizeof(IPv6Config) == 66, "v20 IPv6Config must be 66 bytes.");
+
 static_assert(offsetof(Settings, ethernet_ipv4) == 1789, "v20 ethernet_ipv4 offset drift.");
 static_assert(offsetof(Settings, wifi_sta_ipv4) == 1810, "v20 wifi_sta_ipv4 offset drift.");
 static_assert(offsetof(Settings, ethernet_ipv6) == 1831, "v20 ethernet_ipv6 offset drift.");

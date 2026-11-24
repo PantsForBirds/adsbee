@@ -42,6 +42,7 @@ class ESP32SerialFlasher {
         gpio_deinit(config_.esp32_uart_rx_pin);
 
         RestoreSharedUartPins();
+        comms_manager.InitGNSSUART();  // Protocol output on the GNSS UART works without a GNSS receiver.
 
         // Re-enable receiver after update if it was previously enabled.
         adsbee.SetReceiver1090Enable(receiver_was_enabled_before_update_);

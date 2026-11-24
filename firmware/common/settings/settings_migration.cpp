@@ -3,7 +3,7 @@
 #include <cstring>  // memcpy
 #include <new>      // placement new
 
-// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v20 and extend the chain
+// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v21 and extend the chain
 // (see settings_migration.hh).
 static_assert(kSettingsVersion == 21, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
 static_assert(sizeof(settings_v12::Settings) == 1088 && sizeof(settings_v14::Settings) == 1140 &&
@@ -15,28 +15,6 @@ static_assert(sizeof(settings_v12::Settings) == 1088 && sizeof(settings_v14::Set
 // The frozen nested layouts must stay byte-identical to the live ones for the raw copies below to be valid. If a future
 // version changes CoreNetworkSettings or RxPosition, these fire and the migration steps must switch to field-by-field
 // copies for those members.
-static_assert(sizeof(settings_v20::CoreNetworkSettings) == sizeof(SettingsManager::Settings::CoreNetworkSettings),
-              "v20 CoreNetworkSettings layout diverged from live; migration copy is no longer valid.");
-static_assert(sizeof(settings_v20::RxPosition) == sizeof(SettingsManager::RxPosition),
-              "v20 RxPosition layout diverged from live; migration copy is no longer valid.");
-static_assert(sizeof(settings_v20::WiFiNetwork) == sizeof(SettingsManager::Settings::WiFiNetwork),
-              "v20 WiFiNetwork layout diverged from live; migration copy is no longer valid.");
-static_assert(sizeof(settings_v20::MQTTBroker) == sizeof(SettingsManager::Settings::MQTTBroker) &&
-                  offsetof(settings_v20::MQTTBroker, transport) ==
-                      offsetof(SettingsManager::Settings::MQTTBroker, transport) &&
-                  offsetof(settings_v20::MQTTBroker, websocket_path) ==
-                      offsetof(SettingsManager::Settings::MQTTBroker, websocket_path),
-              "v20 MQTTBroker layout diverged from live; migration copy is no longer valid.");
-static_assert(sizeof(settings_v20::IPv4Config) == sizeof(IPv4Config) &&
-                  offsetof(settings_v20::IPv4Config, dns) == offsetof(IPv4Config, dns),
-              "v20 IPv4Config layout diverged from live; migration copy is no longer valid.");
-static_assert(sizeof(settings_v20::IPv6Config) == sizeof(IPv6Config) &&
-                  offsetof(settings_v20::IPv6Config, dns) == offsetof(IPv6Config, dns),
-              "v20 IPv6Config layout diverged from live; migration copy is no longer valid.");
-// v20 appended the IP configs to v19, which ended at swarm_token.
-static_assert(offsetof(settings_v20::Settings, ethernet_ipv4) == offsetof(settings_v19::Settings, swarm_token) +
-                                                                     sizeof(settings_v19::Settings::swarm_token),
-              "v19 -> v20 prefix layout changed; migration copy is no longer valid.");
 static_assert(sizeof(settings_v19::CoreNetworkSettings) == sizeof(SettingsManager::Settings::CoreNetworkSettings),
               "v19 CoreNetworkSettings layout diverged from live; migration copy is no longer valid.");
 static_assert(sizeof(settings_v19::RxPosition) == sizeof(SettingsManager::RxPosition),
@@ -298,17 +276,9 @@ void SettingsMigrator::MigrateV18ToV19(const settings_v18::Settings& in, setting
 }
 
 void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, settings_v20::Settings& out) {
-    // v20 appended the Ethernet and WiFi station IPv4 and IPv6 configs: all zero is DHCP and AUTO.
+    // Ethernet and WiFi station IPv4 and IPv6 (new in v20) are all zeros: DHCP and AUTO.
     memset(&out, 0, sizeof(out));
-    memcpy(&out, &in, offsetof(settings_v20::Settings, ethernet_ipv4));
     out.settings_version = 20;
-}
-
-void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, SettingsManager::Settings& out) {
-    // Start from a fresh, fully-defaulted current struct: strict UAT timing (new in v21) is off.
-    new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
-
-    out.settings_version = kSettingsVersion;
 
     memcpy(&out.core_network_settings, &in.core_network_settings, sizeof(in.core_network_settings));
 
@@ -319,19 +289,19 @@ void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, Setting
     out.led_enabled = in.led_enabled;
     out.feeds_enabled = in.feeds_enabled;
     out.gnss_enabled = in.gnss_enabled;
-    out.gnss_receiver_type = static_cast<SettingsManager::GNSSReceiverType>(in.gnss_receiver_type);
+    out.gnss_receiver_type = in.gnss_receiver_type;
     out.gnss_notify = in.gnss_notify;
 
-    out.log_level = static_cast<SettingsManager::LogLevel>(in.log_level);
-    for (uint16_t i = 0; i < SettingsManager::SerialInterface::kNumSerialInterfaces; i++) {
-        out.reporting_protocols[i] = static_cast<SettingsManager::ReportingProtocol>(in.reporting_protocols[i]);
+    out.log_level = in.log_level;
+    for (uint16_t i = 0; i < settings_v20::kNumSerialInterfaces; i++) {
+        out.reporting_protocols[i] = in.reporting_protocols[i];
         out.baud_rates[i] = in.baud_rates[i];
     }
 
-    out.subg_enabled = static_cast<SettingsManager::EnableState>(in.subg_enabled);
+    out.subg_enabled = in.subg_enabled;
     out.subg_rx_enabled = in.subg_rx_enabled;
     out.subg_bias_tee_enabled = in.subg_bias_tee_enabled;
-    out.subg_mode = static_cast<SettingsManager::SubGHzRadioMode>(in.subg_mode);
+    out.subg_mode = in.subg_mode;
 
     out.remote_id_rx_enabled = in.remote_id_rx_enabled;
     out.remote_id_transports = in.remote_id_transports;
@@ -346,8 +316,8 @@ void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, Setting
     memcpy(out.feed_uris, in.feed_uris, sizeof(in.feed_uris));
     memcpy(out.feed_ports, in.feed_ports, sizeof(in.feed_ports));
     memcpy(out.feed_is_active, in.feed_is_active, sizeof(in.feed_is_active));
-    for (uint16_t i = 0; i < SettingsManager::Settings::kMaxNumFeeds; i++) {
-        out.feed_protocols[i] = static_cast<SettingsManager::ReportingProtocol>(in.feed_protocols[i]);
+    for (uint16_t i = 0; i < settings_v20::kMaxNumFeeds; i++) {
+        out.feed_protocols[i] = in.feed_protocols[i];
     }
     memcpy(out.feed_receiver_ids, in.feed_receiver_ids, sizeof(in.feed_receiver_ids));
 
@@ -355,13 +325,13 @@ void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, Setting
     out.mavlink_component_id = in.mavlink_component_id;
 
     memcpy(&out.rx_position, &in.rx_position, sizeof(in.rx_position));
-    out.ip_mode = static_cast<SettingsManager::IPMode>(in.ip_mode);
+    out.ip_mode = in.ip_mode;
     memcpy(out.wifi_sta_extra_networks, in.wifi_sta_extra_networks, sizeof(in.wifi_sta_extra_networks));
     out.auto_update_enabled = in.auto_update_enabled;
     out.filter_distance_enabled = in.filter_distance_enabled;
     out.filter_distance_deci_nm = in.filter_distance_deci_nm;
-    for (uint16_t i = 0; i < SettingsManager::Settings::kMaxNumFeeds; i++) {
-        out.feed_transports[i] = static_cast<SettingsManager::FeedTransport>(in.feed_transports[i]);
+    for (uint16_t i = 0; i < settings_v20::kMaxNumFeeds; i++) {
+        out.feed_transports[i] = in.feed_transports[i];
     }
     memcpy(&out.mqtt_broker, &in.mqtt_broker, sizeof(in.mqtt_broker));
     out.asterix_sac = in.asterix_sac;
@@ -373,18 +343,25 @@ void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, Setting
     out.swarm_enabled = in.swarm_enabled;
     memcpy(out.swarm_server, in.swarm_server, sizeof(in.swarm_server));
     memcpy(out.swarm_token, in.swarm_token, sizeof(in.swarm_token));
-    memcpy(&out.ethernet_ipv4, &in.ethernet_ipv4, sizeof(in.ethernet_ipv4));
-    memcpy(&out.wifi_sta_ipv4, &in.wifi_sta_ipv4, sizeof(in.wifi_sta_ipv4));
-    memcpy(&out.ethernet_ipv6, &in.ethernet_ipv6, sizeof(in.ethernet_ipv6));
-    memcpy(&out.wifi_sta_ipv6, &in.wifi_sta_ipv6, sizeof(in.wifi_sta_ipv6));
+}
+
+void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, SettingsManager::Settings& out) {
+    // v21 added ble_output_mode in v20's tail padding and appended uat_strict_timing: v20's bytes, then the defaults.
+    static_assert(offsetof(SettingsManager::Settings, uat_strict_timing) == sizeof(in),
+                  "v21 must keep v20's layout: only ble_output_mode (tail padding) and uat_strict_timing are new.");
+    new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
+    memcpy(static_cast<void*>(&out), &in, sizeof(in));
+    out.settings_version = kSettingsVersion;
+    out.ble_output_mode = SettingsManager::kBLEOutputOff;
+    out.uat_strict_timing = false;
 }
 
 bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t from_version,
                                SettingsManager::Settings& out) {
     // Each case enters the chain at its own version and runs the remaining steps to the current version. The chain only
     // has shipped versions (12, 14, 15, 17, 18, 19, 20), so a step can span an unshipped one.
-    // Snapshots share stack space when one is dead before the other is written: v14 and v15 are last read by the v17
-    // step and v17 and v18 by the v19 step.
+    // v14 and v15 are no longer needed once v17 exists, so v19 shares their stack space; v17 and v18 are no longer
+    // needed once v19 exists, so v20 shares theirs.
     union {
         struct {
             settings_v14::Settings v14;
@@ -398,13 +375,13 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             settings_v18::Settings v18;
         } mid;
         settings_v20::Settings v20;
-    } late_snapshots;
+    } later;
     settings_v14::Settings& v14 = snapshots.early.v14;
     settings_v15::Settings& v15 = snapshots.early.v15;
     settings_v19::Settings& v19 = snapshots.v19;
-    settings_v17::Settings& v17 = late_snapshots.mid.v17;
-    settings_v18::Settings& v18 = late_snapshots.mid.v18;
-    settings_v20::Settings& v20 = late_snapshots.v20;
+    settings_v17::Settings& v17 = later.mid.v17;
+    settings_v18::Settings& v18 = later.mid.v18;
+    settings_v20::Settings& v20 = later.v20;
 
     switch (from_version) {
         case 12: {
@@ -478,7 +455,7 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
 
     MigrateV15ToV17(v15, v17);  // Last read of v14/v15: v19 may overwrite them from here on.
     MigrateV17ToV18(v17, v18);
-    MigrateV18ToV19(v18, v19);  // Last read of v17/v18: v20 may overwrite them from here on.
+    MigrateV18ToV19(v18, v19);
     MigrateV19ToV20(v19, v20);
     MigrateV20ToV21(v20, out);  // Final step: v20 is the newest frozen version, so this lands on the live struct.
     return true;

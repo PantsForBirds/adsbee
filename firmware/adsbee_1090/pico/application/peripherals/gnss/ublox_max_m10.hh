@@ -77,6 +77,7 @@ class UbloxMAXM10 : public GNSSReceiver {
     static constexpr uint32_t kCfgUart1Baudrate = 0x40520001;          // U4
     static constexpr uint32_t kCfgMsgoutNmeaGgaUart1 = 0x209100bb;     // U1
     static constexpr uint32_t kCfgMsgoutNmeaRmcUart1 = 0x209100ac;     // U1
+    static constexpr uint32_t kCfgMsgoutNmeaGstUart1 = 0x209100d4;     // U1
     static constexpr uint32_t kCfgMsgoutNmeaGsaUart1 = 0x209100c0;     // U1
     static constexpr uint32_t kCfgMsgoutNmeaGsvUart1 = 0x209100c5;     // U1
     static constexpr uint32_t kCfgMsgoutNmeaGllUart1 = 0x209100ca;     // U1
@@ -172,7 +173,7 @@ class UbloxMAXM10 : public GNSSReceiver {
     //         deadline was exceeded (module stopped responding mid-pass).
     int32_t SyncConfigDefaults(uint32_t deadline_ms);
 
-    // Enable exactly the NMEA sentences we consume (GGA + RMC) and silence the rest, on UART1.
+    // Enable exactly the NMEA sentences we consume (GGA + RMC + GST) and silence the rest, on UART1.
     // Cheap and idempotent; used both during init and after a UART handover (ResendRuntimeConfig).
     // @param[in] layers CfgLayer bitfield to target.
     void ApplyRuntimeMessageConfig(uint8_t layers);

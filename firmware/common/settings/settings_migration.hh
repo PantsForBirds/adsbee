@@ -11,7 +11,7 @@
  * The RP2040 (settings master) stores Settings as a single raw byte blob. When it boots on new firmware and the stored
  * `settings_version` is older than kSettingsVersion, SettingsManager::Load() calls Migrate() to field-copy the old blob
  * forward into the current live struct, preserving user settings instead of wiping to defaults. Migration supports each
- * version a tagged release or RC shipped, from 12 on (12, 14, 15, 17, 18, 19, 20). Older/unshipped/unknown/short blobs are
+ * version a tagged release or RC shipped, from 12 on (12, 14, 15, 17, 18). Older/unshipped/unknown/short blobs are
  * rejected (Load() then falls back to reset + CoreNetworkSettings preservation).
  *
  * The migration is a pure function of bytes (no flash/EEPROM/globals) so it is fully host-testable.
