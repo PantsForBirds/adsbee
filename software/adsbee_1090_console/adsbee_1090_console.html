@@ -9160,6 +9160,12 @@ const SETTINGS_SCHEMA_1090 = [
         },
         build(v) { return [`AT+TL_OFFSET=${v.offset_mv}`]; },
     },
+    {
+        cmd: 'UAT_STRICT_TIMING', label: 'Strict UAT Timing', group: 'Radio',
+        help: 'Sets UAT timestamps that aren\'t high precision to 0 (unstamped).',
+        tip: 'Off by default. For multilateration and timing: about half of UAT frames keep a ~0.1 us timestamp.',
+        fields: [{ id: 'en', label: 'Enabled', type: 'bool' }],
+    },
     // ── Reporting ──
     {
         cmd: 'PROTOCOL_OUT', label: 'Output Protocols', group: 'Reporting',

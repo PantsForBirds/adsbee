@@ -460,6 +460,9 @@ class SettingsManager {
         // Bluetooth LE output (AT+BLE_OUTPUT), a BLEOutputMode. Off by default. New in v21, in v20's tail padding.
         BLEOutputMode ble_output_mode = kBLEOutputOff;
 
+        // AT+UAT_STRICT_TIMING: true sets UAT timestamps that aren't high precision to 0 (unstamped). New in v21.
+        bool uat_strict_timing = false;
+
         /**
          * Default constructor.
          */
@@ -951,7 +954,7 @@ extern SettingsManager settings_manager;
 // Do not just edit the numbers. They hold on every target (host tests, RP2040, ESP32-S3, CC1312).
 static_assert(kSettingsVersion == 21,
               "kSettingsVersion changed: update the Settings layout lock below to the new version's layout.");
-static_assert(sizeof(SettingsManager::Settings) == 1964,
+static_assert(sizeof(SettingsManager::Settings) == 1968,
               "Settings layout changed without a kSettingsVersion bump and a migration. See the comment above.");
 static_assert(alignof(SettingsManager::Settings) == 4, "Settings alignment changed. See the comment above.");
 static_assert(sizeof(SettingsManager::Settings::CoreNetworkSettings) == 240,
@@ -994,5 +997,6 @@ static_assert(sizeof(IPv6Config) == 66, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, ethernet_ipv6) == 1831, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, wifi_sta_ipv6) == 1897, "Settings layout changed. See above.");
 static_assert(offsetof(SettingsManager::Settings, ble_output_mode) == 1963, "Settings layout changed. See above.");
+static_assert(offsetof(SettingsManager::Settings, uat_strict_timing) == 1964, "Settings layout changed. See above.");
 
 #endif /* SETTINGS_HH_ */

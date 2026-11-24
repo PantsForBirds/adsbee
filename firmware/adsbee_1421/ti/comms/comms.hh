@@ -158,6 +158,7 @@ class CommsManager {
     CPP_AT_CALLBACK(ATRxStatsCallback);
     CPP_AT_CALLBACK(ATSettingsCallback);
     CPP_AT_CALLBACK(ATSubGRxModeCallback);
+    CPP_AT_CALLBACK(ATUATStrictTimingCallback);
     CPP_AT_CALLBACK(ATUptimeCallback);
     CPP_AT_CALLBACK(ATWatchdogCallback);
 #ifdef HARDWARE_UNIT_TESTS

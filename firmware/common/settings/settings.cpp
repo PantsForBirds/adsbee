@@ -131,6 +131,7 @@ bool SettingsManager::Sanitize() {
     }
     changed |= SanitizeString(settings.ntp_server, sizeof(settings.ntp_server), "ntp_server");
     changed |= SanitizeBool(settings.swarm_enabled, "swarm_enabled");
+    changed |= SanitizeBool(settings.uat_strict_timing, "uat_strict_timing");
     changed |= SanitizeString(settings.swarm_server, sizeof(settings.swarm_server), "swarm_server");
     changed |= SanitizeString(settings.swarm_token, sizeof(settings.swarm_token), "swarm_token");
 
@@ -357,6 +358,7 @@ void SettingsManager::Print() {
     CONSOLE_PRINTF("\tSwarm Reports: %s, %s, token %s\r\n", settings.swarm_enabled ? "ENABLED" : "DISABLED",
                    settings.swarm_server, redacted_swarm_token);
     CONSOLE_PRINTF("\tBluetooth Output: %s\r\n", BLEOutputModeToStr(settings.ble_output_mode));
+    CONSOLE_PRINTF("\tStrict UAT Timing: %s\r\n", settings.uat_strict_timing ? "ENABLED" : "DISABLED");
 
 #ifdef ON_PICO
     // Only print serial reporting protocols on master, where we aren't constrained by log message size.
@@ -590,4 +592,7 @@ void SettingsManager::PrintAT() {
 
     // AT+BLE_OUTPUT
     CONSOLE_PRINTF("AT+BLE_OUTPUT=%s\r\n", BLEOutputModeToStr(settings.ble_output_mode));
+
+    // AT+UAT_STRICT_TIMING
+    CONSOLE_PRINTF("AT+UAT_STRICT_TIMING=%d\r\n", settings.uat_strict_timing);
 }

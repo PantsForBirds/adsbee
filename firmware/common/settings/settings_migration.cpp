@@ -346,12 +346,14 @@ void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, setting
 }
 
 void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, SettingsManager::Settings& out) {
-    // v21 only added ble_output_mode in v20's tail padding: same bytes, with Bluetooth output off.
-    static_assert(sizeof(in) == sizeof(out), "v21 must keep v20's size: ble_output_mode sits in its tail padding.");
+    // v21 added ble_output_mode in v20's tail padding and appended uat_strict_timing: v20's bytes, then the defaults.
+    static_assert(offsetof(SettingsManager::Settings, uat_strict_timing) == sizeof(in),
+                  "v21 must keep v20's layout: only ble_output_mode (tail padding) and uat_strict_timing are new.");
     new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
     memcpy(static_cast<void*>(&out), &in, sizeof(in));
     out.settings_version = kSettingsVersion;
     out.ble_output_mode = SettingsManager::kBLEOutputOff;
+    out.uat_strict_timing = false;
 }
 
 bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t from_version,

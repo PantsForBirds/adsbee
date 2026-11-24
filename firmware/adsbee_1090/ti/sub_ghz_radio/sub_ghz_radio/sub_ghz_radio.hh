@@ -20,6 +20,7 @@ extern "C" {
 #include "object_dictionary.hh"
 #include "unit_conversions.hh"
 #include "uat_packet.hh"
+#include "uat_rx_start.hh"
 
 class SubGHzRadio
 {
@@ -81,6 +82,12 @@ public:
 
     bool rx_enabled = true;
 
+    /**
+     * Strict UAT timing (Settings::uat_strict_timing): when on, sync stamps outside the precise phase classes are set
+     * to 0 (unstamped). Takes effect with the next packet.
+     */
+    void SetStrictUATTiming(bool strict) { strict_uat_timing_ = strict; }
+
     // Failed CMD_PROP_SET_LEN immediate commands (RF_runImmediateCmd status != success), counted from
     // the RF callback (ISR context, no logging there). A nonzero value means packet-length shortening
     // raced the RX command ending -- packets may be truncated or over-read.
@@ -103,6 +110,14 @@ public:
     uint8_t GetMLATSyncFlags() const;
 
 private:
+    /**
+     * Posts the receive command. Main-loop or RF callback context.
+     * @param[in] exact True to start at an exact time (UATRxStart::ChipTiming::lead_rat after now), false to start
+     * immediately.
+     * @retval True if the command was posted.
+     */
+    bool PostPacketRx(bool exact);
+
     // Routes the sync pin to the radio timer and captures its rising edges. The RAT restarts with the RF client, so
     // this also restarts the fit.
     void StartSyncCapture();
@@ -128,6 +143,12 @@ private:
     RF_CmdHandle rx_cmd_handle_;
     // Status of a receive command that Update() has to restart, 0 if none. Written by the RF callback.
     volatile uint16_t rx_restart_status_ = 0;
+
+    bool strict_uat_timing_ = false;
+    // The posted receive command's start, and the start of the one that ended last (the one HandlePacketRx() reads
+    // from). Written by PostPacketRx() and HandleRxCommandEnd().
+    UATRxStart::Start rx_start_;
+    UATRxStart::Start ended_rx_start_;
 
     uint32_t last_rx_start_timestamp_ms_ = 0;
 };

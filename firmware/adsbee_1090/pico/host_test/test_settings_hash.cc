@@ -69,8 +69,8 @@ TEST(SettingsHash, SameSettingsSameHashWhateverThePadding) {
 TEST(SettingsHash, DefaultSettingsHashIsPinned) {
     // Host defaults (no device info, access point channel 1). Changes only with the Settings struct or its defaults.
     Settings settings;
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0xA2A2895Fu);
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xCBEC1242u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0x29740161u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x4A1B2323u);
 }
 
 TEST(SettingsHash, StoredCRCDoesNotCount) {
@@ -166,6 +166,7 @@ TEST(SettingsHash, EverySharedSettingChangesBothHashes) {
     EXPECT_CHANGES_BOTH(s.ethernet_ipv6.is_static = true);
     EXPECT_CHANGES_BOTH(s.wifi_sta_ipv6.is_static = true);
     EXPECT_CHANGES_BOTH(s.ble_output_mode = SettingsManager::kBLEOutputGDL90);
+    EXPECT_CHANGES_BOTH(s.uat_strict_timing = true);
 }
 
 TEST(SettingsHash, FeedSlotsAreNotInterchangeable) {

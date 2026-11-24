@@ -365,6 +365,25 @@ CPP_AT_CALLBACK(CommsManager::ATLEDEnableCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+CPP_AT_CALLBACK(CommsManager::ATUATStrictTimingCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%d", settings_manager.settings.uat_strict_timing);
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=':
+            if (CPP_AT_HAS_ARG(0)) {
+                bool strict;
+                CPP_AT_TRY_ARG2NUM(0, strict);
+                settings_manager.settings.uat_strict_timing = strict;
+                subg_radio.SetStrictUATTiming(strict);
+                CPP_AT_SUCCESS();
+            }
+            break;
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 CPP_AT_CALLBACK(CommsManager::ATLogLevelCallback) {
     switch (op) {
         case '?':
@@ -1067,6 +1086,7 @@ static void PrintSettingsJSON() {
                   (int)adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg,
                   (int)adsbee.rx_position.speed_kts, (unsigned)adsbee.rx_position.icao_address);
     CPP_AT_PRINTF("\"SUBG_MODE\":[\"%s\"],", SettingsManager::kSubGHzModeStrs[subg_radio.GetMode()]);
+    CPP_AT_PRINTF("\"UAT_STRICT_TIMING\":[%d],", s.uat_strict_timing);
     CPP_AT_PRINTF("\"WATCHDOG\":[%lu]", (unsigned long)adsbee.GetWatchdogTimeoutSec());
     CPP_AT_PRINTF("}\r\n");
 }
@@ -1738,6 +1758,13 @@ const CppAT::ATCommandDef_t at_command_list[] = {
                     "LRLF/LRHF=LR2021 low/high band (150-1100 / 1900-2700 MHz).",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATRxCWCallback, comms_manager)},
 #endif
+    {.command = "UAT_STRICT_TIMING",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+UAT_STRICT_TIMING=<enabled>\r\n\t1 sets UAT timestamps that aren't high precision to 0 "
+                    "(unstamped); 0 (default) keeps every timestamp.\r\n\tAT+UAT_STRICT_TIMING?\r\n\tQuery "
+                    "whether strict UAT timing is on.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATUATStrictTimingCallback, comms_manager)},
     {.command = "UPTIME",
      .min_args = 0,
      .max_args = 0,

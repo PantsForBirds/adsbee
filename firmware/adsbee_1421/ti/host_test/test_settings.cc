@@ -37,8 +37,8 @@ TEST(Settings, R1090PreambleModeNamesSelectTheirModes) {
 }
 
 TEST(Settings, VersionNumberingModesIsCurrent) {
-    // Version 5 numbers R1090PreambleMode as above; versions 6 and 7 keep that numbering.
-    EXPECT_EQ(kSettingsVersion, 7u);
+    // Version 5 numbers R1090PreambleMode as above; versions 6 to 8 keep that numbering.
+    EXPECT_EQ(kSettingsVersion, 8u);
     SM::Settings settings;
     settings.Stamp();
     EXPECT_TRUE(settings.IsValid());
@@ -134,7 +134,7 @@ TEST(Settings, Version6BlobMigratesWithLEDsEnabled) {
     out.led_enabled = false;
     ASSERT_EQ(SM::MigrateFromOlderVersion(blob, out), 6u);
     EXPECT_TRUE(out.IsValid());
-    EXPECT_EQ(out.settings_version, 7u);
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
     EXPECT_TRUE(out.led_enabled);
     // Every version 6 field is kept.
     SM::Settings expected = current;
@@ -144,6 +144,36 @@ TEST(Settings, Version6BlobMigratesWithLEDsEnabled) {
 
     // A torn version 6 blob is left to the reset path.
     blob[SM::kVersion6SettingsSize - 5] ^= 1;
+    EXPECT_EQ(SM::MigrateFromOlderVersion(blob, out), 0u);
+}
+
+TEST(Settings, Version7BlobMigratesWithStrictUATTimingOff) {
+    // rc3 settings with non-default values.
+    SM::Settings current;
+    current.subg_mode = SM::kSubGHzRadioModeUATRxNoUplink;
+    current.filter_altitude_mode = kAltitudeFilterBetween;
+    current.filter_altitude_a_ft = 1000;
+    current.filter_altitude_b_ft = 18000;
+    current.led_enabled = false;
+    current.uat_strict_timing = true;  // Not in a version 7 blob: the migrated value must be the default.
+    uint8_t blob[sizeof(SM::Settings)];
+    MakeOlderBlob(current, 7, SM::kVersion7SettingsSize, blob, sizeof(blob));
+    EXPECT_EQ(blob[SM::kVersion7SettingsSize], 0xFF);  // Erased flash where uat_strict_timing would be.
+
+    SM::Settings out;
+    out.uat_strict_timing = true;
+    ASSERT_EQ(SM::MigrateFromOlderVersion(blob, out), 7u);
+    EXPECT_TRUE(out.IsValid());
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_FALSE(out.uat_strict_timing);
+    // Every version 7 field is kept.
+    SM::Settings expected = current;
+    expected.uat_strict_timing = false;
+    expected.Stamp();
+    EXPECT_EQ(memcmp(&out, &expected, sizeof(out)), 0);
+
+    // A torn version 7 blob is left to the reset path.
+    blob[SM::kVersion7SettingsSize - 5] ^= 1;
     EXPECT_EQ(SM::MigrateFromOlderVersion(blob, out), 0u);
 }
 
@@ -186,5 +216,5 @@ TEST(Settings, ASTERIXDataSourceDefaultsToZero) {
     SM::Settings settings;
     EXPECT_EQ(settings.asterix_sac, 0);
     EXPECT_EQ(settings.asterix_sic, 0);
-    EXPECT_EQ(sizeof(SM::Settings), 79u);
+    EXPECT_EQ(sizeof(SM::Settings), 80u);
 }

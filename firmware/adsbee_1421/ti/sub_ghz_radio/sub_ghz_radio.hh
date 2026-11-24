@@ -19,6 +19,7 @@ extern "C" {
 #include "settings.hh"
 #include "unit_conversions.hh"
 #include "uat_packet.hh"
+#include "uat_rx_start.hh"
 
 class SubGHzRadio
 {
@@ -123,6 +124,12 @@ public:
     bool SetRxEnabled(bool enabled);
     bool RxIsEnabled() const { return rx_requested_; }
 
+    /**
+     * Strict UAT timing (AT+UAT_STRICT_TIMING): when on, sync stamps outside the precise phase classes are set to 0
+     * (unstamped). Takes effect with the next packet.
+     */
+    void SetStrictUATTiming(bool strict) { strict_uat_timing_ = strict; }
+
 #ifdef HARDWARE_UNIT_TESTS
 #ifdef ADSBEE_DEBUG_BUILD
     /**
@@ -201,6 +208,14 @@ private:
      */
     bool RestoreRx();
 
+    /**
+     * Posts the receive command. Main-loop or RF callback context.
+     * @param[in] exact True to start at an exact time (UATRxStart::ChipTiming::lead_rat after now), false to start
+     * immediately.
+     * @retval True if the command was posted.
+     */
+    bool PostPacketRx(bool exact);
+
     SubGHzRadioConfig config_;
 
     RF_Handle rf_handle_ = nullptr;  // nullptr whenever the RF client is closed.
@@ -215,6 +230,12 @@ private:
     RF_CmdHandle rx_cmd_handle_;
     // Status of a receive command that Update() has to restart, 0 if none. Written by the RF callback.
     volatile uint16_t rx_restart_status_ = 0;
+
+    bool strict_uat_timing_ = false;
+    // The posted receive command's start, and the start of the one that ended last (the one HandlePacketRx() reads
+    // from). Written by PostPacketRx() and HandleRxCommandEnd().
+    UATRxStart::Start rx_start_;
+    UATRxStart::Start ended_rx_start_;
 
     uint32_t last_rx_start_timestamp_ms_ = 0;
 };

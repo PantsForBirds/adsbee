@@ -728,14 +728,18 @@ void ADSBee::IngestAndForwardPackets() {
         sub_ghz_time_sync.AddSyncPoint(rat_now, mlat_active_ ? mlat_timebase_.ExtendForward(mlat_counter_now)
                                                              : timestamp_us * MlatTimebase::kTicksPerUs);
     }
+    // A radio timer stamp of 0 means unstamped (strict UAT timing) and stays 0.
+    auto rat_to_mlat = [&sub_ghz_time_sync](uint64_t rat) -> uint64_t {
+        return rat == 0 ? 0 : sub_ghz_time_sync.ToMLAT48MHzCounts(static_cast<uint32_t>(rat));
+    };
 
     // Ingest decoded UAT ADS-B packets.
     DecodedUATADSBPacket decoded_uat_adsb_packet;
     for (uint16_t i = 0; i < num_decoded_uat_adsb &&
                          uat_packet_decoder.decoded_uat_adsb_packet_out_queue.Dequeue(decoded_uat_adsb_packet);
          i++) {
-        decoded_uat_adsb_packet.raw.mlat_48mhz_64bit_counts = sub_ghz_time_sync.ToMLAT48MHzCounts(
-            static_cast<uint32_t>(decoded_uat_adsb_packet.raw.mlat_48mhz_64bit_counts));
+        decoded_uat_adsb_packet.raw.mlat_48mhz_64bit_counts =
+            rat_to_mlat(decoded_uat_adsb_packet.raw.mlat_48mhz_64bit_counts);
         aircraft_dictionary.IngestDecodedUATADSBPacket(decoded_uat_adsb_packet);
         aircraft_dictionary.RecordSubGHzMetrics(0, 1, 0, 0);
         if (!comms_manager.uat_adsb_packet_reporting_queue.Enqueue(decoded_uat_adsb_packet.raw)) {
@@ -749,8 +753,8 @@ void ADSBee::IngestAndForwardPackets() {
     for (uint16_t i = 0; i < num_decoded_uat_uplink &&
                          uat_packet_decoder.decoded_uat_uplink_packet_out_queue.Dequeue(decoded_uat_uplink_packet);
          i++) {
-        decoded_uat_uplink_packet.raw.mlat_48mhz_64bit_counts = sub_ghz_time_sync.ToMLAT48MHzCounts(
-            static_cast<uint32_t>(decoded_uat_uplink_packet.raw.mlat_48mhz_64bit_counts));
+        decoded_uat_uplink_packet.raw.mlat_48mhz_64bit_counts =
+            rat_to_mlat(decoded_uat_uplink_packet.raw.mlat_48mhz_64bit_counts);
         aircraft_dictionary.RecordSubGHzMetrics(0, 0, 0, 1);
         if (!comms_manager.uat_uplink_packet_reporting_queue.Enqueue(decoded_uat_uplink_packet.raw)) {
             comms_manager.uat_report_queue_ovf_count++;  // Counted, not logged (see the Mode S queue above).

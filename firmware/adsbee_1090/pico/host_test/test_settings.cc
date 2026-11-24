@@ -55,7 +55,7 @@ TEST(SettingsMigration, LayoutLockedSizes) {
     EXPECT_EQ(sizeof(settings_v17::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v18::Settings), 1340u);
     EXPECT_EQ(sizeof(settings_v19::Settings), 1792u);
-    EXPECT_EQ(sizeof(SettingsManager::Settings), 1964u);
+    EXPECT_EQ(sizeof(SettingsManager::Settings), 1968u);
     EXPECT_EQ(offsetof(settings_v19::Settings, swarm_token), offsetof(SettingsManager::Settings, swarm_token));
 
     EXPECT_EQ(sizeof(settings_v14::Settings), 1140u);
@@ -712,7 +712,7 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ntp = dump.find("AT+NTP_SERVER=pool.ntp.org");
     ASSERT_NE(ntp, std::string::npos);
     EXPECT_LT(asterix, ntp);
-    // Then the altitude filter, swarm reports, static IPv4 and IPv6, and GDL90 over Bluetooth last.
+    // Then the altitude filter, swarm reports, static IPv4 and IPv6, GDL90 over Bluetooth, and strict UAT timing last.
     EXPECT_LT(ntp, filter_altitude);
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
@@ -729,7 +729,10 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ble_output = dump.find("AT+BLE_OUTPUT=OFF\r\n");
     ASSERT_NE(ble_output, std::string::npos);
     EXPECT_EQ(dump.find("AT+", prev + 1), ble_output);
-    EXPECT_EQ(dump.find("AT+", ble_output + 1), std::string::npos);
+    size_t uat_strict_timing = dump.find("AT+UAT_STRICT_TIMING=0\r\n");
+    ASSERT_NE(uat_strict_timing, std::string::npos);
+    EXPECT_EQ(dump.find("AT+", ble_output + 1), uat_strict_timing);
+    EXPECT_EQ(dump.find("AT+", uat_strict_timing + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
     memcpy(&manager.settings.auto_update_enabled, &raw, 1);
@@ -1476,12 +1479,15 @@ TEST(SettingsMigration, V20ToCurrentKeepsEverythingAndLeavesBLEOutputOff) {
     uint8_t blob[sizeof(SettingsManager::Settings)];
     memcpy(blob, &v20, sizeof(blob));
     blob[offsetof(SettingsManager::Settings, ble_output_mode)] = 0xFF;
+    blob[offsetof(SettingsManager::Settings, uat_strict_timing)] = 0xFF;  // Past the end of a v20 blob.
 
     static SettingsManager::Settings out;
     out.ble_output_mode = SettingsManager::kBLEOutputGDL90;  // Stale: must not survive.
+    out.uat_strict_timing = true;
     ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 20, out));
     EXPECT_EQ(out.settings_version, kSettingsVersion);
     EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);  // New in v21.
+    EXPECT_FALSE(out.uat_strict_timing);                             // New in v21.
     // Every v20 byte after the version is kept.
     const size_t v20_end = offsetof(settings_v20::Settings, wifi_sta_ipv6) + sizeof(settings_v20::IPv6Config);
     EXPECT_EQ(memcmp(reinterpret_cast<const uint8_t*>(&out) + 4, blob + 4, v20_end - 4), 0);
