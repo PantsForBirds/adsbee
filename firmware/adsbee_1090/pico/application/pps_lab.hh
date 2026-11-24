@@ -2,7 +2,7 @@
 
 // t-1307 LAB ONLY (not for main): bench sources for the PPS capture path (AT+PPS_LAB).
 //   PWM:    a hardware-timed PPS on the GNSS PPS pin (GPIO 2 = PWM slice 1 A, the MLAT jitter counter's slice). Once a
-//           second core 0 switches the pin to PWM for exactly one counter wrap: the rising edge is at the wrap, so the
+//           second core 0 arms one high pulse of the PWM output: the rising edge is at a counter wrap, so the
 //           jitter counter value OnDemodBegin() reads first is the capture delay in clk_sys cycles.
 //   PULSES: the PPS input is the comparator pulses pin (GPIO 19); a 1 Hz Waggler CW burst is the PPS (its own clock).
 //           Edges are debounced (990 ms, and still high 0.8 us later) in RecordPPSEdge(). Each edge is printed; RAW output gives the frame's Mode S
@@ -34,9 +34,8 @@ class PPSLab {
         // kPWMBusPriority: as kPWM, with core 1 given priority on the bus fabric (does it remove the delay under load?).
         busctrl_hw->priority = mode == kPWMBusPriority ? BUSCTRL_BUS_PRIORITY_PROC1_BITS : 0;
         if (mode == kPWM || mode == kPWMBusPriority) {
-            gpio_set_dir(pps_pin, GPIO_OUT);
-            gpio_put(pps_pin, 0);
-            pwm_set_chan_level(pwm_gpio_to_slice_num(pps_pin), pwm_gpio_to_channel(pps_pin), kPWMHighCycles);
+            pwm_set_chan_level(pwm_gpio_to_slice_num(pps_pin), pwm_gpio_to_channel(pps_pin), 0);  // Low.
+            gpio_set_function(pps_pin, GPIO_FUNC_PWM);
             adsbee.SetPPSPin(pps_pin);
         } else if (mode == kPulses) {
             adsbee.pps_lab_debounce_us = 990'000;  // The next 1 Hz burst is due 10 ms later.
@@ -119,22 +118,22 @@ class PPSLab {
     Mode mode() const { return mode_; }
 
    private:
-    // One rising edge, at a wrap of the jitter counter (clk_sys exact).
+    // One rising edge, at a wrap of the jitter counter (clk_sys exact). The compare level is double-buffered (latched
+    // at a wrap): set it well before a wrap for one high pulse after it, clear it after that wrap. Core 0 makes no bus
+    // access around the edge (it would compete with the interrupt it times).
     void __not_in_flash_func(EmitPWMEdge)() {
         uint16_t pin = bsp.gnss_pps_pin;
-        volatile uint32_t* ctr = &pwm_hw->slice[pwm_gpio_to_slice_num(pin)].ctr;
+        uint slice = pwm_gpio_to_slice_num(pin), channel = pwm_gpio_to_channel(pin);
+        volatile uint32_t* ctr = &pwm_hw->slice[slice].ctr;
         uint32_t interrupts = save_and_disable_interrupts();
         uint32_t c;
         do {
             c = *ctr;
-        } while (c < kPWMHighCycles + 512 || c > 0xFFFF - 4096);  // Low phase, well before the wrap.
-        gpio_set_function(pin, GPIO_FUNC_PWM);
-        uint32_t previous = *ctr;
-        while ((c = *ctr) >= previous) previous = c;  // The wrap: the edge.
-        while (*ctr < kPWMHighCycles + 64) {
-        }  // Low again.
-        gpio_set_function(pin, GPIO_FUNC_SIO);  // Back to the SIO output, low.
+        } while (c > 0xFFFF - 8192);  // At least 66 us before the wrap.
+        pwm_set_chan_level(slice, channel, kPWMHighCycles);
         restore_interrupts(interrupts);
+        busy_wait_at_least_cycles(0x10000 - c + 4096);  // Past the wrap (the edge), without touching the bus.
+        pwm_set_chan_level(slice, channel, 0);          // Low from the next wrap on.
     }
 
     void AddLatency(uint16_t cycles) {
