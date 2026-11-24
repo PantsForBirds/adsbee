@@ -4,8 +4,8 @@
 //   PWM:    a hardware-timed PPS on the GNSS PPS pin (GPIO 2 = PWM slice 1 A, the MLAT jitter counter's slice). Once a
 //           second core 0 switches the pin to PWM for exactly one counter wrap: the rising edge is at the wrap, so the
 //           jitter counter value OnDemodBegin() reads first is the capture delay in clk_sys cycles.
-//   PULSES: the PPS input is the comparator pulses pin (GPIO 19); a 1 Hz Waggler frame is the PPS (its own clock).
-//           Edges are debounced (500 ms) in RecordPPSEdge(). Each edge is printed; RAW output gives the frame's Mode S
+//   PULSES: the PPS input is the comparator pulses pin (GPIO 19); a 1 Hz Waggler CW burst is the PPS (its own clock).
+//           Edges are debounced (990 ms, and still high 3 us later) in RecordPPSEdge(). Each edge is printed; RAW output gives the frame's Mode S
 //           stamp. A PPSClock fed with consecutive seconds gives the firmware fit's residuals.
 
 #include "adsbee.hh"
@@ -36,7 +36,7 @@ class PPSLab {
             pwm_set_chan_level(pwm_gpio_to_slice_num(pps_pin), pwm_gpio_to_channel(pps_pin), kPWMHighCycles);
             adsbee.SetPPSPin(pps_pin);
         } else if (mode == kPulses) {
-            adsbee.pps_lab_debounce_us = 500'000;
+            adsbee.pps_lab_debounce_us = 990'000;  // The next 1 Hz burst is due 10 ms later.
             adsbee.SetPPSPin(bsp.r1090_pulses_pin);
         }
         next_pulse_us_ = time_us_32() + 1'000'000;
