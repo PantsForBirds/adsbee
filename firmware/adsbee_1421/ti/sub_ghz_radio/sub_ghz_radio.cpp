@@ -6,7 +6,6 @@
 #include "hal.hh"
 #include "macros.hh"
 #include "uat_packet_decoder.hh"
-#include "uat_rx_start.hh"
 #include "unit_conversions.hh"  // for CeilBitsToBytes
 
 extern "C" {
@@ -327,15 +326,10 @@ bool SubGHzRadio::HandlePacketRx(rfc_dataEntryPartial_t* filled_entry) {
                          (packet_data[packet_len_bytes + 3] << 16) | (packet_data[packet_len_bytes + 4] << 24);
     int8_t status = static_cast<int8_t>(packet_data[packet_len_bytes + kPartialDataEntryNumAppendedBytes - 1]);
     static_assert(kPartialDataEntryNumAppendedBytes == 6);  // This section is hardcoded to match the appended bytes.
-    uint64_t precise_classes = packet_len_bytes == RawUATUplinkPacket::kUplinkMessageNumBytes
-                                   ? kRxStartTiming.precise_uplink_classes
-                                   : kRxStartTiming.precise_adsb_classes;
-    if (!ended_rx_start_exact_ ||
-        !UATRxStart::IsPrecise(precise_classes, UATRxStart::PhaseClass(timestamp, ended_rx_start_rat_))) {
-        imprecise_stamp_count = imprecise_stamp_count + 1;
-        if (strict_uat_timing_) {
-            timestamp = 0;  // 0 = unstamped.
-        }
+    if (strict_uat_timing_ &&
+        !UATRxStart::StampIsPrecise(kRxStartTiming, packet_len_bytes == RawUATUplinkPacket::kUplinkMessageNumBytes,
+                                    ended_rx_start_, timestamp)) {
+        timestamp = 0;  // 0 = unstamped.
     }
 
     // Dispatch on the entry-derived, bounds-checked packet_len_bytes -- NOT the volatile
@@ -389,16 +383,16 @@ bool SubGHzRadio::PostPacketRx(bool exact) {
         // pastTrig = 0: a start time already past when the RF core gets the command ends it with ERROR_PAST_START.
         RF_cmdPropRxAdv.startTrigger.triggerType = TRIG_ABSTIME;
         RF_cmdPropRxAdv.startTrigger.pastTrig = 0;
-        rx_start_rat_ = RF_getCurrentTime() + kRxStartTiming.lead_rat;
-        RF_cmdPropRxAdv.startTime = rx_start_rat_;
+        rx_start_.rat = RF_getCurrentTime() + kRxStartTiming.lead_rat;
+        RF_cmdPropRxAdv.startTime = rx_start_.rat;
     } else {
         RF_cmdPropRxAdv.startTrigger.triggerType = TRIG_NOW;
         RF_cmdPropRxAdv.startTime = 0;
     }
     // The RF driver hands the command to the RF core before RF_postCmd() returns while the core is on.
     rx_cmd_handle_ = RF_postCmd(rf_handle_, (RF_Op*)&RF_cmdPropRxAdv, RF_PriorityNormal, rf_cmd_callback, kRxEventMask);
-    rx_start_exact_ =
-        exact && UATRxStart::StartIsExact(rx_start_rat_, RF_getCurrentTime(), kRxStartTiming.min_margin_rat);
+    rx_start_.exact =
+        exact && UATRxStart::StartIsExact(rx_start_.rat, RF_getCurrentTime(), kRxStartTiming.min_margin_rat);
     return rx_cmd_handle_ >= 0;
 }
 
@@ -605,17 +599,13 @@ bool SubGHzRadio::StopRssiScan() {
 
 void SubGHzRadio::HandleRxCommandEnd() {
     uint16_t rx_status = ((volatile RF_Op*)&RF_cmdPropRxAdv)->status;
-    ended_rx_start_rat_ = rx_start_rat_;
-    ended_rx_start_exact_ = rx_start_exact_;
+    ended_rx_start_ = rx_start_;
     if (rx_enabled) {
         if ((rx_status & 0xFF00) == (PROP_DONE_OK & 0xFF00) && PostPacketRx(true)) {
             return;
         }
-        if (rx_status == ERROR_PAST_START) {
-            rx_start_miss_count = rx_start_miss_count + 1;
-            if (PostPacketRx(false)) {
-                return;
-            }
+        if (rx_status == ERROR_PAST_START && PostPacketRx(false)) {
+            return;  // Missed the start time: restarted immediately, with imprecise stamps.
         }
     }
     rx_restart_status_ = rx_status;

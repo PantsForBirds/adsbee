@@ -568,7 +568,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             CPP_AT_PRINTF(
                 ",mlat_stamped=%lu,mlat_more_pkts=%lu,mlat_more_edges=%lu,mlat_unpaired=%lu,mlat_orphans=%lu,"
                 "mlat_edge_drops=%lu,mlat_overruns=%lu,mlat_restarts=%lu,mlat_kicks=%lu,mlat_pending_clears=%lu,"
-                "mlat_clear_timeouts=%lu,uat_start_misses=%lu,uat_imprecise=%lu",
+                "mlat_clear_timeouts=%lu",
                 (unsigned long)adsbee.mlat_counters().stamped,
                 (unsigned long)adsbee.mlat_counters().unstamped_more_packets,
                 (unsigned long)adsbee.mlat_counters().unstamped_more_edges,
@@ -577,8 +577,7 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
                 (unsigned long)adsbee.mlat_counters().dropped_edges, (unsigned long)adsbee.mlat_capture_overruns,
                 (unsigned long)adsbee.mlat_timebase_restarts, (unsigned long)mlat_clear_dma::counters().kicks,
                 (unsigned long)mlat_clear_dma::counters().pending_clears,
-                (unsigned long)mlat_clear_dma::counters().wait_timeouts,
-                (unsigned long)subg_radio.rx_start_miss_count, (unsigned long)subg_radio.imprecise_stamp_count);
+                (unsigned long)mlat_clear_dma::counters().wait_timeouts);
             CPP_AT_PRINTF(
                 ",two_bit_found=%lu,fixed_es_1bit=%lu,fixed_es_2bit=%lu,fixed_ap_1bit=%lu,fixed_ap_2bit=%lu,"
                 "fixes_rejected=%lu,fixes_skipped=%lu\r\n",
@@ -633,8 +632,6 @@ CPP_AT_CALLBACK(CommsManager::ATRxStatsCallback) {
             adsbee.lr2021_validity_reconfig_count = 0;
             adsbee.lr2021.irq_stale_edges = 0;
             subg_radio.uat_len_mismatch_count = 0;
-            subg_radio.rx_start_miss_count = 0;
-            subg_radio.imprecise_stamp_count = 0;
             comms_manager.uat_report_queue_ovf_count = 0;
             adsbee.parse_capture_max_cycles = 0;
             packet_decoder.decode_max_cycles = 0;

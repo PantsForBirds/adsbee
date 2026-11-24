@@ -20,6 +20,7 @@ extern "C" {
 #include "object_dictionary.hh"
 #include "unit_conversions.hh"
 #include "uat_packet.hh"
+#include "uat_rx_start.hh"
 
 class SubGHzRadio
 {
@@ -87,14 +88,6 @@ public:
      */
     void SetStrictUATTiming(bool strict) { strict_uat_timing_ = strict; }
 
-    // Receive commands restarted immediately after a missed start (ERROR_PAST_START). Counted from the RF
-    // callback.
-    volatile uint32_t rx_start_miss_count = 0;
-
-    // Packets whose sync stamp is imprecise (phase outside the precise classes, or an immediate start). Counted from
-    // the RF callback.
-    volatile uint32_t imprecise_stamp_count = 0;
-
     // Failed CMD_PROP_SET_LEN immediate commands (RF_runImmediateCmd status != success), counted from
     // the RF callback (ISR context, no logging there). A nonzero value means packet-length shortening
     // raced the RX command ending -- packets may be truncated or over-read.
@@ -152,12 +145,10 @@ private:
     volatile uint16_t rx_restart_status_ = 0;
 
     bool strict_uat_timing_ = false;
-    // Start time and exactness of the posted receive command, and of the one that ended last (the one HandlePacketRx()
-    // reads from). Written by PostPacketRx() and HandleRxCommandEnd().
-    uint32_t rx_start_rat_ = 0;
-    bool rx_start_exact_ = false;
-    uint32_t ended_rx_start_rat_ = 0;
-    bool ended_rx_start_exact_ = false;
+    // The posted receive command's start, and the start of the one that ended last (the one HandlePacketRx() reads
+    // from). Written by PostPacketRx() and HandleRxCommandEnd().
+    UATRxStart::Start rx_start_;
+    UATRxStart::Start ended_rx_start_;
 
     uint32_t last_rx_start_timestamp_ms_ = 0;
 };

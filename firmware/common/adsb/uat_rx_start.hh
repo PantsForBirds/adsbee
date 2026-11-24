@@ -50,6 +50,24 @@ inline bool IsPrecise(uint64_t precise_classes, uint8_t phase_class) {
     return phase_class < kNumPhaseClasses && ((precise_classes >> phase_class) & 1);
 }
 
+// Start time of a posted receive command, and whether it started exactly then.
+struct Start {
+    uint32_t rat = 0;
+    bool exact = false;
+};
+
+/**
+ * @param[in] chip Timing of the chip that stamped the packet.
+ * @param[in] uplink True for an uplink (the other sync word), false for ADS-B.
+ * @param[in] start Start of the receive command that got the packet.
+ * @param[in] sync_rat Sync stamp in RAT ticks.
+ * @retval True if the stamp is precise: an exact start and a precise phase class.
+ */
+inline bool StampIsPrecise(const ChipTiming& chip, bool uplink, const Start& start, uint32_t sync_rat) {
+    return start.exact && IsPrecise(uplink ? chip.precise_uplink_classes : chip.precise_adsb_classes,
+                                    PhaseClass(sync_rat, start.rat));
+}
+
 /**
  * @param[in] start_rat Start time of the posted receive command.
  * @param[in] posted_rat RAT read right after RF_postCmd() returned.

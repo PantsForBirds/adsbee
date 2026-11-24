@@ -19,6 +19,7 @@ extern "C" {
 #include "settings.hh"
 #include "unit_conversions.hh"
 #include "uat_packet.hh"
+#include "uat_rx_start.hh"
 
 class SubGHzRadio
 {
@@ -128,7 +129,6 @@ public:
      * (unstamped). Takes effect with the next packet.
      */
     void SetStrictUATTiming(bool strict) { strict_uat_timing_ = strict; }
-    bool GetStrictUATTiming() const { return strict_uat_timing_; }
 
 #ifdef HARDWARE_UNIT_TESTS
 #ifdef ADSBEE_DEBUG_BUILD
@@ -200,14 +200,6 @@ public:
     // Counted from the RF callback (SWI context). Reported and reset via AT+RX_STATS.
     volatile uint32_t uat_len_mismatch_count = 0;
 
-    // Receive commands restarted immediately after a missed start (ERROR_PAST_START). Counted from the RF
-    // callback. Reported and reset via AT+RX_STATS.
-    volatile uint32_t rx_start_miss_count = 0;
-
-    // Packets whose sync stamp is imprecise (phase outside the precise classes, or an immediate start). Counted from
-    // the RF callback. Reported and reset via AT+RX_STATS.
-    volatile uint32_t imprecise_stamp_count = 0;
-
 private:
     /**
      * Brings normal RX back up after Resume()/StopCWTest()/StopRssiScan() if the user has it enabled; otherwise
@@ -240,12 +232,10 @@ private:
     volatile uint16_t rx_restart_status_ = 0;
 
     bool strict_uat_timing_ = false;
-    // Start time and exactness of the posted receive command, and of the one that ended last (the one HandlePacketRx()
-    // reads from). Written by PostPacketRx() and HandleRxCommandEnd().
-    uint32_t rx_start_rat_ = 0;
-    bool rx_start_exact_ = false;
-    uint32_t ended_rx_start_rat_ = 0;
-    bool ended_rx_start_exact_ = false;
+    // The posted receive command's start, and the start of the one that ended last (the one HandlePacketRx() reads
+    // from). Written by PostPacketRx() and HandleRxCommandEnd().
+    UATRxStart::Start rx_start_;
+    UATRxStart::Start ended_rx_start_;
 
     uint32_t last_rx_start_timestamp_ms_ = 0;
 };

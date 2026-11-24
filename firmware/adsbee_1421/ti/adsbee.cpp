@@ -717,24 +717,11 @@ void ADSBee::IngestAndForwardPackets() {
     // both run from the 48 MHz crystal, so one pair of readings fixes the offset.
     uint16_t num_decoded_uat_adsb = uat_packet_decoder.decoded_uat_adsb_packet_out_queue.Length();
     uint16_t num_decoded_uat_uplink = uat_packet_decoder.decoded_uat_uplink_packet_out_queue.Length();
-    static constexpr uint16_t kRATPairReads = 8;
     MLATTimeSync sub_ghz_time_sync(MLATTimeSync::kMLATTicksPerRATTick);
     if (num_decoded_uat_adsb > 0 || num_decoded_uat_uplink > 0) {
         uintptr_t key = HwiP_disable();
         uint32_t rat_now = RF_getCurrentTime();
         uint32_t mlat_counter_now = mlat_active_ ? mlat_capture::Counter() : 0;
-        if (mlat_active_) {
-            // A radio timer read is up to one tick (0.25 us) old: keep the pair read soonest after a tick edge.
-            for (uint16_t i = 0; i < kRATPairReads; i++) {
-                uint32_t rat = RF_getCurrentTime();
-                uint32_t mlat_counter = mlat_capture::Counter();
-                if (static_cast<int32_t>((mlat_counter - mlat_counter_now) -
-                                         (rat - rat_now) * MLATTimeSync::kMLATTicksPerRATTick) < 0) {
-                    rat_now = rat;
-                    mlat_counter_now = mlat_counter;
-                }
-            }
-        }
         uint64_t timestamp_us = get_time_since_boot_us();
         HwiP_restore(key);
         // PollMlat() runs every main loop pass, well within one counter period.

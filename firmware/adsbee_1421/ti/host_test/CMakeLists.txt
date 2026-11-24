@@ -53,7 +53,6 @@ target_sources(host_test PRIVATE
     test_settings.cc
     test_settings_hash.cc
     test_sync_boot.cc
-    test_uat_rx_start.cc
     test_uplink_tx_budget.cc
 )
 target_compile_definitions(host_test PRIVATE ADSBEE_1421_SYSCFG_DIR="${ADSBEE_1421_TI_DIR}/syscfg")

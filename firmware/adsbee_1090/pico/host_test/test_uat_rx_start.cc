@@ -38,6 +38,16 @@ TEST(UATRxStart, StartIsExactComparesAcrossTheWrap) {
     EXPECT_FALSE(StartIsExact(0xFFFFFFF0u, 10, 0));          // Posted after the start time.
 }
 
+TEST(UATRxStart, StampIsPreciseNeedsAnExactStartAndAPreciseClass) {
+    // CC1314: class 19 is precise for ADS-B but not for uplinks; class 39 is precise for uplinks.
+    Start start{1000, true};
+    EXPECT_TRUE(StampIsPrecise(kCC1314, false, start, 1000 + 33));  // 99 % 40 = 19.
+    EXPECT_FALSE(StampIsPrecise(kCC1314, true, start, 1000 + 33));
+    EXPECT_TRUE(StampIsPrecise(kCC1314, true, start, 1000 + 13));  // Class 39.
+    start.exact = false;
+    EXPECT_FALSE(StampIsPrecise(kCC1314, false, start, 1000 + 33));
+}
+
 TEST(UATRxStart, ChipTablesAreConsistent) {
     for (const ChipTiming* t : {&kCC1312, &kCC1314}) {
         EXPECT_EQ(t->precise_adsb_classes >> kNumPhaseClasses, 0u);

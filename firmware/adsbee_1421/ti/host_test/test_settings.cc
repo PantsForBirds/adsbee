@@ -187,21 +187,18 @@ TEST(Settings, CurrentOrUnknownBlobsAreNotMigrated) {
     EXPECT_EQ(SM::MigrateFromOlderVersion(blank, out), 0u);
 }
 
-TEST(Settings, CurrentBlobIsRejectedByOlderFirmware) {
-    // Older firmware checks magic, its own version and the CRC over its own size, so a current blob fails its check
-    // and it resets to defaults on a downgrade.
+TEST(Settings, Version7BlobIsRejectedByVersion6Firmware) {
+    // rc10 (version 6) checks magic, version 6 and the CRC over its first 74 bytes, so a version 7 blob fails its
+    // check and rc10 resets to defaults on a downgrade.
     SM::Settings current;
     current.Stamp();
     uint32_t version;
     memcpy(&version, reinterpret_cast<const uint8_t*>(&current) + offsetof(SM::Settings, settings_version),
            sizeof(version));
     EXPECT_NE(version, 6u);
-    EXPECT_NE(version, 7u);
 }
 
 TEST(Settings, LEDsEnabledByDefault) { EXPECT_TRUE(SM::Settings().led_enabled); }
-
-TEST(Settings, StrictUATTimingOffByDefault) { EXPECT_FALSE(SM::Settings().uat_strict_timing); }
 
 TEST(Settings, AltitudeFilterModeStrings) {
     uint8_t mode = kAltitudeFilterOff;
