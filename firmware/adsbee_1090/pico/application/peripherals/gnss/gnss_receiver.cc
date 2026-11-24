@@ -4,6 +4,7 @@
 
 #include "comms.hh"             // For comms_manager (UART I/O + baud) and CONSOLE_* logging.
 #include "cpu_utils.hh"
+#include "geo_utils.hh"
 #include "hal.hh"               // For get_time_since_boot_ms().
 
 void GNSSReceiver::ClaimUart() {
@@ -188,19 +189,20 @@ bool GNSSReceiver::Update() {
     if (now_ms - debug_last_print_timestamp_ms_ >= kDebugPrintIntervalMs) {
         debug_last_print_timestamp_ms_ = now_ms;
         const GNSSFix& f = parser_.fix();
-        CONSOLE_INFO(
-            "GNSSReceiver::Update",
-            "GNSS dbg: healthy=%d rx_bytes=%lu rx_buffered=%u rx_overflow=%lu rx_irqs=%lu rx_polled=%lu "
-            "last_sentence=%d gga=%lu rmc=%lu cksum_fail=%lu | fix: valid=%d q=%u sats=%u lat=%.5f lon=%.5f "
-            "age_ms=%lu hasfix=%d\r\n",
-            healthy_, static_cast<unsigned long>(debug_total_rx_bytes_),
-            static_cast<unsigned int>(static_cast<uint16_t>(rx_head_ - rx_tail_)),
-            static_cast<unsigned long>(rx_overflow_count_), static_cast<unsigned long>(rx_irq_count_),
-            static_cast<unsigned long>(rx_polled_byte_count_), static_cast<int>(debug_last_sentence_),
-            static_cast<unsigned long>(debug_gga_count_), static_cast<unsigned long>(debug_rmc_count_),
-            static_cast<unsigned long>(debug_cksum_fail_count_), f.valid, f.fix_quality, f.num_satellites,
-            f.latitude_deg, f.longitude_deg,
-            static_cast<unsigned long>(now_ms - f.last_update_timestamp_ms), HasValidFix());
+        char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+        FormatAWBDeg(lat_str, sizeof(lat_str), f.latitude_awb, 5);
+        FormatAWBDeg(lon_str, sizeof(lon_str), f.longitude_awb, 5);
+        CONSOLE_INFO("GNSSReceiver::Update",
+                     "GNSS dbg: healthy=%d rx_bytes=%lu rx_buffered=%u rx_overflow=%lu rx_irqs=%lu rx_polled=%lu "
+                     "last_sentence=%d gga=%lu rmc=%lu cksum_fail=%lu | fix: valid=%d q=%u sats=%u lat=%s lon=%s "
+                     "age_ms=%lu hasfix=%d\r\n",
+                     healthy_, static_cast<unsigned long>(debug_total_rx_bytes_),
+                     static_cast<unsigned int>(static_cast<uint16_t>(rx_head_ - rx_tail_)),
+                     static_cast<unsigned long>(rx_overflow_count_), static_cast<unsigned long>(rx_irq_count_),
+                     static_cast<unsigned long>(rx_polled_byte_count_), static_cast<int>(debug_last_sentence_),
+                     static_cast<unsigned long>(debug_gga_count_), static_cast<unsigned long>(debug_rmc_count_),
+                     static_cast<unsigned long>(debug_cksum_fail_count_), f.valid, f.fix_quality, f.num_satellites,
+                     lat_str, lon_str, static_cast<unsigned long>(now_ms - f.last_update_timestamp_ms), HasValidFix());
     }
 
     // TEMPORARY: periodically dump module RF/antenna status (ublox UBX-MON-RF) to diagnose 0-sats.
@@ -226,10 +228,12 @@ bool GNSSReceiver::Update() {
         if (f.utc_time_valid) {
             snprintf(utc_time, sizeof(utc_time), "%02u:%02u:%02u", f.utc_hour, f.utc_minute, f.utc_second);
         }
-        CONSOLE_INFO("GNSSReceiver::Update", "GNSS_FIX=%d,%.6f,%.6f,%ld,%.1f,%ld,%u,%s,%lu", current_fix_valid,
-                     f.latitude_deg, f.longitude_deg, static_cast<long>(f.altitude_ft), f.heading_deg,
-                     static_cast<long>(f.speed_kts), static_cast<unsigned int>(f.num_satellites), utc_time,
-                     static_cast<unsigned long>(pps_count()));
+        char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+        FormatAWBDeg(lat_str, sizeof(lat_str), f.latitude_awb, 6);
+        FormatAWBDeg(lon_str, sizeof(lon_str), f.longitude_awb, 6);
+        CONSOLE_INFO("GNSSReceiver::Update", "GNSS_FIX=%d,%s,%s,%ld,%.1f,%ld,%u,%s,%lu", current_fix_valid, lat_str,
+                     lon_str, static_cast<long>(f.altitude_ft), f.heading_deg, static_cast<long>(f.speed_kts),
+                     static_cast<unsigned int>(f.num_satellites), utc_time, static_cast<unsigned long>(pps_count()));
         notify_last_emitted_valid_ = current_fix_valid;
         notify_has_emitted_ = true;
         notify_pending_ = false;

@@ -1,4 +1,5 @@
 #include <cstring>
+#include "awb_test_utils.hh"
 #include <string_view>
 #include <vector>
 
@@ -211,7 +212,7 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
     EXPECT_EQ(out.mavlink_component_id, 42);
 
     EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
-    EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
+    EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(37.5f));
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
 }
 
@@ -1040,8 +1041,8 @@ TEST(SettingsMigration, V14ShippedRc2BlobMigrates) {
     EXPECT_EQ(out.mavlink_system_id, 9);
     EXPECT_EQ(out.mavlink_component_id, 190);
     EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
-    EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
-    EXPECT_FLOAT_EQ(out.rx_position.longitude_deg, -122.25f);
+    EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(37.5f));
+    EXPECT_EQ(out.rx_position.longitude_awb, FloatDegToAWB(-122.25f));
     EXPECT_EQ(out.rx_position.gnss_altitude_ft, 1111);
     EXPECT_EQ(out.rx_position.baro_altitude_ft, 2222);
     EXPECT_FLOAT_EQ(out.rx_position.heading_deg, 270.5f);
@@ -1189,8 +1190,8 @@ TEST(SettingsMigration, V12ToCurrentPreservesAllFields) {
 
     // Receiver position preserved.
     EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
-    EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
-    EXPECT_FLOAT_EQ(out.rx_position.longitude_deg, -122.3f);
+    EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(37.5f));
+    EXPECT_EQ(out.rx_position.longitude_awb, FloatDegToAWB(-122.3f));
     EXPECT_EQ(out.rx_position.gnss_altitude_ft, 111);
     EXPECT_EQ(out.rx_position.baro_altitude_ft, 222);
     EXPECT_FLOAT_EQ(out.rx_position.heading_deg, 90.0f);
@@ -1476,15 +1477,36 @@ TEST(SettingsMigration, V20ToCurrentKeepsEverythingAndLeavesBLEOutputOff) {
     uint8_t blob[sizeof(SettingsManager::Settings)];
     memcpy(blob, &v20, sizeof(blob));
     blob[offsetof(SettingsManager::Settings, ble_output_mode)] = 0xFF;
+    // v20 stored the receiver position in float degrees.
+    settings_v20::RxPosition rx = {};
+    rx.source = SettingsManager::RxPosition::kPositionSourceFixed;
+    rx.latitude_deg = -34.603722f;
+    rx.longitude_deg = 151.2099f;
+    rx.gnss_altitude_ft = 82;
+    rx.heading_deg = 271.5f;
+    rx.icao_address = 0xBEE001;
+    const size_t rx_offset = offsetof(settings_v20::Settings, rx_position);
+    memcpy(blob + rx_offset, &rx, sizeof(rx));
 
     static SettingsManager::Settings out;
     out.ble_output_mode = SettingsManager::kBLEOutputGDL90;  // Stale: must not survive.
     ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 20, out));
     EXPECT_EQ(out.settings_version, kSettingsVersion);
     EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);  // New in v21.
-    // Every v20 byte after the version is kept.
+    // AWB since v21, in the same bytes.
+    EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(-34.603722f));
+    EXPECT_EQ(out.rx_position.longitude_awb, FloatDegToAWB(151.2099f));
+    EXPECT_NEAR(AWBToDeg(out.rx_position.latitude_awb), -34.603722, 1e-6);
+    EXPECT_NEAR(AWBToDeg(out.rx_position.longitude_awb), 151.2099, 1e-5);
+    // Every other v20 byte after the version is kept.
+    const size_t lat_lon_offset = rx_offset + offsetof(settings_v20::RxPosition, latitude_deg);
+    const size_t lat_lon_end = rx_offset + offsetof(settings_v20::RxPosition, gnss_altitude_ft);
     const size_t v20_end = offsetof(settings_v20::Settings, wifi_sta_ipv6) + sizeof(settings_v20::IPv6Config);
-    EXPECT_EQ(memcmp(reinterpret_cast<const uint8_t*>(&out) + 4, blob + 4, v20_end - 4), 0);
+    const uint8_t* out_bytes = reinterpret_cast<const uint8_t*>(&out);
+    EXPECT_EQ(memcmp(out_bytes + 4, blob + 4, lat_lon_offset - 4), 0);
+    EXPECT_EQ(memcmp(out_bytes + lat_lon_end, blob + lat_lon_end, v20_end - lat_lon_end), 0);
+    EXPECT_EQ(out.rx_position.icao_address, 0xBEE001u);
+    EXPECT_FLOAT_EQ(out.rx_position.heading_deg, 271.5f);
     EXPECT_STREQ(out.core_network_settings.hostname, "hangar-bee");
     EXPECT_TRUE(out.wifi_sta_ipv4.is_static);
     EXPECT_EQ(out.wifi_sta_ipv4.ip[3], 42);

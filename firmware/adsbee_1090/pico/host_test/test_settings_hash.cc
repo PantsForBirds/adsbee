@@ -1,6 +1,7 @@
 #include <cstring>
 #include <new>
 
+#include "awb_test_utils.hh"
 #include "config_hash.hh"
 #include "gtest/gtest.h"
 #include "settings_hash.hh"
@@ -71,6 +72,15 @@ TEST(SettingsHash, DefaultSettingsHashIsPinned) {
     Settings settings;
     EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0xA2A2895Fu);
     EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xCBEC1242u);
+}
+
+TEST(SettingsHash, FixedPositionHashIsPinned) {
+    // A fixed receiver position counts in kScopeFull as its AWB latitude and longitude.
+    Settings settings;
+    settings.rx_position.source = SettingsManager::RxPosition::kPositionSourceFixed;
+    settings.rx_position.latitude_awb = 0x1A987654u;   // 37.4 deg.
+    settings.rx_position.longitude_awb = 0xA92C5F93u;  // -122.1 deg.
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x89DD3D47u);
 }
 
 TEST(SettingsHash, StoredCRCDoesNotCount) {
@@ -195,14 +205,14 @@ TEST(SettingsHash, PerUnitSettingsChangeOnlyTheFullHash) {
 TEST(SettingsHash, ReceiverPositionCountsOnlyWhenItIsASetting) {
     // Followed aircraft and GNSS overwrite the position while running.
     Settings a, b;
-    b.rx_position.latitude_deg = 47.5f;
+    b.rx_position.latitude_awb = DegToAWB(47.5f);
     b.rx_position.icao_address = 0xBEE001;
     EXPECT_EQ(SettingsHash::Compute(a, kScopeFull), SettingsHash::Compute(b, kScopeFull));
 
     a.rx_position.source = b.rx_position.source = SettingsManager::RxPosition::kPositionSourceFixed;
     EXPECT_EQ(SettingsHash::Compute(a, kScopeFleet), SettingsHash::Compute(b, kScopeFleet));
     EXPECT_NE(SettingsHash::Compute(a, kScopeFull), SettingsHash::Compute(b, kScopeFull));
-    b.rx_position.latitude_deg = a.rx_position.latitude_deg;
+    b.rx_position.latitude_awb = a.rx_position.latitude_awb;
     EXPECT_EQ(SettingsHash::Compute(a, kScopeFull), SettingsHash::Compute(b, kScopeFull));  // ICAO not used.
 
     a.rx_position.source = b.rx_position.source = SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;

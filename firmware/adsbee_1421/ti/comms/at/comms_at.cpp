@@ -7,6 +7,7 @@
 #include "adsbee.hh"
 #include "ccfg_bootloader_flash.hh"
 #include "comms.hh"
+#include "geo_utils.hh"
 #include "mlat/mlat_clear_dma.hh"
 #include "object_dictionary.hh"
 #include "packet_decoder.hh"
@@ -893,21 +894,23 @@ void ATRxPositionHelpCallback() {
 CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
     switch (op) {
         case '?': {
+            char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+            FormatAWBDeg(lat_str, sizeof(lat_str), adsbee.rx_position.latitude_awb, 6);
+            FormatAWBDeg(lon_str, sizeof(lon_str), adsbee.rx_position.longitude_awb, 6);
             CPP_AT_PRINTF(
                 "Receiver Position:\r\n"
                 "\tSource: %s [%s] \r\n"
-                "\tLatitude: %.6f deg\r\n"
-                "\tLongitude: %.6f deg\r\n"
+                "\tLatitude: %s deg\r\n"
+                "\tLongitude: %s deg\r\n"
                 "\tGNSS Altitude: %d ft\r\n"
                 "\tBarometric Altitude: %d ft\r\n"
                 "\tHeading: %.1f deg\r\n"
                 "\tSpeed: %d kts\r\n"
                 "\tICAO: 0x%06X [%s]\r\n",
                 SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
-                adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", adsbee.rx_position.latitude_deg,
-                adsbee.rx_position.longitude_deg, adsbee.rx_position.gnss_altitude_ft,
-                adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts,
-                adsbee.rx_position.icao_address,
+                adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", lat_str, lon_str,
+                adsbee.rx_position.gnss_altitude_ft, adsbee.rx_position.baro_altitude_ft,
+                adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts, adsbee.rx_position.icao_address,
                 adsbee.rx_position.source ==
                         SettingsManager::RxPosition::PositionSource::kPositionSourceAircraftMatchingICAO
                     ? "IN USE"
@@ -938,21 +941,27 @@ CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
 
                                 if (CPP_AT_HAS_ARG(1)) {
                                     // Set latitude.
-                                    float latitude_deg;
-                                    CPP_AT_TRY_ARG2NUM(1, latitude_deg);
-                                    if (latitude_deg < -90.0 || latitude_deg > 90.0) {
-                                        CPP_AT_ERROR("Latitude %.6f out of range (-90.0 to 90.0).", latitude_deg);
+                                    int32_t latitude_e7;
+                                    if (!ParseDegE7(args[1], latitude_e7)) {
+                                        CPP_AT_ERROR("Error converting argument 1.");
                                     }
-                                    adsbee.rx_position.latitude_deg = latitude_deg;
+                                    if (latitude_e7 < -900000000 || latitude_e7 > 900000000) {
+                                        CPP_AT_ERROR("Latitude %.*s out of range (-90.0 to 90.0).",
+                                                     static_cast<int>(args[1].size()), args[1].data());
+                                    }
+                                    adsbee.rx_position.latitude_awb = DegE7ToAWB(latitude_e7);
                                 }
                                 if (CPP_AT_HAS_ARG(2)) {
                                     // Set longitude.
-                                    float longitude_deg;
-                                    CPP_AT_TRY_ARG2NUM(2, longitude_deg);
-                                    if (longitude_deg < -180.0 || longitude_deg > 180.0) {
-                                        CPP_AT_ERROR("Longitude %.6f out of range (-180.0 to 180.0).", longitude_deg);
+                                    int32_t longitude_e7;
+                                    if (!ParseDegE7(args[2], longitude_e7)) {
+                                        CPP_AT_ERROR("Error converting argument 2.");
                                     }
-                                    adsbee.rx_position.longitude_deg = longitude_deg;
+                                    if (longitude_e7 < -1800000000 || longitude_e7 > 1800000000) {
+                                        CPP_AT_ERROR("Longitude %.*s out of range (-180.0 to 180.0).",
+                                                     static_cast<int>(args[2].size()), args[2].data());
+                                    }
+                                    adsbee.rx_position.longitude_awb = DegE7ToAWB(longitude_e7);
                                 }
                                 if (CPP_AT_HAS_ARG(3)) {
                                     // Set GNSS altitude.
@@ -1060,12 +1069,15 @@ static void PrintSettingsJSON() {
                   SettingsManager::kR1090PreambleModeStrs[adsbee.GetR1090PreambleMode()]);
     CPP_AT_PRINTF("\"R1090_RX_BOOST\":[%u],", adsbee.GetR1090RxBoost());
     CPP_AT_PRINTF("\"RX_ENABLE\":[%d,%d],", adsbee.Rx1090IsEnabled(), adsbee.RxSubGHzIsEnabled());
-    CPP_AT_PRINTF("\"RX_POSITION\":[\"%s\",\"%s\",%.6f,%.6f,%d,%d,%.1f,%d,\"%06X\"],",
+    char rx_lat_str[kAWBDegStrMaxLen], rx_lon_str[kAWBDegStrMaxLen];
+    FormatAWBDeg(rx_lat_str, sizeof(rx_lat_str), adsbee.rx_position.latitude_awb, 6);
+    FormatAWBDeg(rx_lon_str, sizeof(rx_lon_str), adsbee.rx_position.longitude_awb, 6);
+    CPP_AT_PRINTF("\"RX_POSITION\":[\"%s\",\"%s\",%s,%s,%d,%d,%.1f,%d,\"%06X\"],",
                   SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
-                  adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", adsbee.rx_position.latitude_deg,
-                  adsbee.rx_position.longitude_deg, (int)adsbee.rx_position.gnss_altitude_ft,
-                  (int)adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg,
-                  (int)adsbee.rx_position.speed_kts, (unsigned)adsbee.rx_position.icao_address);
+                  adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", rx_lat_str, rx_lon_str,
+                  (int)adsbee.rx_position.gnss_altitude_ft, (int)adsbee.rx_position.baro_altitude_ft,
+                  adsbee.rx_position.heading_deg, (int)adsbee.rx_position.speed_kts,
+                  (unsigned)adsbee.rx_position.icao_address);
     CPP_AT_PRINTF("\"SUBG_MODE\":[\"%s\"],", SettingsManager::kSubGHzModeStrs[subg_radio.GetMode()]);
     CPP_AT_PRINTF("\"WATCHDOG\":[%lu]", (unsigned long)adsbee.GetWatchdogTimeoutSec());
     CPP_AT_PRINTF("}\r\n");

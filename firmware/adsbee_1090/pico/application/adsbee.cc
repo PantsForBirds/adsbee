@@ -369,13 +369,14 @@ void ADSBee::UpdateRxPosition() {
         case SettingsManager::RxPosition::PositionSource::kPositionSourceLowestAircraft:
             // Use position of lowest aircraft in dictionary.
             // Make variables to write into since we can't bind directly to the packed struct members.
-            float latitude_deg, longitude_deg, heading_deg;
+            uint32_t latitude_awb, longitude_awb;
+            float heading_deg;
             int32_t gnss_altitude_ft, baro_altitude_ft, speed_kts;
             if (aircraft_dictionary.GetLowestAircraftPosition(
-                    latitude_deg, longitude_deg, reinterpret_cast<int32_t&>(gnss_altitude_ft),
+                    latitude_awb, longitude_awb, reinterpret_cast<int32_t&>(gnss_altitude_ft),
                     reinterpret_cast<int32_t&>(baro_altitude_ft), heading_deg, speed_kts)) {
-                rx_position.latitude_deg = latitude_deg;
-                rx_position.longitude_deg = longitude_deg;
+                rx_position.latitude_awb = latitude_awb;
+                rx_position.longitude_awb = longitude_awb;
                 rx_position.gnss_altitude_ft = gnss_altitude_ft;
                 rx_position.baro_altitude_ft = baro_altitude_ft;
                 rx_position.heading_deg = heading_deg;
@@ -390,8 +391,8 @@ void ADSBee::UpdateRxPosition() {
             // Use the position reported by the GNSS receiver, if it has a valid, fresh fix.
             if (gnss->HasValidFix()) {
                 const NMEAParser::GNSSFix& gnss_fix = gnss->fix();
-                rx_position.latitude_deg = gnss_fix.latitude_deg;
-                rx_position.longitude_deg = gnss_fix.longitude_deg;
+                rx_position.latitude_awb = gnss_fix.latitude_awb;
+                rx_position.longitude_awb = gnss_fix.longitude_awb;
                 rx_position.gnss_altitude_ft = gnss_fix.altitude_ft;
                 rx_position.heading_deg = gnss_fix.heading_deg;
                 rx_position.speed_kts = gnss_fix.speed_kts;
@@ -433,8 +434,8 @@ void ADSBee::UpdateRxPosition() {
             }
 
             if (selected_aircraft) {
-                rx_position.latitude_deg = selected_aircraft->latitude_deg;
-                rx_position.longitude_deg = selected_aircraft->longitude_deg;
+                rx_position.latitude_awb = selected_aircraft->latitude_awb;
+                rx_position.longitude_awb = selected_aircraft->longitude_awb;
                 rx_position.gnss_altitude_ft = selected_aircraft->gnss_altitude_ft;
                 rx_position.baro_altitude_ft = selected_aircraft->baro_altitude_ft;
                 rx_position.heading_deg = selected_aircraft->direction_deg;
@@ -453,7 +454,7 @@ void ADSBee::UpdateRxPosition() {
 
     // Update the aircraft dictionary's reference location.
     if (rx_position_available) {
-        aircraft_dictionary.SetReferencePosition(rx_position.latitude_deg, rx_position.longitude_deg);
+        aircraft_dictionary.SetReferencePosition(rx_position.latitude_awb, rx_position.longitude_awb);
         aircraft_dictionary.SetReferenceAltitudeFt(rx_position.FilterAltitudeFt());
     } else {
         aircraft_dictionary.ClearReferenceAltitude();

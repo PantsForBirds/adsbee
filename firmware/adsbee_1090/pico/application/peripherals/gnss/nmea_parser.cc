@@ -3,6 +3,8 @@
 #include <cstdlib>  // For strtol, strtof, atoi.
 #include <cstring>  // For strlen, strncmp.
 
+#include "geo_utils.hh"
+
 namespace {
 
 // Convert a single hex character to its nibble value, or -1 if not a hex digit.
@@ -14,27 +16,47 @@ int8_t HexCharToNibble(char c) {
 }
 
 // Parse an NMEA latitude/longitude field in ddmm.mmmm / dddmm.mmmm format plus a hemisphere
-// character ('N'/'S'/'E'/'W') into signed decimal degrees. Returns false if either field is empty.
-bool ParseLatLon(const char* coord, const char* hemi, float& out_deg) {
+// character ('N'/'S'/'E'/'W') into AWB. Returns false if either field is empty or not a coordinate.
+bool ParseLatLon(const char* coord, const char* hemi, uint32_t& out_awb) {
     if (coord == nullptr || coord[0] == '\0' || hemi == nullptr || hemi[0] == '\0') {
         return false;
     }
     // Degrees are all digits before the decimal point except the last two (which are minutes).
     const char* dot = strchr(coord, '.');
     uint16_t int_digits = dot ? static_cast<uint16_t>(dot - coord) : static_cast<uint16_t>(strlen(coord));
-    if (int_digits < 3) return false;  // Need at least dd + mm.
-    uint16_t deg_digits = int_digits - 2;
+    if (int_digits < 3 || int_digits > 5) return false;  // Need dd + mm, at most ddd + mm.
 
-    char deg_str[4] = {0};
-    if (deg_digits >= sizeof(deg_str)) return false;
-    memcpy(deg_str, coord, deg_digits);
+    // Minutes in units of 1e-7 minute, rounded on the eighth decimal.
+    constexpr int kMinuteDecimals = 7;
+    int32_t whole_minutes = 0;  // Degrees and minutes, in minutes.
+    for (uint16_t i = 0; i < int_digits; i++) {
+        if (coord[i] < '0' || coord[i] > '9') return false;
+        // The last two digits are minutes; each degree digit before them is worth 60 of its place.
+        const int32_t digit = coord[i] - '0';
+        whole_minutes = i + 2 < int_digits ? whole_minutes * 10 + digit * 60
+                                           : whole_minutes + digit * (i + 2 == int_digits ? 10 : 1);
+    }
+    int64_t fraction = 0;
+    int num_fraction_digits = 0;
+    bool round_up = false;
+    if (dot) {
+        for (const char* p = dot + 1; *p != '\0'; p++) {
+            if (*p < '0' || *p > '9') return false;
+            if (num_fraction_digits < kMinuteDecimals) {
+                fraction = fraction * 10 + (*p - '0');
+                num_fraction_digits++;
+            } else if (num_fraction_digits == kMinuteDecimals) {
+                round_up = *p >= '5';
+                num_fraction_digits++;
+            }
+        }
+    }
+    for (int i = num_fraction_digits; i < kMinuteDecimals; i++) fraction *= 10;
+    const int64_t minutes_e7 = static_cast<int64_t>(whole_minutes) * 10000000 + fraction + (round_up ? 1 : 0);
 
-    float degrees = static_cast<float>(atoi(deg_str));
-    float minutes = strtof(coord + deg_digits, nullptr);
-    float value = degrees + minutes / 60.0f;
-
-    if (hemi[0] == 'S' || hemi[0] == 'W') value = -value;
-    out_deg = value;
+    constexpr uint64_t kMinutesE7PerTurn = 360ull * 60 * 10000000;
+    const bool negative = hemi[0] == 'S' || hemi[0] == 'W';
+    out_awb = ScaledToAWB(negative ? -minutes_e7 : minutes_e7, kMinutesE7PerTurn);
     return true;
 }
 
@@ -207,10 +229,10 @@ NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t
     // An empty field means the receiver does not know the geoid; older receivers end the sentence before it.
     fix_.geoid_separation_valid = num_fields > 11 && ParseHundredths(fields[11], fix_.geoid_separation_cm);
 
-    float lat, lon;
+    uint32_t lat, lon;
     if (fix_quality > 0 && ParseLatLon(fields[2], fields[3], lat) && ParseLatLon(fields[4], fields[5], lon)) {
-        fix_.latitude_deg = lat;
-        fix_.longitude_deg = lon;
+        fix_.latitude_awb = lat;
+        fix_.longitude_awb = lon;
         fix_.valid = true;
         fix_.last_update_timestamp_ms = timestamp_ms_;
     } else if (fix_quality == 0) {
@@ -235,10 +257,10 @@ NMEAParser::SentenceType NMEAParser::ParseRMC(const char* const* fields, uint8_t
         fix_.heading_deg = strtof(fields[8], nullptr);
     }
 
-    float lat, lon;
+    uint32_t lat, lon;
     if (status_valid && ParseLatLon(fields[3], fields[4], lat) && ParseLatLon(fields[5], fields[6], lon)) {
-        fix_.latitude_deg = lat;
-        fix_.longitude_deg = lon;
+        fix_.latitude_awb = lat;
+        fix_.longitude_awb = lon;
         fix_.valid = true;
         fix_.last_update_timestamp_ms = timestamp_ms_;
     } else if (!status_valid) {

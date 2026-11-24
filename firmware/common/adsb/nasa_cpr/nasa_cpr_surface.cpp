@@ -10,11 +10,11 @@ bool NASACPRDecoder::DecodeSurfaceLocalCPR(const DecodedPosition& reference_posi
                                            DecodedPosition& decoded_position) {
     // For some reason local_dec doesn't use the struct message format field, so we need to manually tell it whether the
     // incoming packet is odd or even.
-    nasa_cpr::surface::recovered_position result = nasa_cpr::surface::local_dec(
-        message.odd, lat2awb(reference_position.lat_deg), lon2awb(reference_position.lon_deg),
-        {.format = message.odd, .yz = message.lat_cpr, .xz = message.lon_cpr});
-    decoded_position.lat_deg = awb2lat(result.lat_awb);
-    decoded_position.lon_deg = awb2lon(result.lon_awb);
+    nasa_cpr::surface::recovered_position result =
+        nasa_cpr::surface::local_dec(message.odd, reference_position.lat_awb, reference_position.lon_awb,
+                                     {.format = message.odd, .yz = message.lat_cpr, .xz = message.lon_cpr});
+    decoded_position.lat_awb = result.lat_awb;
+    decoded_position.lon_awb = result.lon_awb;
     return result.valid;
 };
 
@@ -41,8 +41,6 @@ bool NASACPRDecoder::DecodeSurfaceGlobalCPR(const CPRMessage& even_message, cons
             (translated_lon_awb32 < ref_lon_awb32) ? kQuarterAWB32Resolution : -kQuarterAWB32Resolution;
     }
 
-    decoded_position.lat_deg = awb2lat(result.lat_awb);
-    decoded_position.lon_deg = awb2lon(translated_lon_awb32);
     decoded_position.lat_awb = result.lat_awb;
     decoded_position.lon_awb = translated_lon_awb32;
 #ifdef VERBOSE_NASA_CPR_DEBUG

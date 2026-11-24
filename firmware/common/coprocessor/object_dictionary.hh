@@ -160,8 +160,8 @@ class ObjectDictionary {
         bool rx_position_available = false;
         bool gnss_enabled = false;
         bool gnss_fix_valid = false;
-        float gnss_latitude_deg = 0.0f;
-        float gnss_longitude_deg = 0.0f;
+        uint32_t gnss_latitude_awb = 0;  // AWB, see geo_utils.hh.
+        uint32_t gnss_longitude_awb = 0;
         int32_t gnss_altitude_ft = 0;  // Feet above MSL (GGA altitude).
         float gnss_heading_deg = 0.0f;
         int32_t gnss_speed_kts = 0;

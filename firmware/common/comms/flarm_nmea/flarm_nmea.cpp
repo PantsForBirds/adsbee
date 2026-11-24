@@ -25,8 +25,8 @@ bool FLARMNMEAReporter::OwnshipFromRxPosition(Ownship& own, const SettingsManage
                                               int32_t geoid_separation_cm) {
     own = {};
     if (!rx_position_available || !GDL90Reporter::IsValidOwnshipSource(rx_position.source)) return false;
-    own.lat_awb = FloatDegToAWB(rx_position.latitude_deg);
-    own.lon_awb = FloatDegToAWB(rx_position.longitude_deg);
+    own.lat_awb = rx_position.latitude_awb;
+    own.lon_awb = rx_position.longitude_awb;
     if (rx_position.source == SettingsManager::RxPosition::kPositionSourceGNSS) {
         own.msl_altitude_valid = true;
         own.msl_altitude_ft = rx_position.gnss_altitude_ft;

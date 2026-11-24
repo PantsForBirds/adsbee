@@ -1,6 +1,7 @@
 #include "aircraft_dictionary.hh"
 #include "aircraftjson_utils.hh"
 #include "asterix_utils.hh"
+#include "awb_test_utils.hh"
 #include "gtest/gtest.h"
 #include "hal_god_powers.hh"
 #include "settings.hh"
@@ -102,8 +103,8 @@ TEST_F(ContactModes, NonTransponderIsAnICAOTarget) {
     ASSERT_TRUE(aircraft);
     EXPECT_EQ(aircraft->GetUID(), Aircraft::ICAOToUID(0xADF010, Aircraft::kAircraftTypeModeS));
     ASSERT_TRUE(aircraft->HasBitFlag(ModeSAircraft::kBitFlagPositionValid));
-    EXPECT_NEAR(aircraft->latitude_deg, kRiddleLatDeg, 0.03);
-    EXPECT_NEAR(aircraft->longitude_deg, kRiddleLonDeg, 0.03);  // Depends on which frame is newest.
+    EXPECT_NEAR(AWBToDeg(aircraft->latitude_awb), kRiddleLatDeg, 0.03);
+    EXPECT_NEAR(AWBToDeg(aircraft->longitude_awb), kRiddleLonDeg, 0.03);  // Depends on which frame is newest.
     EXPECT_EQ(aircraft->GetAddressType(), ModeSAircraft::kAddressTypeADSBICAONonTransponder);
     EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::kBitFlagIsNonTransponder));
     EXPECT_EQ(JSONType(*aircraft), "adsb_icao_nt");
@@ -192,7 +193,7 @@ TEST_F(ContactModes, DirectADSBHoldsOffTISB) {
     Ingest(kTISBICAOOdd);
     Ingest(kTISBICAOVelocity);
     EXPECT_EQ(dictionary.GetNumAircraft(), 1);
-    EXPECT_NEAR(aircraft->latitude_deg, kRiddleLatDeg, 0.03);
+    EXPECT_NEAR(AWBToDeg(aircraft->latitude_awb), kRiddleLatDeg, 0.03);
     EXPECT_EQ(aircraft->speed_kts, direct_speed_kts);
     EXPECT_EQ(aircraft->GetAddressType(), ModeSAircraft::kAddressTypeADSBICAO);
     EXPECT_EQ(JSONType(*aircraft), "adsb_icao");
@@ -202,8 +203,8 @@ TEST_F(ContactModes, DirectADSBHoldsOffTISB) {
     Ingest(kTISBICAOEven, 0);
     Ingest(kTISBICAOOdd);
     Ingest(kTISBICAOVelocity);
-    EXPECT_GT(aircraft->latitude_deg, 20.0f);
-    EXPECT_LT(aircraft->longitude_deg, -60.0f);
+    EXPECT_GT(AWBToDeg(aircraft->latitude_awb), 20.0f);
+    EXPECT_LT(AWBToDeg(aircraft->longitude_awb), -60.0f);
     EXPECT_NE(aircraft->speed_kts, direct_speed_kts);
     EXPECT_EQ(aircraft->GetAddressType(), ModeSAircraft::kAddressTypeTISBICAO);
     EXPECT_TRUE(aircraft->HasBitFlag(ModeSAircraft::kBitFlagIsNonTransponder));
@@ -211,7 +212,7 @@ TEST_F(ContactModes, DirectADSBHoldsOffTISB) {
     // Direct ADS-B takes the target back at once.
     Ingest(kDirectEven, 0);
     Ingest(kDirectOdd);
-    EXPECT_NEAR(aircraft->latitude_deg, kRiddleLatDeg, 0.03);
+    EXPECT_NEAR(AWBToDeg(aircraft->latitude_awb), kRiddleLatDeg, 0.03);
     EXPECT_EQ(aircraft->GetAddressType(), ModeSAircraft::kAddressTypeADSBICAO);
     EXPECT_FALSE(aircraft->HasBitFlag(ModeSAircraft::kBitFlagIsNonTransponder));
 }

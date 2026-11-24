@@ -2,6 +2,7 @@
 #include <cstring>
 
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "fec.hh"
 #include "gtest/gtest.h"
 #include "hal_god_powers.hh"  // for faking timestamps
@@ -111,8 +112,8 @@ TEST(UATStateVector, PositionAllQuadrants) {
         f.nic = 8;
         UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
         EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagPositionValid));
-        EXPECT_NEAR(aircraft.latitude_deg, p.lat, 2 * kAWB24ResolutionDeg + 1e-5);
-        EXPECT_NEAR(aircraft.longitude_deg, p.lon, 2 * kAWB24ResolutionDeg + 1e-5);
+        EXPECT_NEAR(AWBToDeg(aircraft.latitude_awb), p.lat, 2 * kAWB24ResolutionDeg + 1e-5);
+        EXPECT_NEAR(AWBToDeg(aircraft.longitude_awb), p.lon, 2 * kAWB24ResolutionDeg + 1e-5);
     }
 }
 
@@ -129,7 +130,7 @@ TEST(UATStateVector, PositionFilterAcceptsEquatorCrossing) {
     f.latitude_awb23 = LatDegToAWB23(-0.0005);
     UATAircraft aircraft = IngestAndGet(dictionary, BuildBasicPacket(f));
     EXPECT_TRUE(aircraft.HasBitFlag(UATAircraft::kBitFlagUpdatedPosition));
-    EXPECT_NEAR(aircraft.latitude_deg, -0.0005, 2 * kAWB24ResolutionDeg);
+    EXPECT_NEAR(AWBToDeg(aircraft.latitude_awb), -0.0005, 2 * kAWB24ResolutionDeg);
 }
 
 namespace {

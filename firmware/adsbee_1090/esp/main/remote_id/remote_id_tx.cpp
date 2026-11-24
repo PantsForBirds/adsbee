@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "device_info.hh"        // GetESP32DeviceInfo (base MAC) for the default UAS ID.
+#include "geo_utils.hh"
 #include "object_dictionary.hh"  // rx_position pushed up from the RP2040.
 #include "opendroneid.h"         // Vendored Open Drone ID codec (encode path).
 #include "settings.hh"
@@ -73,8 +74,9 @@ void RemoteIDTransmitter::PopulateLocation(bool position_valid) {
 
     // A moving transmitter is declared airborne; a stationary bench transmitter is declared "on ground".
     loc.Status = (pos.speed_kts > 0) ? ODID_STATUS_AIRBORNE : ODID_STATUS_GROUND;
-    loc.Latitude = pos.latitude_deg;
-    loc.Longitude = pos.longitude_deg;
+    // The Open Drone ID encoder takes degrees and rounds them back to these 1e-7 degree integers.
+    loc.Latitude = AWBToDegE7(pos.latitude_awb) / 1e7;
+    loc.Longitude = AWBToDegE7(pos.longitude_awb) / 1e7;
     loc.AltitudeGeo = static_cast<float>(pos.gnss_altitude_ft) * kMetersPerFoot;
     loc.AltitudeBaro = static_cast<float>(pos.baro_altitude_ft) * kMetersPerFoot;
     loc.SpeedHorizontal = static_cast<float>(pos.speed_kts) * kMetersPerSecondPerKnot;
@@ -105,8 +107,8 @@ void RemoteIDTransmitter::PopulateSystem(bool position_valid) {
     system.Timestamp = 0;
 
     if (position_valid) {
-        system.OperatorLatitude = pos.latitude_deg;
-        system.OperatorLongitude = pos.longitude_deg;
+        system.OperatorLatitude = AWBToDegE7(pos.latitude_awb) / 1e7;
+        system.OperatorLongitude = AWBToDegE7(pos.longitude_awb) / 1e7;
         system.OperatorAltitudeGeo = static_cast<float>(pos.gnss_altitude_ft) * kMetersPerFoot;
     } else {
         system.OperatorLatitude = 0.0;

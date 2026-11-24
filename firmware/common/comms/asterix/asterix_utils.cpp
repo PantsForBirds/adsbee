@@ -83,6 +83,9 @@ uint32_t Signed(int32_t value, uint8_t num_bits) {
 
 int32_t RoundToInt(double value) { return static_cast<int32_t>(lround(value)); }
 
+// An AWB angle in I021/131 units (180 / 2^30 degrees), rounded half up.
+int32_t AWBToAsterixHighRes(uint32_t awb) { return (static_cast<int32_t>(awb) >> 1) + static_cast<int32_t>(awb & 1); }
+
 // Ground speed and indicated airspeed share an LSB of 2^-14 NM/s.
 uint32_t KnotsToNMPerSecond14(float kts) { return static_cast<uint32_t>(lround(kts * 16384.0 / 3600.0)); }
 
@@ -253,8 +256,8 @@ bool ASTERIXReporter::BuildCAT021Report(CAT021TargetReport& report, const ModeSA
     report.service_id = ModeSAircraft::IsRebroadcast(address_type) ? kServiceID1090ESRebroadcast : kServiceID1090ES;
 
     report.has_position = true;
-    report.latitude_deg = aircraft.latitude_deg;
-    report.longitude_deg = aircraft.longitude_deg;
+    report.latitude_awb = aircraft.latitude_awb;
+    report.longitude_awb = aircraft.longitude_awb;
     report.position_time_of_day = ctx.clock.TimeOfDay(aircraft.last_position_update_ms);
 
     if (aircraft.HasBitFlag(ModeSAircraft::kBitFlagGNSSAltitudeValid)) {
@@ -392,8 +395,8 @@ bool ASTERIXReporter::BuildCAT021Report(CAT021TargetReport& report, const UATAir
     report.service_id = rebroadcast ? kServiceIDUATRebroadcast : kServiceIDUAT;
 
     report.has_position = true;
-    report.latitude_deg = aircraft.latitude_deg;
-    report.longitude_deg = aircraft.longitude_deg;
+    report.latitude_awb = aircraft.latitude_awb;
+    report.longitude_awb = aircraft.longitude_awb;
     report.position_time_of_day = ctx.clock.TimeOfDay(aircraft.last_position_update_ms);
 
     if (aircraft.HasBitFlag(UATAircraft::kBitFlagGNSSAltitudeValid)) {
@@ -565,9 +568,9 @@ uint16_t ASTERIXReporter::WriteCAT021Record(uint8_t* buf, uint16_t buf_len, cons
     if (r.has_track_number) w.U16(r.track_number & 0x0FFF);
     if (r.has_service_id) w.U8(r.service_id);
     if (r.has_position) {
-        // LSB 180 / 2^30 degrees.
-        w.U32(static_cast<uint32_t>(RoundToInt(r.latitude_deg * 1073741824.0 / 180.0)));
-        w.U32(static_cast<uint32_t>(llround(r.longitude_deg * 1073741824.0 / 180.0)));
+        // LSB 180 / 2^30 degrees: AWB / 2, rounded.
+        w.U32(static_cast<uint32_t>(AWBToAsterixHighRes(r.latitude_awb)));
+        w.U32(static_cast<uint32_t>(AWBToAsterixHighRes(r.longitude_awb)));
     }
     if (r.has_indicated_airspeed) w.U16(KnotsToNMPerSecond14(r.indicated_airspeed_kts) & 0x7FFF);  // IM = 0: IAS.
     if (r.has_true_airspeed) {
