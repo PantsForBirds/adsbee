@@ -492,6 +492,8 @@ CPP_AT_CALLBACK(CommsManager::ATPPSLabCallback) {
             pps_lab.SetMode(PPSLab::kOff);
         } else if (args[0].compare("PWM") == 0) {
             pps_lab.SetMode(PPSLab::kPWM);
+        } else if (args[0].compare("PWM_BUSPRIO") == 0) {
+            pps_lab.SetMode(PPSLab::kPWMBusPriority);
         } else if (args[0].compare("PULSES") == 0) {
             pps_lab.SetMode(PPSLab::kPulses);
         } else if (args[0].compare("RESET") == 0) {

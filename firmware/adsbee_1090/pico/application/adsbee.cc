@@ -516,7 +516,7 @@ void __time_critical_func(ADSBee::RecordPPSEdge)(uint64_t mlat_48mhz_counts, uin
         return;
     }
     if (pps_lab_debounce_us) {
-        busy_wait_at_least_cycles(375);  // A CW burst is still high 3 us later; comparator noise isn't.
+        busy_wait_at_least_cycles(100);  // A CW burst is still high 0.8 us later (LEVEL catches up in ~2 us).
         if (!gpio_get(pps_pin_)) return;
     }
     pps_edge_jitter_counts_[num_edges % kNumPPSEdges] = jitter_counts;

@@ -5,7 +5,7 @@
 //           second core 0 switches the pin to PWM for exactly one counter wrap: the rising edge is at the wrap, so the
 //           jitter counter value OnDemodBegin() reads first is the capture delay in clk_sys cycles.
 //   PULSES: the PPS input is the comparator pulses pin (GPIO 19); a 1 Hz Waggler CW burst is the PPS (its own clock).
-//           Edges are debounced (990 ms, and still high 3 us later) in RecordPPSEdge(). Each edge is printed; RAW output gives the frame's Mode S
+//           Edges are debounced (990 ms, and still high 0.8 us later) in RecordPPSEdge(). Each edge is printed; RAW output gives the frame's Mode S
 //           stamp. A PPSClock fed with consecutive seconds gives the firmware fit's residuals.
 
 #include "adsbee.hh"
@@ -13,12 +13,13 @@
 #include <cmath>
 
 #include "hardware/pwm.h"
+#include "hardware/structs/busctrl.h"
 #include "hardware/sync.h"
 #include "pps_clock.hh"
 
 class PPSLab {
    public:
-    enum Mode : uint8_t { kOff = 0, kPWM, kPulses };
+    enum Mode : uint8_t { kOff = 0, kPWM, kPulses, kPWMBusPriority };
     static constexpr uint16_t kPWMHighCycles = 8192;  // 66 us high after the wrap.
     static constexpr uint16_t kBinCycles = 4;
     static constexpr uint16_t kNumBins = 256;  // Up to 1024 cycles (8 us); above: overflow.
@@ -30,7 +31,9 @@ class PPSLab {
         gpio_init(pps_pin);  // SIO input.
         mode_ = mode;
         Reset();
-        if (mode == kPWM) {
+        // kPWMBusPriority: as kPWM, with core 1 given priority on the bus fabric (does it remove the delay under load?).
+        busctrl_hw->priority = mode == kPWMBusPriority ? BUSCTRL_BUS_PRIORITY_PROC1_BITS : 0;
+        if (mode == kPWM || mode == kPWMBusPriority) {
             gpio_set_dir(pps_pin, GPIO_OUT);
             gpio_put(pps_pin, 0);
             pwm_set_chan_level(pwm_gpio_to_slice_num(pps_pin), pwm_gpio_to_channel(pps_pin), kPWMHighCycles);
@@ -61,7 +64,7 @@ class PPSLab {
     void Update() {
         if (mode_ == kOff) return;
         uint32_t now_us = time_us_32();
-        if (mode_ == kPWM && static_cast<int32_t>(now_us - next_pulse_us_) >= 0) {
+        if ((mode_ == kPWM || mode_ == kPWMBusPriority) && static_cast<int32_t>(now_us - next_pulse_us_) >= 0) {
             next_pulse_us_ += 1'000'000;
             EmitPWMEdge();
         }
@@ -71,7 +74,7 @@ class PPSLab {
         if (num_edges == seen_edges_) return;
         missed_ += num_edges - seen_edges_ - 1;
         seen_edges_ = num_edges;
-        if (mode_ == kPWM) {
+        if (mode_ != kPulses) {
             AddLatency(jitter_counts);
         } else {
             // Consecutive Waggler frames are a second apart (on its clock): number them by the MLAT counter.
