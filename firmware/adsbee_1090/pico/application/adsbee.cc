@@ -63,9 +63,11 @@ constexpr uint32_t kShortCaptureAlarmDelayUs = 17;  // From the mid-message inte
 constexpr int32_t kTimestampAfterDataStart48MHzCounts = 56 * 48;
 // The sampler takes its first sample one PIO cycle after the FIFO pull that latches the timestamp.
 constexpr int32_t kFirstSampleDelay48MHzCounts = 1;
-// From a PPS rising edge to the MLAT counter read in OnDemodBegin(), when no other interrupt holds it up: ~279 clk_sys
-// cycles, 247 to the jitter counter read (bench, t-1307) plus ~32 to the SysTick read (disassembly).
-constexpr int32_t kPPSCaptureDelay48MHzCounts = 107;
+// From a PPS rising edge to the MLAT counter read in OnDemodBegin(), when no other interrupt holds it up: ~275 clk_sys
+// cycles, 240-245 to the jitter counter read (bench, t-1307, with Mode S traffic) plus ~32 to the SysTick read
+// (disassembly). With no traffic for a while the delay is ~200 cycles (1.6 us) longer; PPSClock re-anchors on the
+// earlier edges once traffic is back.
+constexpr int32_t kPPSCaptureDelay48MHzCounts = 105;
 
 constexpr float kInt16MaxRecip = 1.0f / INT16_MAX;
 
