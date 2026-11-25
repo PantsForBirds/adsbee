@@ -174,6 +174,13 @@ CPP_AT_CALLBACK(CommsManager::ATBaudRateCallback) {
             }
             uint32_t baud_rate;
             CPP_AT_TRY_ARG2NUM(1, baud_rate);
+            if (iface == SettingsManager::kGNSSUART &&
+                (baud_rate < SettingsManager::Settings::kMinGNSSUARTBaudrate ||
+                 baud_rate > SettingsManager::Settings::kMaxGNSSUARTBaudrate)) {
+                CPP_AT_ERROR("GNSS_UART baud rate must be %lu-%lu.",
+                             (unsigned long)SettingsManager::Settings::kMinGNSSUARTBaudrate,
+                             (unsigned long)SettingsManager::Settings::kMaxGNSSUARTBaudrate);
+            }
             if (!SetBaudRate(iface, baud_rate)) {
                 CPP_AT_ERROR("Unable to set baud rate %d on interface %d.", baud_rate, iface);
             }
@@ -2662,8 +2669,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "BAUD_RATE",
      .min_args = 0,
      .max_args = 2,
-     .help_string = "AT+BAUD_RATE=<iface>,<baud_rate>\r\n\tSet the baud rate of a serial "
-                    "interface.\r\n\tAT+BAUD_RATE?\r\n\tQuery the baud rate of all serial interfaces.",
+     .help_string = "AT+BAUD_RATE=<iface>,<baud_rate>\r\n\tSet the baud rate of a serial interface. GNSS_UART: "
+                    "4800-921600, default 921600. A u-blox MAX-M10 is switched to it; set a GENERIC module's own rate "
+                    "(most power up at 9600).\r\n\tAT+BAUD_RATE?\r\n\tQuery the baud rate of all serial interfaces.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBaudRateCallback, comms_manager)},
     {.command = "BIAS_TEE_ENABLE",
      .min_args = 0,

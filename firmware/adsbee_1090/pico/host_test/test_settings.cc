@@ -1520,6 +1520,55 @@ TEST(SettingsMigration, V20ToCurrentKeepsEverythingAndLeavesBLEOutputOff) {
     EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v20::Settings) - 1, 20, out));
 }
 
+// GNSS UART baud on upgrade: a u-blox MAX-M10 (commanded to the setting) at 9600, the old default, moves to the new
+// default; any other stored rate, and any rate for GENERIC or NONE receivers (which must match their module), is kept.
+TEST(SettingsMigration, GNSSBaudMovesFromOldDefaultOnlyForMaxM10) {
+    struct Case {
+        SettingsManager::GNSSReceiverType type;
+        uint32_t stored, expected;
+    };
+    const uint32_t kNew = SettingsManager::Settings::kDefaultGNSSUARTBaudrate;
+    const Case cases[] = {
+        {SettingsManager::kGNSSReceiverUBXMIA, 9600, kNew},     {SettingsManager::kGNSSReceiverUBXMIA, 38400, 38400},
+        {SettingsManager::kGNSSReceiverUBXMIA, 4800, 4800},     {SettingsManager::kGNSSReceiverUBXMIA, 115200, 115200},
+        {SettingsManager::kGNSSReceiverUBXMIA, 921600, 921600}, {SettingsManager::kGNSSReceiverGeneric, 9600, 9600},
+        {SettingsManager::kGNSSReceiverGeneric, 38400, 38400},  {SettingsManager::kGNSSReceiverNone, 9600, 9600},
+    };
+    for (const Case& c : cases) {
+        for (uint32_t from : {19u, 20u}) {  // From the newest frozen version and through the older chain.
+            SCOPED_TRACE(testing::Message() << "type " << int(c.type) << " stored " << c.stored << " from v" << from);
+            static SettingsManager::Settings old_settings;
+            old_settings = SettingsManager::Settings();
+            old_settings.settings_version = from;
+            old_settings.gnss_enabled = true;
+            old_settings.gnss_receiver_type = c.type;
+            old_settings.baud_rates[SettingsManager::kCommsUART] = 57600;
+            old_settings.baud_rates[SettingsManager::kGNSSUART] = c.stored;
+            uint8_t blob[sizeof(SettingsManager::Settings)];
+            memset(blob, 0xFF, sizeof(blob));
+            memcpy(blob, &old_settings,
+                   from == 20 ? sizeof(settings_v20::Settings)
+                              : offsetof(settings_v19::Settings, swarm_token) + sizeof(settings_v19::Settings::swarm_token));
+            static SettingsManager::Settings out;
+            ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), from, out));
+            EXPECT_EQ(out.gnss_receiver_type, c.type);
+            EXPECT_EQ(out.baud_rates[SettingsManager::kGNSSUART], c.expected);
+            EXPECT_EQ(out.baud_rates[SettingsManager::kCommsUART], 57600u);
+        }
+    }
+}
+
+// New units and AT+SETTINGS=RESET start at the new GNSS baud default, inside the range AT+BAUD_RATE accepts.
+TEST(Settings, GNSSBaudDefault) {
+    SettingsManager::Settings s;
+    EXPECT_EQ(s.baud_rates[SettingsManager::kGNSSUART], SettingsManager::Settings::kDefaultGNSSUARTBaudrate);
+    EXPECT_EQ(s.baud_rates[SettingsManager::kCommsUART], SettingsManager::Settings::kDefaultCommsUARTBaudrate);
+    EXPECT_GE(SettingsManager::Settings::kDefaultGNSSUARTBaudrate, SettingsManager::Settings::kMinGNSSUARTBaudrate);
+    EXPECT_LE(SettingsManager::Settings::kDefaultGNSSUARTBaudrate, SettingsManager::Settings::kMaxGNSSUARTBaudrate);
+    EXPECT_NE(SettingsManager::Settings::kDefaultGNSSUARTBaudrate,
+              SettingsManager::Settings::kOldDefaultGNSSUARTBaudrate);
+}
+
 TEST(SettingsMigration, V18ToCurrentUsesDHCPAndV19Defaults) {
     uint8_t blob[sizeof(SettingsManager::Settings)];
     memset(blob, 0xFF, sizeof(blob));

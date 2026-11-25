@@ -93,6 +93,9 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         EXPECT_EQ(static_cast<int>(out.log_level), 3);
         EXPECT_EQ(static_cast<int>(out.reporting_protocols[1]), 2);
         EXPECT_EQ(out.baud_rates[1], 921600u);
+        // GNSS receiver type NONE: the stored GNSS baud stays (the default only moves for a u-blox MAX-M10).
+        EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverNone);
+        EXPECT_EQ(out.baud_rates[2], 9600u);
         EXPECT_TRUE(out.feeds_enabled);
         EXPECT_STREQ(out.feed_uris[1], "feed.adsb.lol");
         EXPECT_EQ(out.feed_ports[1], 30004);
@@ -108,4 +111,16 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         EXPECT_NEAR(AWBToDeg(out.rx_position.latitude_awb), -34.603722, 1e-6);
         EXPECT_NEAR(AWBToDeg(out.rx_position.longitude_awb), -158.381592, 1e-5);
     }
+}
+
+// The 0.10.0-rc1 blob with a u-blox MAX-M10 selected: its GNSS baud, 9600 (the old default), moves to the new default.
+TEST(SettingsReleaseBlobs, MaxM10At9600MovesToNewGNSSBaudDefault) {
+    static uint8_t raw[sizeof(SettingsManager::Settings)];
+    ASSERT_TRUE(ReadBlob("0.10.0-rc1", raw, sizeof(raw)));
+    raw[offsetof(SettingsManager::Settings, gnss_receiver_type)] = SettingsManager::kGNSSReceiverUBXMIA;
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(raw, sizeof(raw), 20, out));
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
+    EXPECT_EQ(out.baud_rates[2], SettingsManager::Settings::kDefaultGNSSUARTBaudrate);
+    EXPECT_EQ(out.baud_rates[1], 921600u);
 }
