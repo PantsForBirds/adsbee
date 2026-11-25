@@ -142,9 +142,6 @@ TEST(PPSClock, NoFixLateAndExtraEdges) {
     // The next second labels normally: the fit held over.
     EXPECT_EQ(Label(clock, bench, num_edges, 6), PPSClock::kLabeled);
     EXPECT_NEAR(ErrorNs(clock, bench, 6.5), 0, kEarlyNs);
-    EXPECT_EQ(clock.GetResultCount(PPSClock::kNoFix), 1u);
-    EXPECT_EQ(clock.GetResultCount(PPSClock::kLate), 1u);
-    EXPECT_EQ(clock.GetResultCount(PPSClock::kExtraEdge), 1u);
 }
 
 TEST(PPSClock, LeapSecondStartsAgain) {
@@ -183,35 +180,27 @@ TEST(PPSClock, DropsDelayedEdges) {
     // Within kMaxResidualNs an edge is used, and its residual reported.
     EXPECT_EQ(Label(clock, bench, num_edges, 8, 300), PPSClock::kLabeled);
     EXPECT_NEAR(clock.GetLastResidualNs(), 300, kEarlyNs);
-    EXPECT_EQ(clock.GetResultCount(PPSClock::kOutlier), 1u);
 }
 
-TEST(PPSClock, ReanchorsOnEarlyEdges) {
+TEST(PPSClock, StartsAgainAfterAStep) {
     Bench bench;
     PPSClock clock;
     uint32_t num_edges = 0;
-    // The fit starts while every edge is stamped 1.6 us late (the receiver had no traffic).
-    for (uint64_t s = 1; s <= 5; s++) Label(clock, bench, num_edges, s, 1600);
-    EXPECT_NEAR(ErrorNs(clock, bench, 5.5), -1600, kEarlyNs);
-    // The first edge on time moves the anchor to it; the fit stays synced. The rate takes a sixteenth of the shift
-    // (100 ns/s), which the next edges take out again.
-    EXPECT_EQ(Label(clock, bench, num_edges, 6), PPSClock::kReanchored);
-    EXPECT_TRUE(clock.IsSynced());
-    EXPECT_NEAR(ErrorNs(clock, bench, 6.5), 0, 60);
-    for (uint64_t s = 7; s <= 40; s++) EXPECT_EQ(Label(clock, bench, num_edges, s), PPSClock::kLabeled) << s;
-    EXPECT_NEAR(ErrorNs(clock, bench, 40.5), 0, kEarlyNs);
-    // Late edges are dropped again.
-    EXPECT_EQ(Label(clock, bench, num_edges, 41, 1600), PPSClock::kOutlier);
-    EXPECT_EQ(Label(clock, bench, num_edges, 42), PPSClock::kLabeled);
-    EXPECT_NEAR(ErrorNs(clock, bench, 42.5), 0, kEarlyNs);
-    // Until kMaxOutliers of them in a row: the anchor moves to the last one, and the fit stays synced.
-    uint64_t s = 43;
-    for (; s < 43 + PPSClock::kMaxOutliers - 1; s++) {
-        EXPECT_EQ(Label(clock, bench, num_edges, s, 1600), PPSClock::kOutlier);
+    for (uint64_t s = 1; s <= 5; s++) Label(clock, bench, num_edges, s);
+    // Early edges are dropped like late ones (the capture delay has one mode: an early edge means the fit is off).
+    EXPECT_EQ(Label(clock, bench, num_edges, 6, -1600), PPSClock::kOutlier);
+    EXPECT_EQ(Label(clock, bench, num_edges, 7), PPSClock::kLabeled);
+    EXPECT_NEAR(ErrorNs(clock, bench, 7.5), 0, kEarlyNs);
+    // A step of 1.6 us in the edges (the PPS or the counter moved): kMaxOutliers in a row start the fit again from
+    // the last, and it follows the new edges from then on.
+    uint64_t s = 8;
+    for (; s < 8 + PPSClock::kMaxOutliers - 1; s++) {
+        EXPECT_EQ(Label(clock, bench, num_edges, s, 1600), PPSClock::kOutlier) << s;
+        EXPECT_TRUE(clock.IsSynced());
     }
-    EXPECT_EQ(Label(clock, bench, num_edges, s, 1600), PPSClock::kReanchored);
-    EXPECT_TRUE(clock.IsSynced());
-    EXPECT_NEAR(ErrorNs(clock, bench, s + 0.5), -1600, 60);
+    EXPECT_EQ(Label(clock, bench, num_edges, s, 1600), PPSClock::kRestarted);
+    EXPECT_EQ(Label(clock, bench, num_edges, s + 1, 1600), PPSClock::kLabeled);
+    EXPECT_NEAR(ErrorNs(clock, bench, s + 1.5), -1600, kEarlyNs);
 }
 
 TEST(PPSClock, StartsAgainAfterOutliersInARow) {

@@ -9,19 +9,15 @@
  * reads as a Mode S stamp (ADSBee::OnDemodBegin()). The RMC sentence that follows an edge labels it with its UTC second
  * (the labeling and RMC date parsing follow PR #451 by Mark Paluch, which stamped the edge with time_us_64()). Each
  * labeled edge is a point. As in MLATTimeSync, the mapping is an anchor point plus the MLAT counter rate (the second
- * point gives the first rate). The PPS capture delay is one-sided (an edge is only ever stamped late), so the anchor is
- * not the raw last edge but a filtered one: each edge moves it a quarter of the way from the prediction, and the rate
- * by a sixteenth of the error (an alpha-beta filter), after late (and early) edges were dropped.
+ * point gives the first rate). The anchor is not the raw last edge but a filtered one: each edge moves it a quarter of
+ * the way from the prediction, and the rate by a sixteenth of the error (an alpha-beta filter).
  *
  * An edge is only labeled when the RMC reports a fix (status A, with a date) on a whole second, when it is the one
  * edge of the last kMinEdgeIntervalUs and when it is younger than kMaxLabelDelayUs (the RMC is assumed to arrive
  * within that of its edge). A leap second (second 60) starts the fit again. Missing edges are fine: the rate is
- * measured over the gap. Once synced, a point further than kMaxResidualNs from the prediction (a PPS edge whose
- * interrupt waited for another one) is dropped. A point up to kMaxShiftNs early instead moves the anchor to it: as the
- * delay is one-sided, the fit was anchored on late edges (the capture delay is ~1.6 us longer when the receiver has had
- * no traffic for a while), or the rate is low, so the rate takes a sixteenth of the error too. After kMaxOutliers
- * dropped points in a row the anchor moves the same way to the earliest of them if the last is within kMaxShiftNs
- * (the delay got longer), else the fit starts again from the last (a mislabeled second).
+ * measured over the gap. The capture delay has a single mode (bench, t-1336), so once synced a point further than
+ * kMaxResidualNs from the prediction (a PPS edge whose interrupt waited for another one, always late) is dropped, and
+ * kMaxOutliers dropped points in a row start the fit again from the last (a mislabeled second, a step in the clock).
  *
  * Seconds are POSIX: UTC seconds since 1970 without leap seconds. Not thread safe: core 0 only.
  */
@@ -34,7 +30,6 @@ class PPSClock {
     // Longest gap between two points of a synced fit (over dropped edges).
     static constexpr int64_t kMaxGapSeconds = 16;
     static constexpr int32_t kMaxResidualNs = 500;
-    static constexpr int32_t kMaxShiftNs = 20'000;
     static constexpr uint16_t kMaxOutliers = 8;
     static constexpr uint32_t kMaxLabelDelayUs = 900'000;
     static constexpr uint32_t kMinEdgeIntervalUs = 900'000;
@@ -57,8 +52,6 @@ class PPSClock {
         kNoEdge,       // No new edge since the last RMC (a missing edge or a second RMC).
         kLate,         // The latest edge is older than kMaxLabelDelayUs.
         kExtraEdge,    // Two edges within kMinEdgeIntervalUs: which one is the second is unknown.
-        kReanchored,   // The edge was early (the anchor moved to it), or the last of kMaxOutliers late ones.
-        kNumResults
     };
 
     // Forgets the points (the PPS stopped, GNSS was disabled).
@@ -95,14 +88,12 @@ class PPSClock {
             if (result != kOutlier) last_point_time_us_ = latest.time_us;
         }
         last_num_edges_ = num_edges;
-        last_result_ = result;
-        result_counts_[result]++;
         return result;
     }
 
     /**
      * Adds a PPS edge and its UTC second.
-     * @retval kLabeled, kRestarted, kReanchored or kOutlier.
+     * @retval kLabeled, kRestarted or kOutlier.
      */
     Result AddPoint(uint64_t mlat_48mhz_counts, uint64_t unix_seconds) {
         if (num_points_ > 0) {
@@ -137,19 +128,8 @@ class PPSClock {
                     if (num_points_ < UINT16_MAX) num_points_++;
                     return kLabeled;
                 }
-                bool shifted = error_ns >= -kMaxShiftNs && error_ns <= kMaxShiftNs;
-                if (shifted && error_ns < 0) {
-                    return Reanchor(mlat_48mhz_counts, unix_seconds, error_sub, expected_sub);
-                }
-                if (shifted && (num_outliers_ == 0 || error_ns < earliest_outlier_.error_ns)) {
-                    earliest_outlier_ = {mlat_48mhz_counts, unix_seconds, error_sub, expected_sub, error_ns};
-                }
                 if (++num_outliers_ < kMaxOutliers) return kOutlier;
-                if (shifted) {
-                    const Outlier& o = earliest_outlier_;
-                    return Reanchor(o.mlat_48mhz_counts, o.unix_seconds, o.error_sub, o.expected_sub);
-                }
-                agrees = false;  // A mislabeled second, a second or more from the prediction.
+                agrees = false;  // kMaxOutliers in a row: start again from this one.
             } else if (agrees) {
                 int64_t rate_error_ppb = (mlat_ticks - expected_mlat_ticks) * 1'000'000'000 / expected_mlat_ticks;
                 agrees = rate_error_ppb <= kMaxRateErrorPPB && rate_error_ppb >= -kMaxRateErrorPPB;
@@ -216,31 +196,8 @@ class PPSClock {
     // Distance of the last point from the prediction, and the RMS over about the last 16 points.
     int32_t GetLastResidualNs() const { return last_residual_ns_; }
     int64_t GetMeanSquareResidualNs2() const { return mean_square_residual_ns2_; }
-    Result GetLastResult() const { return last_result_; }
-    uint32_t GetResultCount(Result result) const { return result < kNumResults ? result_counts_[result] : 0; }
 
    private:
-    // Moves the anchor to a point error_sub (sub-counts) from the prediction over expected_sub, keeping the fit.
-    Result Reanchor(uint64_t mlat_48mhz_counts, uint64_t unix_seconds, int64_t error_sub, int64_t expected_sub) {
-        mlat_48mhz_counts_ = mlat_48mhz_counts;
-        anchor_sub_counts_ = 0;
-        rate_error_ppb_ += error_sub * 1'000'000'000 / expected_sub / kRateGainDivisor;  // In case it's the rate.
-        unix_seconds_ = unix_seconds;
-        mean_square_residual_ns2_ = 0;
-        num_outliers_ = 0;
-        return kReanchored;
-    }
-
-    // The earliest point of the current run of outliers within kMaxShiftNs.
-    struct Outlier {
-        uint64_t mlat_48mhz_counts;
-        uint64_t unix_seconds;
-        int64_t error_sub;
-        int64_t expected_sub;
-        int64_t error_ns;
-    };
-    Outlier earliest_outlier_ = {};
-
     uint16_t num_points_ = 0;  // Since the fit started.
     uint16_t num_outliers_ = 0;  // In a row.
     // Anchor: MLAT count of the PPS edge of unix_seconds_, plus anchor_sub_counts_ / kAnchorSubCounts.
@@ -252,6 +209,4 @@ class PPSClock {
     int64_t mean_square_residual_ns2_ = 0;
     uint32_t last_point_time_us_ = 0;
     uint32_t last_num_edges_ = 0;
-    Result last_result_ = kNoEdge;
-    uint32_t result_counts_[kNumResults] = {};
 };
