@@ -5,6 +5,7 @@
 #include "adsbee.hh"
 #include "comms.hh"
 #include "pps_lab.hh"  // t-1307 LAB.
+#include "t1339_diag.hh"  // t-1339 LAB.
 #include "core1.hh"  // Functions for runningon core1.
 #include "cpu_utils.hh"
 #include "eeprom.hh"
@@ -67,6 +68,7 @@ static constexpr bool kEnable1090ErrorCorrection = true;
 ModeSPacketDecoder decoder = ModeSPacketDecoder({.enable_1090_error_correction = kEnable1090ErrorCorrection});
 
 int main() {
+    T1339SaveBoot();  // t-1339 LAB: keep the record of the boot before.
     RAMMonitor::PaintCore0Stack();
     bi_decl(bi_program_description("ADSBee 1090 ADSB Receiver"));
     adsbee.aircraft_dictionary.SetAddressParityCorrection(kEnable1090ErrorCorrection);

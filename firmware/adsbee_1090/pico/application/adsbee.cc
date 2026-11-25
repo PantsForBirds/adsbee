@@ -75,7 +75,20 @@ ADSBee* isr_access = nullptr;
 
 // t-1339 LAB: core 1 state sampler (see t1339_diag.hh).
 #include "t1339_diag.hh"
-T1339Diag t1339_diag = {};
+// In uninitialized RAM: a watchdog reboot keeps the record of the boot before (copied by T1339SaveBoot()).
+T1339Diag t1339_diag __attribute__((section(".uninitialized_data.t1339_diag")));
+T1339Diag t1339_prev;
+uint32_t t1339_prev_wd_reason, t1339_prev_chip_reset, t1339_prev_scratch[4];
+#include "hardware/structs/watchdog.h"
+#include "hardware/structs/vreg_and_chip_reset.h"
+#include <string.h>
+void T1339SaveBoot() {
+    memcpy(&t1339_prev, (const void*)&t1339_diag, sizeof(t1339_diag));
+    memset((void*)&t1339_diag, 0, sizeof(t1339_diag));
+    t1339_prev_wd_reason = watchdog_hw->reason;
+    t1339_prev_chip_reset = vreg_and_chip_reset_hw->chip_reset;
+    for (int i = 0; i < 4; i++) t1339_prev_scratch[i] = watchdog_hw->scratch[i];
+}
 extern "C" void __attribute__((naked, section(".time_critical.t1339_systick_entry"))) t1339_systick_entry() {
     asm volatile(
         "mrs r0, msp\n"
@@ -119,6 +132,10 @@ extern "C" void __attribute__((used, section(".time_critical.t1339_hardfault_c")
     t1339_diag.hf_pc = frame[6];
     t1339_diag.hf_xpsr = frame[7];
     t1339_diag.hf_sp = reinterpret_cast<uint32_t>(frame);
+    watchdog_hw->scratch[0] = 0x13390000u | sio_hw->cpuid;
+    watchdog_hw->scratch[1] = frame[6];
+    watchdog_hw->scratch[2] = frame[5];
+    watchdog_hw->scratch[3] = frame[7];
     while (true) t1339_diag.hf_count++;
 }
 

@@ -235,6 +235,25 @@ class PPSLab {
             if (bins_[i]) CONSOLE_PRINTF("%u:%lu ", i * kBinCycles, static_cast<unsigned long>(bins_[i]));
         }
         CONSOLE_PRINTF("\r\n");
+        {
+            const T1339Diag& d = t1339_prev;
+            CONSOLE_PRINTF("T1339_PREV=wd_reason=%lx,chip_reset=%08lx,scratch=%08lx %08lx %08lx %08lx,loop=%lu,ticks=%lu,pc=%08lx,lr=%08lx,xpsr=%08lx,icsr=%08lx,ispr=%08lx,gpio_in=%lu,gpio_out=%lu,hf=%lu/%lu/pc %08lx/lr %08lx/xpsr %08lx/sp %08lx r0-3 %08lx %08lx %08lx %08lx r12 %08lx\r\n",
+                           (unsigned long)t1339_prev_wd_reason, (unsigned long)t1339_prev_chip_reset,
+                           (unsigned long)t1339_prev_scratch[0], (unsigned long)t1339_prev_scratch[1],
+                           (unsigned long)t1339_prev_scratch[2], (unsigned long)t1339_prev_scratch[3],
+                           (unsigned long)d.loop, (unsigned long)d.ticks, (unsigned long)d.pc, (unsigned long)d.lr,
+                           (unsigned long)d.xpsr, (unsigned long)d.icsr, (unsigned long)d.ispr,
+                           (unsigned long)d.gpio_isr_enter, (unsigned long)d.gpio_isr_exit, (unsigned long)d.hf_count,
+                           (unsigned long)d.hf_core, (unsigned long)d.hf_pc, (unsigned long)d.hf_lr,
+                           (unsigned long)d.hf_xpsr, (unsigned long)d.hf_sp, (unsigned long)d.hf_r0, (unsigned long)d.hf_r1,
+                           (unsigned long)d.hf_r2, (unsigned long)d.hf_r3, (unsigned long)d.hf_r12);
+            CONSOLE_PRINTF("T1339_PREV_PCS=");
+            for (int i = 0; i < 16; i++) CONSOLE_PRINTF("%08lx ", (unsigned long)d.pc_ring[(d.ticks + i) % 16]);
+            CONSOLE_PRINTF(" IPSR:");
+            for (int i = 0; i < 48; i++)
+                if (d.ipsr_hist[i]) CONSOLE_PRINTF("%d:%lu ", i, (unsigned long)d.ipsr_hist[i]);
+            CONSOLE_PRINTF("\r\n");
+        }
         if (mode_ != kAsync) return;
         {
             T1339Snap now;

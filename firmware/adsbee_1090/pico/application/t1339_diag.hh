@@ -25,3 +25,6 @@ extern "C" void t1339_systick_c(uint32_t* frame);
 extern "C" void t1339_hardfault_c(uint32_t* frame);
 extern "C" void t1339_systick_entry();
 extern "C" void t1339_hardfault_entry();
+extern T1339Diag t1339_prev;
+extern uint32_t t1339_prev_wd_reason, t1339_prev_chip_reset, t1339_prev_scratch[4];
+void T1339SaveBoot();
