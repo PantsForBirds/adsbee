@@ -23,9 +23,7 @@ __attribute__((always_inline)) inline uint32_t DetailCheck(const Detail& d) {
 }
 Detail detail __attribute__((section(".uninitialized_data.hard_fault_detail")));
 
-// The handler's own stack, one per core: the faulting code's stack may be the problem.
 constexpr uint32_t kStackWords = 32;
-uint32_t __attribute__((used)) handler_stacks[2][kStackWords];
 
 // Hardware spin lock that keeps two cores faulting at once from interleaving their records. -1 until Init().
 volatile int8_t lock_num = -1;
@@ -42,6 +40,11 @@ __attribute__((always_inline)) inline void WriteScratch(const uint32_t words[Fau
 }
 
 }  // namespace
+
+// The handler's own stack, one per core: the faulting code's stack may be the problem. (Named for isr_hardfault.)
+extern "C" {
+uint32_t __attribute__((used)) hard_fault_handler_stacks[2][kStackWords];
+}
 
 // Called by isr_hardfault on the handler stack: msp and psp as they were at the fault, EXC_RETURN, the core number.
 extern "C" void __attribute__((noreturn, used, noinline, section(".time_critical.hard_fault_record")))
@@ -96,12 +99,13 @@ hard_fault_record(uint32_t msp, uint32_t psp, uint32_t exc_return, uint32_t core
 // Replaces the SDK's weak isr_hardfault (a bkpt). Switches to this core's handler stack before any C code runs.
 extern "C" void __attribute__((naked, used, section(".time_critical.isr_hardfault"))) isr_hardfault() {
     __asm volatile(
+        ".syntax unified\n"
         "mrs r0, msp\n"
         "mrs r1, psp\n"
         "mov r2, lr\n"            // EXC_RETURN
         "ldr r3, =0xd0000000\n"   // SIO CPUID
         "ldr r3, [r3]\n"
-        "ldr r4, =handler_stacks\n"
+        "ldr r4, =hard_fault_handler_stacks\n"
         "lsls r5, r3, #7\n"       // 128 bytes (kStackWords words) per core
         "adds r4, r4, r5\n"
         "adds r4, #128\n"
