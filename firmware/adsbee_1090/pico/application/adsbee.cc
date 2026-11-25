@@ -73,10 +73,58 @@ constexpr float kInt16MaxRecip = 1.0f / INT16_MAX;
 
 ADSBee* isr_access = nullptr;
 
+// t-1339 LAB: core 1 state sampler (see t1339_diag.hh).
+#include "t1339_diag.hh"
+T1339Diag t1339_diag = {};
+extern "C" void __attribute__((naked, section(".time_critical.t1339_systick_entry"))) t1339_systick_entry() {
+    asm volatile(
+        "mrs r0, msp\n"
+        "ldr r1, =t1339_systick_c\n"
+        "bx r1\n"
+        ".ltorg\n");
+}
+extern "C" void __attribute__((naked, section(".time_critical.t1339_hardfault_entry"))) t1339_hardfault_entry() {
+    asm volatile(
+        "mrs r0, msp\n"
+        "ldr r1, =t1339_hardfault_c\n"
+        "bx r1\n"
+        ".ltorg\n");
+}
+extern "C" void __attribute__((used, section(".time_critical.t1339_systick_c"))) t1339_systick_c(uint32_t* frame) {
+    if (sio_hw->cpuid == 1) {
+        uint32_t n = t1339_diag.ticks;
+        t1339_diag.pc = frame[6];
+        t1339_diag.lr = frame[5];
+        t1339_diag.xpsr = frame[7];
+        t1339_diag.icsr = scb_hw->icsr;
+        t1339_diag.iser = nvic_hw->iser;
+        t1339_diag.ispr = nvic_hw->ispr;
+        uint32_t ipsr = frame[7] & 0x3F;
+        if (ipsr < 48) t1339_diag.ipsr_hist[ipsr]++;
+        t1339_diag.pc_ring[n % 16] = frame[6];
+        t1339_diag.ticks = n + 1;
+    }
+    isr_access->OnSysTickWrap();
+}
+extern "C" void __attribute__((used, section(".time_critical.t1339_hardfault_c"))) t1339_hardfault_c(uint32_t* frame) {
+    t1339_diag.hf_core = sio_hw->cpuid;
+    t1339_diag.hf_r0 = frame[0];
+    t1339_diag.hf_r1 = frame[1];
+    t1339_diag.hf_r2 = frame[2];
+    t1339_diag.hf_r3 = frame[3];
+    t1339_diag.hf_r12 = frame[4];
+    t1339_diag.hf_lr = frame[5];
+    t1339_diag.hf_pc = frame[6];
+    t1339_diag.hf_xpsr = frame[7];
+    t1339_diag.hf_sp = reinterpret_cast<uint32_t>(frame);
+    while (true) t1339_diag.hf_count++;
+}
+
 /** Begin pass-through functions for public access **/
 void __time_critical_func(on_systick_exception)() { isr_access->OnSysTickWrap(); }
 
 void __time_critical_func(on_demod_pin_change)(uint gpio, uint32_t event_mask) {
+    t1339_diag.gpio_isr_enter++;  // t-1339 LAB.
     switch (event_mask) {
         case GPIO_IRQ_EDGE_RISE:
             isr_access->OnDemodBegin(gpio);
@@ -87,6 +135,7 @@ void __time_critical_func(on_demod_pin_change)(uint gpio, uint32_t event_mask) {
             break;
     }
     gpio_acknowledge_irq(gpio, event_mask);
+    t1339_diag.gpio_isr_exit++;  // t-1339 LAB.
 }
 
 void __time_critical_func(on_demod_mid)() { isr_access->OnDemodMid(); }
@@ -932,7 +981,8 @@ void ADSBee::MLATCounterInit() {
     systick_hw->rvr = 0xFFFFFF;  // Use the full 24 bit span of the timer value register.
     // 0xFFFFFF = 16777215 counts @ 125MHz = approx. 0.134 seconds.
     // Call the OnSysTickWrap function every time the SysTick timer hits 0.
-    exception_set_exclusive_handler(SYSTICK_EXCEPTION, on_systick_exception);
+    exception_set_exclusive_handler(SYSTICK_EXCEPTION, t1339_systick_entry);  // t-1339 LAB (calls OnSysTickWrap()).
+    exception_set_exclusive_handler(HARDFAULT_EXCEPTION, t1339_hardfault_entry);  // t-1339 LAB.
     // Let the games begin!
     systick_hw->csr |= 0b1;  // Enable the counter.
     // Set the priority of the Systick exception to kMLATCounterWrapInterruptPriority.

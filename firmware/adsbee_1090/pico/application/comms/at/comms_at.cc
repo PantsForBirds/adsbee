@@ -485,6 +485,11 @@ CPP_AT_CALLBACK(CommsManager::ATPPSLabCallback) {
         } else if (args[0].compare("PULSES") == 0) {
             pps_lab.SetMode(PPSLab::kPulses);
         } else if (args[0].compare("ASYNC") == 0) {
+            pps_lab.SetLoadOnly(PPSLab::kNumLoads);
+            pps_lab.SetMode(PPSLab::kAsync);
+        } else if (args[0].size() == 6 && args[0].compare(0, 5, "ASYNC") == 0 && args[0][5] >= '0' &&
+                   args[0][5] < '0' + PPSLab::kNumLoads) {
+            pps_lab.SetLoadOnly(args[0][5] - '0');  // t-1339: 0 none, 1 flash, 2 warm, 3 flush.
             pps_lab.SetMode(PPSLab::kAsync);
         } else if (args[0].compare("RESET") == 0) {
             pps_lab.Reset();

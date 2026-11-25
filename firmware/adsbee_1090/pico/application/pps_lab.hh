@@ -26,6 +26,75 @@
 #include "hardware/structs/busctrl.h"
 #include "hardware/sync.h"
 #include "pps_clock.hh"
+#include "t1339_diag.hh"  // t-1339 LAB.
+#include "hardware/structs/iobank0.h"
+#include "hardware/structs/pio.h"
+#include "hardware/structs/dma.h"
+
+// t-1339 LAB: core 0's view of the GPIO/PIO/DMA state plus core 1's sampled state.
+struct T1339Snap {
+    uint32_t t_us, pps_edges, arms, load_ring;
+    uint32_t intr[4], p1_inte[4], p1_ints[4], p0_inte[4], p0_ints[4], io2_ctrl, io2_status;
+    uint32_t pio0_irq, pio0_inte0, pio0_intr, pio_pc[8], dma_ints1, dma_inte1, dma_busy;
+    T1339Diag d;
+    void Take(uint32_t edges, uint32_t a, uint32_t lr) {
+        t_us = time_us_32();
+        pps_edges = edges;
+        arms = a;
+        load_ring = lr;
+        for (int i = 0; i < 4; i++) {
+            intr[i] = io_bank0_hw->intr[i];
+            p1_inte[i] = io_bank0_hw->proc1_irq_ctrl.inte[i];
+            p1_ints[i] = io_bank0_hw->proc1_irq_ctrl.ints[i];
+            p0_inte[i] = io_bank0_hw->proc0_irq_ctrl.inte[i];
+            p0_ints[i] = io_bank0_hw->proc0_irq_ctrl.ints[i];
+        }
+        io2_ctrl = io_bank0_hw->io[2].ctrl;
+        io2_status = io_bank0_hw->io[2].status;
+        pio0_irq = pio0_hw->irq;
+        pio0_inte0 = pio0_hw->inte0;
+        pio0_intr = pio0_hw->intr;
+        for (int i = 0; i < 4; i++) {
+            pio_pc[i] = pio0_hw->sm[i].addr;
+            pio_pc[4 + i] = pio1_hw->sm[i].addr;
+        }
+        dma_ints1 = dma_hw->ints1;
+        dma_inte1 = dma_hw->inte1;
+        dma_busy = 0;
+        for (int c = 0; c < 12; c++)
+            if (dma_hw->ch[c].ctrl_trig & DMA_CH0_CTRL_TRIG_BUSY_BITS) dma_busy |= 1u << c;
+        const volatile uint32_t* src = reinterpret_cast<const volatile uint32_t*>(&t1339_diag);
+        volatile uint32_t* dst = reinterpret_cast<volatile uint32_t*>(&d);
+        for (uint32_t i = 0; i < sizeof(T1339Diag) / 4; i++) dst[i] = src[i];
+    }
+    void Print(const char* tag) const {
+        CONSOLE_PRINTF("T1339_%s=t_us=%lu,edges=%lu,arms=%lu,loads=%08lx,loop=%lu,primask=%lu,ticks=%lu,pc=%08lx,lr=%08lx,xpsr=%08lx,icsr=%08lx,iser=%08lx,ispr=%08lx,gpio_in=%lu,gpio_out=%lu,hf=%lu/%lu/%08lx/%08lx/%08lx\r\n",
+                       tag, (unsigned long)t_us, (unsigned long)pps_edges, (unsigned long)arms, (unsigned long)load_ring,
+                       (unsigned long)d.loop, (unsigned long)d.loop_primask, (unsigned long)d.ticks, (unsigned long)d.pc,
+                       (unsigned long)d.lr, (unsigned long)d.xpsr, (unsigned long)d.icsr, (unsigned long)d.iser,
+                       (unsigned long)d.ispr, (unsigned long)d.gpio_isr_enter, (unsigned long)d.gpio_isr_exit,
+                       (unsigned long)d.hf_count, (unsigned long)d.hf_core, (unsigned long)d.hf_pc, (unsigned long)d.hf_lr,
+                       (unsigned long)d.hf_xpsr);
+        CONSOLE_PRINTF("T1339_%s_IO=intr=%08lx %08lx %08lx %08lx,p1_inte=%08lx %08lx %08lx %08lx,p1_ints=%08lx %08lx %08lx %08lx,p0_inte=%08lx %08lx %08lx %08lx,p0_ints=%08lx %08lx %08lx %08lx,io2=%08lx/%08lx\r\n",
+                       tag, (unsigned long)intr[0], (unsigned long)intr[1], (unsigned long)intr[2], (unsigned long)intr[3],
+                       (unsigned long)p1_inte[0], (unsigned long)p1_inte[1], (unsigned long)p1_inte[2], (unsigned long)p1_inte[3],
+                       (unsigned long)p1_ints[0], (unsigned long)p1_ints[1], (unsigned long)p1_ints[2], (unsigned long)p1_ints[3],
+                       (unsigned long)p0_inte[0], (unsigned long)p0_inte[1], (unsigned long)p0_inte[2], (unsigned long)p0_inte[3],
+                       (unsigned long)p0_ints[0], (unsigned long)p0_ints[1], (unsigned long)p0_ints[2], (unsigned long)p0_ints[3],
+                       (unsigned long)io2_ctrl, (unsigned long)io2_status);
+        CONSOLE_PRINTF("T1339_%s_PIO=pio0_irq=%02lx,inte0=%03lx,intr=%03lx,pc=%lu %lu %lu %lu|%lu %lu %lu %lu,dma_ints1=%03lx,inte1=%03lx,busy=%03lx\r\n",
+                       tag, (unsigned long)pio0_irq, (unsigned long)pio0_inte0, (unsigned long)pio0_intr,
+                       (unsigned long)pio_pc[0], (unsigned long)pio_pc[1], (unsigned long)pio_pc[2], (unsigned long)pio_pc[3],
+                       (unsigned long)pio_pc[4], (unsigned long)pio_pc[5], (unsigned long)pio_pc[6], (unsigned long)pio_pc[7],
+                       (unsigned long)dma_ints1, (unsigned long)dma_inte1, (unsigned long)dma_busy);
+        CONSOLE_PRINTF("T1339_%s_PCS=", tag);
+        for (int i = 0; i < 16; i++) CONSOLE_PRINTF("%08lx ", (unsigned long)d.pc_ring[i]);
+        CONSOLE_PRINTF(" IPSR:");
+        for (int i = 0; i < 48; i++)
+            if (d.ipsr_hist[i]) CONSOLE_PRINTF("%d:%lu ", i, (unsigned long)d.ipsr_hist[i]);
+        CONSOLE_PRINTF("\r\n");
+    }
+};
 
 class PPSLab {
    public:
@@ -35,6 +104,7 @@ class PPSLab {
     static constexpr uint16_t kBinCycles = 4;
     static constexpr uint16_t kNumBins = 256;  // Up to 1024 cycles (8 us); above: overflow.
 
+    void SetLoadOnly(uint8_t l) { load_only_ = static_cast<Load>(l); }
     void SetMode(Mode mode) {
         uint16_t pps_pin = bsp.gnss_pps_pin;
         adsbee.SetPPSPin(UINT16_MAX);
@@ -100,7 +170,15 @@ class PPSLab {
         PPSClock::Edge latest, previous;
         uint16_t jitter_counts = 0;
         uint32_t num_edges = adsbee.GetPPSEdges(latest, previous, &jitter_counts);
+        if (mode_ == kAsync && num_edges == seen_edges_ && !t1339_latched_ && seen_edges_ > 0 &&
+            now_us - t1339_last_edge_us_ > 3'000'000) {
+            t1339_snap_[0].Take(num_edges, t1339_arms_, t1339_load_ring_);  // t-1339: edges stopped.
+            busy_wait_us(10'000);
+            t1339_snap_[1].Take(num_edges, t1339_arms_, t1339_load_ring_);
+            t1339_latched_ = true;
+        }
         if (num_edges == seen_edges_) return;
+        t1339_last_edge_us_ = now_us;
         missed_ += num_edges - seen_edges_ - 1;
         seen_edges_ = num_edges;
         if (mode_ == kAsync) {
@@ -158,6 +236,15 @@ class PPSLab {
         }
         CONSOLE_PRINTF("\r\n");
         if (mode_ != kAsync) return;
+        {
+            T1339Snap now;
+            now.Take(seen_edges_, t1339_arms_, t1339_load_ring_);
+            now.Print("NOW");
+            if (t1339_latched_) {
+                t1339_snap_[0].Print("HANG0");
+                t1339_snap_[1].Print("HANG1");
+            }
+        }
         static const char* kLoadNames[kNumLoads] = {"none", "flash", "warm", "flush"};
         CONSOLE_PRINTF("PPS_LAB_ASYNC=not_armed=%lu,extra_edges=%lu,lead_cycles=%u-%u\r\n",
                        static_cast<unsigned long>(not_armed_), static_cast<unsigned long>(extra_edges_),
@@ -218,7 +305,7 @@ class PPSLab {
         uint slice = pwm_gpio_to_slice_num(pin);
         uint32_t c = pwm_hw->slice[slice].ctr;
         if (c < kPWMHighCycles + 1024 || c > 0xFFFF - kPWMHighCycles) return;  // Not 66-460 us before a wrap: later.
-        load_ = static_cast<Load>(Random() % kNumLoads);
+        load_ = load_only_ < kNumLoads ? load_only_ : static_cast<Load>(Random() % kNumLoads);  // t-1339: ASYNCn.
         uint32_t lead = 0x10000 - c;  // Cycles from now to the edge (at 125 MHz).
         if (load_ == kLoadWarm) {
             // The handler's flash lines (vector of IO_IRQ_BANK0) through the cached XIP alias.
@@ -241,6 +328,8 @@ class PPSLab {
         hardware_alarm_set_target(alarm_num_, from_us_since_boot(time_us_64() + lead / 125 + 250));
         armed_us_ = now_us;
         edge_pending_ = true;
+        t1339_arms_++;
+        t1339_load_ring_ = (t1339_load_ring_ << 4) | load_;
         if (lead < min_lead_) min_lead_ = lead;
         if (lead > max_lead_) max_lead_ = lead;
         next_pulse_us_ = now_us + 1'000'000 + Random() % 1000;
@@ -269,6 +358,10 @@ class PPSLab {
         }
     }
 
+    T1339Snap t1339_snap_[2] = {};
+    bool t1339_latched_ = false;
+    uint32_t t1339_last_edge_us_ = 0, t1339_arms_ = 0, t1339_load_ring_ = 0;
+    Load load_only_ = kNumLoads;  // t-1339: AT+PPS_LAB=ASYNC<n> uses only load n.
     Mode mode_ = kOff;
     Load load_ = kLoadNone;
     int alarm_num_ = -1;

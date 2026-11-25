@@ -5,6 +5,12 @@
 #include "mode_s_packet_decoder.hh"
 #include "pico/multicore.h"
 #include "ram_monitor.hh"
+#include "t1339_diag.hh"  // t-1339 LAB.
+static inline uint32_t __get_primask_t1339() {
+    uint32_t r;
+    asm volatile("mrs %0, primask" : "=r"(r));
+    return r;
+}
 
 extern CPUMonitor core_1_monitor;
 
@@ -22,6 +28,8 @@ inline void __not_in_flash_func(main_core1)() {
     core_1_monitor.TimeInterrupts();
 
     while (true) {
+        t1339_diag.loop++;                         // t-1339 LAB.
+        t1339_diag.loop_primask = __get_primask_t1339();  // t-1339 LAB.
         core_1_monitor.BeginWork();  // Counted only if the pass demodulated or decoded something.
 #ifdef ISRS_ON_CORE1
         // Core 0 may try to toggle the 1090 receiver on and off. Keep an eye on it and turn it on and off here, since
