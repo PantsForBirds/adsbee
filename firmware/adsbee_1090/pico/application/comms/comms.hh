@@ -219,9 +219,8 @@ class CommsManager {
                 return true;
                 break;
             case SettingsManager::kGNSSUART:
-                // Persist the requested baudrate, then let the GNSS receiver program the hardware: a receiver we
-                // configure runs its own link rate (UbloxMAXM10 runs 115200 while this setting is at its default),
-                // the others run this setting. Protocol output on the GNSS UART shares that rate.
+                // Persist the requested baudrate, then let the GNSS receiver program the hardware (UbloxMAXM10 also
+                // commands its module to it). Protocol output on the GNSS UART shares that rate.
                 settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART] = baudrate;
                 ApplyGNSSUARTBaudRate();
                 return true;

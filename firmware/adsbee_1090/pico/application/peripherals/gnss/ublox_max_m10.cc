@@ -157,19 +157,14 @@ bool UbloxMAXM10::WaitForAck(uint8_t acked_class, uint8_t acked_id) {
 
 bool UbloxMAXM10::Init() {
     // Expect the module where we last commanded it; ProbeLiveness() falls back to the other candidates.
-    link_baudrate_ = OperatingBaudrate();
+    link_baudrate_ = BaudRateSetting();
     UpdateLabelDelay();
     return GNSSReceiver::Init();
 }
 
-uint32_t UbloxMAXM10::OperatingBaudrate() {
-    uint32_t setting = settings_manager.settings.baud_rates[SettingsManager::kGNSSUART];
-    return setting == SettingsManager::Settings::kDefaultGNSSUARTBaudrate ? kOperatingBaudrate : setting;
-}
-
 void UbloxMAXM10::ApplyBaudRateSetting() {
     if (suspended_) return;  // uart0 belongs to the ESP32 flasher; ClaimUart() programs it on resume.
-    uint32_t target = OperatingBaudrate();
+    uint32_t target = BaudRateSetting();
     if (target == link_baudrate_) {
         uart_set_baudrate(config_.uart_handle, link_baudrate_);
         return;
@@ -193,14 +188,13 @@ void UbloxMAXM10::SetLinkBaudrate(uint32_t baudrate) {
 }
 
 void UbloxMAXM10::UpdateLabelDelay() {
-    pps_clock_.set_max_label_delay_us(link_baudrate_ >= kOperatingBaudrate ? kFastLinkMaxLabelDelayUs
-                                                                           : PPSClock::kMaxLabelDelayUs);
+    pps_clock_.set_max_label_delay_us(link_baudrate_ >= kFastLinkMinBaudrate ? kFastLinkMaxLabelDelayUs
+                                                                             : PPSClock::kMaxLabelDelayUs);
 }
 
 uint16_t UbloxMAXM10::ProbeBaudrates(uint32_t (&rates)[kMaxProbeBaudrates]) const {
-    const uint32_t candidates[kMaxProbeBaudrates] = {link_baudrate_, OperatingBaudrate(),
-                                                     settings_manager.settings.baud_rates[SettingsManager::kGNSSUART],
-                                                     kPowerUpBaudrate, kInterfaceDescriptionDefaultBaudrate};
+    const uint32_t candidates[kMaxProbeBaudrates] = {link_baudrate_, BaudRateSetting(), kPowerUpBaudrate,
+                                                     kInterfaceDescriptionDefaultBaudrate};
     uint16_t n = 0;
     for (uint32_t candidate : candidates) {
         bool seen = candidate == 0;
@@ -381,13 +375,13 @@ bool UbloxMAXM10::SendInitCommands() {
         return false;
     }
 
-    // Raise the link to OperatingBaudrate() (115200 by default) before the config pass: ~370 VALGET
+    // Move the link to the GNSS baud setting before the config pass: ~370 VALGET
     // round trips of ~33 B on the wire (16 B poll + 17-24 B reply) are ~13 s at 9600, more than
     // kInitConfigBudgetMs, and ~1.1 s at 115200 (plus the module's reply time). CFG-UART1-BAUDRATE is excluded
     // from kUbloxConfigDefaults (see WARM-START PRESERVE note there) so the sync doesn't fight it. On a
-    // warm start the module already answered at the operating rate and nothing is sent: even a
+    // warm start the module already answered at the setting and nothing is sent: even a
     // same-value VALSET on this key can make the module briefly reset/re-latch its UART.
-    if (link_baudrate_ != OperatingBaudrate() && !SwitchModuleBaudrate(OperatingBaudrate())) {
+    if (link_baudrate_ != BaudRateSetting() && !SwitchModuleBaudrate(BaudRateSetting())) {
         return false;
     }
 

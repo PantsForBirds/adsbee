@@ -15,25 +15,24 @@
  */
 class UbloxMAXM10 : public GNSSReceiver {
    public:
-    // The rate we run the module's UART1 at (t-1340). At 9600 baud our output (GGA + RMC + GST + the TEMPORARY
-    // UBX-MON-RF/NAV-SAT debug output, 235 + 16 + 12 n B per epoch) exceeds the line above ~62 satellites and backs up by
-    // whole seconds, so RMCs label later PPS edges (t-1336). At 115200 (11520 B/s) 120 satellites (1691 B) take 147 ms.
-    static constexpr uint32_t kOperatingBaudrate = 115200;
-    // Rates a module may be at before we command it, probed after the link rate: the MAX-M10S power-up default (9600,
-    // what every module we've configured so far ran at) and the M10 SPG 5.10 interface description's
-    // CFG-UART1-BAUDRATE default (38400). A module keeps a commanded rate in RAM while powered and in BBR while V_BCKP
-    // holds, so after a reboot it is usually already at kOperatingBaudrate (warm start).
+    // Rates a module may be at before we command it, probed after the link rate and the GNSS baud setting: the
+    // MAX-M10S power-up default (9600) and the M10 SPG 5.10 interface description's CFG-UART1-BAUDRATE default
+    // (38400). A module keeps a commanded rate in RAM while powered and in BBR while V_BCKP holds, so after a reboot it
+    // is usually already at the setting (warm start).
     static constexpr uint32_t kPowerUpBaudrate = 9600;
     static constexpr uint32_t kInterfaceDescriptionDefaultBaudrate = 38400;
     // After a CFG-UART1-BAUDRATE VALSET: time for the module to switch before we probe at the new rate. Its ACK (at
     // either rate, u-blox doesn't say) is waited for first, up to kAckTimeoutMs.
     static constexpr uint32_t kBaudSwitchSettleMs = 20;
-    // An RMC is labeled up to this long after its PPS edge once the link runs at kOperatingBaudrate or faster (the
-    // generic PPSClock::kMaxLabelDelayUs, 900 ms, is for 9600-baud receivers). Budget: the whole epoch's output takes
-    // at most 147 ms on the wire (120 satellites of debug output), the module starts it within ~100 ms of the epoch
+    // An RMC is labeled up to this long after its PPS edge once the link runs at kFastLinkMinBaudrate or faster (the
+    // generic PPSClock::kMaxLabelDelayUs, 900 ms, is for 9600-baud receivers). At 9600 baud our output (GGA + RMC +
+    // GST + the TEMPORARY UBX-MON-RF/NAV-SAT debug output, 235 + 16 + 12 n B per epoch) exceeds the line above ~62
+    // satellites and backs up by whole seconds. Budget at 115200: the whole epoch's output takes at most 147 ms on the
+    // wire (120 satellites, 1691 B), the module starts it within ~100 ms of the epoch
     // (u-blox doesn't publish a figure), leaving >= 250 ms for a main-loop pause before the RMC is parsed. A
     // backed-up stream lands later and goes unlabeled instead of labeling a later edge.
     static constexpr uint32_t kFastLinkMaxLabelDelayUs = 500'000;
+    static constexpr uint32_t kFastLinkMinBaudrate = 115200;
 
     // Settle floor after power-on before we start probing. u-blox does not publish a fixed
     // Vcc-to-UART-ready time for the M10 (only TTFF, which is fix time, not UART readiness) and
@@ -51,12 +50,12 @@ class UbloxMAXM10 : public GNSSReceiver {
     static constexpr uint32_t kProbeTimeoutMs = 500;
 
     // Number of UBX-MON-VER poll rounds before declaring the module absent; each round polls once at every candidate
-    // baud rate (link rate, operating rate, user setting, power-up defaults: up to 3 distinct with default settings).
+    // baud rate (link rate, GNSS baud setting, power-up defaults: up to 3 distinct with default settings).
     // Implements the recommended "poll until ready" pattern so a module still finishing its cold-start on the first
     // poll is still detected, rather than failing a single-shot probe. The watchdog is poked between attempts. Total
     // worst case if absent: kProbeRounds * (number of candidates) * kProbeTimeoutMs (3 s with default settings).
     static constexpr uint32_t kProbeRounds = 2;
-    static constexpr uint16_t kMaxProbeBaudrates = 5;
+    static constexpr uint16_t kMaxProbeBaudrates = 4;
 
     // Overall wall-clock budget for the blocking config pass (SyncConfigDefaults). Bounds the ~371-key
     // read-modify-write so a module that answers the probe but then stops responding cannot stall init
@@ -111,15 +110,7 @@ class UbloxMAXM10 : public GNSSReceiver {
 
     bool Init() override;
 
-    /**
-     * The rate we command the module to: kOperatingBaudrate while the GNSS baud setting is at its default (9600, which
-     * every unit has unless a user set it, and the rate that backs up), otherwise the user's explicit setting. Kept
-     * apart from the setting so the default doesn't change for GENERIC receivers and no settings version bump is
-     * needed.
-     */
-    static uint32_t OperatingBaudrate();
-
-    // Commands the module to OperatingBaudrate() if the link isn't there (AT+BAUD_RATE=GNSS_UART,... at runtime).
+    // Commands the module to the GNSS baud setting if the link isn't there (AT+BAUD_RATE=GNSS_UART,... at runtime).
     void ApplyBaudRateSetting() override;
 
     /**
@@ -150,7 +141,7 @@ class UbloxMAXM10 : public GNSSReceiver {
     bool CfgValSetE1(uint32_t key, uint8_t v, uint8_t layers) { return CfgValSet(key, v, 1, layers); }
 
    protected:
-    // The rate the module was last found or commanded at (OperatingBaudrate() until a probe says otherwise). A
+    // The rate the module was last found or commanded at (the GNSS baud setting until a probe says otherwise). A
     // commanded rate persists in the module's RAM/BBR, so this is where it is after an ESP32 flash or our reboot.
     uint32_t GetLinkBaudrate() const override { return link_baudrate_; }
     bool SendInitCommands() override;
@@ -199,7 +190,7 @@ class UbloxMAXM10 : public GNSSReceiver {
     // Moves our UART and link_baudrate_ to baudrate (the module is not told), and the PPS label delay with it.
     void SetLinkBaudrate(uint32_t baudrate);
 
-    // PPS label delay for the link rate: kFastLinkMaxLabelDelayUs at kOperatingBaudrate or faster.
+    // PPS label delay for the link rate: kFastLinkMaxLabelDelayUs at kFastLinkMinBaudrate or faster.
     void UpdateLabelDelay();
 
     // Commands the module (answering at the link rate) to target with CFG-UART1-BAUDRATE in RAM + BBR, follows it,
@@ -222,7 +213,7 @@ class UbloxMAXM10 : public GNSSReceiver {
     // @param[in] layers CfgLayer bitfield to target.
     void ApplyRuntimeMessageConfig(uint8_t layers);
 
-    uint32_t link_baudrate_ = kOperatingBaudrate;
+    uint32_t link_baudrate_ = SettingsManager::Settings::kDefaultGNSSUARTBaudrate;
 
     // ---- TEMPORARY UBX sniffer state (remove with the rest of the GNSS debug instrumentation) ----
     // Non-blocking, byte-at-a-time UBX frame state machine fed by DebugIngestByte(). It decodes

@@ -139,8 +139,8 @@ class GNSSReceiver {
 
     /**
      * Programs the GNSS UART for the stored GNSS baud setting (settings.baud_rates[kGNSSUART]); CommsManager calls it
-     * whenever that setting is set. The default runs the UART at GetLinkBaudrate(), the setting for receivers we can't
-     * command. A receiver that sets its module's baud rate (UbloxMAXM10) overrides it to command the module too.
+     * whenever that setting is set. The default runs the UART at GetLinkBaudrate(). A receiver that sets its module's
+     * baud rate (UbloxMAXM10) overrides it to command the module to the setting too.
      * No-op while the UART is handed over to the ESP32 flasher.
      */
     virtual void ApplyBaudRateSetting();
@@ -150,10 +150,13 @@ class GNSSReceiver {
 
    protected:
     /**
-     * @retval The baud rate our UART runs at for this receiver. Receivers we can't command run the user's GNSS baud
-     *         setting; UbloxMAXM10 runs the rate it has commanded its module to (see UbloxMAXM10::OperatingBaudrate()).
+     * @retval The baud rate our UART runs at for this receiver: the GNSS baud setting, or for UbloxMAXM10 the rate its
+     *         module answered at (the setting unless switching to it failed).
      */
     virtual uint32_t GetLinkBaudrate() const = 0;
+
+    /** @retval The GNSS baud setting (settings.baud_rates[kGNSSUART]). */
+    static uint32_t BaudRateSetting() { return settings_manager.settings.baud_rates[SettingsManager::kGNSSUART]; }
 
     /**
      * Changes our UART's baud rate: waits for queued TX bytes to leave at the old rate, reprograms the UART, then drops
