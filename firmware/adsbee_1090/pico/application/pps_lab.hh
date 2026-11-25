@@ -96,6 +96,13 @@ struct T1339Snap {
     }
 };
 
+// t-1339 diag6: the flush issued from RAM, completion polled on STAT (as the datasheet example), no FLUSH read-back.
+static void __no_inline_not_in_flash_func(T1339FlushFromRAM)() {
+    xip_ctrl_hw->flush = 1;
+    while (!(xip_ctrl_hw->stat & XIP_STAT_FLUSH_READY_BITS)) {
+    }
+}
+
 class PPSLab {
    public:
     enum Mode : uint8_t { kOff = 0, kPWM, kPulses, kPWMBusPriority, kAsync };
@@ -336,8 +343,7 @@ class PPSLab {
                 warm_sink_ = sum;
             }
         } else if (load_ == kLoadFlush) {
-            xip_ctrl_hw->flush = 1;
-            (void)xip_ctrl_hw->flush;  // Returns once the flush is done.
+            T1339FlushFromRAM();  // t-1339 diag6: from RAM, poll STAT.FLUSH_READY (datasheet 2.6.3.2 example).
         }
         c = pwm_hw->slice[slice].ctr;
         if (c < kPWMHighCycles + 1024 || c > 0xFFFF - 2048) return;  // The load took too long: try again.
