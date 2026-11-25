@@ -91,6 +91,8 @@ extern "C" void __attribute__((naked, section(".time_critical.t1339_hardfault_en
         ".ltorg\n");
 }
 extern "C" void __attribute__((used, section(".time_critical.t1339_systick_c"))) t1339_systick_c(uint32_t* frame) {
+    // Through CPUMonitor's timed_exception_handler (push {r4, lr}): the exception frame is 2 words up.
+    if ((frame[1] & 0xFFFFFFF0u) == 0xFFFFFFF0u) frame += 2;
     if (sio_hw->cpuid == 1) {
         uint32_t n = t1339_diag.ticks;
         t1339_diag.pc = frame[6];
