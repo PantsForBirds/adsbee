@@ -278,7 +278,7 @@ static void XBBuild(int want) {
     pos = XBAdd(pos, "GNGST,123519.00,1.2,0.8,0.6,45.0,0.9,0.7,1.6");
     char body[96];
     int k = 0;
-    while (pos < want - 80) {
+    while (pos < want) {
         snprintf(body, sizeof(body), "GPGSV,9,%d,36,%02d,45,123,38,%02d,12,045,30,%02d,67,300,41,%02d,05,210,22,1",
                  (k % 9) + 1, (k * 4 + 1) % 99, (k * 4 + 2) % 99, (k * 4 + 3) % 99, (k * 4 + 4) % 99);
         pos = XBAdd(pos, body);
