@@ -66,7 +66,7 @@ SECTIONS
         /* bit of a hack right now to exclude all floating point and time critical (e.g. memset, memcpy) code from
          * FLASH_APP1 ... we will include any thing excluded here in .data below by default */
         *(.init)
-        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .text*)
+        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: *hardware_gpio/gpio.c.obj) .text*)
         /* The C++ exception unwinder only runs on a throw: keep it in flash. */
         *libgcc.a:unwind-arm.o(.text*) *libgcc.a:pr-support.o(.text*) *libgcc.a:libunwind.o(.text*)
         *(.fini)
