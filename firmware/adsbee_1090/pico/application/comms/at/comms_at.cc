@@ -469,7 +469,7 @@ CPP_AT_CALLBACK(CommsManager::ATGNSSFixCallback) {
     CPP_AT_SILENT_SUCCESS();
 }
 
-// t-1307 LAB: AT+PPS_LAB=<OFF|PWM|PULSES|RESET>, AT+PPS_LAB? prints the capture delay statistics.
+// t-1307 LAB: AT+PPS_LAB=<OFF|PWM|PWM_BUSPRIO|PULSES|ASYNC|RESET>, AT+PPS_LAB? prints the capture delay statistics.
 CPP_AT_CALLBACK(CommsManager::ATPPSLabCallback) {
     if (op == '?') {
         pps_lab.Print();
@@ -484,10 +484,12 @@ CPP_AT_CALLBACK(CommsManager::ATPPSLabCallback) {
             pps_lab.SetMode(PPSLab::kPWMBusPriority);
         } else if (args[0].compare("PULSES") == 0) {
             pps_lab.SetMode(PPSLab::kPulses);
+        } else if (args[0].compare("ASYNC") == 0) {
+            pps_lab.SetMode(PPSLab::kAsync);
         } else if (args[0].compare("RESET") == 0) {
             pps_lab.Reset();
         } else {
-            CPP_AT_ERROR("OFF, PWM, PULSES or RESET.");
+            CPP_AT_ERROR("OFF, PWM, PWM_BUSPRIO, PULSES, ASYNC or RESET.");
         }
         CPP_AT_SUCCESS();
     }

@@ -7,19 +7,30 @@
 //   PULSES: the PPS input is the comparator pulses pin (GPIO 19); a 1 Hz Waggler CW burst is the PPS (its own clock).
 //           Edges are debounced (990 ms, and still high 0.8 us later) in RecordPPSEdge(). Each edge is printed; RAW output gives the frame's Mode S
 //           stamp. A PPSClock fed with consecutive seconds gives the firmware fit's residuals.
+//   ASYNC:  (t-1336) the PWM edge again (exact: at a wrap of the jitter counter), but core 0 neither polls the bus nor
+//           holds interrupts off near the edge. The pin waits as a low SIO output; once a second (plus a random
+//           0-1 ms) core 0's main loop reads the counter once and, if it is 66-460 us before a wrap, switches the pin
+//           to PWM (low until the wrap, then high for 66 us). A hardware alarm switches it back to SIO ~250 us after
+//           the wrap. Per edge, core 0 does one of (at random): nothing; flash-heavy work (random XIP reads from
+//           arming until 100 us past the edge); warm (reads the GPIO IRQ handler's flash lines through the XIP cache
+//           at arming); flush (flushes the XIP cache at arming). Each has its own histogram.
 
 #include "adsbee.hh"
 #include "comms.hh"
 #include <cmath>
 
 #include "hardware/pwm.h"
+#include "hardware/irq.h"
+#include "hardware/structs/xip_ctrl.h"
+#include "hardware/timer.h"
 #include "hardware/structs/busctrl.h"
 #include "hardware/sync.h"
 #include "pps_clock.hh"
 
 class PPSLab {
    public:
-    enum Mode : uint8_t { kOff = 0, kPWM, kPulses, kPWMBusPriority };
+    enum Mode : uint8_t { kOff = 0, kPWM, kPulses, kPWMBusPriority, kAsync };
+    enum Load : uint8_t { kLoadNone = 0, kLoadFlash, kLoadWarm, kLoadFlush, kNumLoads };
     static constexpr uint16_t kPWMHighCycles = 8192;  // 66 us high after the wrap.
     static constexpr uint16_t kBinCycles = 4;
     static constexpr uint16_t kNumBins = 256;  // Up to 1024 cycles (8 us); above: overflow.
@@ -36,6 +47,16 @@ class PPSLab {
         if (mode == kPWM || mode == kPWMBusPriority) {
             pwm_set_chan_level(pwm_gpio_to_slice_num(pps_pin), pwm_gpio_to_channel(pps_pin), 0);  // Low.
             gpio_set_function(pps_pin, GPIO_FUNC_PWM);
+            adsbee.SetPPSPin(pps_pin);
+        } else if (mode == kAsync) {
+            gpio_put(pps_pin, 0);
+            gpio_set_dir(pps_pin, GPIO_OUT);  // A low SIO output between edges.
+            pwm_set_chan_level(pwm_gpio_to_slice_num(pps_pin), pwm_gpio_to_channel(pps_pin), kPWMHighCycles);
+            if (alarm_num_ < 0) {
+                alarm_num_ = hardware_alarm_claim_unused(true);
+                hardware_alarm_set_callback(alarm_num_, OnDisarmAlarm);  // Its IRQ runs on core 0 (this core).
+            }
+            rand_state_ ^= time_us_32() | 1;
             adsbee.SetPPSPin(pps_pin);
         } else if (mode == kPulses) {
             adsbee.pps_lab_debounce_us = 990'000;  // The next 1 Hz burst is due 10 ms later.
@@ -55,6 +76,14 @@ class PPSLab {
         sum_sq_ = 0;
         overflow_ = 0;
         for (auto& b : bins_) b = 0;
+        for (auto& l : load_bins_)
+            for (auto& b : l) b = 0;
+        for (auto& n : load_n_) n = 0;
+        for (auto& n : load_over_) n = 0;
+        not_armed_ = 0;
+        extra_edges_ = 0;
+        min_lead_ = UINT16_MAX;
+        max_lead_ = 0;
         clock_.Restart();
         first_edge_ = true;
     }
@@ -67,13 +96,28 @@ class PPSLab {
             next_pulse_us_ += 1'000'000;
             EmitPWMEdge();
         }
+        if (mode_ == kAsync) UpdateAsync(now_us);
         PPSClock::Edge latest, previous;
         uint16_t jitter_counts = 0;
         uint32_t num_edges = adsbee.GetPPSEdges(latest, previous, &jitter_counts);
         if (num_edges == seen_edges_) return;
         missed_ += num_edges - seen_edges_ - 1;
         seen_edges_ = num_edges;
-        if (mode_ != kPulses) {
+        if (mode_ == kAsync) {
+            if (!edge_pending_) {
+                extra_edges_++;  // Only one edge per arming is expected.
+                return;
+            }
+            edge_pending_ = false;
+            AddLatency(jitter_counts);
+            uint16_t b = jitter_counts / kBinCycles;
+            load_n_[load_]++;
+            if (b < kNumBins) {
+                load_bins_[load_][b]++;
+            } else {
+                load_over_[load_]++;
+            }
+        } else if (mode_ != kPulses) {
             AddLatency(jitter_counts);
         } else {
             // Consecutive Waggler frames are a second apart (on its clock): number them by the MLAT counter.
@@ -113,6 +157,19 @@ class PPSLab {
             if (bins_[i]) CONSOLE_PRINTF("%u:%lu ", i * kBinCycles, static_cast<unsigned long>(bins_[i]));
         }
         CONSOLE_PRINTF("\r\n");
+        if (mode_ != kAsync) return;
+        static const char* kLoadNames[kNumLoads] = {"none", "flash", "warm", "flush"};
+        CONSOLE_PRINTF("PPS_LAB_ASYNC=not_armed=%lu,extra_edges=%lu,lead_cycles=%u-%u\r\n",
+                       static_cast<unsigned long>(not_armed_), static_cast<unsigned long>(extra_edges_),
+                       min_lead_ == UINT16_MAX ? 0 : min_lead_, max_lead_);
+        for (uint16_t l = 0; l < kNumLoads; l++) {
+            CONSOLE_PRINTF("PPS_LAB_HIST_%s=n=%lu,over=%lu ", kLoadNames[l], static_cast<unsigned long>(load_n_[l]),
+                           static_cast<unsigned long>(load_over_[l]));
+            for (uint16_t i = 0; i < kNumBins; i++) {
+                if (load_bins_[l][i]) CONSOLE_PRINTF("%u:%lu ", i * kBinCycles, static_cast<unsigned long>(load_bins_[l][i]));
+            }
+            CONSOLE_PRINTF("\r\n");
+        }
     }
 
     Mode mode() const { return mode_; }
@@ -136,6 +193,69 @@ class PPSLab {
         pwm_set_chan_level(slice, channel, 0);          // Low from the next wrap on.
     }
 
+    uint32_t Random() {  // xorshift32
+        rand_state_ ^= rand_state_ << 13;
+        rand_state_ ^= rand_state_ >> 17;
+        rand_state_ ^= rand_state_ << 5;
+        return rand_state_;
+    }
+
+    static void OnDisarmAlarm(uint alarm_num) {
+        (void)alarm_num;
+        gpio_set_function(bsp.gnss_pps_pin, GPIO_FUNC_SIO);  // Back to the low SIO output (the PWM is low by now).
+    }
+
+    // Core 0 main loop, interrupts on. One counter read per call while due; nothing else touches the bus near the edge
+    // except the chosen load.
+    void UpdateAsync(uint32_t now_us) {
+        if (static_cast<int32_t>(now_us - next_pulse_us_) < 0) return;
+        if (edge_pending_ && now_us - armed_us_ < 1'000'000) return;  // The edge of the last arming isn't in yet.
+        if (edge_pending_) {
+            not_armed_++;  // Armed, but no edge came: count it and go on.
+            edge_pending_ = false;
+        }
+        uint16_t pin = bsp.gnss_pps_pin;
+        uint slice = pwm_gpio_to_slice_num(pin);
+        uint32_t c = pwm_hw->slice[slice].ctr;
+        if (c < kPWMHighCycles + 1024 || c > 0xFFFF - kPWMHighCycles) return;  // Not 66-460 us before a wrap: later.
+        load_ = static_cast<Load>(Random() % kNumLoads);
+        uint32_t lead = 0x10000 - c;  // Cycles from now to the edge (at 125 MHz).
+        if (load_ == kLoadWarm) {
+            // The handler's flash lines (vector of IO_IRQ_BANK0) through the cached XIP alias.
+            const volatile uint32_t* h =
+                reinterpret_cast<const volatile uint32_t*>(reinterpret_cast<uintptr_t>(irq_get_vtable_handler(IO_IRQ_BANK0)) & ~3u);
+            if (reinterpret_cast<uintptr_t>(h) >= XIP_BASE && reinterpret_cast<uintptr_t>(h) < SRAM_BASE) {
+                uint32_t sum = 0;
+                for (uint16_t i = 0; i < 256; i += 2) sum += h[i];  // 1 KB, every 8-byte line.
+                warm_sink_ = sum;
+            }
+        } else if (load_ == kLoadFlush) {
+            xip_ctrl_hw->flush = 1;
+            (void)xip_ctrl_hw->flush;  // Returns once the flush is done.
+        }
+        c = pwm_hw->slice[slice].ctr;
+        if (c < kPWMHighCycles + 1024 || c > 0xFFFF - 2048) return;  // The load took too long: try again.
+        lead = 0x10000 - c;
+        gpio_set_function(pin, GPIO_FUNC_PWM);  // Low until the wrap (c > level), then the edge.
+        uint32_t edge_us = time_us_32() + lead / 125;
+        hardware_alarm_set_target(alarm_num_, from_us_since_boot(time_us_64() + lead / 125 + 250));
+        armed_us_ = now_us;
+        edge_pending_ = true;
+        if (lead < min_lead_) min_lead_ = lead;
+        if (lead > max_lead_) max_lead_ = lead;
+        next_pulse_us_ = now_us + 1'000'000 + Random() % 1000;
+        if (load_ == kLoadFlash) {
+            // Random XIP reads (nearly all cache misses) until 100 us past the edge, interrupts on.
+            uint32_t sum = 0;
+            while (static_cast<int32_t>(time_us_32() - edge_us) < 100) {
+                for (uint16_t i = 0; i < 16; i++) {
+                    sum += *reinterpret_cast<const volatile uint32_t*>(XIP_BASE + (Random() & 0x3FFFFC));
+                }
+            }
+            warm_sink_ = sum;
+        }
+    }
+
     void AddLatency(uint16_t cycles) {
         n_++;
         if (cycles < min_) min_ = cycles;
@@ -150,6 +270,16 @@ class PPSLab {
     }
 
     Mode mode_ = kOff;
+    Load load_ = kLoadNone;
+    int alarm_num_ = -1;
+    uint32_t rand_state_ = 0x1336BEE5;
+    bool edge_pending_ = false;
+    uint32_t armed_us_ = 0;
+    uint32_t not_armed_ = 0, extra_edges_ = 0;
+    uint16_t min_lead_ = UINT16_MAX, max_lead_ = 0;
+    volatile uint32_t warm_sink_ = 0;
+    uint32_t load_bins_[kNumLoads][kNumBins] = {};
+    uint32_t load_n_[kNumLoads] = {}, load_over_[kNumLoads] = {};
     uint32_t next_pulse_us_ = 0;
     uint32_t seen_edges_ = 0;
     uint32_t n_ = 0, missed_ = 0, overflow_ = 0;
