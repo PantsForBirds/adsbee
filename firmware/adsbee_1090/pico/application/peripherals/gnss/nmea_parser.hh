@@ -41,8 +41,8 @@ class NMEAParser {
     // (position / speed / course / validity) and GST (error estimates).
     struct GNSSFix {
         bool valid = false;             // True if the last position-bearing sentence reported a fix.
-        float latitude_deg = 0.0f;      // WGS84 degrees, north positive.
-        float longitude_deg = 0.0f;     // WGS84 degrees, east positive.
+        uint32_t latitude_awb = 0;      // WGS84 AWB (see geo_utils.hh), north positive.
+        uint32_t longitude_awb = 0;     // WGS84 AWB, east positive.
         int32_t altitude_ft = 0;        // MSL altitude, feet (converted from meters).
         // GGA geoid separation: height of the geoid (MSL) above the WGS-84 ellipsoid, so height above the ellipsoid
         // = MSL altitude + geoid separation. Not every receiver fills the field.

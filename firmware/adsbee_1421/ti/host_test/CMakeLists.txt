@@ -69,6 +69,7 @@ target_include_directories(host_test PRIVATE
     ${ADSBEE_COMMON_DIR}/comms/uat_uplink
     ${ADSBEE_COMMON_DIR}/utils
     ${ADSBEE_COMMON_DIR}/utils/crc
+    ${ADSBEE_COMMON_DIR}/utils/geo
     .  # comms.hh: console logging for host tests
 )
 

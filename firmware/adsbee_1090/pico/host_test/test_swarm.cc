@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "fec.hh"
 #include "geo_utils.hh"
 #include "gtest/gtest.h"
@@ -104,8 +105,8 @@ SwarmReporter::DeviceState FixedPosition() {
     SwarmReporter::DeviceState state;
     state.auto_update = true;
     state.rx_position_valid = true;
-    state.latitude_deg = 37.1f;
-    state.longitude_deg = -122.1f;
+    state.latitude_awb = DegToAWB(37.1f);
+    state.longitude_awb = DegToAWB(-122.1f);
     state.altitude_m = 30;
     state.rx_position_source = "fixed";
     state.range_valid = true;
@@ -536,7 +537,7 @@ TEST(SwarmRecorder, DictionaryRecordsConfirmedPositions) {
     AircraftDictionary dictionary;
     SwarmRecorder recorder;
     dictionary.SetSwarmRecorder(&recorder);
-    dictionary.SetReferencePosition(48.0f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0f), DegToAWB(18.0f));
     auto ingest = [&](const char* hex) {
         DecodedModeSPacket packet = DecodedModeSPacket((char*)hex);
         inc_time_since_boot_ms(500);
@@ -607,17 +608,19 @@ TEST(SwarmRecorder, OnlyDirectPositionsCountForRange) {
 
 TEST(SwarmReporter, UsablePositionIsFixedOrGNSSAndReal) {
     typedef SettingsManager::RxPosition P;
-    EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, 37.1f, -122.1f));
-    EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceGNSS, -33.9f, 151.2f));
-    EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, 0.0f, 10.0f));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(false, P::kPositionSourceGNSS, 37.1f, -122.1f));  // No fix.
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceLowestAircraft, 37.1f, -122.1f));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceAircraftMatchingICAO, 37.1f, -122.1f));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceNone, 37.1f, -122.1f));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, 0.0f, 0.0f));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, 91.0f, 0.0f));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, 10.0f, -181.0f));
-    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, NAN, 1.0f));
+    EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(37.1), DegToAWB(-122.1)));
+    EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceGNSS, DegToAWB(-33.9), DegToAWB(151.2)));
+    EXPECT_TRUE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(0.0), DegToAWB(10.0)));
+    EXPECT_FALSE(
+        SwarmReporter::UsablePosition(false, P::kPositionSourceGNSS, DegToAWB(37.1), DegToAWB(-122.1)));  // No fix.
+    EXPECT_FALSE(
+        SwarmReporter::UsablePosition(true, P::kPositionSourceLowestAircraft, DegToAWB(37.1), DegToAWB(-122.1)));
+    EXPECT_FALSE(
+        SwarmReporter::UsablePosition(true, P::kPositionSourceAircraftMatchingICAO, DegToAWB(37.1), DegToAWB(-122.1)));
+    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceNone, DegToAWB(37.1), DegToAWB(-122.1)));
+    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(0.0), DegToAWB(0.0)));
+    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(91.0), DegToAWB(0.0)));
+    EXPECT_FALSE(SwarmReporter::UsablePosition(true, P::kPositionSourceFixed, DegToAWB(-91.0), 0));
 }
 
 namespace {
@@ -992,7 +995,7 @@ TEST(SwarmRecorder, DictionaryRecordsUATPositions) {
     AircraftDictionary dictionary;
     SwarmRecorder recorder;
     dictionary.SetSwarmRecorder(&recorder);
-    dictionary.SetReferencePosition(37.0f, -122.0f);
+    dictionary.SetReferencePosition(DegToAWB(37.0f), DegToAWB(-122.0f));
     inc_time_since_boot_ms(1000);
     ASSERT_TRUE(dictionary.IngestDecodedUATADSBPacket(UATPosition(0xA12345, 37.3, -122.0, 12000)));
     dictionary.Update(get_time_since_boot_ms());
@@ -1013,7 +1016,7 @@ TEST(SwarmRecorder, ReceiverMoveRecomputesWithoutRecordingAgain) {
     AircraftDictionary dictionary;
     SwarmRecorder recorder;
     dictionary.SetSwarmRecorder(&recorder);
-    dictionary.SetReferencePosition(37.0f, -122.0f);
+    dictionary.SetReferencePosition(DegToAWB(37.0f), DegToAWB(-122.0f));
     inc_time_since_boot_ms(1000);
     ASSERT_TRUE(dictionary.IngestDecodedUATADSBPacket(UATPosition(0xA12345, 37.3, -122.0, 12000)));
     inc_time_since_boot_ms(1000);
@@ -1027,7 +1030,7 @@ TEST(SwarmRecorder, ReceiverMoveRecomputesWithoutRecordingAgain) {
 
     // The receiver moves 1.1 km north, three times: recomputed every time, recorded never.
     for (int i = 1; i <= 3; i++) {
-        dictionary.SetReferencePosition(37.0f + 0.01f * i, -122.0f);
+        dictionary.SetReferencePosition(DegToAWB(37.0f + 0.01f * i), DegToAWB(-122.0f));
         inc_time_since_boot_ms(1000);
         dictionary.Update(get_time_since_boot_ms());
         EXPECT_NEAR(static_cast<int32_t>(distance_m - aircraft->distance_m), 1110 * i, 5);
@@ -1036,7 +1039,7 @@ TEST(SwarmRecorder, ReceiverMoveRecomputesWithoutRecordingAgain) {
 
     // Heard at a new position (1.1 km north) as the receiver moves again: recorded once, from the new receiver
     // position.
-    dictionary.SetReferencePosition(37.04f, -122.0f);
+    dictionary.SetReferencePosition(DegToAWB(37.04f), DegToAWB(-122.0f));
     ASSERT_TRUE(dictionary.IngestDecodedUATADSBPacket(UATPosition(0xA12345, 37.32, -122.0, 12000)));
     EXPECT_EQ(recorder.guard.num_positions, 1u);
     dictionary.Update(get_time_since_boot_ms());
@@ -1050,7 +1053,7 @@ TEST(SwarmRecorder, DictionaryRecordsDronesAfterTwoLocationMessages) {
     SwarmRecorder recorder;
     recorder.SetReceiverAltitude(30);  // 98 ft.
     dictionary.SetSwarmRecorder(&recorder);
-    dictionary.SetReferencePosition(37.0f, -122.0f);
+    dictionary.SetReferencePosition(DegToAWB(37.0f), DegToAWB(-122.0f));
 
     // Hovering 1.11 km north, 120 m geodetic (= 296 ft above the receiver): band 2.
     inc_time_since_boot_ms(100);
@@ -1152,8 +1155,8 @@ SwarmReporter::DeviceState CaseState(bool position) {
     s.auto_update = true;
     s.rx_position_valid = position;
     s.range_valid = position;
-    s.latitude_deg = 37.1234f;
-    s.longitude_deg = -122.1234f;
+    s.latitude_awb = DegToAWB(37.1234f);
+    s.longitude_awb = DegToAWB(-122.1234f);
     s.altitude_m = 30;
     s.rx_position_source = "fixed";
     return s;

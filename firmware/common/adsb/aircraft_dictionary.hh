@@ -113,8 +113,8 @@ class Aircraft {
     uint32_t last_position_update_ms = 0;
     uint32_t last_velocity_update_ms = 0;  // Local time of the last velocity, 0 until one arrives.
 
-    float latitude_deg = 0.0f;
-    float longitude_deg = 0.0f;
+    uint32_t latitude_awb = 0;   // AWB, see geo_utils.hh.
+    uint32_t longitude_awb = 0;  // AWB.
 
     int32_t baro_altitude_ft = 0;
     int32_t gnss_altitude_ft = 0;
@@ -568,7 +568,7 @@ class ModeSAircraft : public Aircraft {
 
 #ifdef FILTER_CPR_POSITIONS
     // Position in Angular Weighted Binary. This gets set to a candidate position which may not match the actual
-    // displayed latitude_deg and logitude_deg. Format is in AWB to enable fast fixed point operations for screening
+    // displayed latitude_awb and longitude_awb. Format is in AWB to enable fast fixed point operations for screening
     // candidate positions.
     uint32_t last_filter_received_timestamp_ms_ =
         0;  // received_timestamp_ms for the last packet that was fed to the filter.
@@ -814,7 +814,7 @@ class UATAircraft : public Aircraft {
 
 #ifdef FILTER_CPR_POSITIONS
     // Position in Angular Weighted Binary. This gets set to a candidate position which may not match the actual
-    // displayed latitude_deg and logitude_deg. Format is in AWB to enable fast fixed point operations for screening
+    // displayed latitude_awb and longitude_awb. Format is in AWB to enable fast fixed point operations for screening
     // candidate positions.
     uint32_t last_filter_received_timestamp_ms_ =
         0;  // received_timestamp_ms for the last packet that was fed to the filter.
@@ -910,8 +910,8 @@ class RemoteIDAircraft : public Aircraft {
 
     int32_t height_above_takeoff_ft = 0;  // UA height above takeoff or ground per height_type. Valid iff flag set.
 
-    float operator_latitude_deg = 0.0f;
-    float operator_longitude_deg = 0.0f;
+    uint32_t operator_latitude_awb = 0;  // AWB.
+    uint32_t operator_longitude_awb = 0;
     int32_t operator_altitude_geo_ft = 0;  // Operator (System message) geometric altitude, WGS84.
 
     Metrics metrics;
@@ -1394,8 +1394,8 @@ class AircraftDictionary {
     /**
      * Get the position of the lowest aircraft in the dictionary with a valid GNSS altitude. This can be used to
      * approximate the receiver position.
-     * @param[out] latitude_deg Latitude of the lowest aircraft, in degrees.
-     * @param[out] longitude_deg Longitude of the lowest aircraft, in degrees.
+     * @param[out] latitude_awb Latitude of the lowest aircraft, in AWB.
+     * @param[out] longitude_awb Longitude of the lowest aircraft, in AWB.
      * @param[out] gnss_altitude_ft GNSS altitude of the lowest aircraft, in feet.
      * @param[out] baro_altitude_ft Barometric altitude of the lowest aircraft, in feet.
      * @param[out] heading_deg Heading of the lowest aircraft, in degrees. NAN if not available.
@@ -1403,7 +1403,7 @@ class AircraftDictionary {
      * @retval True if a lowest aircraft was found, false if no aircraft with a valid GNSS altitude exists in the
      * dictionary.
      */
-    bool GetLowestAircraftPosition(float& latitude_deg, float& longitude_deg, int32_t& gnss_altitude_ft,
+    bool GetLowestAircraftPosition(uint32_t& latitude_awb, uint32_t& longitude_awb, int32_t& gnss_altitude_ft,
                                    int32_t& baro_altitude_ft, float& heading_deg, int32_t& speed_kts);
 
     /**
@@ -1554,10 +1554,10 @@ class AircraftDictionary {
     /**
      * Sets a reference position used when decoding Mode S surface position packets. Should be called whenever the
      * reference position (i.e. the receiver location) changes.
-     * @param[in] latitude_deg Latitude of the reference position, in degrees.
-     * @param[in] longitude_deg Longitude of the reference position, in degrees.
+     * @param[in] latitude_awb Latitude of the reference position, in AWB.
+     * @param[in] longitude_awb Longitude of the reference position, in AWB.
      */
-    void SetReferencePosition(float latitude_deg, float longitude_deg);
+    void SetReferencePosition(uint32_t latitude_awb, uint32_t longitude_awb);
 
     /**
      * Marks the reference position as unavailable. While the reference is invalid, Mode S surface position packets
@@ -1585,10 +1585,7 @@ class AircraftDictionary {
      */
     inline bool ReferencePositionValid() const { return reference_position_valid_; }
 
-    /**
-     * Whether the dictionary measures distance and bearing from this position (latitude and longitude in AWB, as
-     * FloatDegToAWB() gives them for the floats passed to SetReferencePosition()).
-     */
+    // Whether the dictionary measures distance and bearing from this position (AWB).
     inline bool DistanceReferenceIs(uint32_t lat_awb, uint32_t lon_awb) const {
         return reference_position_valid_ && distance_reference_.lat_awb == lat_awb &&
                distance_reference_.lon_awb == lon_awb;
@@ -1769,14 +1766,12 @@ class AircraftDictionary {
     // update. This ensures that the public metrics struct always has valid data.
     Metrics metrics_counter_;
 
-    // Reference position for decoding Mode S surface position packets, in angular weighted binary format.
-    uint32_t reference_latitude_awb32_ = 0;
-    uint32_t reference_longitude_awb32_ = 0;
     bool reference_position_valid_ = false;  // Set by SetReferencePosition, cleared by ClearReferencePosition.
     int32_t reference_altitude_ft_ = 0;
     bool reference_altitude_valid_ = false;  // Set by SetReferenceAltitudeFt, cleared by ClearReferencePosition.
-    // Receiver position for aircraft distance and bearing. Moving it at all (to another AWB) or clearing it bumps
-    // reference_epoch_, and Update() recomputes every aircraft computed in an older epoch or marked stale by a move.
+    // Receiver position for aircraft distance and bearing and Mode S surface position decoding. Moving it at all (to
+    // another AWB) or clearing it bumps reference_epoch_, and Update() recomputes every aircraft computed in an older
+    // epoch or marked stale by a move.
     // Epoch value that marks an aircraft's distance as stale; reference_epoch_ never takes it.
     static constexpr uint16_t kDistanceEpochStale = UINT16_MAX;
     GeoReference distance_reference_;
@@ -1784,12 +1779,12 @@ class AircraftDictionary {
 
     // Position and validity of an aircraft before a packet is applied, to tell whether its distance needs updating.
     struct PositionSnapshot {
-        float latitude_deg;
-        float longitude_deg;
+        uint32_t latitude_awb;
+        uint32_t longitude_awb;
         bool valid;
         template <typename T>
         static PositionSnapshot Of(const T &aircraft) {
-            return {aircraft.latitude_deg, aircraft.longitude_deg, aircraft.HasBitFlag(T::kBitFlagPositionValid)};
+            return {aircraft.latitude_awb, aircraft.longitude_awb, aircraft.HasBitFlag(T::kBitFlagPositionValid)};
         }
     };
 
@@ -1803,7 +1798,7 @@ class AircraftDictionary {
         PositionSnapshot after = PositionSnapshot::Of(aircraft);
         bool record_in_place = false;
         if constexpr (kRecordsRange<T>) {
-            bool moved = after.latitude_deg != before.latitude_deg || after.longitude_deg != before.longitude_deg;
+            bool moved = after.latitude_awb != before.latitude_awb || after.longitude_awb != before.longitude_awb;
             // Remote ID repeats a hovering drone's position unchanged, so every Location message with one counts.
             bool decoded = std::is_same_v<T, RemoteIDAircraft> ? position_message : !before.valid || moved;
             if (!after.valid) {
@@ -1819,7 +1814,7 @@ class AircraftDictionary {
         if (after.valid != before.valid || (after.valid && aircraft.distance_m == Aircraft::kDistanceUnknown)) {
             UpdateDistanceAndBearing(aircraft, after.valid);
             RecordRange(aircraft);
-        } else if (after.latitude_deg != before.latitude_deg || after.longitude_deg != before.longitude_deg) {
+        } else if (after.latitude_awb != before.latitude_awb || after.longitude_awb != before.longitude_awb) {
             aircraft.distance_reference_epoch = kDistanceEpochStale;
         } else if (record_in_place) {
             // Confirmed or heard again in place. After a receiver move Update() records it with the new distance.
@@ -1908,7 +1903,7 @@ class AircraftDictionary {
     /**
      * Recomputes an aircraft's distance and bearing from the receiver.
      * @param[in,out] aircraft Aircraft to update.
-     * @param[in] position_valid Whether the aircraft's latitude_deg and longitude_deg hold a position.
+     * @param[in] position_valid Whether the aircraft's latitude_awb and longitude_awb hold a position.
      */
     void UpdateDistanceAndBearing(Aircraft &aircraft, bool position_valid);
 

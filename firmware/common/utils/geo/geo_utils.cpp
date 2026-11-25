@@ -331,6 +331,116 @@ void CalculateTrackAndSpeedFromNEVelocities(int32_t n_vel_kts, int32_t e_vel_kts
 #endif
 }
 
+static constexpr uint32_t kPowersOf10[] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000};
+
+// |awb| (read as signed) in degrees times 10^decimals, rounded. At most 1.8e9.
+static uint32_t AWBMagnitudeToScaledDeg(uint32_t magnitude, uint8_t decimals) {
+    const uint32_t units_per_turn = 360u * kPowersOf10[decimals];  // At most 3.6e9.
+    return static_cast<uint32_t>((static_cast<uint64_t>(magnitude) * units_per_turn + (1ull << 31)) >> 32);
+}
+
+int32_t AWBToScaledDeg(uint32_t awb, uint8_t decimals) {
+    const bool negative = static_cast<int32_t>(awb) < 0;
+    const uint32_t units = AWBMagnitudeToScaledDeg(negative ? 0u - awb : awb, decimals);
+    return negative ? -static_cast<int32_t>(units) : static_cast<int32_t>(units);
+}
+
+uint32_t ScaledToAWB(int64_t value, uint64_t units_per_turn) {
+    const bool negative = value < 0;
+    const uint64_t magnitude = negative ? 0ull - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
+    // magnitude 2^32 / units_per_turn in two 16-bit steps, so no intermediate overflows.
+    const uint64_t high = magnitude << 16;
+    const uint64_t q1 = high / units_per_turn;
+    const uint64_t q2 = (((high - q1 * units_per_turn) << 16) + units_per_turn / 2) / units_per_turn;
+    const uint32_t awb = static_cast<uint32_t>((q1 << 16) + q2);
+    return negative ? 0u - awb : awb;
+}
+
+int FormatAWBDeg(char* buf, size_t len, uint32_t awb, uint8_t decimals) {
+    const bool negative = static_cast<int32_t>(awb) < 0;
+    const uint32_t units = AWBMagnitudeToScaledDeg(negative ? 0u - awb : awb, decimals);
+    const char* sign = negative && units != 0 ? "-" : "";
+    if (decimals == 0) {
+        return snprintf(buf, len, "%s%lu", sign, static_cast<unsigned long>(units));
+    }
+    return snprintf(buf, len, "%s%lu.%0*lu", sign, static_cast<unsigned long>(units / kPowersOf10[decimals]),
+                    static_cast<int>(decimals), static_cast<unsigned long>(units % kPowersOf10[decimals]));
+}
+
+bool ParseDegE7(std::string_view text, int32_t& deg_e7) {
+    size_t i = 0;
+    bool negative = false;
+    if (i < text.size() && (text[i] == '-' || text[i] == '+')) {
+        negative = text[i++] == '-';
+    }
+    // Significant digits (up to 18), and the decimal exponent of the last one kept.
+    uint64_t digits = 0;
+    int exponent = 0;
+    int num_digits = 0;
+    bool seen_point = false;
+    for (; i < text.size(); i++) {
+        const char c = text[i];
+        if (c == '.' && !seen_point) {
+            seen_point = true;
+        } else if (c >= '0' && c <= '9') {
+            num_digits++;
+            if (digits < 100000000000000000ull) {
+                digits = digits * 10 + static_cast<uint64_t>(c - '0');
+                exponent -= seen_point ? 1 : 0;
+            } else if (!seen_point) {
+                exponent++;  // Beyond 18 digits: an integer part this long is out of range anyway.
+            }
+        } else {
+            break;
+        }
+    }
+    if (num_digits == 0) {
+        return false;
+    }
+    if (i < text.size() && (text[i] == 'e' || text[i] == 'E')) {
+        i++;
+        bool exponent_negative = false;
+        if (i < text.size() && (text[i] == '-' || text[i] == '+')) {
+            exponent_negative = text[i++] == '-';
+        }
+        const size_t first = i;
+        int e = 0;
+        for (; i < text.size() && text[i] >= '0' && text[i] <= '9'; i++) {
+            e = e < 1000 ? e * 10 + (text[i] - '0') : e;
+        }
+        if (i == first) {
+            return false;
+        }
+        exponent += exponent_negative ? -e : e;
+    }
+    if (i != text.size()) {
+        return false;
+    }
+    // digits 10^exponent in units of 1e-7, rounded half away from zero.
+    constexpr uint64_t kMaxDegE7 = INT32_MAX;
+    int shift = exponent + 7;
+    for (; shift > 0 && digits != 0; shift--) {
+        if (digits > kMaxDegE7) {
+            return false;
+        }
+        digits *= 10;
+    }
+    if (shift < -19) {
+        digits = 0;  // Below 1e-26 deg (19 digits is more than digits holds).
+    }
+    uint64_t last_dropped = 0;
+    for (; shift < 0; shift++) {
+        last_dropped = digits % 10;
+        digits /= 10;
+    }
+    digits += last_dropped >= 5 ? 1 : 0;
+    if (digits > kMaxDegE7) {
+        return false;
+    }
+    deg_e7 = negative ? -static_cast<int32_t>(digits) : static_cast<int32_t>(digits);
+    return true;
+}
+
 void WriteNMEALatLon(char* buf, size_t len, uint32_t awb, bool is_lat) {
     const bool negative = static_cast<int32_t>(awb) < 0;
     const char hemisphere = is_lat ? (negative ? 'S' : 'N') : (negative ? 'W' : 'E');

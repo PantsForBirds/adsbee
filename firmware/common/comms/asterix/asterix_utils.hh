@@ -105,8 +105,8 @@ class ASTERIXReporter {
         uint8_t service_id = 0;
 
         bool has_position = false;
-        double latitude_deg = 0.0;
-        double longitude_deg = 0.0;
+        uint32_t latitude_awb = 0;  // AWB, see geo_utils.hh.
+        uint32_t longitude_awb = 0;
         uint32_t position_time_of_day = 0;  // I021/073.
 
         bool has_velocity_time = false;

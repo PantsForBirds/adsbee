@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "beast_utils.hh"
 #include "decode_utils.hh"  // for location calculation utility functions
 #include "gtest/gtest.h"
@@ -190,8 +191,8 @@ TEST(ModeSAircraft, SetCPRLatLon) {
     EXPECT_TRUE(aircraft.SetCPRLatLon(93000, 51372, false, get_time_since_boot_ms()));
     EXPECT_TRUE(aircraft.DecodeAirbornePosition());
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid));
-    EXPECT_NEAR(aircraft.latitude_deg, 52.25720f, 1e-4);  // even latitude
-    EXPECT_NEAR(aircraft.longitude_deg, 3.91937f, 1e-4);  // longitude calculated from even latitude
+    EXPECT_NEAR(AWBToDeg(aircraft.latitude_awb), 52.25720f, 1e-4);  // even latitude
+    EXPECT_NEAR(AWBToDeg(aircraft.longitude_awb), 3.91937f, 1e-4);  // longitude calculated from even latitude
 
     // Send one even packet and one odd packet at startup.
     aircraft = ModeSAircraft();  // clear everything
@@ -201,7 +202,7 @@ TEST(ModeSAircraft, SetCPRLatLon) {
     EXPECT_TRUE(aircraft.SetCPRLatLon(74158, 50194, true, get_time_since_boot_ms()));
     EXPECT_TRUE(aircraft.DecodeAirbornePosition());
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid));
-    EXPECT_NEAR(aircraft.latitude_deg, 52.26578f, 1e-4);  // odd latitude
+    EXPECT_NEAR(AWBToDeg(aircraft.latitude_awb), 52.26578f, 1e-4);  // odd latitude
     // don't have a test value available for the longitude calculated from odd latitude
 
     // Straddle two position packets between different latitude bands.
@@ -246,8 +247,8 @@ TEST(AircraftDictionary, ApplyAirbornePositionMessage) {
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));
     EXPECT_FALSE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedPosition));
     ASSERT_EQ(aircraft.icao_address, (uint32_t)0xA6147F);
-    EXPECT_FLOAT_EQ(aircraft.latitude_deg, 0.0f);
-    EXPECT_FLOAT_EQ(aircraft.longitude_deg, 0.0f);
+    EXPECT_FLOAT_EQ(AWBToDeg(aircraft.latitude_awb), 0.0f);
+    EXPECT_FLOAT_EQ(AWBToDeg(aircraft.longitude_awb), 0.0f);
     // Altitude should be filled out.
     EXPECT_EQ(aircraft.altitude_source, ADSBTypes::kAltitudeSourceBaro);
     EXPECT_EQ(aircraft.baro_altitude_ft, 16975);
@@ -261,8 +262,8 @@ TEST(AircraftDictionary, ApplyAirbornePositionMessage) {
     // Aircraft should now have a valid location.
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedPosition));
     ASSERT_EQ(aircraft.icao_address, 0xA6147Fu);
-    EXPECT_NEAR(aircraft.latitude_deg, 20.326522568524894f, kLatDegCloseEnough);
-    EXPECT_NEAR(aircraft.longitude_deg, -156.5328535600142f, kLonDegCloseEnough);
+    EXPECT_NEAR(AWBToDeg(aircraft.latitude_awb), 20.326522568524894f, kLatDegCloseEnough);
+    EXPECT_NEAR(AWBToDeg(aircraft.longitude_awb), -156.5328535600142f, kLonDegCloseEnough);
     // Altitude should be filled out.
     EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagUpdatedBaroAltitude));
     EXPECT_EQ(aircraft.altitude_source, ADSBTypes::kAltitudeSourceBaro);
@@ -1196,8 +1197,8 @@ TEST(AircraftDictionary, FilterCPRLocations) {
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
     EXPECT_TRUE(aircraft->CanDecodePosition());
     EXPECT_FALSE(aircraft->DecodeAirbornePosition());  // Double decode fails without a new packet fails.
-    EXPECT_NEAR(aircraft->latitude_deg, 48.5977f, 0.0001f);
-    EXPECT_NEAR(aircraft->longitude_deg, 18.70521f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft->latitude_awb), 48.5977f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(aircraft->longitude_awb), 18.70521f, 0.001f);
 
     // Make it look like the aircraft already has a valid location so that the CPR filter is active.
     aircraft->WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid, true);
@@ -1212,8 +1213,8 @@ TEST(AircraftDictionary, FilterCPRLocations) {
     EXPECT_FALSE(aircraft->DecodeAirbornePosition());
 
     // Previous position is persisted.
-    EXPECT_NEAR(aircraft->latitude_deg, 48.5977f, 0.0001f);
-    EXPECT_NEAR(aircraft->longitude_deg, 18.70521f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft->latitude_awb), 48.5977f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(aircraft->longitude_awb), 18.70521f, 0.001f);
 
     /**  Test Case 1 **/
     // Valid position pair.
@@ -1229,8 +1230,8 @@ TEST(AircraftDictionary, FilterCPRLocations) {
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet));
     EXPECT_TRUE(aircraft->CanDecodePosition());
     EXPECT_FALSE(aircraft->DecodeAirbornePosition());  // Double decode fails without new packet.
-    EXPECT_NEAR(aircraft->latitude_deg, 49.30659f, 0.0001f);
-    EXPECT_NEAR(aircraft->longitude_deg, 17.4134f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(aircraft->latitude_awb), 49.30659f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(aircraft->longitude_awb), 17.4134f, 0.0001f);
 
     // Invalid position pair.
     packet = DecodedModeSPacket((char*)"8D48C22D60AB00E705C60B37E092");  // even
@@ -1251,18 +1252,19 @@ TEST(AircraftDictionary, FilterCPRLocations) {
 
 TEST(AircraftDictionary, GetLowestAircraftPositionModeS) {
     AircraftDictionary dictionary = AircraftDictionary();
-    float latitude_deg, longitude_deg, heading_deg;
+    uint32_t latitude_awb, longitude_awb;
+    float heading_deg;
     int32_t gnss_altitude_ft, baro_altitude_ft, speed_kts;
 
     // No aircraft in dictionary, should return false.
-    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                       heading_deg, speed_kts));
     EXPECT_EQ(dictionary.lowest_aircraft_entry, nullptr);
 
     // Add an aircraft without GNSS altitude - should not be selected as lowest.
     ModeSAircraft aircraft1(0x123456);
-    aircraft1.latitude_deg = 37.0f;
-    aircraft1.longitude_deg = -122.0f;
+    aircraft1.latitude_awb = DegToAWB(37.0f);
+    aircraft1.longitude_awb = DegToAWB(-122.0f);
     aircraft1.baro_altitude_ft = 10000;
     aircraft1.WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid, true);
     aircraft1.WriteBitFlag(ModeSAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
@@ -1273,13 +1275,13 @@ TEST(AircraftDictionary, GetLowestAircraftPositionModeS) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Still no valid GNSS altitude, so should return false.
-    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                       heading_deg, speed_kts));
 
     // Add an aircraft with GNSS altitude at 5000ft.
     ModeSAircraft aircraft2(0x234567);
-    aircraft2.latitude_deg = 38.0f;
-    aircraft2.longitude_deg = -121.0f;
+    aircraft2.latitude_awb = DegToAWB(38.0f);
+    aircraft2.longitude_awb = DegToAWB(-121.0f);
     aircraft2.gnss_altitude_ft = 5000;
     aircraft2.baro_altitude_ft = 4900;
     aircraft2.direction_deg = 90.0f;
@@ -1297,10 +1299,10 @@ TEST(AircraftDictionary, GetLowestAircraftPositionModeS) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Should now return the aircraft with GNSS altitude.
-    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                      heading_deg, speed_kts));
-    EXPECT_NEAR(latitude_deg, 38.0f, kFloatCloseEnough);
-    EXPECT_NEAR(longitude_deg, -121.0f, kFloatCloseEnough);
+    EXPECT_NEAR(AWBToDeg(latitude_awb), 38.0f, kFloatCloseEnough);
+    EXPECT_NEAR(AWBToDeg(longitude_awb), -121.0f, kFloatCloseEnough);
     EXPECT_EQ(gnss_altitude_ft, 5000);
     EXPECT_EQ(baro_altitude_ft, 4900);
     EXPECT_NEAR(heading_deg, 90.0f, kFloatCloseEnough);
@@ -1308,8 +1310,8 @@ TEST(AircraftDictionary, GetLowestAircraftPositionModeS) {
 
     // Add another aircraft with lower GNSS altitude at 2000ft.
     ModeSAircraft aircraft3(0x345678);
-    aircraft3.latitude_deg = 39.0f;
-    aircraft3.longitude_deg = -120.0f;
+    aircraft3.latitude_awb = DegToAWB(39.0f);
+    aircraft3.longitude_awb = DegToAWB(-120.0f);
     aircraft3.gnss_altitude_ft = 2000;
     aircraft3.baro_altitude_ft = 1900;
     aircraft3.direction_deg = 180.0f;
@@ -1327,10 +1329,10 @@ TEST(AircraftDictionary, GetLowestAircraftPositionModeS) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Should now return the lower aircraft.
-    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                      heading_deg, speed_kts));
-    EXPECT_NEAR(latitude_deg, 39.0f, kFloatCloseEnough);
-    EXPECT_NEAR(longitude_deg, -120.0f, kFloatCloseEnough);
+    EXPECT_NEAR(AWBToDeg(latitude_awb), 39.0f, kFloatCloseEnough);
+    EXPECT_NEAR(AWBToDeg(longitude_awb), -120.0f, kFloatCloseEnough);
     EXPECT_EQ(gnss_altitude_ft, 2000);
     EXPECT_EQ(baro_altitude_ft, 1900);
     EXPECT_NEAR(heading_deg, 180.0f, kFloatCloseEnough);
@@ -1338,8 +1340,8 @@ TEST(AircraftDictionary, GetLowestAircraftPositionModeS) {
 
     // Add a fourth aircraft with even lower GNSS altitude at 500ft.
     ModeSAircraft aircraft4(0x456789);
-    aircraft4.latitude_deg = 40.0f;
-    aircraft4.longitude_deg = -119.0f;
+    aircraft4.latitude_awb = DegToAWB(40.0f);
+    aircraft4.longitude_awb = DegToAWB(-119.0f);
     aircraft4.gnss_altitude_ft = 500;
     aircraft4.direction_deg = 270.0f;
     aircraft4.speed_kts = 100;
@@ -1356,10 +1358,10 @@ TEST(AircraftDictionary, GetLowestAircraftPositionModeS) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Should now return the lowest aircraft (500ft).
-    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                      heading_deg, speed_kts));
-    EXPECT_NEAR(latitude_deg, 40.0f, kFloatCloseEnough);
-    EXPECT_NEAR(longitude_deg, -119.0f, kFloatCloseEnough);
+    EXPECT_NEAR(AWBToDeg(latitude_awb), 40.0f, kFloatCloseEnough);
+    EXPECT_NEAR(AWBToDeg(longitude_awb), -119.0f, kFloatCloseEnough);
     EXPECT_EQ(gnss_altitude_ft, 500);
     EXPECT_EQ(baro_altitude_ft, INT32_MIN);  // No baro altitude available.
     EXPECT_NEAR(heading_deg, 270.0f, kFloatCloseEnough);
@@ -1371,15 +1373,16 @@ TEST(AircraftDictionary, LowestAircraftPtrClearedOnPrune) {
     config.aircraft_prune_interval_ms = 1000;  // Short prune interval for testing.
     AircraftDictionary dictionary(config);
 
-    float latitude_deg, longitude_deg, heading_deg;
+    uint32_t latitude_awb, longitude_awb;
+    float heading_deg;
     int32_t gnss_altitude_ft, baro_altitude_ft, speed_kts;
 
     set_time_since_boot_ms(10000);
 
     // Add an aircraft with valid GNSS altitude.
     ModeSAircraft aircraft(0x123456);
-    aircraft.latitude_deg = 37.0f;
-    aircraft.longitude_deg = -122.0f;
+    aircraft.latitude_awb = DegToAWB(37.0f);
+    aircraft.longitude_awb = DegToAWB(-122.0f);
     aircraft.gnss_altitude_ft = 1000;
     aircraft.direction_deg = 45.0f;
     aircraft.speed_kts = 200;
@@ -1395,7 +1398,7 @@ TEST(AircraftDictionary, LowestAircraftPtrClearedOnPrune) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Should return the aircraft.
-    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                      heading_deg, speed_kts));
     EXPECT_NE(dictionary.lowest_aircraft_entry, nullptr);
     EXPECT_NEAR(heading_deg, 45.0f, kFloatCloseEnough);
@@ -1412,7 +1415,7 @@ TEST(AircraftDictionary, LowestAircraftPtrClearedOnPrune) {
     EXPECT_EQ(dictionary.GetNumAircraft(), 0);
 
     // GetLowestAircraftPosition should return false.
-    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                       heading_deg, speed_kts));
 }
 
@@ -1429,7 +1432,8 @@ TEST(AircraftDictionary, IngestSurfacePositionMessagesOnGround) {
 
     AircraftDictionary::AircraftDictionaryConfig config;
     AircraftDictionary dictionary(config);
-    dictionary.SetReferencePosition(51.990f, 4.375f);  // Set reference latitude for surface position CPR decoding.
+    dictionary.SetReferencePosition(DegToAWB(51.990f),
+                                    DegToAWB(4.375f));  // Set reference latitude for surface position CPR decoding.
     DecodedModeSPacket packet_0 = DecodedModeSPacket((char*)"8C4841753AAB238733C8CD4020B1");
     DecodedModeSPacket packet_1 = DecodedModeSPacket((char*)"8C4841753A8A35323FAEBDAC702D");
 
@@ -1456,49 +1460,49 @@ TEST(AircraftDictionary, IngestSurfacePositionMessagesOnGround) {
     EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));
 
     // Verify that the decoded position is correct.
-    EXPECT_NEAR(aircraft_ptr->latitude_deg, 52.320607f, 0.001f);
-    EXPECT_NEAR(aircraft_ptr->longitude_deg, 4.734735f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->latitude_awb), 52.320607f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->longitude_awb), 4.734735f, 0.001f);
 
     // Now change the reference position and observe that the decoded surface position tracks with it.
     dictionary.Init();
-    dictionary.SetReferencePosition(51.990f, 4.375f + 90.0f);
+    dictionary.SetReferencePosition(DegToAWB(51.990f), DegToAWB(4.375f + 90.0f));
     packet_0.raw.mlat_48mhz_64bit_counts += 100e3;
     packet_1.raw.mlat_48mhz_64bit_counts += 100e3;
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_0));
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_1));
     aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(uid, false);
-    EXPECT_NEAR(aircraft_ptr->latitude_deg, 52.320607f, 0.001f);
-    EXPECT_NEAR(aircraft_ptr->longitude_deg, WrapCPRDecodeLongitude(4.734735f + 90.0f), 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->latitude_awb), 52.320607f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->longitude_awb), WrapCPRDecodeLongitude(4.734735f + 90.0f), 0.001f);
 
     dictionary.Init();
-    dictionary.SetReferencePosition(51.990f, 4.375f + 180.0f);
+    dictionary.SetReferencePosition(DegToAWB(51.990f), DegToAWB(4.375f + 180.0f));
     packet_0.raw.mlat_48mhz_64bit_counts += 100e3;
     packet_1.raw.mlat_48mhz_64bit_counts += 100e3;
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_0));
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_1));
     aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(uid, false);
-    EXPECT_NEAR(aircraft_ptr->latitude_deg, 52.320607f, 0.001f);
-    EXPECT_NEAR(aircraft_ptr->longitude_deg, WrapCPRDecodeLongitude(4.734735f + 180.0f), 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->latitude_awb), 52.320607f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->longitude_awb), WrapCPRDecodeLongitude(4.734735f + 180.0f), 0.001f);
 
     dictionary.Init();
-    dictionary.SetReferencePosition(51.990f, 4.375f - 90.0f);
+    dictionary.SetReferencePosition(DegToAWB(51.990f), DegToAWB(4.375f - 90.0f));
     packet_0.raw.mlat_48mhz_64bit_counts += 100e3;
     packet_1.raw.mlat_48mhz_64bit_counts += 100e3;
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_0));
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_1));
     aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(uid, false);
-    EXPECT_NEAR(aircraft_ptr->latitude_deg, 52.320607f, 0.001f);
-    EXPECT_NEAR(aircraft_ptr->longitude_deg, WrapCPRDecodeLongitude(4.734735f - 90.0f), 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->latitude_awb), 52.320607f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->longitude_awb), WrapCPRDecodeLongitude(4.734735f - 90.0f), 0.001f);
 
     dictionary.Init();
-    dictionary.SetReferencePosition(51.990f, 4.375f - 180.0f);
+    dictionary.SetReferencePosition(DegToAWB(51.990f), DegToAWB(4.375f - 180.0f));
     packet_0.raw.mlat_48mhz_64bit_counts += 100e3;
     packet_1.raw.mlat_48mhz_64bit_counts += 100e3;
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_0));
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_1));
     aircraft_ptr = dictionary.GetAircraftPtr<ModeSAircraft>(uid, false);
-    EXPECT_NEAR(aircraft_ptr->latitude_deg, 52.320607f, 0.001f);
-    EXPECT_NEAR(aircraft_ptr->longitude_deg, WrapCPRDecodeLongitude(4.734735f - 180.0f), 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->latitude_awb), 52.320607f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->longitude_awb), WrapCPRDecodeLongitude(4.734735f - 180.0f), 0.001f);
 }
 
 TEST(AircraftDictionary, SurfacePositionSkippedWithoutReference) {
@@ -1525,15 +1529,15 @@ TEST(AircraftDictionary, SurfacePositionSkippedWithoutReference) {
     EXPECT_FALSE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagIsAirborne));  // Air/ground still applied.
 
     // Once a reference appears, re-ingesting decodes the position (CPR frames were cached).
-    dictionary.SetReferencePosition(51.990f, 4.375f);
+    dictionary.SetReferencePosition(DegToAWB(51.990f), DegToAWB(4.375f));
     EXPECT_TRUE(dictionary.ReferencePositionValid());
     packet_0.raw.mlat_48mhz_64bit_counts += 100e3;
     packet_1.raw.mlat_48mhz_64bit_counts += 100e3;
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_0));
     EXPECT_TRUE(dictionary.IngestDecodedModeSPacket(packet_1));
     EXPECT_TRUE(aircraft_ptr->HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid));
-    EXPECT_NEAR(aircraft_ptr->latitude_deg, 52.320607f, 0.001f);
-    EXPECT_NEAR(aircraft_ptr->longitude_deg, 4.734735f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->latitude_awb), 52.320607f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft_ptr->longitude_awb), 4.734735f, 0.001f);
 
     // Clearing the reference pauses surface position decoding again (existing position stays latched).
     dictionary.ClearReferencePosition();
@@ -1843,17 +1847,17 @@ TEST(AircraftDictionary, SingleCorruptCPRPacketCannotConfirmItself) {
         ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
         ASSERT_TRUE(aircraft.SetCPRLatLon(kOddLat, kOddLon, true, t += 500));
         ASSERT_TRUE(aircraft.DecodeAirbornePosition());
-        const float lat0 = aircraft.latitude_deg, lon0 = aircraft.longitude_deg;
+        const float lat0 = AWBToDeg(aircraft.latitude_awb), lon0 = AWBToDeg(aircraft.longitude_awb);
 
         // Corrupted odd packet, decoded against the current even packet and then against the next even packet.
         ASSERT_TRUE(aircraft.SetCPRLatLon((kOddLat + corrupt_lat_delta) & 0x1FFFF, kOddLon, true, t += 500));
         bool first = aircraft.DecodeAirbornePosition();
         ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
         bool second = aircraft.DecodeAirbornePosition();
-        EXPECT_NEAR(aircraft.latitude_deg, lat0, 0.05) << "first=" << first << " second=" << second;
-        EXPECT_NEAR(aircraft.longitude_deg, lon0, 0.05);
-        EXPECT_GE(aircraft.latitude_deg, -90.0f);
-        EXPECT_LE(aircraft.latitude_deg, 90.0f);
+        EXPECT_NEAR(AWBToDeg(aircraft.latitude_awb), lat0, 0.05) << "first=" << first << " second=" << second;
+        EXPECT_NEAR(AWBToDeg(aircraft.longitude_awb), lon0, 0.05);
+        EXPECT_GE(AWBToDeg(aircraft.latitude_awb), -90.0f);
+        EXPECT_LE(AWBToDeg(aircraft.latitude_awb), 90.0f);
 
         // Good packets resume; the track continues from the real position.
         for (int i = 0; i < 4; i++) {
@@ -1862,8 +1866,8 @@ TEST(AircraftDictionary, SingleCorruptCPRPacketCannotConfirmItself) {
             ASSERT_TRUE(aircraft.SetCPRLatLon(kEvenLat, kEvenLon, false, t += 500));
             aircraft.DecodeAirbornePosition();
         }
-        EXPECT_NEAR(aircraft.latitude_deg, lat0, 0.05);
-        EXPECT_NEAR(aircraft.longitude_deg, lon0, 0.05);
+        EXPECT_NEAR(AWBToDeg(aircraft.latitude_awb), lat0, 0.05);
+        EXPECT_NEAR(AWBToDeg(aircraft.longitude_awb), lon0, 0.05);
         EXPECT_TRUE(aircraft.HasBitFlag(ModeSAircraft::BitFlag::kBitFlagPositionValid));
     }
 }
@@ -1884,7 +1888,7 @@ static ModeSAircraft* IngestPositionPair(AircraftDictionary& dictionary) {
 
 TEST(AircraftDictionary, DistanceAndBearingFromReceiver) {
     AircraftDictionary dictionary;
-    dictionary.SetReferencePosition(48.0f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0f), DegToAWB(18.0f));
     ModeSAircraft* aircraft = IngestPositionPair(dictionary);
     ASSERT_TRUE(aircraft);
     // WGS-84 geodesic from 48 N 18 E: 84585 m at 37.95 deg.
@@ -1905,7 +1909,7 @@ TEST(AircraftDictionary, DistanceAndBearingFromReceiver) {
     // Any move of the receiver makes the next Update() recompute every distance: 56 m north takes 56 cos(37.95 deg) =
     // 44 m off the distance to this aircraft.
     const uint32_t distance_before_m = aircraft->distance_m;
-    dictionary.SetReferencePosition(48.0005f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0005f), DegToAWB(18.0f));
     EXPECT_FALSE(dictionary.DistanceIsCurrent(entry));
     EXPECT_EQ(aircraft->distance_m, distance_before_m);  // Until Update().
     dictionary.Update(get_time_since_boot_ms());
@@ -1915,13 +1919,13 @@ TEST(AircraftDictionary, DistanceAndBearingFromReceiver) {
     // The same position again (a FIXED source, or a unit that got no new fix) recomputes nothing.
     const uint32_t distance_moved_m = aircraft->distance_m;
     aircraft->distance_m = 1;  // A recompute would overwrite it.
-    dictionary.SetReferencePosition(48.0005f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0005f), DegToAWB(18.0f));
     EXPECT_TRUE(dictionary.DistanceIsCurrent(entry));
     dictionary.Update(get_time_since_boot_ms());
     EXPECT_EQ(aircraft->distance_m, 1u);
     aircraft->distance_m = distance_moved_m;
 
-    dictionary.SetReferencePosition(48.5f, 18.6f);
+    dictionary.SetReferencePosition(DegToAWB(48.5f), DegToAWB(18.6f));
     dictionary.Update(get_time_since_boot_ms());
     EXPECT_NEAR(aircraft->distance_m, 13356, 10);  // Geodesic: 13355.6 m at 35.52 deg.
     EXPECT_NEAR(Bam16ToDeg(aircraft->bearing_bam16), 35.52f, 0.2f);
@@ -1938,7 +1942,7 @@ TEST(AircraftDictionary, DistanceAndBearingFromReceiver) {
 // frames, which take no filter at all.
 TEST(AircraftDictionary, DistanceFilterGatesAircraftReportsNotRawPackets) {
     AircraftDictionary dictionary;
-    dictionary.SetReferencePosition(48.0f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0f), DegToAWB(18.0f));
     ModeSAircraft* far = IngestPositionPair(dictionary);  // 84.6 km = 45.7 nm.
     ASSERT_TRUE(far);
     ModeSAircraft* near = dictionary.InsertAircraft<ModeSAircraft>(ModeSAircraft(0xBEE001));
@@ -2076,7 +2080,7 @@ TEST(AircraftDictionary, AltitudeFilterModes) {
     EXPECT_EQ(ReportedICAOs(dictionary, near_filter), all);
     dictionary.SetReferenceAltitudeFt(4000);
     EXPECT_EQ(ReportedICAOs(dictionary, dictionary.GetReportFilter(0, kAltitudeFilterNearRx, 2000, 0)), all);
-    dictionary.SetReferencePosition(48.0f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0f), DegToAWB(18.0f));
     EXPECT_EQ(ReportedICAOs(dictionary, dictionary.GetReportFilter(0, kAltitudeFilterNearRx, 2000, 0)),
               (V{0xBEE002, 0xBEE005, 0xBEE006}));  // 2000 to 6000 ft.
     dictionary.SetReferenceAltitudeFt(0);
@@ -2086,7 +2090,7 @@ TEST(AircraftDictionary, AltitudeFilterModes) {
     EXPECT_EQ(ReportedICAOs(dictionary, dictionary.GetReportFilter(0, kAltitudeFilterNearRx, 2000, 0)), all);
     dictionary.SetReferenceAltitudeFt(4000);
     dictionary.ClearReferencePosition();  // Clears the receiver altitude too.
-    dictionary.SetReferencePosition(48.0f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0f), DegToAWB(18.0f));
     EXPECT_EQ(ReportedICAOs(dictionary, dictionary.GetReportFilter(0, kAltitudeFilterNearRx, 2000, 0)), all);
 }
 
@@ -2116,7 +2120,7 @@ TEST(AircraftDictionary, AltitudeFilterOtherAircraftTypes) {
 // aircraft are unchanged.
 TEST(AircraftDictionary, AltitudeAndDistanceFiltersCombine) {
     AircraftDictionary dictionary;
-    dictionary.SetReferencePosition(48.0f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0f), DegToAWB(18.0f));
     ModeSAircraft* far = IngestPositionPair(dictionary);  // 45.7 nm out.
     ASSERT_TRUE(far);
     ASSERT_TRUE(far->HasBitFlag(ModeSAircraft::kBitFlagBaroAltitudeValid));
@@ -2177,14 +2181,14 @@ TEST(AircraftDictionary, DistanceUnknownWithoutReceiverPosition) {
     EXPECT_EQ(aircraft->distance_m, Aircraft::kDistanceUnknown);
 
     // Once the receiver position arrives, the next Update() fills in the distance.
-    dictionary.SetReferencePosition(48.0f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0f), DegToAWB(18.0f));
     dictionary.Update(get_time_since_boot_ms());
     EXPECT_NEAR(aircraft->distance_m, 84585, 30);
 }
 
 TEST(AircraftDictionary, DistanceFollowsMovesOnUpdate) {
     AircraftDictionary dictionary;
-    dictionary.SetReferencePosition(48.0f, 18.0f);
+    dictionary.SetReferencePosition(DegToAWB(48.0f), DegToAWB(18.0f));
     auto ingest = [&](const char* hex) {
         DecodedModeSPacket packet = DecodedModeSPacket((char*)hex);
         inc_time_since_boot_ms(500);
@@ -2205,7 +2209,7 @@ TEST(AircraftDictionary, DistanceFollowsMovesOnUpdate) {
         ingest("8DBEE001589B804445F17E39A3D0");
         ingest("8DBEE001589B87BA99D79C52EE84");
     }
-    EXPECT_NEAR(aircraft->latitude_deg, 48.4f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(aircraft->latitude_awb), 48.4f, 0.001f);
     EXPECT_NEAR(aircraft->distance_m, 36527, 15);
     dictionary.Update(get_time_since_boot_ms());
     EXPECT_NEAR(aircraft->distance_m, 46897, 15);  // Geodesic: 46897 m at 18.41 deg.

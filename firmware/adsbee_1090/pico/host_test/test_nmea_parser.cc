@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "awb_test_utils.hh"
 #include "gtest/gtest.h"
 #include "nmea_parser.hh"
 
@@ -31,8 +32,8 @@ TEST(NMEAParser, ParsesGPGGA) {
     EXPECT_TRUE(fix.valid);
     EXPECT_EQ(fix.num_satellites, 8);
     EXPECT_EQ(fix.fix_quality, 1);
-    EXPECT_NEAR(fix.latitude_deg, 48.1173f, 0.001f);
-    EXPECT_NEAR(fix.longitude_deg, 11.5167f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(fix.latitude_awb), 48.1173f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(fix.longitude_awb), 11.5167f, 0.001f);
     EXPECT_NEAR(fix.altitude_ft, static_cast<int32_t>(545.4f * 3.28084f), 2);
     EXPECT_EQ(fix.last_update_timestamp_ms, 1000u);
     EXPECT_TRUE(fix.utc_time_valid);
@@ -107,8 +108,8 @@ TEST(NMEAParser, ParsesGPRMC) {
 
     const NMEAParser::GNSSFix& fix = parser.fix();
     EXPECT_TRUE(fix.valid);
-    EXPECT_NEAR(fix.latitude_deg, 48.1173f, 0.001f);
-    EXPECT_NEAR(fix.longitude_deg, 11.5167f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(fix.latitude_awb), 48.1173f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(fix.longitude_awb), 11.5167f, 0.001f);
     EXPECT_EQ(fix.speed_kts, 22);          // 022.4 knots truncated to int.
     EXPECT_NEAR(fix.heading_deg, 84.4f, 0.1f);
 }
@@ -120,7 +121,7 @@ TEST(NMEAParser, TalkerIdAgnostic) {
         parser, "$GNRMC,123519,A,4807.038,N,01131.000,E,010.0,090.0,230394,,,A*66\r\n");
     EXPECT_EQ(type, NMEAParser::kSentenceRMC);
     EXPECT_TRUE(parser.fix().valid);
-    EXPECT_NEAR(parser.fix().latitude_deg, 48.1173f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(parser.fix().latitude_awb), 48.1173f, 0.001f);
 }
 
 // CASIC AT6558 receivers identify themselves with GPTXT and then emit multi-constellation
@@ -177,14 +178,14 @@ TEST(NMEAParser, RejectsBadChecksum) {
     // Establish a known-good fix first.
     FeedSentence(parser, "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n");
     ASSERT_TRUE(parser.fix().valid);
-    float good_lat = parser.fix().latitude_deg;
+    uint32_t good_lat = parser.fix().latitude_awb;
 
     // Now feed a sentence with a deliberately wrong checksum (*00); it must be rejected.
     auto type = FeedSentence(
         parser, "$GPGGA,123519,0000.000,S,00000.000,W,1,08,0.9,1.0,M,46.9,M,,*00\r\n");
     EXPECT_EQ(type, NMEAParser::kSentenceChecksumFail);
     // Fix must be unchanged by the rejected sentence.
-    EXPECT_EQ(parser.fix().latitude_deg, good_lat);
+    EXPECT_EQ(parser.fix().latitude_awb, good_lat);
 }
 
 // A GGA reporting no fix (quality 0) must mark the fix invalid.

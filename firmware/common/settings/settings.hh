@@ -157,8 +157,8 @@ class SettingsManager {
         static const char kPositionSourceStrs[kNumPositionSources][kPositionSourceStrMaxLen];
 
         PositionSource source = kPositionSourceLowestAircraft;
-        float latitude_deg = 0.0;      // Degrees, WGS84
-        float longitude_deg = 0.0;     // Degrees, WGS84
+        uint32_t latitude_awb = 0;   // WGS84, AWB (see geo_utils.hh)
+        uint32_t longitude_awb = 0;  // WGS84, AWB
         // Feet. GNSS source: above MSL (GGA altitude). Aircraft sources: the aircraft's geometric altitude, which
         // ADS-B references to the WGS-84 ellipsoid. Fixed source: as entered.
         int32_t gnss_altitude_ft = 0;

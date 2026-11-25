@@ -1,4 +1,5 @@
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "decode_utils.hh"  // for location calculation utility functions
 #include "gtest/gtest.h"
 #include "hal_god_powers.hh"  // for changing timestamp
@@ -24,18 +25,19 @@ TEST(AircraftDictionary, IngestUATADSBPacket) {
 
 TEST(AircraftDictionary, GetLowestAircraftPositionUAT) {
     AircraftDictionary dictionary = AircraftDictionary();
-    float latitude_deg, longitude_deg, heading_deg;
+    uint32_t latitude_awb, longitude_awb;
+    float heading_deg;
     int32_t gnss_altitude_ft, baro_altitude_ft, speed_kts;
 
     // No aircraft in dictionary, should return false.
-    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                       heading_deg, speed_kts));
     EXPECT_EQ(dictionary.lowest_aircraft_entry, nullptr);
 
     // Add a UAT aircraft without GNSS altitude - should not be selected as lowest.
     UATAircraft aircraft1(0xA11111);
-    aircraft1.latitude_deg = 37.0f;
-    aircraft1.longitude_deg = -122.0f;
+    aircraft1.latitude_awb = DegToAWB(37.0f);
+    aircraft1.longitude_awb = DegToAWB(-122.0f);
     aircraft1.baro_altitude_ft = 10000;
     aircraft1.WriteBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid, true);
     aircraft1.WriteBitFlag(UATAircraft::BitFlag::kBitFlagBaroAltitudeValid, true);
@@ -46,13 +48,13 @@ TEST(AircraftDictionary, GetLowestAircraftPositionUAT) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Still no valid GNSS altitude, so should return false.
-    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_FALSE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                       heading_deg, speed_kts));
 
     // Add a UAT aircraft with GNSS altitude at 3000ft.
     UATAircraft aircraft2(0xA22222);
-    aircraft2.latitude_deg = 38.0f;
-    aircraft2.longitude_deg = -121.0f;
+    aircraft2.latitude_awb = DegToAWB(38.0f);
+    aircraft2.longitude_awb = DegToAWB(-121.0f);
     aircraft2.gnss_altitude_ft = 3000;
     aircraft2.baro_altitude_ft = 2900;
     aircraft2.direction_deg = 180.0f;
@@ -69,10 +71,10 @@ TEST(AircraftDictionary, GetLowestAircraftPositionUAT) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Should now return the UAT aircraft with GNSS altitude.
-    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                      heading_deg, speed_kts));
-    EXPECT_NEAR(latitude_deg, 38.0f, 0.0001f);
-    EXPECT_NEAR(longitude_deg, -121.0f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(latitude_awb), 38.0f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(longitude_awb), -121.0f, 0.0001f);
     EXPECT_EQ(gnss_altitude_ft, 3000);
     EXPECT_EQ(baro_altitude_ft, 2900);
     EXPECT_NEAR(heading_deg, 180.0f, 0.0001f);
@@ -80,8 +82,8 @@ TEST(AircraftDictionary, GetLowestAircraftPositionUAT) {
 
     // Add another UAT aircraft with lower GNSS altitude at 1500ft.
     UATAircraft aircraft3(0xA33333);
-    aircraft3.latitude_deg = 39.0f;
-    aircraft3.longitude_deg = -120.0f;
+    aircraft3.latitude_awb = DegToAWB(39.0f);
+    aircraft3.longitude_awb = DegToAWB(-120.0f);
     aircraft3.gnss_altitude_ft = 1500;
     aircraft3.baro_altitude_ft = 1400;
     aircraft3.direction_deg = 123.4f;
@@ -98,10 +100,10 @@ TEST(AircraftDictionary, GetLowestAircraftPositionUAT) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Should now return the lower UAT aircraft.
-    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                      heading_deg, speed_kts));
-    EXPECT_NEAR(latitude_deg, 39.0f, 0.0001f);
-    EXPECT_NEAR(longitude_deg, -120.0f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(latitude_awb), 39.0f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(longitude_awb), -120.0f, 0.0001f);
     EXPECT_EQ(gnss_altitude_ft, 1500);
     EXPECT_EQ(baro_altitude_ft, 1400);
     EXPECT_FLOAT_EQ(heading_deg, 123.4f);
@@ -110,13 +112,14 @@ TEST(AircraftDictionary, GetLowestAircraftPositionUAT) {
 
 TEST(AircraftDictionary, GetLowestAircraftPositionMixedModeSAndUAT) {
     AircraftDictionary dictionary = AircraftDictionary();
-    float latitude_deg, longitude_deg, heading_deg;
+    uint32_t latitude_awb, longitude_awb;
+    float heading_deg;
     int32_t gnss_altitude_ft, baro_altitude_ft, speed_kts;
 
     // Add a Mode S aircraft with GNSS altitude at 4000ft.
     ModeSAircraft mode_s_aircraft(0x123456);
-    mode_s_aircraft.latitude_deg = 37.0f;
-    mode_s_aircraft.longitude_deg = -122.0f;
+    mode_s_aircraft.latitude_awb = DegToAWB(37.0f);
+    mode_s_aircraft.longitude_awb = DegToAWB(-122.0f);
     mode_s_aircraft.gnss_altitude_ft = 4000;
     mode_s_aircraft.baro_altitude_ft = 3900;
     mode_s_aircraft.direction_deg = 90.0f;
@@ -132,8 +135,8 @@ TEST(AircraftDictionary, GetLowestAircraftPositionMixedModeSAndUAT) {
 
     // Add a UAT aircraft with GNSS altitude at 2000ft (lower than Mode S).
     UATAircraft uat_aircraft(0xA44444);
-    uat_aircraft.latitude_deg = 38.0f;
-    uat_aircraft.longitude_deg = -121.0f;
+    uat_aircraft.latitude_awb = DegToAWB(38.0f);
+    uat_aircraft.longitude_awb = DegToAWB(-121.0f);
     uat_aircraft.gnss_altitude_ft = 2000;
     uat_aircraft.baro_altitude_ft = 1900;
     uat_aircraft.direction_deg = 45.0f;
@@ -150,10 +153,10 @@ TEST(AircraftDictionary, GetLowestAircraftPositionMixedModeSAndUAT) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Should return the UAT aircraft since it has lower altitude.
-    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                      heading_deg, speed_kts));
-    EXPECT_NEAR(latitude_deg, 38.0f, 0.0001f);
-    EXPECT_NEAR(longitude_deg, -121.0f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(latitude_awb), 38.0f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(longitude_awb), -121.0f, 0.0001f);
     EXPECT_EQ(gnss_altitude_ft, 2000);
     EXPECT_EQ(baro_altitude_ft, 1900);
     EXPECT_NEAR(heading_deg, 45.0f, 0.0001f);
@@ -161,8 +164,8 @@ TEST(AircraftDictionary, GetLowestAircraftPositionMixedModeSAndUAT) {
 
     // Add another Mode S aircraft with even lower GNSS altitude at 500ft.
     ModeSAircraft mode_s_aircraft2(0x234567);
-    mode_s_aircraft2.latitude_deg = 39.0f;
-    mode_s_aircraft2.longitude_deg = -120.0f;
+    mode_s_aircraft2.latitude_awb = DegToAWB(39.0f);
+    mode_s_aircraft2.longitude_awb = DegToAWB(-120.0f);
     mode_s_aircraft2.gnss_altitude_ft = 500;
     mode_s_aircraft2.direction_deg = 270.0f;
     mode_s_aircraft2.speed_kts = 80;
@@ -178,10 +181,10 @@ TEST(AircraftDictionary, GetLowestAircraftPositionMixedModeSAndUAT) {
     dictionary.Update(get_time_since_boot_ms());
 
     // Should now return the Mode S aircraft with 500ft altitude.
-    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_deg, longitude_deg, gnss_altitude_ft, baro_altitude_ft,
+    EXPECT_TRUE(dictionary.GetLowestAircraftPosition(latitude_awb, longitude_awb, gnss_altitude_ft, baro_altitude_ft,
                                                      heading_deg, speed_kts));
-    EXPECT_NEAR(latitude_deg, 39.0f, 0.0001f);
-    EXPECT_NEAR(longitude_deg, -120.0f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(latitude_awb), 39.0f, 0.0001f);
+    EXPECT_NEAR(AWBToDeg(longitude_awb), -120.0f, 0.0001f);
     EXPECT_EQ(gnss_altitude_ft, 500);
     EXPECT_EQ(baro_altitude_ft, INT32_MIN);  // No baro altitude available.
     EXPECT_NEAR(heading_deg, 270.0f, 0.0001f);

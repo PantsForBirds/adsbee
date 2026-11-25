@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "auto_updater.hh"  // AutoUpdatePlatform: HTTP types and device identity.
+#include "geo_utils.hh"
 #include "settings.hh"
 #include "swarm_recorder.hh"
 
@@ -46,8 +47,8 @@ class SwarmReporter {
     struct DeviceState {
         bool auto_update = false;
         bool rx_position_valid = false;
-        float latitude_deg = 0;
-        float longitude_deg = 0;
+        uint32_t latitude_awb = 0;  // AWB, see geo_utils.hh.
+        uint32_t longitude_awb = 0;
         int32_t altitude_m = 0;
         const char* rx_position_source = "";
         bool range_valid = false;  // UsablePosition() held all period, so the range map means something.
@@ -108,13 +109,11 @@ class SwarmReporter {
      * Whether a receiver position may go into reports: FIXED or GNSS (positions of received aircraft move with them),
      * and a real coordinate (FIXED at 0, 0 means none was entered).
      */
-    static bool UsablePosition(bool available, SettingsManager::RxPosition::PositionSource source, float latitude_deg,
-                               float longitude_deg) {
+    static bool UsablePosition(bool available, SettingsManager::RxPosition::PositionSource source,
+                               uint32_t latitude_awb, uint32_t longitude_awb) {
         if (!available || !SettingsManager::RxPosition::MayBeTransmittedAsOwnPosition(source)) return false;
-        if (!(latitude_deg >= -90.0f && latitude_deg <= 90.0f && longitude_deg >= -180.0f && longitude_deg <= 180.0f)) {
-            return false;  // Also NaN.
-        }
-        return !(latitude_deg == 0.0f && longitude_deg == 0.0f);
+        if (!AWBIsLatitude(latitude_awb)) return false;
+        return !(latitude_awb == 0 && longitude_awb == 0);
     }
 
     // True for https://adsbee.aero (any path): the only server that gets the OTA keys.

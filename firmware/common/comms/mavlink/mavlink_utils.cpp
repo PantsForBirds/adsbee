@@ -104,9 +104,9 @@ mavlink_adsb_vehicle_t ModeSAircraftToMAVLINKADSBVehicleMessage(const ModeSAircr
     // Non-ICAO addresses keep their address qualifier bits, as UAT addresses do, so they can't match an ICAO address.
     adsb_vehicle_msg.ICAO_address = Aircraft::UIDToICAOAddress(aircraft.GetUID());
     // Latitude [degE7]
-    adsb_vehicle_msg.lat = static_cast<int32_t>(aircraft.latitude_deg * 1e7f);
+    adsb_vehicle_msg.lat = AWBToDegE7(aircraft.latitude_awb);
     // Longitude [degE7]
-    adsb_vehicle_msg.lon = static_cast<int32_t>(aircraft.longitude_deg * 1e7f);
+    adsb_vehicle_msg.lon = AWBToDegE7(aircraft.longitude_awb);
     // Altitude [mm]: Prefer GNSS altitude but fall back to baro altitude.
     adsb_vehicle_msg.altitude =
         FeetToMeters(use_gnss_altitude ? aircraft.gnss_altitude_ft : aircraft.baro_altitude_ft) * 1000;
@@ -173,9 +173,9 @@ mavlink_adsb_vehicle_t UATAircraftToMAVLINKADSBVehicleMessage(const UATAircraft 
     mavlink_adsb_vehicle_t adsb_vehicle_msg = {};
     adsb_vehicle_msg.ICAO_address = aircraft.icao_address;
     // Latitude [degE7]
-    adsb_vehicle_msg.lat = static_cast<int32_t>(aircraft.latitude_deg * 1e7f);
+    adsb_vehicle_msg.lat = AWBToDegE7(aircraft.latitude_awb);
     // Longitude [degE7]
-    adsb_vehicle_msg.lon = static_cast<int32_t>(aircraft.longitude_deg * 1e7f);
+    adsb_vehicle_msg.lon = AWBToDegE7(aircraft.longitude_awb);
     // Altitude [mm]: Prefer GNSS altitude but fall back to baro altitude.
     adsb_vehicle_msg.altitude =
         FeetToMeters(use_gnss_altitude ? aircraft.gnss_altitude_ft : aircraft.baro_altitude_ft) * 1000;

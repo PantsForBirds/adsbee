@@ -1,3 +1,4 @@
+#include "awb_test_utils.hh"
 #include "fec.hh"
 #include "gdl90_utils.hh"
 #include "gtest/gtest.h"
@@ -391,8 +392,8 @@ static float DecodeLatLon24(const uint8_t* bytes) {
 TEST(GDL90Utils, OwnshipReportFromGNSS) {
     SettingsManager::RxPosition rx_position;
     rx_position.source = SettingsManager::RxPosition::kPositionSourceGNSS;
-    rx_position.latitude_deg = 37.5f;
-    rx_position.longitude_deg = -122.0f;
+    rx_position.latitude_awb = DegToAWB(37.5f);
+    rx_position.longitude_awb = DegToAWB(-122.0f);
     rx_position.gnss_altitude_ft = 1500;
     rx_position.baro_altitude_ft = 1234;  // Stale: must NOT leak into a GNSS ownship report.
     rx_position.heading_deg = 90.0f;
@@ -403,8 +404,8 @@ TEST(GDL90Utils, OwnshipReportFromGNSS) {
     ASSERT_TRUE(GDL90Reporter::BuildOwnshipReportData(data, rx_position, /*rx_position_available=*/true));
     EXPECT_EQ(data.address_type, GDL90Reporter::GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress);
     EXPECT_EQ(data.participant_address, 0u);
-    EXPECT_FLOAT_EQ(data.latitude_deg, 37.5f);
-    EXPECT_FLOAT_EQ(data.longitude_deg, -122.0f);
+    EXPECT_FLOAT_EQ(AWBToDeg(data.latitude_awb), 37.5f);
+    EXPECT_FLOAT_EQ(AWBToDeg(data.longitude_awb), -122.0f);
     EXPECT_EQ(data.altitude_ft, INT32_MIN);  // Pressure altitude unknown from GNSS: invalid, never GNSS altitude.
     EXPECT_FLOAT_EQ(data.speed_kts, 45.0f);
     EXPECT_FLOAT_EQ(data.direction_deg, 90.0f);
@@ -438,8 +439,8 @@ TEST(GDL90Utils, OwnshipReportFromGNSS) {
 TEST(GDL90Utils, OwnshipReportFromTrackedAircraft) {
     SettingsManager::RxPosition rx_position;
     rx_position.source = SettingsManager::RxPosition::kPositionSourceAircraftMatchingICAO;
-    rx_position.latitude_deg = 40.0f;
-    rx_position.longitude_deg = -75.0f;
+    rx_position.latitude_awb = DegToAWB(40.0f);
+    rx_position.longitude_awb = DegToAWB(-75.0f);
     rx_position.gnss_altitude_ft = 3100;
     rx_position.baro_altitude_ft = 3000;
     rx_position.heading_deg = 180.0f;
@@ -455,18 +456,18 @@ TEST(GDL90Utils, OwnshipReportFromTrackedAircraft) {
 
 TEST(GDL90Utils, OwnshipReportWithoutPosition) {
     SettingsManager::RxPosition rx_position;
-    rx_position.latitude_deg = 37.5f;
-    rx_position.longitude_deg = -122.0f;
+    rx_position.latitude_awb = DegToAWB(37.5f);
+    rx_position.longitude_awb = DegToAWB(-122.0f);
     rx_position.speed_kts = 100;
     rx_position.icao_address = 0xABCDEF;
 
     // A GNSS source with no fresh fix must not send its last coordinates.
     rx_position.source = SettingsManager::RxPosition::kPositionSourceGNSS;
     GDL90Reporter::GDL90TargetReportData data;
-    data.latitude_deg = 1.0f;  // Prove the builder resets stale contents.
+    data.latitude_awb = DegToAWB(1.0f);  // Prove the builder resets stale contents.
     EXPECT_FALSE(GDL90Reporter::BuildOwnshipReportData(data, rx_position, /*rx_position_available=*/false));
-    EXPECT_FLOAT_EQ(data.latitude_deg, 0.0f);
-    EXPECT_FLOAT_EQ(data.longitude_deg, 0.0f);
+    EXPECT_FLOAT_EQ(AWBToDeg(data.latitude_awb), 0.0f);
+    EXPECT_FLOAT_EQ(AWBToDeg(data.longitude_awb), 0.0f);
     EXPECT_EQ(data.navigation_integrity_category, 0);  // GDL90 "no position" convention: lat, lon, NIC all zero.
     EXPECT_EQ(data.participant_address, 0u);
     EXPECT_EQ(data.address_type, GDL90Reporter::GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress);
@@ -479,7 +480,7 @@ TEST(GDL90Utils, OwnshipReportWithoutPosition) {
         EXPECT_FALSE(GDL90Reporter::IsValidOwnshipSource(source));
         EXPECT_FALSE(GDL90Reporter::BuildOwnshipReportData(data, rx_position, /*rx_position_available=*/true))
             << "source " << static_cast<int>(source);
-        EXPECT_FLOAT_EQ(data.latitude_deg, 0.0f);
+        EXPECT_FLOAT_EQ(AWBToDeg(data.latitude_awb), 0.0f);
         EXPECT_EQ(data.navigation_integrity_category, 0);
     }
     EXPECT_TRUE(GDL90Reporter::IsValidOwnshipSource(SettingsManager::RxPosition::kPositionSourceGNSS));
@@ -715,8 +716,8 @@ TEST(GDL90Utils, RemoteIDTrackValidOnlyWhenDirectionValid) {
     // Remote ID reports direction independently of position, so a drone with a valid position but no direction must
     // NOT be reported as having a true track angle — otherwise a stale/default heading reads as a real track.
     RemoteIDAircraft ac(0x123456);
-    ac.latitude_deg = 37.5f;
-    ac.longitude_deg = -122.3f;
+    ac.latitude_awb = DegToAWB(37.5f);
+    ac.longitude_awb = DegToAWB(-122.3f);
     ac.direction_deg = 90.0f;  // Stale value that must not be presented as a valid track.
     ac.WriteBitFlag(RemoteIDAircraft::kBitFlagPositionValid, true);
 
@@ -735,8 +736,8 @@ TEST(GDL90Utils, RemoteIDVerticalRateUnavailableWhenNotReceived) {
     // A Remote ID Location message may omit vertical speed. That must encode as the GDL90 "not available" sentinel
     // (0x800), not as a real 0 fpm.
     RemoteIDAircraft ac(0x123456);
-    ac.latitude_deg = 37.5f;
-    ac.longitude_deg = -122.3f;
+    ac.latitude_awb = DegToAWB(37.5f);
+    ac.longitude_awb = DegToAWB(-122.3f);
     ac.WriteBitFlag(RemoteIDAircraft::kBitFlagPositionValid, true);
     ac.gnss_vertical_rate_fpm = 0;  // Default/stale: no vertical rate was ever received.
 

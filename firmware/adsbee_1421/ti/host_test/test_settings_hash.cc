@@ -15,8 +15,17 @@ TEST(SettingsHash, SameSettingsSameHash) {
 TEST(SettingsHash, DefaultSettingsHashIsPinned) {
     // Changes only with the Settings struct or its defaults.
     SM::Settings settings;
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0x64FB12DDu);
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x692A4AABu);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0xBC2EB462u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x322C3110u);
+}
+
+TEST(SettingsHash, FixedPositionHashIsPinned) {
+    // A fixed receiver position counts in kScopeFull as its AWB latitude and longitude.
+    SM::Settings settings;
+    settings.rx_position.source = SM::RxPosition::kPositionSourceFixed;
+    settings.rx_position.latitude_awb = 0x1A987654u;   // 37.4 deg.
+    settings.rx_position.longitude_awb = 0xA92C5F93u;  // -122.1 deg.
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xFE189BA0u);
 }
 
 TEST(SettingsHash, MagicAndStoredCRCDoNotCount) {
@@ -69,7 +78,7 @@ TEST(SettingsHash, ASTERIXSICCountsOnlyInTheFullHash) {
 TEST(SettingsHash, ReceiverPositionCountsOnlyWhenItIsASetting) {
     // Followed aircraft and GNSS overwrite the position while running.
     SM::Settings a, b;
-    b.rx_position.latitude_deg = 47.5f;
+    b.rx_position.latitude_awb = FloatDegToAWB(47.5f);
     b.rx_position.icao_address = 0xBEE001;
     EXPECT_EQ(SettingsHash::Compute(a, kScopeFull), SettingsHash::Compute(b, kScopeFull));
 

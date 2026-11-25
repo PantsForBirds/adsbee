@@ -4,6 +4,7 @@
 #include "adsbee.hh"
 #endif
 #include "comms.hh"
+#include "geo_utils.hh"
 
 // A bool loaded from raw flash can hold any byte, and reading one that isn't 0 or 1 is undefined behavior. Check the
 // raw byte and rewrite nonzero values as true.
@@ -265,6 +266,12 @@ bool SettingsManager::Sanitize() {
         CONSOLE_ERROR("SettingsManager::Sanitize", "rx_position.source %u out of range, resetting to kPositionSourceLowestAircraft.",
                       settings.rx_position.source);
         settings.rx_position.source = RxPosition::kPositionSourceLowestAircraft;
+        changed = true;
+    }
+    if (!AWBIsLatitude(settings.rx_position.latitude_awb)) {
+        CONSOLE_ERROR("SettingsManager::Sanitize", "rx_position latitude 0x%08lx out of range, resetting to 0.",
+                      static_cast<unsigned long>(settings.rx_position.latitude_awb));
+        settings.rx_position.latitude_awb = 0;
         changed = true;
     }
 

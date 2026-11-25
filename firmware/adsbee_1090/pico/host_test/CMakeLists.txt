@@ -74,6 +74,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_decode_utils.cc
         test_fixedmath.cc
         test_geo_utils.cc
+        test_awb_positions.cc
         test_idle_session_tracker.cc
         test_ipv4_config.cc
         test_ipv6_config.cc
