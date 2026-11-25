@@ -29,7 +29,9 @@ class PPSClock {
     static constexpr int64_t kHoldoverSeconds = 4;
     // Longest gap between two points of a synced fit (over dropped edges).
     static constexpr int64_t kMaxGapSeconds = 16;
-    static constexpr int32_t kMaxResidualNs = 500;
+    // The capture delay is within 16 ns of its mode for 76-92% of the edges (bench, t-1336), a receiver adds ~30 ns rms:
+    // 150 ns keeps them and drops the edges whose interrupt waited (replay of the bench delays: 17-24 ns rms at mid-second).
+    static constexpr int32_t kMaxResidualNs = 150;
     static constexpr uint16_t kMaxOutliers = 8;
     static constexpr uint32_t kMaxLabelDelayUs = 900'000;
     static constexpr uint32_t kMinEdgeIntervalUs = 900'000;

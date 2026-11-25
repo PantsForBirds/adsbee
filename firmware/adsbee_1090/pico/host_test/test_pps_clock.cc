@@ -178,8 +178,9 @@ TEST(PPSClock, DropsDelayedEdges) {
     EXPECT_NEAR(ErrorNs(clock, bench, 6.5), 0, kEarlyNs);
     EXPECT_EQ(Label(clock, bench, num_edges, 7), PPSClock::kLabeled);
     // Within kMaxResidualNs an edge is used, and its residual reported.
-    EXPECT_EQ(Label(clock, bench, num_edges, 8, 300), PPSClock::kLabeled);
-    EXPECT_NEAR(clock.GetLastResidualNs(), 300, kEarlyNs);
+    EXPECT_EQ(Label(clock, bench, num_edges, 8, 120), PPSClock::kLabeled);
+    EXPECT_NEAR(clock.GetLastResidualNs(), 120, kEarlyNs);
+    EXPECT_EQ(Label(clock, bench, num_edges, 9, 300), PPSClock::kOutlier);
 }
 
 TEST(PPSClock, StartsAgainAfterAStep) {
