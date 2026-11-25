@@ -31,6 +31,7 @@ class PPSLab {
    public:
     enum Mode : uint8_t { kOff = 0, kPWM, kPulses, kPWMBusPriority, kAsync };
     enum Load : uint8_t { kLoadNone = 0, kLoadFlash, kLoadWarm, kLoadFlush, kNumLoads };
+    static constexpr uint16_t kAsyncNumBins = 1024;  // ASYNC: 4-cycle bins up to 4096 cycles (33 us).
     static constexpr uint16_t kPWMHighCycles = 8192;  // 66 us high after the wrap.
     static constexpr uint16_t kBinCycles = 4;
     static constexpr uint16_t kNumBins = 256;  // Up to 1024 cycles (8 us); above: overflow.
@@ -81,6 +82,8 @@ class PPSLab {
         for (auto& n : load_n_) n = 0;
         for (auto& n : load_over_) n = 0;
         not_armed_ = 0;
+        bad_arm_ = 0;
+        for (auto& m : load_max_) m = 0;
         extra_edges_ = 0;
         min_lead_ = UINT16_MAX;
         max_lead_ = 0;
@@ -112,7 +115,8 @@ class PPSLab {
             AddLatency(jitter_counts);
             uint16_t b = jitter_counts / kBinCycles;
             load_n_[load_]++;
-            if (b < kNumBins) {
+            if (jitter_counts > load_max_[load_]) load_max_[load_] = jitter_counts;
+            if (b < kAsyncNumBins) {
                 load_bins_[load_][b]++;
             } else {
                 load_over_[load_]++;
@@ -159,13 +163,15 @@ class PPSLab {
         CONSOLE_PRINTF("\r\n");
         if (mode_ != kAsync) return;
         static const char* kLoadNames[kNumLoads] = {"none", "flash", "warm", "flush"};
-        CONSOLE_PRINTF("PPS_LAB_ASYNC=not_armed=%lu,extra_edges=%lu,lead_cycles=%u-%u\r\n",
-                       static_cast<unsigned long>(not_armed_), static_cast<unsigned long>(extra_edges_),
+        CONSOLE_PRINTF("PPS_LAB_ASYNC=not_armed=%lu,bad_arm=%lu,extra_edges=%lu,lead_cycles=%u-%u\r\n",
+                       static_cast<unsigned long>(not_armed_), static_cast<unsigned long>(bad_arm_),
+                       static_cast<unsigned long>(extra_edges_),
                        min_lead_ == UINT16_MAX ? 0 : min_lead_, max_lead_);
         for (uint16_t l = 0; l < kNumLoads; l++) {
-            CONSOLE_PRINTF("PPS_LAB_HIST_%s=n=%lu,over=%lu ", kLoadNames[l], static_cast<unsigned long>(load_n_[l]),
-                           static_cast<unsigned long>(load_over_[l]));
-            for (uint16_t i = 0; i < kNumBins; i++) {
+            CONSOLE_PRINTF("PPS_LAB_HIST_%s=n=%lu,over=%lu,max=%u ", kLoadNames[l],
+                           static_cast<unsigned long>(load_n_[l]), static_cast<unsigned long>(load_over_[l]),
+                           load_max_[l]);
+            for (uint16_t i = 0; i < kAsyncNumBins; i++) {
                 if (load_bins_[l][i]) CONSOLE_PRINTF("%u:%lu ", i * kBinCycles, static_cast<unsigned long>(load_bins_[l][i]));
             }
             CONSOLE_PRINTF("\r\n");
@@ -233,10 +239,21 @@ class PPSLab {
             xip_ctrl_hw->flush = 1;
             (void)xip_ctrl_hw->flush;  // Returns once the flush is done.
         }
+        // The switch must land in the low phase before the wrap: no interrupt between the check and the switch (a
+        // few hundred ns, at least 53 us before the edge), and a second read proves it did.
+        uint32_t interrupts = save_and_disable_interrupts();
         c = pwm_hw->slice[slice].ctr;
-        if (c < kPWMHighCycles + 1024 || c > 0xFFFF - 2048) return;  // The load took too long: try again.
-        lead = 0x10000 - c;
+        if (c < kPWMHighCycles + 1024 || c > 0xFFFF - 6600) {
+            restore_interrupts(interrupts);
+            return;  // The load took too long: try again.
+        }
         gpio_set_function(pin, GPIO_FUNC_PWM);  // Low until the wrap (c > level), then the edge.
+        uint32_t c2 = pwm_hw->slice[slice].ctr;
+        restore_interrupts(interrupts);
+        lead = 0x10000 - c;
+        if (c2 < c) {  // Can't happen with interrupts off; counted to be sure.
+            bad_arm_++;
+        }
         uint32_t edge_us = time_us_32() + lead / 125;
         hardware_alarm_set_target(alarm_num_, from_us_since_boot(time_us_64() + lead / 125 + 250));
         armed_us_ = now_us;
@@ -278,7 +295,9 @@ class PPSLab {
     uint32_t not_armed_ = 0, extra_edges_ = 0;
     uint16_t min_lead_ = UINT16_MAX, max_lead_ = 0;
     volatile uint32_t warm_sink_ = 0;
-    uint32_t load_bins_[kNumLoads][kNumBins] = {};
+    uint16_t load_bins_[kNumLoads][kAsyncNumBins] = {};
+    uint16_t load_max_[kNumLoads] = {};
+    uint32_t bad_arm_ = 0;
     uint32_t load_n_[kNumLoads] = {}, load_over_[kNumLoads] = {};
     uint32_t next_pulse_us_ = 0;
     uint32_t seen_edges_ = 0;
