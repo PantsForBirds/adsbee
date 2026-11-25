@@ -1,4 +1,6 @@
 #include "hardware_unit_tests.hh"
+#include "hard_fault.hh"
+#include "hardware/structs/watchdog.h"
 
 #include "adsbee.hh"
 #include "eeprom.hh"
@@ -65,6 +67,35 @@ CPP_AT_CALLBACK(ATTestCallback) {
                 memset(buf, 0xFF, eeprom_size_bytes);
                 eeprom.WriteBuf(0x0, buf, eeprom_size_bytes);
                 CPP_AT_SUCCESS();
+            } else if (args[0].compare("HARDFAULT_CORE0") == 0) {
+                HardFault::TriggerFault();  // Doesn't return: the handler records the fault and resets.
+            } else if (args[0].compare("HARDFAULT_CORE1") == 0) {
+                // Core 1 faults; core 0 waits here for the reset (the reply never comes).
+                RunOnISRCore([](void*) { HardFault::TriggerFault(); }, nullptr, 5000);
+                CPP_AT_ERROR("Core 1 did not fault.");
+            } else if (args[0].compare("HARDFAULT_BOTH") == 0) {
+                // Both cores fault at the same moment: core 1 spins on the flag, core 0 sets it and faults.
+                static volatile bool go = false;
+                multicore_fifo_push_blocking(reinterpret_cast<uintptr_t>(+[](void*) {
+                    while (!go) {
+                    }
+                    HardFault::TriggerFault();
+                }));
+                multicore_fifo_push_blocking(0);
+                busy_wait_ms(10);  // Core 1 is in the spin.
+                go = true;
+                HardFault::TriggerFault();
+            } else if (args[0].compare("HARDFAULT_SECOND") == 0) {
+                // A fault while the record of an earlier one is still unreported: put this boot's (reported) record
+                // back as unreported, then fault on core 0. The next boot must report the earlier fault, counted twice.
+                FaultRecord::State earlier = HardFault::BootState();
+                if (!earlier.has_record) {
+                    CPP_AT_ERROR("No fault reported at this boot to put back.");
+                }
+                uint32_t words[FaultRecord::kNumWords];
+                FaultRecord::Encode(earlier, words);
+                for (uint16_t i = 0; i < FaultRecord::kNumWords; i++) watchdog_hw->scratch[i] = words[i];
+                HardFault::TriggerFault();
             } else if (args[0].compare("SPI_HANDSHAKE_DEADLOCK") == 0) {
                 CPP_AT_PRINTF("Simulating SPI handshake deadlock. Expect kErrorHandshakeHigh then recovery...\r\n");
                 if (esp32.TestSPIHandshakeDeadlock()) {
