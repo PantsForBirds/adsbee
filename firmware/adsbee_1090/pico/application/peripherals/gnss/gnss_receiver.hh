@@ -152,6 +152,12 @@ class GNSSReceiver {
 
     /** @retval The baud rate the GNSS UART runs at for this receiver (shared by protocol output on that UART). */
     uint32_t link_baudrate() const { return GetLinkBaudrate(); }
+    // t-1341 LAB
+    uint32_t lab_ring_overflow() const { return rx_overflow_count_; }
+    uint32_t lab_gga() const { return debug_gga_count_; }
+    uint32_t lab_rmc() const { return debug_rmc_count_; }
+    uint32_t lab_cksum() const { return debug_cksum_fail_count_; }
+    uint32_t lab_parsed_bytes() const { return debug_total_rx_bytes_; }
 
    protected:
     /**

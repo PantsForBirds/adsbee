@@ -8,6 +8,16 @@
 #include "geo_utils.hh"
 #include "hal.hh"               // For get_time_since_boot_ms().
 
+// t-1341 LAB (never for merge): RX path counters.
+volatile uint32_t lab_rx_bytes = 0, lab_poll_bytes = 0, lab_rx_oe = 0, lab_rx_fe = 0, lab_rx_be = 0, lab_rx_pe = 0,
+                  lab_ris_oe = 0, lab_rx_irqs = 0, lab_rx_max = 0, lab_rx_hist[33] = {0};
+volatile uint32_t lab_sent_total = 0, lab_sent_unknown = 0, lab_sent_malformed = 0, lab_sent_gst = 0;
+static inline void LabCountDR(uint32_t dr) {
+    if (dr & UART_UARTDR_OE_BITS) lab_rx_oe = lab_rx_oe + 1;
+    if (dr & UART_UARTDR_FE_BITS) lab_rx_fe = lab_rx_fe + 1;
+    if (dr & UART_UARTDR_BE_BITS) lab_rx_be = lab_rx_be + 1;
+    if (dr & UART_UARTDR_PE_BITS) lab_rx_pe = lab_rx_pe + 1;
+}
 void GNSSReceiver::ClaimUart() {
     // Bring the GNSS UART up to a known state. uart0 is shared with the ESP32 flasher (GPIO 16/17),
     // which calls uart_deinit(uart0) when it finishes; claim the GNSS pins (GPIO 0/1) and
@@ -184,6 +194,10 @@ bool GNSSReceiver::Update() {
             if (result == NMEAParser::kSentenceGGA) debug_gga_count_++;
             if (result == NMEAParser::kSentenceRMC) debug_rmc_count_++;
             if (result == NMEAParser::kSentenceChecksumFail) debug_cksum_fail_count_++;
+            lab_sent_total = lab_sent_total + 1;
+            if (result == NMEAParser::kSentenceUnknown) lab_sent_unknown = lab_sent_unknown + 1;
+            if (result == NMEAParser::kSentenceMalformed) lab_sent_malformed = lab_sent_malformed + 1;
+            if (result == NMEAParser::kSentenceGST) lab_sent_gst = lab_sent_gst + 1;
         }
     }
 
@@ -392,8 +406,11 @@ void GNSSReceiver::PollUartIntoRxBuffer() {
     // drain so their head-index updates cannot interleave.
     irq_set_enabled(irq_num, false);
     while (uart_is_readable(config_.uart_handle)) {
-        PushRxByte(static_cast<char>(uart_getc(config_.uart_handle)));
+        uint32_t dr = uart_get_hw(config_.uart_handle)->dr;
+        LabCountDR(dr);
+        PushRxByte(static_cast<char>(dr & 0xFF));
         rx_polled_byte_count_++;
+        lab_poll_bytes = lab_poll_bytes + 1;
     }
     irq_set_enabled(irq_num, true);
 }
@@ -402,10 +419,22 @@ void GNSSReceiver::RxIRQHandler() {
     GNSSReceiver* receiver = rx_irq_owner_;
     if (receiver == nullptr) return;
     receiver->rx_irq_count_ = receiver->rx_irq_count_ + 1;
-
-    while (uart_is_readable(receiver->config_.uart_handle)) {
-        receiver->PushRxByte(static_cast<char>(uart_getc(receiver->config_.uart_handle)));
+    uart_hw_t* hw = uart_get_hw(receiver->config_.uart_handle);
+    if (hw->ris & UART_UARTRIS_OERIS_BITS) {
+        lab_ris_oe = lab_ris_oe + 1;
+        hw->icr = UART_UARTICR_OEIC_BITS;
     }
+    uint32_t n = 0;
+    while (!(hw->fr & UART_UARTFR_RXFE_BITS)) {
+        uint32_t dr = hw->dr;
+        LabCountDR(dr);
+        receiver->PushRxByte(static_cast<char>(dr & 0xFF));
+        n++;
+    }
+    lab_rx_bytes = lab_rx_bytes + n;
+    lab_rx_irqs = lab_rx_irqs + 1;
+    if (n > lab_rx_max) lab_rx_max = n;
+    lab_rx_hist[n > 32 ? 32 : n] = lab_rx_hist[n > 32 ? 32 : n] + 1;
 }
 
 bool GNSSReceiver::HasValidFix() const {

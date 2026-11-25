@@ -2470,8 +2470,24 @@ CPP_AT_CALLBACK(CommsManager::ATTLSetCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+void XBStart(uint32_t baud, int bytes, uint32_t period_ms);
+int XBPrint(char* out, int n);
 CPP_AT_CALLBACK(CommsManager::ATUptimeCallback) {
     switch (op) {
+        case '=':  // t-1341 LAB: AT+UPTIME=XB[,<baud>,<bytes>,<period_ms>] (baud 0 = hold)
+            if (CPP_AT_HAS_ARG(0) && args[0].compare("XB") == 0) {
+                if (CPP_AT_HAS_ARG(1)) {
+                    uint32_t baud = strtoul(std::string(args[1]).c_str(), nullptr, 10);
+                    int bytes = CPP_AT_HAS_ARG(2) ? atoi(std::string(args[2]).c_str()) : 1700;
+                    uint32_t period = CPP_AT_HAS_ARG(3) ? strtoul(std::string(args[3]).c_str(), nullptr, 10) : 1000;
+                    XBStart(baud, bytes, period);
+                }
+                static char line[700];
+                XBPrint(line, sizeof(line));
+                CPP_AT_PRINTF("%s\r\n", line);
+                CPP_AT_SILENT_SUCCESS();
+            }
+            break;
         case '?':
             // Query uptime.
             CPP_AT_CMD_PRINTF("=%u", get_time_since_boot_ms() / kMsPerSec);
@@ -3041,7 +3057,7 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATTLSetCallback, comms_manager)},
     {.command = "UPTIME",
      .min_args = 0,
-     .max_args = 0,
+     .max_args = 4,
      .help_string = "Get the uptime of the ADSBee 1090 in seconds.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATUptimeCallback, comms_manager)},
     {.command = "WATCHDOG",

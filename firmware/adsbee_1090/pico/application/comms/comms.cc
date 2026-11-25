@@ -62,7 +62,9 @@ void CommsManager::InitGNSSUART() {
     uart_init(config_.gnss_uart_handle, settings_manager.settings.baud_rates[SettingsManager::kGNSSUART]);
 }
 
+static void XBUpdate();
 bool CommsManager::Update() {
+    XBUpdate();
     UpdateAT();
     UpdateNetworkConsole();
 
@@ -228,6 +230,155 @@ int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const ch
     }
 
     return -1;  // puts failed.
+}
+
+
+// t-1341 LAB (never for merge): GNSS UART internal loopback at a test baud. DMA sends a burst shaped like a MAX-M10
+// epoch every period; the GNSS receiver (GENERIC) reads it through its real RX interrupt. A 1 kHz-ish timer alarm at
+// the GNSS UART's interrupt priority on core 0 measures how long core 0 can't take that interrupt.
+#include "hardware/dma.h"
+#include "hardware/timer.h"
+#include "hardware/structs/timer.h"
+extern volatile uint32_t lab_rx_bytes, lab_poll_bytes, lab_rx_oe, lab_rx_fe, lab_rx_be, lab_rx_pe, lab_ris_oe,
+    lab_rx_irqs, lab_rx_max, lab_rx_hist[33];
+extern volatile uint32_t lab_sent_total, lab_sent_unknown, lab_sent_malformed, lab_sent_gst;
+static uint8_t xb_buf[2048];
+static uint16_t xb_len = 0, xb_sentences = 0;
+static int xb_dma = -1, xb_alarm = -1;
+static uint32_t xb_baud = 0, xb_actual = 0, xb_period_ms = 0, xb_last_ms = 0, xb_bursts = 0, xb_skipped = 0,
+                xb_t0_ms = 0, xb_relbe = 0;
+static uint32_t xb_gga0 = 0, xb_rmc0 = 0, xb_ck0 = 0, xb_ovf0 = 0, xb_parsed0 = 0;
+static volatile uint32_t xb_target = 0, xb_lcg = 12345, xb_lat_max = 0, xb_lat_n = 0, xb_lat_hist[10] = {0};
+static const uint32_t kXBLatEdges[9] = {2, 5, 10, 20, 50, 100, 200, 500, 1000};
+static void XBAlarmIRQ() {
+    uint32_t now = timer_hw->timerawl;
+    timer_hw->intr = 1u << xb_alarm;
+    uint32_t lat = now - xb_target;
+    if (lat > xb_lat_max) xb_lat_max = lat;
+    int b = 0;
+    while (b < 9 && lat >= kXBLatEdges[b]) b++;
+    xb_lat_hist[b] = xb_lat_hist[b] + 1;
+    xb_lat_n = xb_lat_n + 1;
+    xb_lcg = xb_lcg * 1103515245u + 12345u;
+    xb_target = timer_hw->timerawl + 500 + ((xb_lcg >> 16) % 1000);  // 0.5-1.5 ms, not phase-locked to loops
+    timer_hw->alarm[xb_alarm] = xb_target;
+}
+static int XBAdd(int pos, const char* body) {
+    uint8_t cs = 0;
+    for (const char* p = body; *p; p++) cs ^= (uint8_t)*p;
+    int n = snprintf((char*)xb_buf + pos, sizeof(xb_buf) - pos, "$%s*%02X\r\n", body, cs);
+    xb_sentences++;
+    return pos + n;
+}
+static void XBBuild(int want) {
+    int pos = 0;
+    xb_sentences = 0;
+    pos = XBAdd(pos, "GNGGA,123519.00,3746.12345,N,12225.12345,W,1,32,0.6,10.2,M,-30.1,M,,");
+    pos = XBAdd(pos, "GNRMC,123519.00,A,3746.12345,N,12225.12345,W,0.012,,251126,,,A,V");
+    pos = XBAdd(pos, "GNGST,123519.00,1.2,0.8,0.6,45.0,0.9,0.7,1.6");
+    char body[96];
+    int k = 0;
+    while (pos < want - 80) {
+        snprintf(body, sizeof(body), "GPGSV,9,%d,36,%02d,45,123,38,%02d,12,045,30,%02d,67,300,41,%02d,05,210,22,1",
+                 (k % 9) + 1, (k * 4 + 1) % 99, (k * 4 + 2) % 99, (k * 4 + 3) % 99, (k * 4 + 4) % 99);
+        pos = XBAdd(pos, body);
+        k++;
+    }
+    xb_len = pos;
+}
+void XBStart(uint32_t baud, int bytes, uint32_t period_ms) {
+    uart_inst_t* u = uart0;
+    if (xb_alarm < 0) {
+        xb_alarm = hardware_alarm_claim_unused(true);
+        uint irq = TIMER_IRQ_0 + xb_alarm;
+        irq_set_exclusive_handler(irq, XBAlarmIRQ);
+        irq_set_priority(irq, PICO_DEFAULT_IRQ_PRIORITY);  // The GNSS UART's priority.
+        hw_set_bits(&timer_hw->inte, 1u << xb_alarm);
+        irq_set_enabled(irq, true);
+        xb_target = timer_hw->timerawl + 1000;
+        timer_hw->alarm[xb_alarm] = xb_target;
+    }
+    if (xb_dma < 0) xb_dma = dma_claim_unused_channel(true);
+    if (baud == 0) {  // Hold: no new bursts, counters kept.
+        xb_period_ms = 0;
+        return;
+    }
+    while (dma_channel_is_busy(xb_dma)) tight_loop_contents();
+    uart_tx_wait_blocking(u);
+    XBBuild(bytes > (int)sizeof(xb_buf) ? sizeof(xb_buf) : bytes);
+    xb_baud = baud;
+    xb_actual = uart_set_baudrate(u, baud);
+    hw_set_bits(&uart_get_hw(u)->cr, UART_UARTCR_LBE_BITS);
+    sleep_ms(5);
+    uint32_t irqs = save_and_disable_interrupts();
+    while (uart_is_readable(u)) (void)uart_get_hw(u)->dr;
+    lab_rx_bytes = lab_poll_bytes = lab_rx_oe = lab_rx_fe = lab_rx_be = lab_rx_pe = lab_ris_oe = lab_rx_irqs =
+        lab_rx_max = 0;
+    for (int i = 0; i < 33; i++) lab_rx_hist[i] = 0;
+    lab_sent_total = lab_sent_unknown = lab_sent_malformed = lab_sent_gst = 0;
+    xb_lat_max = xb_lat_n = 0;
+    for (int i = 0; i < 10; i++) xb_lat_hist[i] = 0;
+    restore_interrupts(irqs);
+    if (gnss) {
+        xb_gga0 = gnss->lab_gga();
+        xb_rmc0 = gnss->lab_rmc();
+        xb_ck0 = gnss->lab_cksum();
+        xb_ovf0 = gnss->lab_ring_overflow();
+        xb_parsed0 = gnss->lab_parsed_bytes();
+    }
+    xb_bursts = xb_skipped = xb_relbe = 0;
+    xb_t0_ms = get_time_since_boot_ms();
+    xb_last_ms = xb_t0_ms;
+    xb_period_ms = period_ms;
+}
+static void XBUpdate() {
+    if (xb_dma < 0 || xb_baud == 0) return;
+    if (!(uart_get_hw(uart0)->cr & UART_UARTCR_LBE_BITS)) {
+        hw_set_bits(&uart_get_hw(uart0)->cr, UART_UARTCR_LBE_BITS);
+        xb_relbe++;
+    }
+    if (xb_period_ms == 0) return;
+    uint32_t now = get_time_since_boot_ms();
+    if (now - xb_last_ms < xb_period_ms) return;
+    xb_last_ms += xb_period_ms;
+    if (dma_channel_is_busy(xb_dma)) {
+        xb_skipped++;
+        return;
+    }
+    dma_channel_config c = dma_channel_get_default_config(xb_dma);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_dreq(&c, uart_get_dreq(uart0, true));
+    dma_channel_configure(xb_dma, &c, &uart_get_hw(uart0)->dr, xb_buf, xb_len, true);
+    xb_bursts++;
+}
+int XBPrint(char* out, int n) {
+    uint32_t remaining = xb_dma >= 0 ? dma_hw->ch[xb_dma].transfer_count : 0;
+    uint32_t sent = xb_bursts * xb_len - (dma_channel_is_busy(xb_dma) ? remaining : 0);
+    uint32_t got = lab_rx_bytes + lab_poll_bytes;
+    int k = snprintf(out, n,
+                     "XB baud=%lu actual=%lu len=%u sent_per_burst=%u secs=%lu bursts=%lu skipped=%lu sent=%lu rx=%lu "
+                     "poll=%lu lost=%ld oe=%lu ris_oe=%lu fe=%lu be=%lu pe=%lu irqs=%lu rxmax=%lu ovf=%lu gga=%lu rmc=%lu "
+                     "gst=%lu ck=%lu unk=%lu mal=%lu sent_total=%lu parsed=%lu relbe=%lu lat_max=%lu lat_n=%lu lat=",
+                     (unsigned long)xb_baud, (unsigned long)xb_actual, xb_len, xb_sentences,
+                     (unsigned long)((get_time_since_boot_ms() - xb_t0_ms) / 1000), (unsigned long)xb_bursts,
+                     (unsigned long)xb_skipped, (unsigned long)sent, (unsigned long)lab_rx_bytes,
+                     (unsigned long)lab_poll_bytes, (long)(sent - got), (unsigned long)lab_rx_oe,
+                     (unsigned long)lab_ris_oe, (unsigned long)lab_rx_fe, (unsigned long)lab_rx_be,
+                     (unsigned long)lab_rx_pe, (unsigned long)lab_rx_irqs, (unsigned long)lab_rx_max,
+                     (unsigned long)(gnss ? gnss->lab_ring_overflow() - xb_ovf0 : 0),
+                     (unsigned long)(gnss ? gnss->lab_gga() - xb_gga0 : 0),
+                     (unsigned long)(gnss ? gnss->lab_rmc() - xb_rmc0 : 0), (unsigned long)lab_sent_gst,
+                     (unsigned long)(gnss ? gnss->lab_cksum() - xb_ck0 : 0), (unsigned long)lab_sent_unknown,
+                     (unsigned long)lab_sent_malformed, (unsigned long)lab_sent_total,
+                     (unsigned long)(gnss ? gnss->lab_parsed_bytes() - xb_parsed0 : 0), (unsigned long)xb_relbe,
+                     (unsigned long)xb_lat_max, (unsigned long)xb_lat_n);
+    for (int i = 0; i < 10 && k < n; i++) k += snprintf(out + k, n - k, "%lu%s", (unsigned long)xb_lat_hist[i], i < 9 ? "/" : "");
+    if (k < n) k += snprintf(out + k, n - k, " hist=");
+    for (int i = 0; i < 33 && k < n; i++)
+        if (lab_rx_hist[i]) k += snprintf(out + k, n - k, "%d:%lu,", i, (unsigned long)lab_rx_hist[i]);
+    return k;
 }
 
 CommsManager::UARTTx* CommsManager::GetUARTTx(SettingsManager::SerialInterface iface) {
