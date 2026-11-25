@@ -155,23 +155,120 @@ bool UbloxMAXM10::WaitForAck(uint8_t acked_class, uint8_t acked_id) {
     return is_ack;
 }
 
-bool UbloxMAXM10::ProbeLiveness() {
-    // Poll UBX-MON-VER (a zero-length payload is a poll request per interface description S3.5.2)
-    // and wait briefly for the reply (class/id 0x0A 0x04). UBX in/out are enabled on UART1 in the
-    // module's factory-default state, so a present module answers even before our config pass runs.
-    //
-    // Retry up to kProbeAttempts times rather than probing once: u-blox does not publish a fixed
-    // Vcc-to-UART-ready time and recommends polling MON-VER until it answers, so a module still
-    // finishing its cold-start on the first poll is caught on a later attempt instead of being
-    // declared absent. Poke the watchdog between attempts since this whole path runs before the
-    // main super-loop's first poke.
-    for (uint32_t attempt = 0; attempt < kProbeAttempts; attempt++) {
+bool UbloxMAXM10::Init() {
+    // Expect the module where we last commanded it; ProbeLiveness() falls back to the other candidates.
+    link_baudrate_ = OperatingBaudrate();
+    UpdateLabelDelay();
+    return GNSSReceiver::Init();
+}
+
+uint32_t UbloxMAXM10::OperatingBaudrate() {
+    uint32_t setting = settings_manager.settings.baud_rates[SettingsManager::kGNSSUART];
+    return setting == SettingsManager::Settings::kDefaultGNSSUARTBaudrate ? kOperatingBaudrate : setting;
+}
+
+void UbloxMAXM10::ApplyBaudRateSetting() {
+    if (suspended_) return;  // uart0 belongs to the ESP32 flasher; ClaimUart() programs it on resume.
+    uint32_t target = OperatingBaudrate();
+    if (target == link_baudrate_) {
+        uart_set_baudrate(config_.uart_handle, link_baudrate_);
+        return;
+    }
+    if (active_ && healthy_ && !initializing_) {
+        // The module answers at the link rate: command it to the new one.
+        if (!SwitchModuleBaudrate(target)) healthy_ = false;  // Lost it; the unhealthy retry probes every candidate.
+        return;
+    }
+    // Not talking to the module (disabled, or not yet found): only our side moves, and the next probe tries the old
+    // rate too.
+    link_baudrate_ = target;
+    uart_set_baudrate(config_.uart_handle, link_baudrate_);
+    UpdateLabelDelay();
+}
+
+void UbloxMAXM10::SetLinkBaudrate(uint32_t baudrate) {
+    SetUartBaudrate(baudrate);
+    link_baudrate_ = baudrate;
+    UpdateLabelDelay();
+}
+
+void UbloxMAXM10::UpdateLabelDelay() {
+    pps_clock_.set_max_label_delay_us(link_baudrate_ >= kOperatingBaudrate ? kFastLinkMaxLabelDelayUs
+                                                                           : PPSClock::kMaxLabelDelayUs);
+}
+
+uint16_t UbloxMAXM10::ProbeBaudrates(uint32_t (&rates)[kMaxProbeBaudrates]) const {
+    const uint32_t candidates[kMaxProbeBaudrates] = {link_baudrate_, OperatingBaudrate(),
+                                                     settings_manager.settings.baud_rates[SettingsManager::kGNSSUART],
+                                                     kPowerUpBaudrate, kInterfaceDescriptionDefaultBaudrate};
+    uint16_t n = 0;
+    for (uint32_t candidate : candidates) {
+        bool seen = candidate == 0;
+        for (uint16_t i = 0; i < n; i++) seen |= rates[i] == candidate;
+        if (!seen) rates[n++] = candidate;
+    }
+    return n;
+}
+
+bool UbloxMAXM10::PollMonVer(uint32_t attempts) {
+    for (uint32_t attempt = 0; attempt < attempts; attempt++) {
         SendUbxFrame(kUbxClassMon, kUbxIdMonVer, nullptr, 0);
         if (WaitForUbxMessage(kUbxClassMon, kUbxIdMonVer, kProbeTimeoutMs)) {
             return true;
         }
         watchdog_update();
     }
+    return false;
+}
+
+bool UbloxMAXM10::ProbeLiveness() {
+    // Poll UBX-MON-VER (a zero-length payload is a poll request per interface description S3.5.2)
+    // and wait briefly for the reply (class/id 0x0A 0x04). UBX in/out are enabled on UART1 in the
+    // module's factory-default state, so a present module answers even before our config pass runs.
+    //
+    // Retry over kProbeRounds rounds rather than probing once: u-blox does not publish a fixed
+    // Vcc-to-UART-ready time and recommends polling MON-VER until it answers, so a module still
+    // finishing its cold-start on the first poll is caught on a later attempt instead of being
+    // declared absent. Each round tries every baud rate the module may be at: the one we commanded
+    // (warm start: RAM/BBR kept it) first, then the power-up defaults (cold module, BBR lost). Poke the
+    // watchdog between attempts since this whole path runs before the main super-loop's first poke.
+    uint32_t rates[kMaxProbeBaudrates];
+    uint16_t num_rates = ProbeBaudrates(rates);
+    for (uint32_t round = 0; round < kProbeRounds; round++) {
+        for (uint16_t i = 0; i < num_rates; i++) {
+            if (rates[i] != link_baudrate_) SetLinkBaudrate(rates[i]);
+            if (PollMonVer(1)) {
+                return true;
+            }
+        }
+    }
+    // Keep listening for NMEA at the most likely rate.
+    if (rates[0] != link_baudrate_) SetLinkBaudrate(rates[0]);
+    return false;
+}
+
+bool UbloxMAXM10::SwitchModuleBaudrate(uint32_t target) {
+    uint32_t old_baudrate = link_baudrate_;
+    if (target == old_baudrate) return true;
+    // The ACK may come at either rate, or be cut off by the switch (u-blox doesn't say), so its result means nothing:
+    // waiting for it (up to kAckTimeoutMs) just lets the command finish. MON-VER at the new rate is the check.
+    (void)CfgValSetU4(kCfgUart1Baudrate, target, kCfgLayerRam | kCfgLayerBbr);
+    sleep_ms(kBaudSwitchSettleMs);
+    SetLinkBaudrate(target);
+    if (PollMonVer(kProbeRounds)) {
+        CONSOLE_INFO("UbloxMAXM10::SwitchModuleBaudrate", "GNSS UART %lu -> %lu baud.",
+                     static_cast<unsigned long>(old_baudrate), static_cast<unsigned long>(target));
+        return true;
+    }
+    SetLinkBaudrate(old_baudrate);
+    if (PollMonVer(kProbeRounds)) {
+        CONSOLE_WARNING("UbloxMAXM10::SwitchModuleBaudrate",
+                        "GNSS module did not answer at %lu baud; staying at %lu.", static_cast<unsigned long>(target),
+                        static_cast<unsigned long>(old_baudrate));
+        return true;
+    }
+    CONSOLE_WARNING("UbloxMAXM10::SwitchModuleBaudrate", "GNSS module lost switching from %lu to %lu baud.",
+                    static_cast<unsigned long>(old_baudrate), static_cast<unsigned long>(target));
     return false;
 }
 
@@ -284,6 +381,16 @@ bool UbloxMAXM10::SendInitCommands() {
         return false;
     }
 
+    // Raise the link to OperatingBaudrate() (115200 by default) before the config pass: ~370 VALGET
+    // round trips of ~33 B on the wire (16 B poll + 17-24 B reply) are ~13 s at 9600, more than
+    // kInitConfigBudgetMs, and ~1.1 s at 115200 (plus the module's reply time). CFG-UART1-BAUDRATE is excluded
+    // from kUbloxConfigDefaults (see WARM-START PRESERVE note there) so the sync doesn't fight it. On a
+    // warm start the module already answered at the operating rate and nothing is sent: even a
+    // same-value VALSET on this key can make the module briefly reset/re-latch its UART.
+    if (link_baudrate_ != OperatingBaudrate() && !SwitchModuleBaudrate(OperatingBaudrate())) {
+        return false;
+    }
+
     // Read-modify-write the default table: writes only the keys that differ, so a module we've
     // already provisioned keeps its warm/hot-start data untouched. Bounded by kInitConfigBudgetMs so
     // a module that answers the probe but then stops responding can't stall init past the watchdog
@@ -297,21 +404,6 @@ bool UbloxMAXM10::SendInitCommands() {
     // if the module already has them, VALSET is harmless. (Kept as unconditional writes rather than
     // read-modify-write since they're few and none is warm-start-sensitive.)
     uint8_t layers = kCfgLayerRam | kCfgLayerBbr;
-
-    // Sync the module's UART1 baud rate to the user-configured/persisted setting, since
-    // CFG-UART1-BAUDRATE is excluded from kUbloxConfigDefaults (see WARM-START PRESERVE note there)
-    // to avoid fighting this value. Read-modify-write like SyncConfigDefaults(): only actually issue
-    // the VALSET when the value differs. We already probed successfully at this same rate
-    // (GetDefaultBaudrate() returns the settings value), so this is normally a true no-op -- and it
-    // must stay that way, because even a same-value VALSET on this key can make the module briefly
-    // reset/re-latch its UART, corrupting the NMEA-enable writes that immediately follow.
-    {
-        uint64_t current_baudrate = 0;
-        uint32_t target_baudrate = settings_manager.settings.baud_rates[SettingsManager::kGNSSUART];
-        if (!CfgValGet(kCfgUart1Baudrate, 4, current_baudrate) || current_baudrate != target_baudrate) {
-            CfgValSetU4(kCfgUart1Baudrate, target_baudrate, layers);
-        }
-    }
 
     // NMEA sentence selection.
     ApplyRuntimeMessageConfig(layers);

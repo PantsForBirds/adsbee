@@ -5,7 +5,8 @@
 // T; the receiver starts sending epoch T latency_ms later, at the baud rate (8N1), through a transmit buffer that drops
 // whole messages that don't fit (as u-blox, MAX-M10S integration manual UBX-20053088 §3.2.1); the RMC is labeled when
 // its last byte is in. The u-blox MAX-M10 case (no log available) is built from the sentence formats and our
-// configuration (GGA + RMC + GST, UBX-MON-RF and UBX-NAV-SAT every epoch, 9600 baud).
+// configuration (GGA + RMC + GST, UBX-MON-RF and UBX-NAV-SAT every epoch, at the 115200 baud UbloxMAXM10 commands
+// since t-1340, and at the 9600 it ran before).
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -16,6 +17,10 @@
 #include "gtest/gtest.h"
 #include "nmea_parser.hh"
 #include "pps_clock.hh"
+
+// UbloxMAXM10's link rate and label delay (ublox_max_m10.hh needs the pico SDK, so they are mirrored here).
+static constexpr uint32_t kMaxM10Baudrate = 115200;
+static constexpr uint32_t kMaxM10FastLinkMaxLabelDelayUs = 500'000;
 
 namespace {
 
@@ -245,8 +250,10 @@ struct Replay {
  * Epoch k (k = 0, 1, ...) describes the PPS edge at GNSS time k + 1. unix_first is the RMC second of epoch 0.
  */
 Replay ReplayEpochs(const std::vector<std::vector<std::string>>& epochs, uint64_t unix_first, double latency_s,
-           uint32_t baud = 9600, uint32_t tx_buffer_bytes = 4096) {
+           uint32_t baud = 9600, uint32_t tx_buffer_bytes = 4096,
+           uint32_t max_label_delay_us = PPSClock::kMaxLabelDelayUs) {
     Replay r;
+    r.clock.set_max_label_delay_us(max_label_delay_us);
     NMEAParser parser;
     const double bytes_per_s = baud / 10.0;
     double line_free_at = 0;
@@ -384,7 +391,8 @@ TEST(PPSLabelingReplay, MaxM10At9600Baud) {
 // KNOWN LIMIT: more output than the baud rate carries (here 62 satellites, 995 B a second) backs the stream up by
 // whole seconds until the transmit buffer is full and drops messages. Each RMC then arrives within 900 ms of a later
 // edge and labels it, consistently, so the fit is self-consistent but whole seconds off: PPSClock can't see it. The
-// MAX-M10's TEMPORARY UBX-NAV-SAT debug output at 9600 baud is the only configuration we ship that can get there.
+// MAX-M10's TEMPORARY UBX-NAV-SAT debug output at 9600 baud got there; since t-1340 UbloxMAXM10 runs the module at
+// 115200 (MaxM10At115200Baud below), and at 9600 only if the module refuses to switch.
 TEST(PPSLabelingReplay, KnownLimitBackloggedStreamIsWholeSecondsOff) {
     const uint64_t unix_first = 1795568400;  // 2026-11-25 01:00:00 UTC.
     const int n = 600;
@@ -395,4 +403,46 @@ TEST(PPSLabelingReplay, KnownLimitBackloggedStreamIsWholeSecondsOff) {
     double error_s = ErrorS(r.clock, unix_first, n + 0.5);
     EXPECT_LE(error_s, -1.0 + 1e-6);  // UTC reads whole seconds early.
     EXPECT_NEAR(error_s, std::round(error_s), 1e-6);
+}
+
+// UbloxMAXM10 since t-1340: 115200 baud (11520 B/s) and a 500 ms label delay. 80 and 120 satellites of debug output
+// (1211 and 1691 B an epoch) in either order, 20 to 200 ms module latency: every RMC labels its own second, nothing is
+// dropped, and the RMC is done well inside the label delay.
+TEST(PPSLabelingReplay, MaxM10At115200Baud) {
+    const uint64_t unix_first = 1795568400;  // 2026-11-25 01:00:00 UTC.
+    const int n = 600;
+    for (uint16_t num_svs : {80, 120}) {
+        for (bool ubx_first : {false, true}) {
+            for (double latency_s : {0.02, 0.1, 0.2}) {
+                SCOPED_TRACE(testing::Message() << num_svs << " svs, ubx_first " << ubx_first << ", latency " << latency_s);
+                Replay r = ReplayEpochs(MaxM10Run(unix_first, num_svs, ubx_first, n), unix_first, latency_s,
+                                        kMaxM10Baudrate, 4096, kMaxM10FastLinkMaxLabelDelayUs);
+                EXPECT_EQ(r.restarted, 1u);  // The first edge.
+                EXPECT_EQ(r.labeled, n - 1u);
+                EXPECT_EQ(r.late + r.outliers + r.other + r.dropped_messages, 0u);
+                // On the wire for at most 1691 B / 11520 B/s = 147 ms after the module starts.
+                EXPECT_LT(r.max_rmc_delay_s, latency_s + 0.15);
+                EXPECT_NEAR(ErrorS(r.clock, unix_first, n + 0.5), 0, 50e-9);
+            }
+        }
+    }
+}
+
+// The 500 ms label delay is for the 115200 link only: generic 9600-baud receivers keep 900 ms, which the recorded
+// MediaTek output at 250 ms latency needs (RMC done up to 0.69 s after the edge). And at 500 ms, a MAX-M10 left at
+// 9600 with 56 satellites (RMC 0.93 s late) is still never labeled.
+TEST(PPSLabelingReplay, FastLinkLabelDelayOnlyFor115200) {
+    uint64_t unix_first = FirstRMCSeconds(kMediaTekMT3339);
+    Replay generic = ReplayEpochs(kMediaTekMT3339, unix_first, 0.25);
+    EXPECT_GT(generic.max_rmc_delay_s, kMaxM10FastLinkMaxLabelDelayUs * 1e-6);
+    EXPECT_EQ(generic.labeled, kMediaTekMT3339.size() - 1);
+    Replay too_short =
+        ReplayEpochs(kMediaTekMT3339, unix_first, 0.25, 9600, 4096, kMaxM10FastLinkMaxLabelDelayUs);
+    EXPECT_GT(too_short.late, 0u);
+
+    const uint64_t m10_first = 1795568400;
+    Replay slow = ReplayEpochs(MaxM10Run(m10_first, 56, true, 60), m10_first, 0.02, 9600, 4096,
+                               kMaxM10FastLinkMaxLabelDelayUs);
+    EXPECT_EQ(slow.labeled, 0u);
+    EXPECT_EQ(slow.late, 60u);
 }

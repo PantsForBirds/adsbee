@@ -219,11 +219,11 @@ class CommsManager {
                 return true;
                 break;
             case SettingsManager::kGNSSUART:
-                // Program the hardware, but persist the requested baudrate (not the
-                // hardware-rounded value uart_set_baudrate() returns) so settings round-trip
-                // exactly.
-                uart_set_baudrate(config_.gnss_uart_handle, baudrate);
+                // Persist the requested baudrate, then let the GNSS receiver program the hardware: a receiver we
+                // configure runs its own link rate (UbloxMAXM10 runs 115200 while this setting is at its default),
+                // the others run this setting. Protocol output on the GNSS UART shares that rate.
                 settings_manager.settings.baud_rates[SettingsManager::SerialInterface::kGNSSUART] = baudrate;
+                ApplyGNSSUARTBaudRate();
                 return true;
                 break;
             default:
@@ -231,6 +231,18 @@ class CommsManager {
         }
         return false;  // Should never get here.
     }
+
+    /**
+     * Programs the GNSS UART hardware for the stored GNSS baud setting (through the GNSS receiver, see SetBaudRate()).
+     */
+    void ApplyGNSSUARTBaudRate();
+
+    /**
+     * Waits until everything queued for a UART interface has left the wire (TX queue empty, FIFO and shifter idle), so
+     * its baud rate can change without garbling bytes in flight.
+     * @retval False if the queue didn't drain within timeout_ms, or iface is not a UART.
+     */
+    bool FlushUARTTx(SettingsManager::SerialInterface iface, uint32_t timeout_ms);
 
     /**
      * Returns the currently set baudrate for a serial interface.

@@ -13,8 +13,9 @@
  * the way from the prediction, and the rate by a sixteenth of the error (an alpha-beta filter).
  *
  * An edge is only labeled when the RMC reports a fix (status A, with a date) on a whole second, when it is the one
- * edge of the last kMinEdgeIntervalUs and when it is younger than kMaxLabelDelayUs (the RMC is assumed to arrive
- * within that of its edge). A leap second (second 60) starts the fit again. Missing edges are fine: the rate is
+ * edge of the last kMinEdgeIntervalUs and when it is younger than the label delay (the RMC is assumed to arrive
+ * within that of its edge): kMaxLabelDelayUs, or less for a receiver whose output is known to arrive sooner
+ * (set_max_label_delay_us()). A leap second (second 60) starts the fit again. Missing edges are fine: the rate is
  * measured over the gap. The capture delay has a single mode (bench, t-1336), so once synced a point further than
  * kMaxResidualNs from the prediction (a PPS edge whose interrupt waited for another one, always late) is dropped, and
  * kMaxOutliers dropped points in a row start the fit again from the last (a mislabeled second, a step in the clock).
@@ -33,6 +34,7 @@ class PPSClock {
     // 150 ns keeps them and drops the edges whose interrupt waited (replay of the bench delays: 17-24 ns rms at mid-second).
     static constexpr int32_t kMaxResidualNs = 150;
     static constexpr uint16_t kMaxOutliers = 8;
+    // Default label delay: generic NMEA receivers at 9600 baud finish their RMC up to ~0.7-0.9 s after the edge (t-1336).
     static constexpr uint32_t kMaxLabelDelayUs = 900'000;
     static constexpr uint32_t kMinEdgeIntervalUs = 900'000;
     static constexpr int64_t kAnchorGainDivisor = 4;
@@ -52,9 +54,13 @@ class PPSClock {
         kNoFix,        // The RMC had no fix, no date or not a whole second.
         kLeapSecond,   // Second 60: the fit starts again after it.
         kNoEdge,       // No new edge since the last RMC (a missing edge or a second RMC).
-        kLate,         // The latest edge is older than kMaxLabelDelayUs.
+        kLate,         // The latest edge is older than the label delay (max_label_delay_us()).
         kExtraEdge,    // Two edges within kMinEdgeIntervalUs: which one is the second is unknown.
     };
+
+    // The longest an RMC may arrive after its edge and still label it. Changing it keeps the fit.
+    void set_max_label_delay_us(uint32_t delay_us) { max_label_delay_us_ = delay_us; }
+    uint32_t max_label_delay_us() const { return max_label_delay_us_; }
 
     // Forgets the points (the PPS stopped, GNSS was disabled).
     void Restart() {
@@ -81,7 +87,7 @@ class PPSClock {
             result = kNoFix;
         } else if (num_edges == 0 || num_edges == last_num_edges_) {
             result = kNoEdge;
-        } else if (now_us - latest.time_us > kMaxLabelDelayUs) {
+        } else if (now_us - latest.time_us > max_label_delay_us_) {
             result = kLate;
         } else if (num_edges > 1 && latest.time_us - previous.time_us < kMinEdgeIntervalUs) {
             result = kExtraEdge;
@@ -211,4 +217,5 @@ class PPSClock {
     int64_t mean_square_residual_ns2_ = 0;
     uint32_t last_point_time_us_ = 0;
     uint32_t last_num_edges_ = 0;
+    uint32_t max_label_delay_us_ = kMaxLabelDelayUs;
 };

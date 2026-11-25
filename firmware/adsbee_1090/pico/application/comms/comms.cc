@@ -11,6 +11,8 @@
 #include "pico/stdlib.h"
 #include "spi_coprocessor.hh"
 
+extern GNSSReceiver* gnss;  // The selected GNSS receiver (gnss_interface.hh).
+
 static const CommsManager::ReportSink kReportingSinks[] = {SettingsManager::SerialInterface::kConsole,
                                                            SettingsManager::SerialInterface::kCommsUART,
                                                            SettingsManager::SerialInterface::kGNSSUART};
@@ -250,6 +252,26 @@ void CommsManager::OnUARTIRQ() {
     if (irq_num == UART_IRQ_NUM(comms_manager.config_.gnss_uart_handle)) {
         GNSSReceiver::RxIRQHandler();
     }
+}
+
+void CommsManager::ApplyGNSSUARTBaudRate() {
+    if (gnss != nullptr) {
+        gnss->ApplyBaudRateSetting();
+    } else {
+        uart_set_baudrate(config_.gnss_uart_handle, settings_manager.settings.baud_rates[SettingsManager::kGNSSUART]);
+    }
+}
+
+bool CommsManager::FlushUARTTx(SettingsManager::SerialInterface iface, uint32_t timeout_ms) {
+    UARTTx* uart = GetUARTTx(iface);
+    if (uart == nullptr) return false;
+    uint32_t start_ms = get_time_since_boot_ms();
+    while (!uart->queue.IsEmpty()) {
+        FillUARTTxFIFO(*uart);
+        if (get_time_since_boot_ms() - start_ms > timeout_ms) return false;
+    }
+    uart_tx_wait_blocking(uart->handle);  // At most a FIFO (32 bytes) on the wire.
+    return true;
 }
 
 void CommsManager::FillUARTTxFIFO(UARTTx& uart) {
