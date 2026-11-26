@@ -134,9 +134,15 @@ void ReportBootFault() {
         return;
     }
     const FaultRecord::Record& r = boot_state.record;
-    CONSOLE_ERROR("HardFault", "Reset by a HardFault on core %u: PC 0x%08lx LR 0x%08lx SP 0x%08lx IPSR %u (%u since power-on).",
-                  r.core, static_cast<unsigned long>(r.pc), static_cast<unsigned long>(r.lr),
-                  static_cast<unsigned long>(r.sp), r.ipsr, boot_state.count);
+    if (r.stalled) {
+        CONSOLE_ERROR("HardFault", "Reset by the watchdog: core 1 stalled (no loop pass for %lu ms) (%u since power-on).",
+                      static_cast<unsigned long>(r.pc), boot_state.count);
+    } else {
+        CONSOLE_ERROR("HardFault",
+                      "Reset by a HardFault on core %u: PC 0x%08lx LR 0x%08lx SP 0x%08lx IPSR %u (%u since power-on).",
+                      r.core, static_cast<unsigned long>(r.pc), static_cast<unsigned long>(r.lr),
+                      static_cast<unsigned long>(r.sp), r.ipsr, boot_state.count);
+    }
     if (boot_detail_valid) {
         const Detail& d = boot_detail;
         CONSOLE_ERROR("HardFault", "R0 0x%08lx R1 0x%08lx R2 0x%08lx R3 0x%08lx R12 0x%08lx xPSR 0x%08lx EXC_RETURN 0x%08lx",
@@ -156,6 +162,18 @@ void ReportBootFault() {
 }
 
 const FaultRecord::State& BootState() { return boot_state; }
+
+void RecordStall(uint32_t stalled_ms, uint32_t passes) {
+    FaultRecord::Record stall;
+    stall.core = 1;
+    stall.stalled = true;
+    stall.pc = stalled_ms;
+    stall.lr = passes;
+    uint32_t words[FaultRecord::kNumWords];
+    ReadScratch(words);
+    FaultRecord::Encode(FaultRecord::AddFault(FaultRecord::Decode(words), stall), words);
+    WriteScratch(words);
+}
 
 #ifdef HARDWARE_UNIT_TESTS
 void __attribute__((noinline)) TriggerFault() {

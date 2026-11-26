@@ -85,6 +85,14 @@ CPP_AT_CALLBACK(ATTestCallback) {
                 busy_wait_ms(10);  // Core 1 is in the spin.
                 go = true;
                 HardFault::TriggerFault();
+            } else if (args[0].compare("CORE1_HANG") == 0 || args[0].compare("CORE1_HANG_NOIRQ") == 0) {
+                // Core 1 stops passing through its loop without a fault: core 0 stops feeding the watchdog.
+                bool irqs_off = args[0].compare("CORE1_HANG_NOIRQ") == 0;
+                multicore_fifo_push_blocking(reinterpret_cast<uintptr_t>(
+                    irqs_off ? +[](void*) { __asm volatile("cpsid i"); while (true) { __asm volatile("nop"); } }
+                             : +[](void*) { while (true) { __asm volatile("nop"); } }));
+                multicore_fifo_push_blocking(0);
+                CPP_AT_SUCCESS();
             } else if (args[0].compare("HARDFAULT_SECOND") == 0) {
                 // A fault while the record of an earlier one is still unreported: put this boot's (reported) record
                 // back as unreported, then fault on core 0. The next boot must report the earlier fault, counted twice.

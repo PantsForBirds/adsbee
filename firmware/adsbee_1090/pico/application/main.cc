@@ -233,6 +233,11 @@ int main() {
     // Console and (once the ESP32 is up) network console are ready: report a HardFault that reset the last boot.
     HardFault::ReportBootFault();
 
+    // Core 1 must keep passing through its loop for core 0 to feed the watchdog (FaultRecord::Core1Alive).
+    static constexpr uint32_t kCore1StallLimitMs = 2000;
+    uint32_t core1_last_passes = 0, core1_last_move_ms = get_time_since_boot_ms();
+    bool core1_stalled = false;
+
     core_0_monitor.TimeInterrupts();
     while (true) {
         // Loop forever.
@@ -252,10 +257,19 @@ int main() {
         adsbee.SyncPPSIRQEnable();
 #endif  // ISRS_ON_CORE1
 
+        if (!core1_stalled && !FaultRecord::Core1Alive(core1_passes, core1_running, get_time_since_boot_ms(),
+                                                        kCore1StallLimitMs, core1_last_passes, core1_last_move_ms)) {
+            core1_stalled = true;  // Feed no more: the watchdog resets the chip, and the record says why.
+            HardFault::RecordStall(get_time_since_boot_ms() - core1_last_move_ms, core1_passes);
+            CONSOLE_ERROR("main", "Core 1 stalled for %lu ms: letting the watchdog reset.",
+                          static_cast<unsigned long>(get_time_since_boot_ms() - core1_last_move_ms));
+        }
+
         // Poke the watchdog to keep things alive if the ESP32 is responding or if it's disabled.
         uint32_t old_esp32_last_heartbeat_timestamp_ms = esp32_last_heartbeat_timestamp_ms;
         esp32_last_heartbeat_timestamp_ms = esp32.GetLastHeartbeatTimestampMs();
-        if (esp32_last_heartbeat_timestamp_ms != old_esp32_last_heartbeat_timestamp_ms || !esp32.IsEnabled()) {
+        if (!core1_stalled &&
+            (esp32_last_heartbeat_timestamp_ms != old_esp32_last_heartbeat_timestamp_ms || !esp32.IsEnabled())) {
             // Don't need to talk to the ESP32, or it acknowledged a heartbeat just now: poke the watchdog since nothing
             // seems amiss.
             adsbee.PokeWatchdog();
@@ -264,7 +278,7 @@ int main() {
 #endif
         }
 #ifndef HARDWARE_UNIT_TESTS
-        else if (esp32.IsEnabled() &&
+        else if (!core1_stalled && esp32.IsEnabled() &&
                  get_time_since_boot_ms() - esp32_last_successful_comms_ms > kESP32CommsLostTimeoutMs) {
             CONSOLE_ERROR("main", "ESP32 SPI communication lost for >%ums. Cycling enable pin.",
                           kESP32CommsLostTimeoutMs);
