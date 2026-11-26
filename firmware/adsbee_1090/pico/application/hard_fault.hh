@@ -18,6 +18,9 @@ void Init();
 /** Logs the record left by the previous boot (once, at error level), then marks it reported. */
 void ReportBootFault();
 
+/** Core 0 found core 1 stalled and stops feeding the watchdog: record why the coming reset happens. */
+void RecordStall(uint32_t stalled_ms, uint32_t passes);
+
 /** The record found at this boot (kept for AT+DEVICE_INFO? after it has been reported). */
 const FaultRecord::State& BootState();
 
