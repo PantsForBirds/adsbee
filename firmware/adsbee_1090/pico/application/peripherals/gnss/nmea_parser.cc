@@ -117,6 +117,29 @@ bool ParseUTCTime(const char* field, NMEAParser::GNSSFix& fix) {
     return true;
 }
 
+// Parse an RMC date (ddmmyy) into days since 1970-01-01. From PR #451 (Mark Paluch).
+bool ParseUTCDate(const char* field, uint32_t& days_since_epoch) {
+    if (strlen(field) != 6) return false;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (field[i] < '0' || field[i] > '9') return false;
+    }
+    uint8_t day = (field[0] - '0') * 10 + field[1] - '0';
+    uint8_t month = (field[2] - '0') * 10 + field[3] - '0';
+    uint16_t year = (field[4] - '0') * 10 + field[5] - '0';
+    // NMEA's two-digit year is interpreted within the GNSS era, 1980-2079.
+    year += year >= 80 ? 1900 : 2000;
+    auto leap_year = [](uint16_t y) { return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0); };
+    static constexpr uint8_t month_days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month < 1 || month > 12 || day < 1 || day > month_days[month - 1] + (month == 2 && leap_year(year))) {
+        return false;
+    }
+    days_since_epoch = 0;
+    for (uint16_t y = 1970; y < year; y++) days_since_epoch += leap_year(y) ? 366 : 365;
+    for (uint8_t m = 1; m < month; m++) days_since_epoch += month_days[m - 1] + (m == 2 && leap_year(year));
+    days_since_epoch += day - 1;
+    return true;
+}
+
 }  // namespace
 
 NMEAParser::SentenceType NMEAParser::IngestByte(char c) {
@@ -245,10 +268,20 @@ NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t
 //   0: address  1: UTC time  2: status (A=valid, V=void)  3: lat  4: N/S  5: lon  6: E/W
 //   7: speed over ground (knots)  8: course over ground (deg)  9: date  ... (trailing fields vary)
 NMEAParser::SentenceType NMEAParser::ParseRMC(const char* const* fields, uint8_t num_fields) {
+    rmc_time_valid_ = false;
+    rmc_leap_second_ = false;
     if (num_fields < 10) return kSentenceMalformed;
 
     bool status_valid = (fields[2][0] == 'A');
-    ParseUTCTime(fields[1], fix_);
+    bool time_valid = ParseUTCTime(fields[1], fix_) && status_valid;
+    uint32_t days_since_epoch = 0;
+    rmc_leap_second_ = time_valid && fix_.utc_second == 60;
+    rmc_time_valid_ = time_valid && fix_.utc_second < 60 && fix_.utc_millisecond == 0 &&
+                      ParseUTCDate(fields[9], days_since_epoch);
+    if (rmc_time_valid_) {
+        rmc_unix_seconds_ = static_cast<uint64_t>(days_since_epoch) * 86400 + fix_.utc_hour * 3600 +
+                            fix_.utc_minute * 60 + fix_.utc_second;
+    }
 
     if (fields[7][0] != '\0') {
         fix_.speed_kts = static_cast<int32_t>(strtof(fields[7], nullptr));

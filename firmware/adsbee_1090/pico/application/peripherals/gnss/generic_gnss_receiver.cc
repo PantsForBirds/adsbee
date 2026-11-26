@@ -8,7 +8,7 @@ bool GenericGNSSReceiver::Init() {
     // from arriving at an old baud rate or while the UART peripheral is being reset.
     SetEnable(false);
     ClaimUart();
-    comms_manager.SetBaudRate(SettingsManager::kGNSSUART, GetDefaultBaudrate());
+    comms_manager.SetBaudRate(SettingsManager::kGNSSUART, GetLinkBaudrate());
     EnableRxInterrupt();
 
     if (config_.pps_pin != UINT16_MAX) {

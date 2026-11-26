@@ -224,7 +224,13 @@ class SettingsManager {
         static constexpr uint16_t kWiFiSTAMaxNumNetworks = 3;
         static constexpr uint16_t kWiFiSTANumExtraNetworks = kWiFiSTAMaxNumNetworks - 1;
         static constexpr uint32_t kDefaultCommsUARTBaudrate = 115200;
-        static constexpr uint32_t kDefaultGNSSUARTBaudrate = 9600;
+        // A u-blox MAX-M10 is commanded to the GNSS UART rate; other receivers must be set to their module's rate.
+        static constexpr uint32_t kDefaultGNSSUARTBaudrate = 921600;
+        // Before settings v21 the default was 9600, so a MAX-M10 left at 9600 moves to the new default on upgrade.
+        static constexpr uint32_t kOldDefaultGNSSUARTBaudrate = 9600;
+        // GNSS UART range: the MAX-M10's slowest rate up to the fastest our RX interrupt keeps up with under load.
+        static constexpr uint32_t kMinGNSSUARTBaudrate = 4800;
+        static constexpr uint32_t kMaxGNSSUARTBaudrate = 921600;
         // Open Drone ID UAS ID / Operator ID string length (ODID_ID_SIZE in opendroneid.h).
         static constexpr uint16_t kRemoteIDIDMaxLen = 20;
         static constexpr uint16_t kMaxNumFeeds = 10;
@@ -343,9 +349,9 @@ class SettingsManager {
             ReportingProtocol::kNoReports   // GNSS UART
         };
         uint32_t baud_rates[SerialInterface::kNumSerialInterfaces] = {
-            0,       // Console (virtual COM port)
-            115200,  // Comms UART
-            9600     // GNSS UART
+            0,                          // Console (virtual COM port)
+            kDefaultCommsUARTBaudrate,  // Comms UART
+            kDefaultGNSSUARTBaudrate    // GNSS UART
         };
 
         // Sub-GHz settings

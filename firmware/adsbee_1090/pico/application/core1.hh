@@ -35,6 +35,7 @@ inline void __not_in_flash_func(main_core1)() {
         if (adsbee.Receiver1090IsEnabled() != adsbee.Receiver1090IRQIsEnabled()) {
             adsbee.SyncReceiver1090IRQEnable();
         }
+        adsbee.SyncPPSIRQEnable();
 #endif  // ISRS_ON_CORE1
 #ifdef HARDWARE_UNIT_TESTS
         RunPendingTestFunctionOnCore1();  // Lets hardware unit tests read core 1 state, e.g. its SysTick.
