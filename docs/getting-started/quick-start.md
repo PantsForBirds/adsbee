@@ -231,7 +231,7 @@ The ADSBee 1090 is intended to interface easily with external modules via UART! 
 4. Connect your external device to the pins on the ADSBee 1090 labeled GND, TX, and RX. Don’t forget to cross over TX and RX as necessary!
 5. Save your settings with `AT+SETTINGS=SAVE`.
 
-The GNSS UART (on the GNSS module connector) works the same way with `GNSS_UART` in place of `COMMS_UART`. Warning: A GNSS receiver installed on `GNSS_UART` will receive protocols being reported on `GNSS_UART`.
+The GNSS UART (on the GNSS module connector) works the same way with `GNSS_UART` in place of `COMMS_UART`. It runs at 921600 baud by default (4800 to 921600): a u-blox MAX-M10 is switched to that rate, but a generic NMEA module needs its own rate set with `AT+BAUD_RATE=GNSS_UART,<baud>` (most start at 9600). Warning: A GNSS receiver installed on `GNSS_UART` will receive protocols being reported on `GNSS_UART`.
 
 ### Connect a Device via USB
 

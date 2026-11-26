@@ -9319,7 +9319,7 @@ const SETTINGS_SCHEMA_1090 = [
         cmd: 'BAUD_RATE', label: 'UART Baud Rates', group: 'Serial',
         fields: [
             { id: 'COMMS_UART', label: 'Comms UART (baud)', type: 'int', min: 1200, max: 1000000 },
-            { id: 'GNSS_UART', label: 'GNSS UART (baud)', type: 'int', min: 1200, max: 1000000 },
+            { id: 'GNSS_UART', label: 'GNSS UART (baud)', type: 'int', min: 4800, max: 921600 },
         ],
         build(v, dirty) { return [...dirty].map(iface => `AT+BAUD_RATE=${iface},${v[iface]}`); },
     },

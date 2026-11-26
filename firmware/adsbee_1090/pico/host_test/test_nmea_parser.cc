@@ -202,3 +202,50 @@ TEST(NMEAParser, UnknownSentenceType) {
     auto type = FeedSentence(parser, "$GPVTG,084.4,T,,M,022.4,N,041.5,K*6C\r\n");
     EXPECT_EQ(type, NMEAParser::kSentenceUnknown);
 }
+
+TEST(NMEAParser, RMCUnixSeconds) {
+    NMEAParser parser;
+    uint64_t unix_seconds = 0;
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));  // No RMC yet.
+    EXPECT_EQ(FeedSentence(parser, "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A\r\n"),
+              NMEAParser::kSentenceRMC);
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 764426119u);  // 1994-03-23 12:35:19 UTC.
+
+    // Year end, and the next second in the next year.
+    FeedSentence(parser, "$GNRMC,235959.00,A,4807.038,N,01131.000,E,0.0,,311226,,,A*68\r\n");
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 1798761599u);
+    FeedSentence(parser, "$GNRMC,000000.00,A,4807.038,N,01131.000,E,0.0,,010127,,,A*69\r\n");
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 1798761600u);
+    EXPECT_FALSE(parser.RMCIsLeapSecond());
+
+    // February 29 in a leap year; years 00-79 are 2000-2079.
+    FeedSentence(parser, "$GNRMC,120000.00,A,4807.038,N,01131.000,E,0.0,,290228,,,A*6C\r\n");
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 1835438400u);
+    FeedSentence(parser, "$GNRMC,120000.00,A,4807.038,N,01131.000,E,0.0,,010179,,,A*61\r\n");
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 3439800000u);
+}
+
+TEST(NMEAParser, RMCUnixSecondsNeedsFixDateAndWholeSecond) {
+    NMEAParser parser;
+    uint64_t unix_seconds = 0;
+    // No fix (status V), even with a time and date.
+    EXPECT_EQ(FeedSentence(parser, "$GNRMC,120000.00,V,,,,,,,231126,,,N*65\r\n"), NMEAParser::kSentenceRMC);
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    // Not a whole second: it can't label a PPS edge.
+    FeedSentence(parser, "$GNRMC,120000.50,A,4807.038,N,01131.000,E,0.0,,231126,,,A*6F\r\n");
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    // February 29 in a year that has none, and no date at all.
+    FeedSentence(parser, "$GNRMC,120000.00,A,4807.038,N,01131.000,E,0.0,,290226,,,A*62\r\n");
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    FeedSentence(parser, "$GNRMC,120000.00,A,4807.038,N,01131.000,E,0.0,,,,,A*6F\r\n");
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    // A leap second has no POSIX time.
+    FeedSentence(parser, "$GNRMC,235960.00,A,4807.038,N,01131.000,E,0.0,,311226,,,A*62\r\n");
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_TRUE(parser.RMCIsLeapSecond());
+}

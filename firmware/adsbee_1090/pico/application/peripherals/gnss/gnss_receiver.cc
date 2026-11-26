@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "adsbee.hh"            // For the PPS edges.
 #include "comms.hh"             // For comms_manager (UART I/O + baud) and CONSOLE_* logging.
 #include "cpu_utils.hh"
 #include "geo_utils.hh"
@@ -22,7 +23,7 @@ void GNSSReceiver::ClaimUart() {
     gpio_set_function(config_.uart_tx_pin, GPIO_FUNC_UART);
     gpio_set_function(config_.uart_rx_pin, GPIO_FUNC_UART);
     uart_set_translate_crlf(config_.uart_handle, false);
-    uart_init(config_.uart_handle, GetDefaultBaudrate());
+    uart_init(config_.uart_handle, GetLinkBaudrate());
 
     // Drain any bytes left in the RX FIFO from before the re-init so the first UBX-MON-VER probe
     // reads a clean stream (mirrors the flasher's EnterBootloader() flush).
@@ -44,11 +45,10 @@ bool GNSSReceiver::Init() {
 
     SetEnable(false);
 
-    // ClaimUart() already brings the hardware up at GetDefaultBaudrate() so we can talk to the
+    // ClaimUart() already brings the hardware up at GetLinkBaudrate() so we can talk to the
     // receiver. Do not also route through comms_manager.SetBaudRate() here: that call persists its
     // argument into settings_manager.settings.baud_rates[kGNSSUART], which would silently overwrite
-    // the user-configured/persisted baud rate with the receiver's hardcoded probing default on every
-    // boot.
+    // the user-configured/persisted baud rate with the receiver's link rate on every boot.
     ClaimUart();
     EnableRxInterrupt();
 
@@ -127,7 +127,7 @@ bool GNSSReceiver::Update() {
                             "GNSS module did not respond; continuing to listen for NMEA messages.");
         } else {
             CONSOLE_INFO("GNSSReceiver::Update", "GNSS module configured at %lu baud.",
-                         static_cast<unsigned long>(GetDefaultBaudrate()));
+                         static_cast<unsigned long>(GetLinkBaudrate()));
         }
 
         // Initialization/probing can consume measurable time. Refresh the clock used for fix
@@ -148,7 +148,7 @@ bool GNSSReceiver::Update() {
                          "GNSS module responded on retry %lu/%lu; configured at %lu baud.",
                          static_cast<unsigned long>(unhealthy_retry_count_),
                          static_cast<unsigned long>(kMaxUnhealthyRetries),
-                         static_cast<unsigned long>(GetDefaultBaudrate()));
+                         static_cast<unsigned long>(GetLinkBaudrate()));
         } else {
             CONSOLE_WARNING("GNSSReceiver::Update", "GNSS module still not responding (retry %lu/%lu).",
                             static_cast<unsigned long>(unhealthy_retry_count_),
@@ -172,6 +172,9 @@ bool GNSSReceiver::Update() {
     while (ReadBufferedByte(c)) {
         CPUMonitor::WorkScope work;
         NMEAParser::SentenceType result = parser_.IngestByte(c);
+        if (result == NMEAParser::kSentenceRMC) {
+            LabelPPSEdge();
+        }
         // TEMPORARY: also feed the byte to the receiver-specific binary sniffer (UBX for ublox).
         DebugIngestByte(c);
         // TEMPORARY debug instrumentation (remove once root cause found).
@@ -274,7 +277,40 @@ void GNSSReceiver::ResumeAfterUartHandover() {
     suspended_ = false;
 }
 
+void GNSSReceiver::ApplyBaudRateSetting() {
+    if (suspended_) return;  // uart0 belongs to the ESP32 flasher; ClaimUart() programs it on resume.
+    uart_set_baudrate(config_.uart_handle, GetLinkBaudrate());
+}
+
+void GNSSReceiver::SetUartBaudrate(uint32_t baudrate) {
+    // Bytes still queued (a UBX command) must leave at the rate the module is listening at.
+    comms_manager.FlushUARTTx(SettingsManager::kGNSSUART, kUartTxFlushTimeoutMs);
+    uart_set_baudrate(config_.uart_handle, baudrate);
+    FlushRx();
+}
+
+void GNSSReceiver::FlushRx() {
+    const uint irq_num = config_.uart_handle == uart0 ? UART0_IRQ : UART1_IRQ;
+    irq_set_enabled(irq_num, false);
+    while (uart_is_readable(config_.uart_handle)) {
+        (void)uart_getc(config_.uart_handle);
+    }
+    rx_tail_ = rx_head_;
+    irq_set_enabled(irq_num, true);
+}
+
+void GNSSReceiver::LabelPPSEdge() {
+    PPSClock::Edge latest, previous;
+    uint32_t num_edges = adsbee.GetPPSEdges(latest, previous);
+    uint64_t unix_seconds = 0;
+    bool rmc_valid = parser_.GetRMCUnixSeconds(unix_seconds);
+    pps_clock_.OnRMC(rmc_valid, parser_.RMCIsLeapSecond(), unix_seconds, num_edges, latest, previous, time_us_32());
+}
+
 void GNSSReceiver::SetEnable(bool enabled) {
+    // The edge interrupt runs while the receiver is enabled (powered or not: the module may be powered externally).
+    adsbee.SetPPSPin(enabled ? config_.pps_pin : UINT16_MAX);
+    pps_clock_.Restart();
     if (!enabled) {
         power_enable_pending_ = false;
         DisableRxInterrupt();

@@ -84,6 +84,19 @@ class NMEAParser {
      */
     void SetTimestampMs(uint32_t timestamp_ms) { timestamp_ms_ = timestamp_ms; }
 
+    /**
+     * UTC second of the last RMC sentence, for labeling the PPS edge before it (PPSClock).
+     * @param[out] unix_seconds UTC seconds since 1970 without leap seconds (POSIX).
+     * @retval True if that RMC reported a fix (status A) with a date, on a whole second below 60.
+     */
+    bool GetRMCUnixSeconds(uint64_t& unix_seconds) const {
+        unix_seconds = rmc_unix_seconds_;
+        return rmc_time_valid_;
+    }
+
+    // True if the last RMC sentence was on a leap second (second 60), which POSIX time can't represent.
+    bool RMCIsLeapSecond() const { return rmc_leap_second_; }
+
    private:
     // Parse the currently buffered line (line_buf_ / line_len_, '$' stripped, checksum validated)
     // by splitting on ',' and dispatching on the 3-char sentence type.
@@ -104,4 +117,7 @@ class NMEAParser {
 
     GNSSFix fix_;
     uint32_t timestamp_ms_ = 0;
+    bool rmc_time_valid_ = false;
+    bool rmc_leap_second_ = false;
+    uint64_t rmc_unix_seconds_ = 0;
 };

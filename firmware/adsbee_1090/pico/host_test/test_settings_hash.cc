@@ -70,8 +70,8 @@ TEST(SettingsHash, SameSettingsSameHashWhateverThePadding) {
 TEST(SettingsHash, DefaultSettingsHashIsPinned) {
     // Host defaults (no device info, access point channel 1). Changes only with the Settings struct or its defaults.
     Settings settings;
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0xA2A2895Fu);
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xCBEC1242u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFleet), 0xC08FFFCAu);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xBA29784Eu);
 }
 
 TEST(SettingsHash, FixedPositionHashIsPinned) {
@@ -80,7 +80,7 @@ TEST(SettingsHash, FixedPositionHashIsPinned) {
     settings.rx_position.source = SettingsManager::RxPosition::kPositionSourceFixed;
     settings.rx_position.latitude_awb = 0x1A987654u;   // 37.4 deg.
     settings.rx_position.longitude_awb = 0xA92C5F93u;  // -122.1 deg.
-    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0x89DD3D47u);
+    EXPECT_EQ(SettingsHash::Compute(settings, kScopeFull), 0xA1EB7652u);
 }
 
 TEST(SettingsHash, StoredCRCDoesNotCount) {
@@ -137,7 +137,7 @@ TEST(SettingsHash, EverySharedSettingChangesBothHashes) {
     EXPECT_CHANGES_BOTH(s.gnss_notify = true);
     EXPECT_CHANGES_BOTH(s.log_level = SettingsManager::kInfo);
     EXPECT_CHANGES_BOTH(s.reporting_protocols[SettingsManager::kCommsUART] = SettingsManager::kMAVLINK2);
-    EXPECT_CHANGES_BOTH(s.baud_rates[SettingsManager::kGNSSUART] = 115200);
+    EXPECT_CHANGES_BOTH(s.baud_rates[SettingsManager::kGNSSUART] = 9600);
     EXPECT_CHANGES_BOTH(s.subg_enabled = SettingsManager::kEnableStateDisabled);
     EXPECT_CHANGES_BOTH(s.subg_rx_enabled = false);
     EXPECT_CHANGES_BOTH(s.subg_bias_tee_enabled = true);
