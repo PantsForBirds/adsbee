@@ -149,7 +149,12 @@ bool ESP32::Update() {
     uint32_t status_timestamp_ms = get_time_since_boot_ms();
     ObjectDictionary::PPSTime pps_time = {.seq = gnss->pps_time_seq()};
     if (pps_time.seq != 0) {
-        gnss->pps_clock().GetAnchor(pps_time.edge_mlat_48mhz_counts, pps_time.edge_sub_counts, pps_time.utc_seconds);
+        uint64_t edge_counts = 0, utc_seconds = 0;  // Packed fields don't bind to references.
+        uint16_t edge_sub_counts = 0;
+        gnss->pps_clock().GetAnchor(edge_counts, edge_sub_counts, utc_seconds);
+        pps_time.edge_mlat_48mhz_counts = edge_counts;
+        pps_time.edge_sub_counts = edge_sub_counts;
+        pps_time.utc_seconds = utc_seconds;
         int64_t rate_ppb = gnss->pps_clock().GetRateErrorPPB();  // Within +-PPSClock::kMaxRateErrorPPB.
         pps_time.rate_ppb = static_cast<int32_t>(rate_ppb);
         pps_time.step = gnss->pps_time_step();
