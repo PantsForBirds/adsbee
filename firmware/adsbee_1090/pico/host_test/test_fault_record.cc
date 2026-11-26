@@ -111,3 +111,50 @@ TEST(FaultRecord, FormatForDeviceInfo) {
     Format(AddFault(State(), bad), buf, sizeof(buf));
     EXPECT_STREQ(buf, "core 0, bad stack SP 0x1fffffe0 (1 since power-on)");
 }
+
+TEST(FaultRecord, Core1StallRoundTripsAndReads) {
+    Record stall;
+    stall.core = 1;
+    stall.stalled = true;
+    stall.pc = 2004;      // ms since core 1's loop last moved
+    stall.lr = 123456;    // its passes
+    State s = RoundTrip(AddFault(State(), stall));
+    ASSERT_TRUE(s.has_record);
+    EXPECT_TRUE(s.record.stalled);
+    EXPECT_EQ(s.record.core, 1);
+    EXPECT_EQ(s.record.pc, 2004u);
+    EXPECT_EQ(s.record.lr, 123456u);
+    char buf[80];
+    Format(s, buf, sizeof(buf));
+    EXPECT_STREQ(buf, "core 1 stalled 2004 ms (1 since power-on)");
+    EXPECT_FALSE(RoundTrip(AddFault(State(), MakeFault(1, 0x1006c10a, 0x2000013b))).record.stalled);
+    // A stall after an unreported fault only counts, like a second fault.
+    State both = RoundTrip(AddFault(RoundTrip(AddFault(State(), MakeFault(0, 0x10001000, 0))), stall));
+    EXPECT_FALSE(both.record.stalled);
+    EXPECT_EQ(both.count, 2);
+}
+
+TEST(FaultRecord, Core1AliveWhileItsLoopMoves) {
+    uint32_t last_passes = 0, last_move = 0;
+    EXPECT_TRUE(Core1Alive(1, true, 100, 2000, last_passes, last_move));
+    EXPECT_TRUE(Core1Alive(1, true, 2099, 2000, last_passes, last_move));     // 1999 ms without a pass
+    EXPECT_FALSE(Core1Alive(1, true, 2100, 2000, last_passes, last_move));    // 2000 ms: stalled
+    EXPECT_TRUE(Core1Alive(2, true, 2200, 2000, last_passes, last_move));     // it moved again
+    EXPECT_EQ(last_move, 2200u);
+}
+
+TEST(FaultRecord, Core1StoppedOnPurposeIsNeverStalled) {
+    uint32_t last_passes = 5, last_move = 0;
+    EXPECT_TRUE(Core1Alive(5, false, 60000, 2000, last_passes, last_move));   // StopCore1: flash write, ESP32 flash
+    // Restarted (StartCore1 counts a pass) but no loop pass yet: the clock starts from the restart.
+    EXPECT_TRUE(Core1Alive(6, true, 60100, 2000, last_passes, last_move));
+    EXPECT_TRUE(Core1Alive(6, true, 62000, 2000, last_passes, last_move));
+    EXPECT_FALSE(Core1Alive(6, true, 62100, 2000, last_passes, last_move));
+}
+
+TEST(FaultRecord, Core1AliveAcrossTheMillisecondWrap) {
+    uint32_t last_passes = 0, last_move = 0;
+    EXPECT_TRUE(Core1Alive(1, true, 0xFFFFFF00u, 2000, last_passes, last_move));
+    EXPECT_TRUE(Core1Alive(1, true, 0x00000500u, 2000, last_passes, last_move));   // 1536 ms later
+    EXPECT_FALSE(Core1Alive(1, true, 0x00000800u, 2000, last_passes, last_move));  // 2304 ms later
+}
