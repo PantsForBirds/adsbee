@@ -127,6 +127,11 @@ class GNSSReceiver {
     // GNSS time on the MLAT counter, from the PPS edges (see PPSClock).
     const PPSClock& pps_clock() const { return pps_clock_; }
 
+    // + 1 (skipping 0) each time an RMC labels an edge while the fit is in sync: a new pps_clock() anchor for the
+    // ESP32's GPS time frame (0xe6). pps_time_step(): the fit restarted since the previous seq.
+    static uint8_t pps_time_seq() { return pps_time_seq_; }
+    static bool pps_time_step() { return pps_time_step_; }
+
     /**
      * Converts a 48 MHz MLAT count (a Mode S, UAT or Remote ID timestamp) to UTC.
      * @param[out] unix_seconds UTC seconds since 1970 without leap seconds (POSIX).
@@ -240,6 +245,10 @@ class GNSSReceiver {
     // Updated from the main loop, so no atomic access is required.
     static inline uint32_t pps_count_ = 0;
     PPSClock pps_clock_;
+    // Shared by all receiver instances like pps_count_, so a receiver swap doesn't repeat a seq.
+    static inline uint8_t pps_time_seq_ = 0;
+    static inline bool pps_time_step_ = false;
+    static inline bool pps_restarted_ = true;  // The fit restarted since the last seq.
 
     // Single-producer (UART ISR), single-consumer (main loop) ring buffer. Monotonic 16-bit indices
     // make all 2048 slots usable; unsigned subtraction remains valid across index wrap.

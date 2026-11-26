@@ -71,22 +71,44 @@ constexpr uint8_t kBeastNoLevelPowerByte = 0x00;
  * moment the answer is read; any other server gets plain Beast.
  *
  * 0x1a | 0xe5 | 'Q' / 'A' | 0x80 | version | 0x80 | bits 0-6 | 0x80 | bits 7-13. Never contains 0x1a.
- * Bit 0 is reserved (was dBm signal levels): never set, ignored in an answer.
  */
+constexpr uint16_t kBeastCapGPSTime = 1 << 0;        // 0xe6 GPS time sync frames (one per labeled PPS edge).
 constexpr uint16_t kBeastCapADSL = 1 << 1;           // 0xed ADS-L frames.
 constexpr uint16_t kBeastCapRemoteID = 1 << 2;       // 0xef Remote ID frames.
 constexpr uint16_t kBeastCapUATModeSClock = 1 << 3;  // 0xec with upper-case S / L / U: timestamp on the Mode S clock.
-constexpr uint16_t kBeastCapsKnown = kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;
+constexpr uint16_t kBeastCapsKnown = kBeastCapGPSTime | kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;
 // Bits this firmware may put in a query. kBeastCapADSL waits for ADS-L receive (#409), kBeastCapUATModeSClock for UAT
 // timestamps on the Mode S clock (#428); their writers are ready.
-constexpr uint16_t kBeastCapsSendable = kBeastCapRemoteID;
+constexpr uint16_t kBeastCapsSendable = kBeastCapGPSTime | kBeastCapRemoteID;
 // Every feed of one protocol gets the same Beast frames, built once. Upper-case UAT would change them per feed.
 static_assert(!(kBeastCapsSendable & kBeastCapUATModeSClock),
               "Offering upper-case UAT needs its own Beast batch for the feeds that agree on it (ReportBeast).");
+/**
+ * The bits a Beast feed's query offers (within kBeastCapsSendable): Remote ID while its receiver is on, GPS time while
+ * GNSS is enabled (on a board with a PPS input).
+ */
+constexpr uint16_t CapsToOffer(bool remote_id_rx_enabled, bool gnss_enabled_with_pps) {
+    return ((remote_id_rx_enabled ? kBeastCapRemoteID : 0) | (gnss_enabled_with_pps ? kBeastCapGPSTime : 0)) &
+           kBeastCapsSendable;
+}
+
 // The version byte of the 0xe5 frame: a field of the wire format, not a document version.
 constexpr uint8_t kBeastCapsVersion = 1;
 constexpr uint16_t kBeastCapsFrameLenBytes = 6;
 constexpr uint32_t kBeastCapsAnswerTimeoutMs = 5000;
+
+/**
+ * GPS Time Sync Format (ADSBee Beast extensions, 0xe6, feeds that agreed on kBeastCapGPSTime)
+ * 0x1a | 0xe6 | 'P' | ts6 | sub1 | utc5 | flags1 | rate3
+ * ts6 + sub1/256: 12 MHz count of the PPS edge of UTC second utc5 (POSIX), on the Mode S clock. flags1: 0x80 always
+ * (never escaped), 0x01 step (the fit restarted since the last frame). rate3: signed ppb of the 12 MHz counter against
+ * GNSS time, 0x800000 = unknown. ts6, sub1, utc5 and rate3 are escaped.
+ */
+constexpr char kGPSTimeLetterPPS = 'P';
+constexpr uint8_t kGPSTimeFlagsAlways = 0x80;
+constexpr uint8_t kGPSTimeFlagStep = 0x01;
+constexpr int32_t kGPSTimeRateMax = 0x7FFFFF;
+constexpr uint16_t kGPSTimeBeastFrameMaxLenBytes = 2 + 1 + 2 * 15 + 1;  // [Bytes] 34
 
 constexpr uint16_t kUuidNumChars = 36;
 constexpr uint16_t kReceiverIDLenBytes = 8;
@@ -98,6 +120,7 @@ enum BeastFrameType {
     kBeastFrameTypeUAT =
         0xec,  // Used for encapsulated UAT ADSB short messages, UAT ADSB long messages, and UAT uplink messages.
     kBeastFrameTypeCapabilities = 0xe5,  // readsbee: capabilities query and answer.
+    kBeastFrameTypeGPSTime = 0xe6,       // readsbee: GPS time sync (PPS edge on the Mode S clock).
     kBeastFrameTypeADSL = 0xed,          // readsbee: ADS-L packet.
     kBeastFrameTypeRemoteID = 0xef,      // readsbee: Broadcast Remote ID (ASTM F3411) message or message pack.
     kBeastFrameTypeModeAC = 0x31,  // Note: This is not used, since I'm assuming it does NOT refer to DF 4,5.
@@ -236,6 +259,19 @@ uint16_t WriteRemoteIDBeastFrame(uint8_t *beast_frame_buf, char transport, uint6
  * @retval Number of bytes written, or 0 if the transport is unknown or the ODID bytes are out of bounds.
  */
 uint16_t BuildRemoteIDBeastFrame(uint8_t *beast_frame_buf, const RawRemoteIDPacket &packet);
+
+/**
+ * Write a GPS time sync frame (0xe6 'P') for a labeled PPS edge.
+ * @param[out] buf Buffer of at least kGPSTimeBeastFrameMaxLenBytes.
+ * @param[in] edge_mlat_48mhz_counts PPS edge on the 48 MHz MLAT counter (whole counts).
+ * @param[in] edge_sub_counts Fraction of a count in 1/1024.
+ * @param[in] utc_seconds POSIX second of the edge.
+ * @param[in] rate_ppb Counter rate against GNSS time; clamped to +-kGPSTimeRateMax.
+ * @param[in] step The fit restarted since the previous frame.
+ * @retval Number of bytes written.
+ */
+uint16_t WriteGPSTimeFrame(uint8_t *buf, uint64_t edge_mlat_48mhz_counts, uint16_t edge_sub_counts,
+                           uint64_t utc_seconds, int32_t rate_ppb, bool step);
 
 /**
  * Write a capabilities frame (0xe5). Never escaped: every byte after the letter has the high bit set.
@@ -392,6 +428,34 @@ bool ReportRemoteIDRound(const SinkInfo *sinks, uint16_t num_sinks, const Packet
     if (packets.header->num_remote_id_packets == 0) return true;
     return ReportRemoteIDFrames(sinks, num_sinks, packets.remote_id_packets, packets.header->num_remote_id_packets, buf,
                                 buf_size, selected, send, num_build_failures);
+}
+
+/**
+ * Sends the GPS time sync frame (0xe6) of a new labeled PPS edge, once per seq, to the sinks that agreed on
+ * kBeastCapGPSTime. The frame is built once. A seq seen before (or 0, none yet) sends nothing; a new seq is taken even
+ * if no sink agreed, so a feed that agrees later starts with the next edge.
+ * @param[in] sinks Sink descriptors with .sink and .beast_caps (CommsManager::ReportSinkInfo).
+ * @param[in] pps_time ObjectDictionary::PPSTime (.edge_mlat_48mhz_counts, .edge_sub_counts, .utc_seconds, .rate_ppb,
+ * .step, .seq).
+ * @param[in,out] last_seq The seq last taken.
+ * @param[out] selected Scratch, at least num_sinks entries.
+ * @param[in] send bool(const Sink *sinks, uint16_t num_sinks, const uint8_t *buf, uint16_t len, uint16_t num_frames).
+ * @retval False if the send failed.
+ */
+template <typename SinkInfo, typename PPSTime, typename Sink, typename Send>
+bool ReportGPSTimeFrame(const SinkInfo *sinks, uint16_t num_sinks, const PPSTime &pps_time, uint8_t &last_seq,
+                        Sink *selected, Send send) {
+    if (pps_time.seq == 0 || pps_time.seq == last_seq) return true;
+    last_seq = pps_time.seq;
+    uint16_t num_selected = 0;
+    for (uint16_t i = 0; i < num_sinks; i++) {
+        if (sinks[i].beast_caps & kBeastCapGPSTime) selected[num_selected++] = sinks[i].sink;
+    }
+    if (num_selected == 0) return true;
+    uint8_t buf[kGPSTimeBeastFrameMaxLenBytes];
+    uint16_t len = WriteGPSTimeFrame(buf, pps_time.edge_mlat_48mhz_counts, pps_time.edge_sub_counts,
+                                     pps_time.utc_seconds, pps_time.rate_ppb, pps_time.step != 0);
+    return send(selected, num_selected, buf, len, 1);
 }
 
 }  // namespace BeastReporter

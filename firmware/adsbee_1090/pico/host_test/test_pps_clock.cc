@@ -256,3 +256,23 @@ TEST(PPSClock, FollowsJitterAndDrift) {
     EXPECT_LT(worst_ns, 150);
     EXPECT_NEAR(std::sqrt(static_cast<double>(clock.GetMeanSquareResidualNs2())), 30, 25);
 }
+
+// The anchor the ESP32's GPS time frame (0xe6) sends: the fit's edge of the last labeled second, which ToUTC() maps to
+// that second within a count, on the bench's true edge within the settled error.
+TEST(PPSClock, AnchorIsTheFitsEdge) {
+    Bench b;
+    PPSClock clock;
+    for (uint64_t s = 0; s < 40; s++) clock.AddPoint(b.Edge(s, (s % 3) * 10.0).mlat_48mhz_counts, kUnixStart + s);
+    uint64_t counts = 0, seconds = 0;
+    uint16_t sub = 0;
+    clock.GetAnchor(counts, sub, seconds);
+    EXPECT_EQ(seconds, kUnixStart + 39);
+    EXPECT_LT(sub, PPSClock::kAnchorSubCounts);
+    double edge = counts + sub / 1024.0;
+    EXPECT_NEAR(edge, static_cast<double>(b.Mlat(39)), kSettledNs * 0.048 + 1);
+    uint64_t utc = 0;
+    uint32_t ns = 0;
+    ASSERT_TRUE(clock.ToUTC(counts + 1, utc, ns));  // One count after the anchor's whole count.
+    EXPECT_EQ(utc, kUnixStart + 39);
+    EXPECT_LE(ns, 21u);
+}

@@ -198,6 +198,16 @@ class PPSClock {
         return true;
     }
 
+    /**
+     * The fit's edge: the PPS edge of UTC second unix_seconds is at MLAT count mlat_48mhz_counts + sub_counts / 1024
+     * (what ToUTC() converts from). Valid while synced.
+     */
+    void GetAnchor(uint64_t& mlat_48mhz_counts, uint16_t& sub_counts, uint64_t& unix_seconds) const {
+        mlat_48mhz_counts = mlat_48mhz_counts_;
+        sub_counts = static_cast<uint16_t>(anchor_sub_counts_);
+        unix_seconds = unix_seconds_;
+    }
+
     uint16_t GetNumPoints() const { return num_points_; }
     // MLAT counter rate relative to 48 MHz of GNSS time, in parts per billion.
     int64_t GetRateErrorPPB() const { return rate_error_ppb_; }

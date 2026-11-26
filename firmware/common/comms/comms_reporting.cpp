@@ -514,6 +514,19 @@ static uint16_t BuildBeastBatch(uint8_t* buf, size_t buf_size, const CompositeAr
 }
 #endif
 
+#ifdef ON_ESP32
+bool CommsManager::ReportGPSTime(const ReportSinkInfo* sinks, uint16_t num_sinks,
+                                 const ObjectDictionary::PPSTime& pps_time) {
+    static uint8_t last_seq = 0;  // IPWANTask only.
+    if (num_sinks > SettingsManager::kMaxNumReportSinks) num_sinks = SettingsManager::kMaxNumReportSinks;
+    ReportSink selected[SettingsManager::kMaxNumReportSinks];
+    auto send = [&](const ReportSink* to, uint16_t num_to, const uint8_t* buf, uint16_t len, uint16_t num_frames) {
+        return SendBufToSinks(to, num_to, reinterpret_cast<const char*>(buf), len, beast_tally, num_frames);
+    };
+    return BeastReporter::ReportGPSTimeFrame(sinks, num_sinks, pps_time, last_seq, selected, send);
+}
+#endif
+
 bool CommsManager::ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks,
                                const CompositeArray::RawPackets& packets) {
     if (num_sinks > SettingsManager::kMaxNumReportSinks) num_sinks = SettingsManager::kMaxNumReportSinks;

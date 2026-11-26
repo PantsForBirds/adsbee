@@ -93,6 +93,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_reporting_asterix.cc
         test_reporting_beast.cc
         test_reporting_beast_caps.cc
+        test_beast_gps_time.cc
         test_reporting_csbee.cc
         test_reporting_gdl90.cc
         test_reporting_mavlink.cc

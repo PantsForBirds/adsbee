@@ -151,6 +151,21 @@ class ObjectDictionary {
         kMLATSyncFlagSynced = 1 << 0,  // Packet timestamps are on the MLAT time base.
     };
 
+    /**
+     * The latest labeled PPS edge on the MLAT counter (GNSSReceiver, PPSClock's filtered anchor), for the ESP32's GPS
+     * time sync frame (0xe6). seq changes (1..255, never 0) once per edge labeled while the fit is in sync; 0 = none
+     * yet.
+     */
+    struct __attribute__((packed)) PPSTime {
+        uint64_t edge_mlat_48mhz_counts = 0;  // The fit's edge of utc_seconds on the MLAT counter (48 MHz).
+        uint16_t edge_sub_counts = 0;         // + /1024 of a count.
+        uint64_t utc_seconds = 0;             // POSIX.
+        int32_t rate_ppb = 0;                 // PPSClock::GetRateErrorPPB().
+        uint8_t step = 0;                     // The fit restarted since the previous seq.
+        uint8_t seq = 0;
+    };
+    static_assert(sizeof(PPSTime) == 24, "PPSTime is part of the RP2040 -> ESP32 status: both sides change together.");
+
     struct __attribute__((packed)) RP2040DeviceStatus {
         uint32_t timestamp_ms = 0;
         int8_t temperature_deg_c = 0;
@@ -186,6 +201,7 @@ class ObjectDictionary {
         bool subg_rx_enabled = false;  // Sub-GHz radio on and receiving.
         SettingsManager::SubGHzRadioMode subg_mode = SettingsManager::kSubGHzRadioModeUATRx;
         SyncPulse sync_pulse;  // The latest sync pulse. The ESP32 takes each count once.
+        PPSTime pps_time;      // The latest labeled PPS edge. The ESP32 sends each seq once.
     };
 
     struct __attribute__((__packed__)) ESP32DeviceStatus {

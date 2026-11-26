@@ -463,13 +463,14 @@
  },
  {
   "name": "answer_bit0_set",
-  "note": "reserved bit 0 set: ignored, the feeder uses bits 1-3 only",
+  "note": "bit 0 set: GPS time sync 0xE6 since 2026-11-26 (readsbee's default answer); the feeder sends 0xE6 only if it offered bit 0",
   "direction": "server_to_feeder",
   "hex": "1ae541818f80",
   "answer": {
    "version": 1,
    "bits": 15,
    "features": [
+    "gps_time_e6",
     "adsl_ed",
     "rid_ef",
     "uat_upper"
@@ -991,5 +992,133 @@
   ],
   "skipped": 0,
   "unknown": 0
+ },
+ {
+  "name": "gps_time",
+  "note": "the PPS edge of UTC second 1795483693 is at 12 MHz tick 0x00123456789b + 128/256; the counter runs 17.3 ppm fast",
+  "hex": "1ae65000123456789b80006b04e82d80004394",
+  "decoded": [
+   {
+    "type": 230,
+    "kind": "gps_time",
+    "clock": "modes",
+    "ts": 78187493531,
+    "sub": 128,
+    "utc": 1795483693,
+    "step": false,
+    "rate_ppb": 17300
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "gps_time_escaped_step",
+  "note": "ts6, sub and rate contain 0x1a (escaped; flags 0x81 never is). step: the fit restarted or was re-anchored since the last frame, don't derive a rate across it",
+  "hex": "1ae65000001a1a1a1a001a1a1a1a006b04e82e81001a1a1a1a",
+  "decoded": [
+   {
+    "type": 230,
+    "kind": "gps_time",
+    "clock": "modes",
+    "ts": 437911578,
+    "sub": 26,
+    "utc": 1795483694,
+    "step": true,
+    "rate_ppb": 6682
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "gps_time_rate_unknown",
+  "note": "a feeder that doesn't measure a rate (80 00 00): the edge of UTC second 1795483695, two seconds after gps_time on the same counter; the server takes the rate from the two frames",
+  "hex": "1ae650001235c4b03ab3006b04e82f80800000",
+  "decoded": [
+   {
+    "type": 230,
+    "kind": "gps_time",
+    "clock": "modes",
+    "ts": 78211493946,
+    "sub": 179,
+    "utc": 1795483695,
+    "step": false,
+    "rate_ppb": null
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0
+ },
+ {
+  "name": "stream_query_answer_gps_time",
+  "note": "E4 + query 8f (GNSS with PPS configured), a Mode S frame while waiting; answer 8f (bit 0 agreed); then Mode S and the sync frame of the last labeled PPS edge",
+  "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818f801a32001234500000045d4840d6abcdef1a320012345a0000045d4840d6abcdef1ae65000123456789b80006b04e82d800043941a32001234600000045d4840d6abcdef",
+  "decoded": [
+   {
+    "type": 228,
+    "kind": "uuid",
+    "uuid": "0bee0003-8172-d18c-0bee-00038172d18c"
+   },
+   {
+    "type": 229,
+    "kind": "caps_query",
+    "version": 1,
+    "bits": 15,
+    "features": [
+     "gps_time_e6",
+     "adsl_ed",
+     "rid_ef",
+     "uat_upper"
+    ]
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 78187069440,
+    "rssi": 4,
+    "msg": "5d4840d6abcdef"
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 78187724800,
+    "rssi": 4,
+    "msg": "5d4840d6abcdef"
+   },
+   {
+    "type": 230,
+    "kind": "gps_time",
+    "clock": "modes",
+    "ts": 78187493531,
+    "sub": 128,
+    "utc": 1795483693,
+    "step": false,
+    "rate_ppb": 17300
+   },
+   {
+    "type": 50,
+    "kind": "mode_s_short",
+    "ts": 78188118016,
+    "rssi": 4,
+    "msg": "5d4840d6abcdef"
+   }
+  ],
+  "skipped": 0,
+  "unknown": 0,
+  "exchange": [
+   {
+    "from": "feeder",
+    "hex": "1ae430626565303030332d383137322d643138632d306265652d3030303338313732643138631ae551818f801a32001234500000045d4840d6abcdef"
+   },
+   {
+    "from": "server",
+    "hex": "1ae541818f80"
+   },
+   {
+    "from": "feeder",
+    "hex": "1a320012345a0000045d4840d6abcdef1ae65000123456789b80006b04e82d800043941a32001234600000045d4840d6abcdef"
+   }
+  ]
  }
 ]

@@ -111,6 +111,16 @@ bool ReportRaw(ReportSink* sinks, uint16_t num_sinks, const CompositeArray::RawP
  */
 bool ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks, const CompositeArray::RawPackets& packets);
 
+#ifdef ON_ESP32
+/**
+ * Sends the GPS time sync frame (0xe6) of a new labeled PPS edge to the Beast feeds that agreed on kBeastCapGPSTime,
+ * once per pps_time.seq (BeastReporter::ReportGPSTimeFrame), through the same send path as the other Beast frames.
+ * @param[in] pps_time The RP2040's latest PPSTime (a consistent copy).
+ * @retval False if a send failed.
+ */
+bool ReportGPSTime(const ReportSinkInfo* sinks, uint16_t num_sinks, const ObjectDictionary::PPSTime& pps_time);
+#endif
+
 /**
  * Sends out comma separated aircraft information for each aircraft in the aircraft dictionary.
  * @param[in] sinks Array of ReportSinks to broadcast aircraft information on.

@@ -16,9 +16,12 @@ type is >= 0x80 or an ASCII letter, so the frame never contains 0x1a and is neve
 
 The feeder sends the agreed frames (query bits AND answer bits) as soon as it has read the
 answer: every frame says what it is, so there is no switch point. The signal byte of every frame
-type (0x31-0x33, 0xEC, 0xED, 0xEF) is the Beast power byte, 0 = no level. Capability bit 0 is
-reserved (never set, ignored); the letter 'C' of 0xE5 is reserved too (dBm levels and the
-confirm frame were removed 2026-11-07).
+type (0x31-0x33, 0xEC, 0xED, 0xEF) is the Beast power byte, 0 = no level. The letter 'C' of 0xE5
+is reserved (dBm levels and the confirm frame were removed 2026-11-07).
+
+GPS time sync (0xE6 'P', capability bit 0 since 2026-11-26, FEED-PROTOCOL.md section 12): one frame
+per labeled PPS edge, the edge's 12 MHz count (ts6 + sub1/256) and its POSIX second; utc_of() is
+the server-side conversion of a Mode S timestamp on the same connection to UTC.
 """
 from __future__ import annotations
 
@@ -40,6 +43,7 @@ T_UAT = 0xEC             # ADSBee/readsb: UAT
 T_ADSL = 0xED            # ADS-L
 T_RID = 0xEF             # Remote ID (ODID)
 T_CAPS = 0xE5            # capabilities query / answer
+T_GPS_TIME = 0xE6        # GPS time sync (PPS edge on the Mode S clock)
 T_PING = 0x50            # readsb -> feeder: '1a P' + 3 bytes (escaped), only from a server
 
 # ---- capabilities check -------------------------------------------------------------------
@@ -47,12 +51,12 @@ CAPS_QUERY, CAPS_ANSWER = "Q", "A"
 CAPS_LETTERS = (CAPS_QUERY, CAPS_ANSWER)
 CAPS_RESERVED = "C"             # reserved letter (was the confirm frame): skipped as a 6-byte frame
 CAPS_VERSION = 1
-CAP_RESERVED_0 = 1 << 0         # reserved: never set, ignored (was dBm signal levels)
+CAP_GPS_TIME = 1 << 0           # 0xE6 GPS time sync (2026-11-26; was dBm levels before 2026-11-07, never deployed)
 CAP_ADSL = 1 << 1               # 0xED ADS-L
 CAP_RID = 1 << 2                # 0xEF Remote ID
 CAP_UAT_MODES_CLOCK = 1 << 3    # 0xEC with upper-case S L U
-CAP_NAMES = {CAP_ADSL: "adsl_ed", CAP_RID: "rid_ef", CAP_UAT_MODES_CLOCK: "uat_upper"}
-CAP_KNOWN = CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK
+CAP_NAMES = {CAP_GPS_TIME: "gps_time_e6", CAP_ADSL: "adsl_ed", CAP_RID: "rid_ef", CAP_UAT_MODES_CLOCK: "uat_upper"}
+CAP_KNOWN = CAP_GPS_TIME | CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK
 CAPS_LEN = 6                    # 1a E5 letter ver f0 f1
 CAPS_ANSWER_TIMEOUT_S = 5.0     # feeder: wait this long for 'A', sending plain Beast meanwhile
 
@@ -68,6 +72,17 @@ ADSL_MIN_L, ADSL_MAX_L = 1, 31      # on-air length byte (firmware: 12..31 today
 ODID_MSG = 25
 ODID_PACK_MAX = 9
 REP_UNKNOWN = 0xFF
+
+# GPS time sync 0xE6 'P' (section 12): ts6 sub1 utc5 flags1 rate3
+GPS_LETTER = "P"
+GPS_BODY_LEN = 6 + 1 + 5 + 1 + 3        # after the letter
+GPS_FLAG_ALWAYS = 0x80                  # always set: flags is never 0x1a, never escaped
+GPS_FLAG_STEP = 0x01                    # fit restarted / re-anchored since the last frame
+GPS_RATE_UNKNOWN = -(1 << 23)           # 80 00 00
+TICKS_PER_S = 12_000_000
+TS_MOD = 1 << 48
+GPS_VALID_S = 4                         # a frame is good for 4 s around its edge
+GPS_PAIR_TOLERANCE_TICKS = 12           # 1 us
 
 
 def escape(body: bytes) -> bytes:
@@ -155,6 +170,17 @@ def enc_caps(letter: str, bits: int, version: int = CAPS_VERSION) -> bytes:
     if letter not in CAPS_LETTERS or not 1 <= version <= 0x7F or not 0 <= bits < 1 << 14:
         raise ValueError("bad caps frame")
     return bytes([ESC, T_CAPS, ord(letter), 0x80 | version, 0x80 | (bits & 0x7F), 0x80 | (bits >> 7)])
+
+
+def enc_gps_time(ts: int, sub: int, utc: int, step: bool, rate_ppb) -> bytes:
+    """PPS edge of POSIX second utc at 12 MHz tick ts + sub/256 on this connection's Mode S clock.
+    rate_ppb: one GNSS second = 12e6 * (1 + rate * 1e-9) ticks, None = unknown (80 00 00)."""
+    rate = GPS_RATE_UNKNOWN if rate_ppb is None else rate_ppb
+    if not (0 <= ts < TS_MOD and 0 <= sub < 256 and 0 < utc < 1 << 40 and GPS_RATE_UNKNOWN <= rate < 1 << 23):
+        raise ValueError("bad gps time frame")
+    head = ts.to_bytes(6, "big") + bytes([sub]) + utc.to_bytes(5, "big")
+    return (bytes([ESC, T_GPS_TIME, ord(GPS_LETTER)]) + escape(head)
+            + bytes([GPS_FLAG_ALWAYS | (GPS_FLAG_STEP if step else 0)]) + escape(rate.to_bytes(3, "big", signed=True)))
 
 
 def dec_caps_body(body: bytes):
@@ -309,12 +335,21 @@ class Decoder:
             if ESC in body or dec_caps_body(body) is None:
                 return "unknown"
             return (chr(body[0]), body[1:], p + 4)
-        if t not in (T_UAT, T_ADSL, T_RID):
+        if t not in (T_UAT, T_ADSL, T_RID, T_GPS_TIME):
             return "unknown"
         if p >= len(b):
             return None
         k = chr(b[p])
         p += 1
+        if t == T_GPS_TIME:
+            if k != GPS_LETTER:                       # other letters reserved
+                return "unknown"
+            r = self._take(p, GPS_BODY_LEN)
+            if not r:
+                return r
+            if not r[0][12] & GPS_FLAG_ALWAYS:
+                return "unknown"
+            return k, r[0], r[1]
         if t == T_UAT:
             if k.lower() not in UAT_LEN:
                 return "unknown"
@@ -403,6 +438,11 @@ def parse_fields(t: int, k: str, body: bytes) -> dict:
         kind = {CAPS_QUERY: "caps_query", CAPS_ANSWER: "caps_answer", CAPS_RESERVED: "caps_reserved"}[k]
         return {"kind": kind, "version": ver, "bits": bits,
                 "features": cap_names(bits)}
+    if t == T_GPS_TIME:
+        rate = int.from_bytes(body[13:16], "big", signed=True)
+        return {"kind": "gps_time", "clock": "modes", "ts": int.from_bytes(body[:6], "big"), "sub": body[6],
+                "utc": int.from_bytes(body[7:12], "big"), "step": bool(body[12] & GPS_FLAG_STEP),
+                "rate_ppb": None if rate == GPS_RATE_UNKNOWN else rate}
     ts, rssi, p = int.from_bytes(body[:6], "big"), body[6], body[7:]
     common = {"ts": ts, "rssi": rssi}
     if t in MODE_LEN:
@@ -423,6 +463,48 @@ def odid_types(odid: bytes) -> list[int]:
     if odid[0] >> 4 == 0xF:
         return [odid[3 + i * ODID_MSG] >> 4 for i in range(odid[2])]
     return [odid[0] >> 4]
+
+
+# ---- GPS time sync: server side (section 12.3) -------------------------------------------
+def _d48(a: int, b: int) -> int:
+    """a - b as a signed 48-bit difference (the counter wraps every 2^48 / 12e6 s = 271.5 days)."""
+    d = (a - b) % TS_MOD
+    return d - TS_MOD if d >= TS_MOD // 2 else d
+
+
+def pair_rate_ppb(prev: dict, cur: dict):
+    """Rate from two consecutive frames, or None if cur has step or the pair is inconsistent: the
+    edges must be (utc difference) x 12e6 x (1 + rate) ticks apart within 1 us (a mislabeled second)."""
+    if cur["step"] or not 0 < cur["utc"] - prev["utc"] <= GPS_VALID_S:
+        return None
+    ticks = _d48(cur["ts"], prev["ts"]) + (cur["sub"] - prev["sub"]) / 256
+    nominal = (cur["utc"] - prev["utc"]) * TICKS_PER_S
+    rate = (ticks / nominal - 1) * 1e9
+    if prev["rate_ppb"] is not None and cur["rate_ppb"] is not None:
+        if abs(ticks - nominal * (1 + cur["rate_ppb"] * 1e-9)) > GPS_PAIR_TOLERANCE_TICKS:
+            return None
+    elif abs(rate) > 1e6:                            # more than 1000 ppm off: not a crystal
+        return None
+    return rate
+
+
+def utc_of(ts: int, sync: dict, prev: dict = None):
+    """UTC (whole POSIX seconds, ns) of a frame stamped ts on the same connection, from the latest
+    0xE6 (and the one before it). None if there is no rate yet (rate unknown and no good pair), if
+    the two frames disagree (consecutive, no step), or if ts is more than 4 s from the edge."""
+    rate = sync["rate_ppb"]
+    pair = prev is not None and not sync["step"] and 0 < sync["utc"] - prev["utc"] <= GPS_VALID_S
+    if rate is None or (pair and prev["rate_ppb"] is not None):
+        r = pair_rate_ppb(prev, sync) if pair else None
+        if r is None:
+            return None
+        rate = r if rate is None else rate
+    ticks = _d48(ts, sync["ts"]) - sync["sub"] / 256
+    if abs(ticks) > GPS_VALID_S * TICKS_PER_S:
+        return None
+    s = ticks / (TICKS_PER_S * (1 + rate * 1e-9))
+    whole = int(s // 1)
+    return sync["utc"] + whole, (s - whole) * 1e9
 
 
 def decode_all(data: bytes) -> tuple[list[Frame], Decoder]:
@@ -513,9 +595,11 @@ def build_vectors() -> list[dict]:
          "a 1a inside the caps bytes starts a new frame: the second, complete answer counts")
     scan("stock_readsb_silence", ping_esc * 3, "stock readsb: pings only, no answer -> timeout -> plain Beast")
 
-    # ---- reserved bit 0: a server that sets it (readsbee before 2026-11-07 answered 8f)
-    scan("answer_bit0_set", enc_caps(CAPS_ANSWER, CAP_RESERVED_0 | CAP_KNOWN),
-         "reserved bit 0 set: ignored, the feeder uses bits 1-3 only")
+    # ---- bit 0 set (readsbee before 2026-11-07 answered 8f for dBm levels; since 2026-11-26 bit 0 is
+    # GPS time sync 0xE6 and readsbee answers 8f by default)
+    scan("answer_bit0_set", enc_caps(CAPS_ANSWER, CAP_GPS_TIME | CAP_ADSL | CAP_RID | CAP_UAT_MODES_CLOCK),
+         "bit 0 set: GPS time sync 0xE6 since 2026-11-26 (readsbee's default answer); the feeder sends 0xE6 "
+         "only if it offered bit 0")
 
     # ---- the signal byte of every frame type is the Beast power byte (0 = no level)
     ds, dl = bytes.fromhex("5d4840d6abcdef"), bytes.fromhex("8d4840d6202cc371c32ce0576098")
@@ -576,7 +660,80 @@ def build_vectors() -> list[dict]:
         enc_rid(_odid_msg(1, 0x33), 0xFF_FF_FF_FF_FF_FF, dbm_to_power(-70), "b", mac, modes_clock=True)
         + enc_rid(_odid_msg(1, 0x33), 2, dbm_to_power(-70), "b", mac, modes_clock=True),
         "the 48-bit 12 MHz counter wraps: ffffffffffff, then 000000000002; power byte 20")
+
+    # ---- GPS time sync 0xE6 'P' (capability bit 0, section 12; from t-1336 gps_time_proto.py)
+    utc = 1795483693                                 # 2026-11-24 01:28:13 UTC
+    edge0 = 0x00_12_34_56_78_9B << 8 | 0x80          # in 1/256 ticks
+    g = enc_gps_time(edge0 >> 8, edge0 & 0xFF, utc, False, 17300)
+    add("gps_time", g,
+        "the PPS edge of UTC second 1795483693 is at 12 MHz tick 0x00123456789b + 128/256; the counter runs "
+        "17.3 ppm fast")
+    add("gps_time_escaped_step", enc_gps_time(0x00_00_1A_1A_00_1A, 0x1A, utc + 1, True, 0x1A1A),
+        "ts6, sub and rate contain 0x1a (escaped; flags 0x81 never is). step: the fit restarted or was re-anchored "
+        "since the last frame, don't derive a rate across it")
+    edge2 = edge0 + round(2 * TICKS_PER_S * (1 + 17300e-9) * 256)   # two seconds after gps_time, same counter
+    add("gps_time_rate_unknown", enc_gps_time(edge2 >> 8, edge2 & 0xFF, utc + 2, False, None),
+        "a feeder that doesn't measure a rate (80 00 00): the edge of UTC second 1795483695, two seconds after "
+        "gps_time on the same counter; the server takes the rate from the two frames")
+    q = enc_caps(CAPS_QUERY, CAP_KNOWN)
+    m1 = enc_mode_s(ds, 0x00_12_34_50_00_00, 4)
+    m2 = enc_mode_s(ds, 0x00_12_34_5A_00_00, 4)
+    m3 = enc_mode_s(ds, 0x00_12_34_60_00_00, 4)
+    add("stream_query_answer_gps_time", uuid + q + m1 + m2 + g + m3,
+        "E4 + query 8f (GNSS with PPS configured), a Mode S frame while waiting; answer 8f (bit 0 agreed); "
+        "then Mode S and the sync frame of the last labeled PPS edge",
+        exchange=[("feeder", uuid + q + m1), ("server", enc_caps(CAPS_ANSWER, CAP_KNOWN)), ("feeder", m2 + g + m3)])
     return v
+
+
+def _gps_ok(v: list) -> int:
+    """0xE6 checks beyond the vectors (section 12): flags, conversion, pairs. Returns failures."""
+    bad = 0
+
+    def ok(cond, what):
+        nonlocal bad
+        if not cond:
+            print("GPS TIME", what)
+            bad += 1
+    by = {e["name"]: e for e in v}
+    sync, step, norate = (by[n]["decoded"][0] for n in ("gps_time", "gps_time_escaped_step", "gps_time_rate_unknown"))
+    # reserved flag bits ignored; no 0x80: unknown; another letter: unknown; nothing around it lost
+    raw = bytearray(bytes.fromhex(by["gps_time"]["hex"]))
+    raw[15] |= 0x7E
+    ok(dict(type=T_GPS_TIME, **Decoder().feed(bytes(raw))[0].fields) == sync, "reserved flags")
+    tail = enc_mode_s(bytes.fromhex("5d4840d6abcdef"), 1, 4)
+    for name, wire in (("no 0x80", bytes(raw[:15]) + b"\x01" + bytes(raw[16:])),
+                       ("letter Q", raw[:2] + b"Q" + raw[3:]),
+                       ("short", bytes(raw[:10]))):
+        d = Decoder()
+        fr = d.feed(tail + bytes(wire) + tail)
+        ok([f.type for f in fr] == [0x32, 0x32] and d.unknown + (d.skipped > 0) >= 1, "malformed " + name)
+    # conversion: at the edge, half a second later at 17.3 ppm (within half a tick), across the wrap, +-4 s
+    ok(utc_of(sync["ts"], sync) == (sync["utc"] - 1, 1e9 * (1 - 0.5 / TICKS_PER_S / (1 + 17300e-9))), "at the edge")
+    s, ns = utc_of((sync["ts"] + 6_000_104) % TS_MOD, sync)
+    ok(s == sync["utc"] and abs(ns - 5e8) < 42, "half a second")
+    wrap = dict(sync, ts=TS_MOD - 12_000_000, sub=0)
+    s, ns = utc_of(1000, wrap)
+    ok(s == wrap["utc"] + 1 and abs(ns - ((12e6 + 1000) / (12e6 * (1 + 17300e-9)) - 1) * 1e9) < 1, "48-bit wrap")
+    ok(utc_of((sync["ts"] + 5 * TICKS_PER_S) % TS_MOD, sync) is None, "beyond 4 s")
+    ok(utc_of(sync["ts"] - 4 * TICKS_PER_S + 1000, sync) is not None, "4 s before")
+    # rate unknown: needs the frame before it; the pair gives 17.3 ppm back
+    ok(utc_of(norate["ts"], norate) is None, "rate unknown, one frame")
+    r = pair_rate_ppb(sync, norate)
+    ok(r is not None and abs(r - 17300) < 0.2, "pair rate")
+    s, ns = utc_of((norate["ts"] + 6_000_104) % TS_MOD, norate, sync)
+    ok(s == norate["utc"] and abs(ns - 5e8) < 42, "rate from the pair")
+    # step: no rate across it; a mislabeled second or an edge 13 ticks off fails the pair check
+    ok(pair_rate_ppb(sync, dict(step, utc=sync["utc"] + 1)) is None, "step")
+    nxt = dict(sync, utc=sync["utc"] + 1, ts=sync["ts"] + 12_000_208)
+    ok(pair_rate_ppb(sync, nxt) is not None and utc_of(nxt["ts"], nxt, sync) is not None, "consecutive pair")
+    ok(pair_rate_ppb(sync, dict(nxt, ts=nxt["ts"] + 13)) is None, "pair 13 ticks off")
+    ok(utc_of(nxt["ts"], dict(nxt, ts=nxt["ts"] + 13), sync) is None, "conversion refused, pair 13 ticks off")
+    ok(pair_rate_ppb(sync, dict(nxt, utc=sync["utc"] + 2)) is None, "mislabeled second")
+    ok(utc_of(nxt["ts"], dict(nxt, step=True, ts=nxt["ts"] + 999), sync) is not None, "after step: frame alone")
+    ok(max(len(bytes.fromhex(by[n]["hex"])) for n in ("gps_time", "gps_time_escaped_step", "gps_time_rate_unknown"))
+       <= 3 + 2 * 15 + 1, "34 bytes max")
+    return bad
 
 
 def _exchange_ok(g: dict) -> bool:
@@ -593,6 +750,8 @@ def _exchange_ok(g: dict) -> bool:
             if f.type == T_ADSL and not (i and agreed & CAP_ADSL) or f.type == T_RID and not (i and agreed & CAP_RID):
                 return False
             if f.type == T_UAT and f.letter.isupper() and not (i and agreed & CAP_UAT_MODES_CLOCK):
+                return False
+            if f.type == T_GPS_TIME and not (i and agreed & CAP_GPS_TIME):
                 return False
     return True
 
@@ -633,6 +792,7 @@ def check(path: Path) -> int:
         if "exchange" in g and not _exchange_ok(g):
             print("EXCHANGE MISMATCH", g["name"])
             bad += 1
+    bad += _gps_ok(got)
     print("vectors ok" if not bad else f"{bad} failures")
     return 1 if bad else 0
 

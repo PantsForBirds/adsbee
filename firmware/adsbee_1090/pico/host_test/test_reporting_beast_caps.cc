@@ -73,7 +73,7 @@ const char* kLongMsg = "8d4840d6202cc371c32ce0576098";
 const uint8_t kMAC[6] = {0xc0, 0xff, 0xee, 0x1a, 0x00, 0x01};
 const uint8_t kPackMAC[6] = {0x6a, 0x1a, 0x2b, 0x3c, 0x4d, 0x5e};
 const uint8_t kFeedId[8] = {0x0b, 0xee, 0x00, 0x03, 0x81, 0x72, 0xd1, 0x8c};
-const uint16_t kAllBits = kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;  // 0x0e; bit 0 is reserved.
+const uint16_t kAllBits = kBeastCapADSL | kBeastCapRemoteID | kBeastCapUATModeSClock;  // 0x0e, as caps_query.
 
 std::vector<uint8_t> ADSLOnAir() {
     std::vector<uint8_t> body = Hex("0002" "1a" "3c4d5e6f" "1a1a" "00112233445566778899aabb" "0102" "a1b2c3");
@@ -165,15 +165,17 @@ TEST(BeastCapsVectors, FileIsThere) {
 TEST(BeastCapsVectors, CapabilitiesFrames) {
     EXPECT_EQ(Caps(kBeastCapsQuery, kAllBits), VectorHex("caps_query"));
     EXPECT_EQ(Caps(kBeastCapsQuery, 0), VectorHex("caps_query_none"));
-    // What this firmware offers: Remote ID while receive is on. Never 0x1a.
-    EXPECT_EQ(Caps(kBeastCapsQuery, kBeastCapsSendable), "1ae551818480");
+    // What this firmware offers: GPS time while GNSS is on, Remote ID while receive is on. Never 0x1a.
+    EXPECT_EQ(Caps(kBeastCapsQuery, kBeastCapsSendable), "1ae551818580");
+    EXPECT_EQ(Caps(kBeastCapsQuery, kBeastCapRemoteID), "1ae551818480");
     EXPECT_EQ(Caps(kBeastCapsAnswer, 1 << 13 | 1), "1ae54181" "81c0");
 }
 
-// Bit 0 is reserved; bits 1 and 3 wait for ADS-L (#409) and sub-GHz Mode S timestamps (#428) on main.
+// Bit 0 is GPS time (0xe6, test_beast_gps_time.cc); bits 1 and 3 wait for ADS-L (#409) and sub-GHz Mode S timestamps
+// (#428) on main.
 TEST(BeastCapsVectors, OnlyImplementedBitsAreOffered) {
-    EXPECT_EQ(kBeastCapsKnown, 0x0e);
-    EXPECT_EQ(kBeastCapsSendable, kBeastCapRemoteID);
+    EXPECT_EQ(kBeastCapsKnown, 0x0f);
+    EXPECT_EQ(kBeastCapsSendable, kBeastCapGPSTime | kBeastCapRemoteID);
     EXPECT_EQ(kBeastCapsSendable & (kBeastCapADSL | kBeastCapUATModeSClock), 0);
 }
 
@@ -270,7 +272,7 @@ TEST(BeastCapsPlain, StreamIsMainPlusTheQuery) {
     ASSERT_EQ(session.bits(), 0);
     stream += ModeS("8d495066587f469bb826d21ad767", 0xABABFF1AFFFFFF1A, -80) +
               ModeS("5d4840d6abcdef", 0x0000001A2B3C, -55) + UATADSB(payload, 0x1a3456, -60, session.bits());
-    EXPECT_EQ(stream, FeedStart() + "1ae551818480" + main_frames);
+    EXPECT_EQ(stream, FeedStart() + "1ae551818580" + main_frames);
     EXPECT_EQ(FeedStart(), "1ae430626565303030332d383137322d643138632d306265652d303030333831373264313863");
 }
 
@@ -347,7 +349,7 @@ TEST(BeastCapsScanner, FindsTheAnswerInPingsHeartbeatsAndGarbage) {
             i += n;
         }
         EXPECT_EQ(found, 1) << run;
-        EXPECT_EQ(scanner.bits(), kBeastCapsSendable) << run;
+        EXPECT_EQ(scanner.bits(), kBeastCapRemoteID) << run;  // As sent: 1ae541818480.
     }
 }
 
@@ -357,7 +359,7 @@ TEST(BeastCapsSession, AnswerInTimeAgreesAtOnce) {
     uint8_t buf[kBeastCapsFrameLenBytes];
     CapsSession session;
     EXPECT_EQ(session.state(), CapsSession::kPlain);
-    EXPECT_EQ(ToHex(buf, session.Start(buf, kBeastCapsSendable, 1000)), "1ae551818480");
+    EXPECT_EQ(ToHex(buf, session.Start(buf, kBeastCapsSendable, 1000)), "1ae551818580");
     EXPECT_EQ(session.state(), CapsSession::kWaiting);
     EXPECT_EQ(session.bits(), 0);
     std::vector<uint8_t> answer = Hex(VectorHex("answer_all"));  // Server accepts bits 1-3.
@@ -384,10 +386,13 @@ TEST(BeastCapsSession, KnownBitsOnlyAndEmptyAnswers) {
     EXPECT_EQ(session.state(), CapsSession::kAgreed);
     EXPECT_EQ(session.bits(), 0);
 
-    // Reserved bit 0 (readsbee before 2026-11-07 answered 8f): never offered, never used.
-    session.Start(buf, kBeastCapsSendable | 1, 0);
+    // Bit 0 is GPS time since 2026-11-26 (readsbee answers 8f): agreed only when offered (GNSS on).
+    session.Start(buf, kBeastCapsSendable | 1 << 9, 0);
     EXPECT_EQ(session.offered(), kBeastCapsSendable);
     std::vector<uint8_t> bit0 = Hex(VectorHex("answer_bit0_set"));
+    ASSERT_TRUE(session.Receive(bit0.data(), bit0.size(), 10));
+    EXPECT_EQ(session.bits(), kBeastCapGPSTime | kBeastCapRemoteID);
+    session.Start(buf, kBeastCapRemoteID, 0);
     ASSERT_TRUE(session.Receive(bit0.data(), bit0.size(), 10));
     EXPECT_EQ(session.bits(), kBeastCapRemoteID);
     session.Start(buf, kAllBits, 0);

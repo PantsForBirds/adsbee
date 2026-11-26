@@ -147,6 +147,13 @@ bool ESP32::Update() {
     int32_t gnss_altitude_std_dev_cm = 0;
     bool gnss_altitude_std_dev_valid = gnss->GetAltitudeStdDevCm(gnss_altitude_std_dev_cm);
     uint32_t status_timestamp_ms = get_time_since_boot_ms();
+    ObjectDictionary::PPSTime pps_time = {.seq = gnss->pps_time_seq()};
+    if (pps_time.seq != 0) {
+        gnss->pps_clock().GetAnchor(pps_time.edge_mlat_48mhz_counts, pps_time.edge_sub_counts, pps_time.utc_seconds);
+        int64_t rate_ppb = gnss->pps_clock().GetRateErrorPPB();  // Within +-PPSClock::kMaxRateErrorPPB.
+        pps_time.rate_ppb = static_cast<int32_t>(rate_ppb);
+        pps_time.step = gnss->pps_time_step();
+    }
     // UTC at the time of this status, so the ESP32 can read it as its current time.
     static constexpr uint32_t kMsPerDay = 86400000;
     uint32_t utc_ms_of_day =
@@ -187,6 +194,7 @@ bool ESP32::Update() {
                     bsp.has_subg && adsbee.subg_radio_ll.IsEnabled() && settings_manager.settings.subg_rx_enabled,
                 .subg_mode = settings_manager.settings.subg_mode,
                 .sync_pulse = adsbee.sync_pulse_service.GetLastPulse(),
+                .pps_time = pps_time,
             },
         .subg = adsbee.subg_radio_ll.device_status,
     };
