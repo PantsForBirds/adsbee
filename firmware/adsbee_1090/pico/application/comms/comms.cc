@@ -5,6 +5,7 @@
 
 #include "cpu_utils.hh"
 #include "esp32.hh"
+#include "adsbee.hh"  // t-1360 LAB: GetPPSEdges.
 #include "gnss_receiver.hh"
 #include "hardware/irq.h"
 #include "pico/printf.h"  // For vfctprintf.
@@ -331,8 +332,63 @@ void XBStart(uint32_t baud, int bytes, uint32_t period_ms) {
     xb_last_ms = xb_t0_ms;
     xb_period_ms = period_ms;
 }
+// t-1360 LAB: one RMC per PPS edge (AT+UPTIME=XP,<baud>,<utc0>,<delay_ms>): delay_ms after each edge the loopback
+// sends GGA + RMC with second utc0 + (edges since start), so the receiver labels the lab PPS edges like a real module.
+static uint32_t xp_delay_us = 0, xp_n0 = 0, xp_last_n = 0, xp_sent = 0;
+static uint64_t xp_utc0 = 0;
+static bool xp_on = false;
+static void XPBuild(uint64_t utc) {
+    int64_t days = utc / 86400, sod = utc % 86400;
+    // civil_from_days (H. Hinnant)
+    int64_t z = days + 719468, era = z / 146097, doe = z - era * 146097;
+    int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365, y = yoe + era * 400;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    int64_t d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+    if (m <= 2) y++;
+    char t[16], body[128];
+    snprintf(t, sizeof(t), "%02d%02d%02d.00", (int)(sod / 3600), (int)(sod / 60 % 60), (int)(sod % 60));
+    int pos = 0;
+    xb_sentences = 0;
+    snprintf(body, sizeof(body), "GNGGA,%s,3746.12345,N,12225.12345,W,1,12,0.8,10.2,M,-30.1,M,,", t);
+    pos = XBAdd(pos, body);
+    snprintf(body, sizeof(body), "GNRMC,%s,A,3746.12345,N,12225.12345,W,0.012,,%02d%02d%02d,,,A,V", t, (int)d, (int)m,
+             (int)(y % 100));
+    pos = XBAdd(pos, body);
+    xb_len = pos;
+}
+void XPStart(uint32_t baud, uint64_t utc0, uint32_t delay_ms) {
+    XBStart(baud, 200, 0);  // Loopback on at baud, no periodic bursts.
+    PPSClock::Edge latest, previous;
+    xp_n0 = xp_last_n = adsbee.GetPPSEdges(latest, previous);
+    xp_utc0 = utc0;
+    xp_delay_us = delay_ms * 1000;
+    xp_sent = 0;
+    xp_on = baud != 0;
+}
+int XPPrint(char* out, int n) {
+    return snprintf(out, n, "XP on=%d sent=%lu utc0=%llu delay_us=%lu seq=%u step=%d", xp_on, (unsigned long)xp_sent,
+                    (unsigned long long)xp_utc0, (unsigned long)xp_delay_us, GNSSReceiver::pps_time_seq(),
+                    GNSSReceiver::pps_time_step());
+}
+static void XPUpdate() {
+    if (!xp_on || xb_dma < 0 || dma_channel_is_busy(xb_dma)) return;
+    PPSClock::Edge latest, previous;
+    uint32_t num = adsbee.GetPPSEdges(latest, previous);
+    if (num == xp_last_n || time_us_32() - latest.time_us < xp_delay_us) return;
+    xp_last_n = num;
+    XPBuild(xp_utc0 + (num - xp_n0));
+    dma_channel_config c = dma_channel_get_default_config(xb_dma);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_dreq(&c, uart_get_dreq(uart0, true));
+    dma_channel_configure(xb_dma, &c, &uart_get_hw(uart0)->dr, xb_buf, xb_len, true);
+    xp_sent++;
+}
+
 static void XBUpdate() {
     if (xb_dma < 0 || xb_baud == 0) return;
+    XPUpdate();
     if (!(uart_get_hw(uart0)->cr & UART_UARTCR_LBE_BITS)) {
         hw_set_bits(&uart_get_hw(uart0)->cr, UART_UARTCR_LBE_BITS);
         xb_relbe++;

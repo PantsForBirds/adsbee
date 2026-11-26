@@ -2471,10 +2471,26 @@ CPP_AT_CALLBACK(CommsManager::ATTLSetCallback) {
 }
 
 void XBStart(uint32_t baud, int bytes, uint32_t period_ms);
+void XPStart(uint32_t baud, uint64_t utc0, uint32_t delay_ms);
+int XPPrint(char* out, int n);
 int XBPrint(char* out, int n);
 CPP_AT_CALLBACK(CommsManager::ATUptimeCallback) {
     switch (op) {
         case '=':  // t-1341 LAB: AT+UPTIME=XB[,<baud>,<bytes>,<period_ms>] (baud 0 = hold)
+            // t-1360 LAB: AT+UPTIME=XP[,<baud>,<utc0>,<delay_ms>] one RMC per PPS edge; AT+UPTIME=XR restarts the fit.
+            if (CPP_AT_HAS_ARG(0) && (args[0].compare("XP") == 0 || args[0].compare("XR") == 0)) {
+                if (args[0].compare("XR") == 0) {
+                    if (gnss) gnss->LabRestartPPS();
+                } else if (CPP_AT_HAS_ARG(1)) {
+                    XPStart(strtoul(std::string(args[1]).c_str(), nullptr, 10),
+                            CPP_AT_HAS_ARG(2) ? strtoull(std::string(args[2]).c_str(), nullptr, 10) : 1795483693ull,
+                            CPP_AT_HAS_ARG(3) ? strtoul(std::string(args[3]).c_str(), nullptr, 10) : 300);
+                }
+                static char xp_line[160];
+                XPPrint(xp_line, sizeof(xp_line));
+                CPP_AT_PRINTF("%s\r\n", xp_line);
+                CPP_AT_SILENT_SUCCESS();
+            }
             if (CPP_AT_HAS_ARG(0) && args[0].compare("XB") == 0) {
                 if (CPP_AT_HAS_ARG(1)) {
                     uint32_t baud = strtoul(std::string(args[1]).c_str(), nullptr, 10);

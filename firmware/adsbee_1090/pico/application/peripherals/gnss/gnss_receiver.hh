@@ -153,6 +153,7 @@ class GNSSReceiver {
     /** @retval The baud rate the GNSS UART runs at for this receiver (shared by protocol output on that UART). */
     uint32_t link_baudrate() const { return GetLinkBaudrate(); }
     // t-1341 LAB
+    void LabRestartPPS() { pps_clock_.Restart(); }  // t-1360 LAB: forced fit restart (step on the next frame).
     uint32_t lab_ring_overflow() const { return rx_overflow_count_; }
     uint32_t lab_gga() const { return debug_gga_count_; }
     uint32_t lab_rmc() const { return debug_rmc_count_; }
