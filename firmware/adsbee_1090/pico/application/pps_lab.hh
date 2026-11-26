@@ -29,7 +29,12 @@
 
 class PPSLab {
    public:
-    enum Mode : uint8_t { kOff = 0, kPWM, kPulses, kPWMBusPriority, kAsync };
+    enum Mode : uint8_t { kOff = 0, kPWM, kPulses, kPWMBusPriority, kAsync, kStable };
+    // t-1360 LAB: STABLE = the PWM edge at every kStableWraps-th wrap exactly (1907 x 65536 clk_sys cycles =
+    // 0.999817216 s, a fixed -183 ppm against 1 s: a steady 1 Hz-like PPS for PPSClock). An edge the main loop is too
+    // late for is skipped (the next one is still on the grid).
+    static constexpr uint32_t kStableWraps = 1907;
+    static constexpr uint64_t kStablePeriodNs = 1907ull * 524288ull;  // 65536 cycles at 125 MHz = 524.288 us.
     enum Load : uint8_t { kLoadNone = 0, kLoadFlash, kLoadWarm, kLoadFlush, kNumLoads };
     static constexpr uint16_t kAsyncNumBins = 1024;  // ASYNC: 4-cycle bins up to 4096 cycles (33 us).
     static constexpr uint16_t kPWMHighCycles = 8192;  // 66 us high after the wrap.
@@ -45,7 +50,7 @@ class PPSLab {
         Reset();
         // kPWMBusPriority: as kPWM, with core 1 given priority on the bus fabric (does it remove the delay under load?).
         busctrl_hw->priority = mode == kPWMBusPriority ? BUSCTRL_BUS_PRIORITY_PROC1_BITS : 0;
-        if (mode == kPWM || mode == kPWMBusPriority) {
+        if (mode == kPWM || mode == kPWMBusPriority || mode == kStable) {
             pwm_set_chan_level(pwm_gpio_to_slice_num(pps_pin), pwm_gpio_to_channel(pps_pin), 0);  // Low.
             gpio_set_function(pps_pin, GPIO_FUNC_PWM);
             adsbee.SetPPSPin(pps_pin);
@@ -64,6 +69,8 @@ class PPSLab {
             adsbee.SetPPSPin(bsp.r1090_pulses_pin);
         }
         next_pulse_us_ = time_us_32() + 1'000'000;
+        stable_anchor_us_ = 0;
+        stable_k_ = 0;
         PPSClock::Edge latest, previous;
         seen_edges_ = adsbee.GetPPSEdges(latest, previous);
     }
@@ -100,6 +107,7 @@ class PPSLab {
             EmitPWMEdge();
         }
         if (mode_ == kAsync) UpdateAsync(now_us);
+        if (mode_ == kStable) UpdateStable();
         PPSClock::Edge latest, previous;
         uint16_t jitter_counts = 0;
         uint32_t num_edges = adsbee.GetPPSEdges(latest, previous, &jitter_counts);
@@ -122,7 +130,7 @@ class PPSLab {
                 load_over_[load_]++;
             }
         } else if (mode_ != kPulses) {
-            AddLatency(jitter_counts);
+            AddLatency(jitter_counts);  // kPWM, kPWMBusPriority and kStable.
         } else {
             // Consecutive Waggler frames are a second apart (on its clock): number them by the MLAT counter.
             if (first_edge_) {
@@ -163,6 +171,7 @@ class PPSLab {
         CONSOLE_PRINTF("\r\n");
         if (mode_ != kAsync) return;
         static const char* kLoadNames[kNumLoads] = {"none", "flash", "warm", "flush"};
+        CONSOLE_PRINTF("PPS_LAB_STABLE=edges=%llu,skipped=%lu\r\n", (unsigned long long)stable_k_, (unsigned long)stable_skipped_);
         CONSOLE_PRINTF("PPS_LAB_ASYNC=not_armed=%lu,bad_arm=%lu,extra_edges=%lu,lead_cycles=%u-%u\r\n",
                        static_cast<unsigned long>(not_armed_), static_cast<unsigned long>(bad_arm_),
                        static_cast<unsigned long>(extra_edges_),
@@ -197,6 +206,27 @@ class PPSLab {
         restore_interrupts(interrupts);
         busy_wait_at_least_cycles(0x10000 - c + 4096);  // Past the wrap (the edge), without touching the bus.
         pwm_set_chan_level(slice, channel, 0);          // Low from the next wrap on.
+    }
+
+    // kStable: the first edge anchors the grid (time_us_64 of its wrap); edge k is due at anchor + k * period. Armed half
+    // a wrap before, so EmitPWMEdge's wait lands on that wrap; later than 70 us before it, the edge is skipped.
+    void UpdateStable() {
+        uint64_t now = time_us_64();
+        if (stable_anchor_us_ == 0) {
+            if (static_cast<int32_t>(time_us_32() - next_pulse_us_) < 0) return;
+            EmitPWMEdge();
+            stable_anchor_us_ = time_us_64() - 33;  // EmitPWMEdge returns 4096 cycles (33 us) past the wrap.
+            stable_k_ = 1;
+            return;
+        }
+        uint64_t due = stable_anchor_us_ + (stable_k_ * kStablePeriodNs) / 1000;
+        if (now + 262 < due) return;
+        if (now + 70 > due) {
+            stable_skipped_++;
+        } else {
+            EmitPWMEdge();
+        }
+        stable_k_++;
     }
 
     uint32_t Random() {  // xorshift32
@@ -300,6 +330,9 @@ class PPSLab {
     uint32_t bad_arm_ = 0;
     uint32_t load_n_[kNumLoads] = {}, load_over_[kNumLoads] = {};
     uint32_t next_pulse_us_ = 0;
+    uint64_t stable_anchor_us_ = 0;
+    uint64_t stable_k_ = 0;
+    uint32_t stable_skipped_ = 0;
     uint32_t seen_edges_ = 0;
     uint32_t n_ = 0, missed_ = 0, overflow_ = 0;
     uint16_t min_ = UINT16_MAX, max_ = 0;

@@ -496,6 +496,8 @@ CPP_AT_CALLBACK(CommsManager::ATPPSLabCallback) {
             pps_lab.SetMode(PPSLab::kPWMBusPriority);
         } else if (args[0].compare("PULSES") == 0) {
             pps_lab.SetMode(PPSLab::kPulses);
+        } else if (args[0].compare("STABLE") == 0) {  // t-1360 LAB
+            pps_lab.SetMode(PPSLab::kStable);
         } else if (args[0].compare("ASYNC") == 0) {
             pps_lab.SetMode(PPSLab::kAsync);
         } else if (args[0].compare("RESET") == 0) {

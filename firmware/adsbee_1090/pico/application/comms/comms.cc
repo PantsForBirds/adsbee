@@ -335,7 +335,7 @@ void XBStart(uint32_t baud, int bytes, uint32_t period_ms) {
 // t-1360 LAB: one RMC per PPS edge (AT+UPTIME=XP,<baud>,<utc0>,<delay_ms>): delay_ms after each edge the loopback
 // sends GGA + RMC with second utc0 + (edges since start), so the receiver labels the lab PPS edges like a real module.
 static uint32_t xp_delay_us = 0, xp_n0 = 0, xp_last_n = 0, xp_sent = 0;
-static uint64_t xp_utc0 = 0;
+static uint64_t xp_utc0 = 0, xp_first_mlat = 0;
 static bool xp_on = false;
 static void XPBuild(uint64_t utc) {
     int64_t days = utc / 86400, sod = utc % 86400;
@@ -361,6 +361,7 @@ void XPStart(uint32_t baud, uint64_t utc0, uint32_t delay_ms) {
     PPSClock::Edge latest, previous;
     xp_n0 = xp_last_n = adsbee.GetPPSEdges(latest, previous);
     xp_utc0 = utc0;
+    xp_first_mlat = 0;
     xp_delay_us = delay_ms * 1000;
     xp_sent = 0;
     xp_on = baud != 0;
@@ -376,7 +377,9 @@ static void XPUpdate() {
     uint32_t num = adsbee.GetPPSEdges(latest, previous);
     if (num == xp_last_n || time_us_32() - latest.time_us < xp_delay_us) return;
     xp_last_n = num;
-    XPBuild(xp_utc0 + (num - xp_n0));
+    // The second by elapsed time from the first edge (48 MHz counts, rounded): a skipped edge keeps the labels right.
+    if (xp_first_mlat == 0) xp_first_mlat = latest.mlat_48mhz_counts;
+    XPBuild(xp_utc0 + 1 + (latest.mlat_48mhz_counts - xp_first_mlat + 24'000'000) / 48'000'000);
     dma_channel_config c = dma_channel_get_default_config(xb_dma);
     channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
     channel_config_set_read_increment(&c, true);
