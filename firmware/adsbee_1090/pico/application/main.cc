@@ -4,6 +4,7 @@
 
 #include "adsbee.hh"
 #include "comms.hh"
+#include "hard_fault.hh"
 #include "core1.hh"  // Functions for runningon core1.
 #include "cpu_utils.hh"
 #include "eeprom.hh"
@@ -66,6 +67,7 @@ static constexpr bool kEnable1090ErrorCorrection = true;
 ModeSPacketDecoder decoder = ModeSPacketDecoder({.enable_1090_error_correction = kEnable1090ErrorCorrection});
 
 int main() {
+    HardFault::Init();  // First: keep the record of a HardFault before this boot.
     RAMMonitor::PaintCore0Stack();
     bi_decl(bi_program_description("ADSBee 1090 ADSB Receiver"));
     adsbee.aircraft_dictionary.SetAddressParityCorrection(kEnable1090ErrorCorrection);
@@ -227,6 +229,9 @@ int main() {
     static constexpr uint32_t kESP32CommsLostTimeoutMs = 5000;
     uint32_t esp32_last_successful_comms_ms = get_time_since_boot_ms();
 #endif
+
+    // Console and (once the ESP32 is up) network console are ready: report a HardFault that reset the last boot.
+    HardFault::ReportBootFault();
 
     core_0_monitor.TimeInterrupts();
     while (true) {

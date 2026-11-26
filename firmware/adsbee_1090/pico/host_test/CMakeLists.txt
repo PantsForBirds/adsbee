@@ -63,6 +63,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         # test_adsbee.cc
         test_composite_array.cc
         test_esp32_firmware_check.cc
+        test_fault_record.cc
         test_gdl90_ble_stream.cc
         test_ble_output_buffers.cc
         test_cpu_utils.cc

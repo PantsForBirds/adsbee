@@ -7,6 +7,7 @@
 #include "adsbee.hh"
 #include "comms.hh"
 #include "geo_utils.hh"
+#include "hard_fault.hh"
 #include "core1.hh"  // For turning multiprocessor on / off during firmware flashing.
 #include "cpu_utils.hh"
 #include "eeprom.hh"
@@ -519,6 +520,11 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
             CPP_AT_PRINTF("RP2040 RAM: %lu B heap, %lu B free, stack peak %lu B core 0, %lu B core 1\r\n",
                           (unsigned long)ram.heap_in_use_bytes, (unsigned long)ram.free_bytes,
                           (unsigned long)ram.core_0_stack_peak_bytes, (unsigned long)ram.core_1_stack_peak_bytes);
+            {
+                char fault_str[80];
+                FaultRecord::Format(HardFault::BootState(), fault_str, sizeof(fault_str));
+                CPP_AT_PRINTF("RP2040 Last Fault: %s\r\n", fault_str);
+            }
             CPP_AT_PRINTF("RP2040 Aircraft Dictionary: %u aircraft max\r\n",
                           (unsigned)AircraftDictionary::kMaxNumAircraft);
             CPP_AT_PRINTF("RP2040 Report frames dropped:");
