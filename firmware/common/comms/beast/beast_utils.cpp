@@ -288,6 +288,31 @@ uint16_t BeastReporter::WriteADSLBeastFrame(uint8_t *beast_frame_buf, ADSLChanne
     return bytes_written;
 }
 
+uint16_t BeastReporter::WriteGPSTimeFrame(uint8_t *buf, uint64_t edge_mlat_48mhz_counts, uint16_t edge_sub_counts,
+                                         uint64_t utc_seconds, int32_t rate_ppb, bool step) {
+    // E = edge * 1024 + sub, in 1/4096 of a 12 MHz tick: ts6 = E >> 12 (the edge >> 2, as Mode S), sub1 = E >> 4.
+    // Computed from the low bits so E never overflows.
+    uint64_t ts = edge_mlat_48mhz_counts >> 2;
+    uint32_t low = static_cast<uint32_t>(((edge_mlat_48mhz_counts & 0x3) << 10) | (edge_sub_counts & 0x3FF));
+    uint8_t fields[6 + 1 + 5];
+    for (uint16_t i = 0; i < 6; i++) fields[i] = (ts >> (8 * (5 - i))) & 0xFF;
+    fields[6] = (low >> 4) & 0xFF;
+    for (uint16_t i = 0; i < 5; i++) fields[7 + i] = (utc_seconds >> (8 * (4 - i))) & 0xFF;
+    if (rate_ppb > kGPSTimeRateMax) rate_ppb = kGPSTimeRateMax;
+    if (rate_ppb < -kGPSTimeRateMax) rate_ppb = -kGPSTimeRateMax;  // Never 0x800000 (unknown).
+    uint32_t rate = static_cast<uint32_t>(rate_ppb) & 0xFFFFFF;
+    uint8_t rate_bytes[3] = {static_cast<uint8_t>(rate >> 16), static_cast<uint8_t>(rate >> 8),
+                             static_cast<uint8_t>(rate)};
+    uint16_t len = 0;
+    buf[len++] = kBeastEscapeChar;
+    buf[len++] = kBeastFrameTypeGPSTime;
+    buf[len++] = kGPSTimeLetterPPS;
+    len += WriteBufferWithBeastEscapes(buf + len, fields, sizeof(fields));
+    buf[len++] = kGPSTimeFlagsAlways | (step ? kGPSTimeFlagStep : 0);
+    len += WriteBufferWithBeastEscapes(buf + len, rate_bytes, sizeof(rate_bytes));
+    return len;
+}
+
 uint16_t BeastReporter::WriteCapsFrame(uint8_t *buf, BeastCapsLetter letter, uint16_t bits) {
     buf[0] = kBeastEscapeChar;
     buf[1] = kBeastFrameTypeCapabilities;

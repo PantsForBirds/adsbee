@@ -608,6 +608,15 @@ void CommsManager::IPWANTask(void* pvParameters) {
         if (!UpdateReporting(active_report_sinks, num_active_report_sinks, &reporting_composite_array)) {
             CONSOLE_ERROR("CommsManager::IPWANTask", "Error during UpdateReporting for feeds.");
         }
+        // The SPI task overwrites the status while we copy it: use a copy whose seq didn't change across it.
+        const volatile uint8_t& status_seq = object_dictionary.composite_device_status.rp2040.pps_time.seq;
+        uint8_t seq = status_seq;
+        ObjectDictionary::PPSTime pps_time;
+        memcpy(&pps_time, &object_dictionary.composite_device_status.rp2040.pps_time, sizeof(pps_time));
+        if (pps_time.seq == seq && status_seq == seq &&
+            !ReportGPSTime(active_report_sinks, num_active_report_sinks, pps_time)) {
+            CONSOLE_ERROR("CommsManager::IPWANTask", "Error sending the GPS time frame.");
+        }
     }
 
     // Close all sockets while exiting.
@@ -630,7 +639,9 @@ uint32_t CommsManager::FeedConfigCRC(uint16_t feed_index) {
                            crc);
     crc = crc32_ieee_802_3(reinterpret_cast<const uint8_t*>(&s.feed_transports[feed_index]),
                            sizeof(s.feed_transports[0]), crc);
-    return crc32_ieee_802_3(s.feed_receiver_ids[feed_index], sizeof(s.feed_receiver_ids[0]), crc);
+    crc = crc32_ieee_802_3(s.feed_receiver_ids[feed_index], sizeof(s.feed_receiver_ids[0]), crc);
+    // GNSS on or off changes the capabilities a Beast feed offers (kBeastCapGPSTime): reconnect to ask again.
+    return crc32_ieee_802_3(reinterpret_cast<const uint8_t*>(&s.gnss_enabled), sizeof(s.gnss_enabled), crc);
 }
 
 void CommsManager::CloseFeedSocket(uint16_t feed_index) {
@@ -885,9 +896,9 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
 }
 
 uint16_t CommsManager::BeastCapsToOffer() {
-    uint16_t offer = 0;
-    if (settings_manager.settings.remote_id_rx_enabled) offer |= BeastReporter::kBeastCapRemoteID;
-    return offer & BeastReporter::kBeastCapsSendable;
+    // Every ADSBee 1090 board with an ESP32 has a GNSS PPS input (BSP gnss_pps_pin), so GNSS on is enough.
+    return BeastReporter::CapsToOffer(settings_manager.settings.remote_id_rx_enabled,
+                                      settings_manager.settings.gnss_enabled);
 }
 
 void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {

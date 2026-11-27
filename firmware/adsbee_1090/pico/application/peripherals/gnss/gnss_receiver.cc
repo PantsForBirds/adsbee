@@ -304,13 +304,21 @@ void GNSSReceiver::LabelPPSEdge() {
     uint32_t num_edges = adsbee.GetPPSEdges(latest, previous);
     uint64_t unix_seconds = 0;
     bool rmc_valid = parser_.GetRMCUnixSeconds(unix_seconds);
-    pps_clock_.OnRMC(rmc_valid, parser_.RMCIsLeapSecond(), unix_seconds, num_edges, latest, previous, time_us_32());
+    PPSClock::Result result =
+        pps_clock_.OnRMC(rmc_valid, parser_.RMCIsLeapSecond(), unix_seconds, num_edges, latest, previous, time_us_32());
+    if (result == PPSClock::kRestarted || result == PPSClock::kLeapSecond) pps_restarted_ = true;
+    if (result == PPSClock::kLabeled && pps_clock_.IsSynced()) {
+        pps_time_step_ = pps_restarted_;
+        pps_restarted_ = false;
+        pps_time_seq_ = pps_time_seq_ == UINT8_MAX ? 1 : pps_time_seq_ + 1;
+    }
 }
 
 void GNSSReceiver::SetEnable(bool enabled) {
     // The edge interrupt runs while the receiver is enabled (powered or not: the module may be powered externally).
     adsbee.SetPPSPin(enabled ? config_.pps_pin : UINT16_MAX);
     pps_clock_.Restart();
+    pps_restarted_ = true;
     if (!enabled) {
         power_enable_pending_ = false;
         DisableRxInterrupt();
