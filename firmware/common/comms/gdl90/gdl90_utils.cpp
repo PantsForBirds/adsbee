@@ -541,8 +541,8 @@ uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t 
     data.address_type = aircraft.address_mapping == DecodedADSLPacket::kAddressMappingICAO
                             ? GDL90TargetReportData::kAddressTypeADSBWithICAOAddress
                             : GDL90TargetReportData::kAddressTypeADSBWithSelfAssignedAddress;
-    data.latitude_deg = aircraft.latitude_deg;
-    data.longitude_deg = aircraft.longitude_deg;
+    data.latitude_awb = aircraft.latitude_awb;
+    data.longitude_awb = aircraft.longitude_awb;
     // ADS-L only carries altitude above the WGS-84 ellipsoid; GDL90 expects pressure altitude, so this is approximate.
     data.altitude_ft =
         aircraft.HasBitFlag(ADSLAircraft::kBitFlagGNSSAltitudeValid) ? aircraft.gnss_altitude_ft : INT32_MIN;
@@ -550,7 +550,7 @@ uint16_t GDL90Reporter::WriteGDL90TargetReportMessage(uint8_t* to_buf, uint16_t 
     data.SetMiscIndicator(aircraft.HasBitFlag(ADSLAircraft::kBitFlagDirectionValid)
                               ? GDL90TargetReportData::kMiscIndicatorTTIsTrueTrackAngle
                               : GDL90TargetReportData::kMiscIndicatorTTNotValid,
-                          /*report_is_extrapolated=*/false, aircraft.HasBitFlag(ADSLAircraft::kBitFlagIsAirborne));
+                          /*report_is_extrapolated=*/false, !aircraft.IsOnGround());
     data.navigation_integrity_category = aircraft.GetNIC();
     data.navigation_accuracy_category_position = aircraft.GetNACp();
     data.speed_kts =

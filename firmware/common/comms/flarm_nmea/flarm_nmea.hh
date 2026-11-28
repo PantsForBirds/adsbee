@@ -37,12 +37,12 @@ class FLARMNMEAReporter {
     static constexpr uint16_t kMaxSentenceLenBytes = 83;
     static constexpr int32_t kMaxRelativeHorizontalM = 20000000;  // PFLAA <RelativeNorth> / <RelativeEast> range.
 
-    enum IDType : uint8_t { kIDTypeRandom = 0, kIDTypeICAO = 1 };
+    enum IDType : uint8_t { kIDTypeRandom = 0, kIDTypeICAO = 1, kIDTypeFLARM = 2 };
     enum Source : uint8_t {
         kSourceADSB = 1,
         kSourceADSR = 3,
         kSourceTISB = 4,
-        kSourceNone = 0xFF,  // No FTD-012 source code (Remote ID): <Source> and <RSSI> are omitted.
+        kSourceNone = 0xFF,  // No FTD-012 source code (Remote ID, ADS-L): <Source> and <RSSI> are omitted.
     };
     enum AircraftType : uint8_t {
         kAircraftTypeGlider = 0x1,
@@ -136,6 +136,7 @@ class FLARMNMEAReporter {
     static bool TargetFromAircraft(Target& target, const ModeSAircraft& aircraft);
     static bool TargetFromAircraft(Target& target, const UATAircraft& aircraft);
     static bool TargetFromAircraft(Target& target, const RemoteIDAircraft& aircraft);
+    static bool TargetFromAircraft(Target& target, const ADSLAircraft& aircraft);
 
     /**
      * Ownship-relative position: north and east split from the target's distance and bearing (SplitNorthEastMeters(),

@@ -492,6 +492,26 @@ TEST_F(PreferredReportForAddress, DirectADSBBeatsFreshTISB) {
     EXPECT_FALSE(Preferred(tisb->GetUID()));
 }
 
+TEST_F(PreferredReportForAddress, ADSLWithTheSameICAOAddressDefersToFreshADSB) {
+    ADSLAircraft* adsl = dictionary.InsertAircraft<ADSLAircraft>(
+        ADSLAircraft(kICAO | (DecodedADSLPacket::kAddressMappingICAO << Aircraft::kAddressQualifierBitShift)));
+    adsl->WriteBitFlag(ADSLAircraft::kBitFlagPositionValid, true);
+    adsl->last_position_update_ms = kNowMs - 500;
+    EXPECT_TRUE(Preferred(adsl->GetUID()));
+    ModeSAircraft* mode_s = AddModeS(true, 1000);
+    EXPECT_TRUE(Preferred(mode_s->GetUID()));
+    EXPECT_FALSE(Preferred(adsl->GetUID()));
+    // A stale ADS-B position gives way to ADS-L.
+    mode_s->last_position_update_ms = kNowMs - AircraftDictionary::kPreferredReportPositionFreshMs - 1;
+    EXPECT_TRUE(Preferred(adsl->GetUID()));
+    // A FLARM address with the same 24 bits is another sender.
+    ADSLAircraft* flarm = dictionary.InsertAircraft<ADSLAircraft>(
+        ADSLAircraft(kICAO | (DecodedADSLPacket::kAddressMappingFLARM << Aircraft::kAddressQualifierBitShift)));
+    EXPECT_TRUE(Preferred(flarm->GetUID()));
+    EXPECT_TRUE(AircraftDictionary::IsOwnship(adsl->GetUID(), kICAO));
+    EXPECT_FALSE(AircraftDictionary::IsOwnship(flarm->GetUID(), kICAO));
+}
+
 TEST_F(PreferredReportForAddress, FreshTISBBeatsStaleDirectPosition) {
     // Other Mode S replies can keep a direct entry alive with a frozen position.
     ModeSAircraft* mode_s = AddModeS(true, AircraftDictionary::kPreferredReportPositionFreshMs + 1);

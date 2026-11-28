@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "crc.hh"
+#include "geo_utils.hh"
 
 namespace {
 
@@ -224,9 +225,9 @@ void DecodedADSLPacket::ParseTraffic() {
         // Sign extend the 24-bit fields.
         int32_t lat = static_cast<int32_t>(lat_raw << 8) >> 8;
         int32_t lon = static_cast<int32_t>(lon_raw << 8) >> 8;
-        traffic.latitude_deg = static_cast<float>(lat) / kLatitudeLSBPerDeg;
-        traffic.longitude_deg = static_cast<float>(lon) / kLongitudeLSBPerDeg;
-        traffic.position_valid = traffic.latitude_deg >= -90.0f && traffic.latitude_deg <= 90.0f;
+        traffic.position_valid = lat >= -90 * kLatitudeLSBPerDeg && lat <= 90 * kLatitudeLSBPerDeg;
+        traffic.latitude_awb = ScaledToAWB(lat, 360 * kLatitudeLSBPerDeg);
+        traffic.longitude_awb = ScaledToAWB(lon, 360 * kLongitudeLSBPerDeg);
     }
 
     uint32_t gs_raw = GetBits(p, 64, 8);

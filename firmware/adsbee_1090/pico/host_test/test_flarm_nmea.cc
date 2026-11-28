@@ -416,6 +416,31 @@ TEST(FLARMNMEA, TargetFromRemoteIDAircraft) {
     EXPECT_FALSE(t.on_ground);
 }
 
+TEST(FLARMNMEA, TargetFromADSLAircraft) {
+    FLARMNMEAReporter::Target t;
+    ADSLAircraft ac(0xBEE080 | (DecodedADSLPacket::kAddressMappingFLARM << Aircraft::kAddressQualifierBitShift));
+    EXPECT_FALSE(FLARMNMEAReporter::TargetFromAircraft(t, ac));  // No position.
+    ac.WriteBitFlag(ADSLAircraft::kBitFlagPositionValid, true);
+    ac.WriteBitFlag(ADSLAircraft::kBitFlagGNSSAltitudeValid, true);
+    ac.gnss_altitude_ft = 3280;
+    ac.category = DecodedADSLPacket::kCategoryGlider;
+    ASSERT_TRUE(FLARMNMEAReporter::TargetFromAircraft(t, ac));
+    EXPECT_EQ(t.id, 0xBEE080u);
+    EXPECT_EQ(t.id_type, FLARMNMEAReporter::kIDTypeFLARM);
+    EXPECT_EQ(t.source, FLARMNMEAReporter::kSourceNone);
+    EXPECT_EQ(t.type, FLARMNMEAReporter::kAircraftTypeGlider);
+    EXPECT_TRUE(t.geometric_altitude_valid);
+    EXPECT_FALSE(t.baro_altitude_valid);
+    EXPECT_FALSE(t.on_ground);  // Flight state undefined.
+    ac.flight_state = DecodedADSLPacket::kFlightStateOnGround;
+    ASSERT_TRUE(FLARMNMEAReporter::TargetFromAircraft(t, ac));
+    EXPECT_TRUE(t.on_ground);
+    ADSLAircraft icao(0xBEE081 | (DecodedADSLPacket::kAddressMappingICAO << Aircraft::kAddressQualifierBitShift));
+    icao.WriteBitFlag(ADSLAircraft::kBitFlagPositionValid, true);
+    ASSERT_TRUE(FLARMNMEAReporter::TargetFromAircraft(t, icao));
+    EXPECT_EQ(t.id_type, FLARMNMEAReporter::kIDTypeICAO);
+}
+
 TEST(FLARMNMEA, AircraftTypes) {
     EXPECT_EQ(FLARMNMEAReporter::AircraftTypeFromEmitterCategory(ADSBTypes::kEmitterCategoryLight),
               FLARMNMEAReporter::kAircraftTypePiston);

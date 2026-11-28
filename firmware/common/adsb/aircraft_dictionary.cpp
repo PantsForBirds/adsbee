@@ -1728,6 +1728,11 @@ AircraftDictionary::AddressSourceRank AircraftDictionary::GetAddressSourceRank(c
                 return kAddressSourceRankUnique;
         }
     }
+    if (const ADSLAircraft* ac = std::get_if<ADSLAircraft>(&entry);
+        ac && ac->address_mapping == DecodedADSLPacket::kAddressMappingICAO) {
+        icao_address = ac->address;
+        return kAddressSourceRankADSL;
+    }
     return kAddressSourceRankUnique;
 }
 
@@ -1744,12 +1749,13 @@ bool AircraftDictionary::IsPreferredReportForAddress(uint32_t uid, uint32_t time
     // Every entry that can carry this ICAO address. The UAT address qualifier is part of the UID.
     const uint32_t candidate_uids[] = {
         Aircraft::ICAOToUID(icao_address, Aircraft::kAircraftTypeModeS),
-        Aircraft::ICAOToUID(icao_address | (UATAircraft::kADSBTargetWithICAO24BitAddress
-                                            << Aircraft::kAddressQualifierBitShift),
-                            Aircraft::kAircraftTypeUAT),
-        Aircraft::ICAOToUID(icao_address | (UATAircraft::kTISBTargetWithICAO24BitAddress
-                                            << Aircraft::kAddressQualifierBitShift),
-                            Aircraft::kAircraftTypeUAT),
+        Aircraft::ICAOToUID(
+            icao_address | (UATAircraft::kADSBTargetWithICAO24BitAddress << Aircraft::kAddressQualifierBitShift),
+            Aircraft::kAircraftTypeUAT),
+        Aircraft::ICAOToUID(
+            icao_address | (UATAircraft::kTISBTargetWithICAO24BitAddress << Aircraft::kAddressQualifierBitShift),
+            Aircraft::kAircraftTypeUAT),
+        ADSLAircraft::AddressToUID(icao_address, DecodedADSLPacket::kAddressMappingICAO),
     };
     uint32_t best_uid = uid;
     bool best_fresh = false;
@@ -1768,6 +1774,9 @@ bool AircraftDictionary::IsPreferredReportForAddress(uint32_t uid, uint32_t time
             position_age_ms = timestamp_ms - ac->last_position_update_ms;
         } else if (const UATAircraft* ac = std::get_if<UATAircraft>(&candidate->second);
                    ac && ac->HasBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid)) {
+            position_age_ms = timestamp_ms - ac->last_position_update_ms;
+        } else if (const ADSLAircraft* ac = std::get_if<ADSLAircraft>(&candidate->second);
+                   ac && ac->HasBitFlag(ADSLAircraft::BitFlag::kBitFlagPositionValid)) {
             position_age_ms = timestamp_ms - ac->last_position_update_ms;
         }
         bool fresh = position_age_ms <= kPreferredReportPositionFreshMs;
@@ -2873,8 +2882,8 @@ void ADSLAircraft::ApplyTraffic(const DecodedADSLPacket& packet) {
 
     uint32_t now_ms = get_time_since_boot_ms();
     if (t.position_valid) {
-        latitude_deg = t.latitude_deg;
-        longitude_deg = t.longitude_deg;
+        latitude_awb = t.latitude_awb;
+        longitude_awb = t.longitude_awb;
         last_position_update_ms = now_ms;
     }
     WriteBitFlag(kBitFlagPositionValid, t.position_valid);

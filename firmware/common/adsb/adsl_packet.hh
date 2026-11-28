@@ -178,8 +178,8 @@ class DecodedADSLPacket {
         AircraftCategory category = kCategoryNoInfo;
         EmergencyStatus emergency = kEmergencyUndefined;
         bool position_valid = false;
-        float latitude_deg = 0.0f;
-        float longitude_deg = 0.0f;
+        uint32_t latitude_awb = 0;  // AWB (geo_utils.hh).
+        uint32_t longitude_awb = 0;
         bool ground_speed_valid = false;
         float ground_speed_mps = 0.0f;
         bool altitude_valid = false;

@@ -6,6 +6,7 @@
 
 #include "adsl/adsl_vectors.hh"
 #include "adsl_packet.hh"
+#include "awb_test_utils.hh"
 #include "crc.hh"
 #include "data_structures.hh"
 #include "gtest/gtest.h"
@@ -146,8 +147,8 @@ TEST(ADSLPacket, GoldenVectorsFromPacketBytes) {
 
         if (v.payload_type == DecodedADSLPacket::kPayloadTypeTraffic) {
             const DecodedADSLPacket::Traffic &t = decoded.traffic;
-            ExpectNear(v.lat, t.position_valid, t.latitude_deg, 1e-4f, "lat", v.name);
-            ExpectNear(v.lon, t.position_valid, t.longitude_deg, 1e-4f, "lon", v.name);
+            ExpectNear(v.lat, t.position_valid, AWBToDeg(t.latitude_awb), 1e-4f, "lat", v.name);
+            ExpectNear(v.lon, t.position_valid, AWBToDeg(t.longitude_awb), 1e-4f, "lon", v.name);
             ExpectNear(v.alt_m, t.altitude_valid, t.altitude_wgs84_m, 0.0f, "alt", v.name);
             ExpectNear(v.gs_mps, t.ground_speed_valid, t.ground_speed_mps, 0.0f, "gs", v.name);
             ExpectNear(v.vrate_mps, t.vertical_rate_valid, t.vertical_rate_mps, 0.0f, "vrate", v.name);

@@ -927,7 +927,7 @@ class RemoteIDAircraft : public Aircraft {
  * ADS-L (EASA ADS-L 4 SRD-860) sender, from Traffic and Status payloads.
  *
  * UID: the 24-bit sender address, with the address mapping table entry (AMT: random, ICAO, FLARM, OGN, ...) in the
- * address qualifier bits. AMT values above 15 (manufacturer pages 7 and up) share qualifier 15.
+ * address qualifier bits. AMT 15 and up (manufacturer page 6 and the reserved values) share qualifier 15.
  */
 class ADSLAircraft : public Aircraft {
    public:
@@ -989,6 +989,9 @@ class ADSLAircraft : public Aircraft {
      * ADS-B emitter category (DO-260B / GDL90 table) for the ADS-L aircraft category.
      */
     ADSBTypes::EmitterCategory GetEmitterCategory() const;
+
+    // Only a reported on-ground state counts: senders may leave the flight state undefined in flight.
+    inline bool IsOnGround() const { return flight_state == DecodedADSLPacket::kFlightStateOnGround; }
 
     /**
      * DO-260B NACp from the ADS-L horizontal accuracy code (spec G.1.14): 1 (< 0.5 NM) .. 7 (< 3 m) map to 5 .. 11.
@@ -1547,15 +1550,16 @@ class AircraftDictionary {
      */
     bool ContainsAircraft(uint32_t uid) const;
 
-    // One ICAO address can have up to three entries: Mode S (direct, ADS-R or TIS-B, see ModeSAircraft::AddressType),
-    // UAT ADS-B, and UAT TIS-B/ADS-R. Address-keyed outputs (aircraft JSON, GDL90 traffic, ASTERIX) report one: the
-    // best-ranked entry with a position newer than kPreferredReportPositionFreshMs, else the newest position. 15 s
-    // covers a TIS-B radar scan.
+    // One ICAO address can have up to four entries: Mode S (direct, ADS-R or TIS-B, see ModeSAircraft::AddressType),
+    // UAT ADS-B, UAT TIS-B/ADS-R, and ADS-L with an ICAO address. Address-keyed outputs (aircraft JSON, GDL90 traffic,
+    // ASTERIX) report one: the best-ranked entry with a position newer than kPreferredReportPositionFreshMs, else the
+    // newest position. 15 s covers a TIS-B radar scan.
     static constexpr uint32_t kPreferredReportPositionFreshMs = 15e3;
     enum AddressSourceRank : int8_t {
         kAddressSourceRankDirect = 0,       // DF17, DF18 CF=0, Mode S replies, or UAT ADS-B with an ICAO address.
         kAddressSourceRankRebroadcast = 1,  // 1090 ADS-R (DF18 CF=6) with an ICAO address.
         kAddressSourceRankTISB = 2,         // 1090 TIS-B, or UAT TIS-B/ADS-R, with an ICAO address.
+        kAddressSourceRankADSL = 3,         // ADS-L with an ICAO address (geometric altitude only).
         kAddressSourceRankUnique = -1       // Not an ICAO-addressed entry (Remote ID, track files, anonymous).
     };
 
@@ -1594,8 +1598,8 @@ class AircraftDictionary {
 
     /**
      * Whether a dictionary entry is ownship: an entry that carries ownship's ICAO address (Mode S from ADS-B, ADS-R,
-     * TIS-B or Mode S replies, or UAT ADS-B or TIS-B). Remote ID and entries without an ICAO address (anonymous,
-     * self-assigned, track files) never are, and nothing is for kNoOwnshipICAOAddress.
+     * TIS-B or Mode S replies, UAT ADS-B or TIS-B, or ADS-L with an ICAO address). Remote ID and entries without an
+     * ICAO address (anonymous, self-assigned, track files) never are, and nothing is for kNoOwnshipICAOAddress.
      * @param[in] uid UID of the entry.
      * @param[in] ownship_icao_address From OwnshipICAOAddress().
      */
@@ -1610,6 +1614,8 @@ class AircraftDictionary {
             case Aircraft::kAircraftTypeUAT:
                 return qualifier == UATAircraft::kADSBTargetWithICAO24BitAddress ||
                        qualifier == UATAircraft::kTISBTargetWithICAO24BitAddress;
+            case Aircraft::kAircraftTypeADSL:
+                return qualifier == DecodedADSLPacket::kAddressMappingICAO;
             default:
                 return false;
         }

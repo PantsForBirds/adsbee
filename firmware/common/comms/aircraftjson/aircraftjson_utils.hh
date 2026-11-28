@@ -607,8 +607,7 @@ inline int16_t WriteAircraftJSONADSLAircraftStr(char buf[], const ADSLAircraft& 
     }
 
     if (aircraft.HasBitFlag(ADSLAircraft::kBitFlagPositionValid)) {
-        n += snprintf(buf + n, max - n, ",\"lat\":%.5f,\"lon\":%.5f", aircraft.latitude_deg, aircraft.longitude_deg);
-        n = n < max ? n : max;
+        n = AppendAircraftJSONLatLon(buf, n, max, "lat", "lon", aircraft.latitude_awb, aircraft.longitude_awb);
         if (timestamp_ms != 0) {
             n += snprintf(buf + n, max - n, ",\"seen_pos\":%.1f",
                           (timestamp_ms - aircraft.last_position_update_ms) / 1000.0f);

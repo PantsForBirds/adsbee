@@ -756,8 +756,8 @@ TEST(GDL90Utils, RemoteIDVerticalRateUnavailableWhenNotReceived) {
 }
 TEST(GDL90Utils, ADSLTrafficReport) {
     ADSLAircraft ac(0xBEE001 | (DecodedADSLPacket::kAddressMappingICAO << Aircraft::kAddressQualifierBitShift));
-    ac.latitude_deg = 47.25f;
-    ac.longitude_deg = 8.5f;
+    ac.latitude_awb = DegToAWB(47.25);
+    ac.longitude_awb = DegToAWB(8.5);
     ac.gnss_altitude_ft = 4921;
     ac.speed_kts = 97;
     ac.direction_deg = 90.0f;

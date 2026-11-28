@@ -5,6 +5,7 @@
 #include "adsl/adsl_vectors.hh"
 #include "aircraft_dictionary.hh"
 #include "aircraftjson_utils.hh"
+#include "awb_test_utils.hh"
 #include "composite_array.hh"
 #include "gtest/gtest.h"
 #include "hal_god_powers.hh"
@@ -42,8 +43,8 @@ TEST(ADSLAircraft, TrafficCreatesAircraft) {
     EXPECT_EQ(ac->address, 0xBEE000u);
     EXPECT_EQ(ac->address_mapping, DecodedADSLPacket::kAddressMappingICAO);
     EXPECT_TRUE(ac->HasBitFlag(ADSLAircraft::kBitFlagPositionValid));
-    EXPECT_NEAR(ac->latitude_deg, v.lat, 1e-4);
-    EXPECT_NEAR(ac->longitude_deg, v.lon, 1e-4);
+    EXPECT_NEAR(AWBToDeg(ac->latitude_awb), v.lat, 1e-4);
+    EXPECT_NEAR(AWBToDeg(ac->longitude_awb), v.lon, 1e-4);
     EXPECT_TRUE(ac->HasBitFlag(ADSLAircraft::kBitFlagGNSSAltitudeValid));
     EXPECT_EQ(ac->gnss_altitude_ft, 3280);  // 1000 m.
     EXPECT_EQ(ac->speed_kts, 117);          // 60 m/s.
@@ -146,6 +147,14 @@ TEST(ADSLAircraft, RawFrameFromTheSharedSubGHzSlot) {
     len = BuildRawSubGHzFrame(uat, shared_line);
     ASSERT_EQ(len, BuildRawUATADSBFrame(uat, uat_line));
     EXPECT_EQ(std::string(shared_line, 6), "#UAT*-");
+}
+
+TEST(ADSLAircraft, RawFrameOfAnOverlongSlotStopsAt32Bytes) {
+    RawADSLPacket p = Packet("traffic_v0_k0", -61);
+    p.buffer_len_bytes = RawUATADSBPacket::kADSBMessageMaxSizeBytes;  // Not from a CC13xx: keep in bounds anyway.
+    char buf[kRawADSLFrameMaxNumChars];
+    std::string line(buf, BuildRawADSLFrame(p, buf));
+    EXPECT_EQ(line.find(';'), 5 + 2 * RawADSLPacket::kMaxPacketLenBytes);
 }
 
 TEST(ADSLAircraft, NotInTheSwarmRegistry) {

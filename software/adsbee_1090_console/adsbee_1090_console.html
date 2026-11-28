@@ -7828,8 +7828,8 @@ class AircraftStore {
     ingest(ac) {
         if (!ac.hex) return;
         const src = acSource(ac);
-        // An ADS-L sender can use the same ICAO address as the aircraft's own ADS-B: keep the two apart.
-        const key = src === 'adsl' ? `adsl-${ac.hex}` : ac.hex;
+        // ADS-L senders are keyed by address mapping (ICAO, FLARM, OGN, ...) and address, apart from ADS-B.
+        const key = src === 'adsl' ? `adsl-${ac.adsl_amt}-${ac.hex}` : ac.hex;
         let prev = this.aircraft.get(key) || {};
         if (prev.src && prev.src !== src) prev = {};  // Don't mix fields from two sources; the trail carries over.
         const merged = { ...prev, ...ac, key, src, srcLabel: TRAFFIC_SOURCES[src].label };
