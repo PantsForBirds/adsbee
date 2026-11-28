@@ -43,6 +43,14 @@ class MLATTimeSync {
     void Restart() {
         num_points_ = 0;
         rate_error_ppb_ = 0;
+        rate_kept_ = false;
+    }
+
+    // Forgets the points but keeps a measured rate: the local clock restarted on the same crystal (CC13xx RF client
+    // re-opened), so the next point alone gives timestamps again.
+    void RestartKeepingRate() {
+        rate_kept_ = IsSynced();
+        num_points_ = 0;
     }
 
     /**
@@ -77,7 +85,7 @@ class MLATTimeSync {
         return agrees;
     }
 
-    bool IsSynced() const { return num_points_ > 0 && num_points_ >= min_sync_points_; }
+    bool IsSynced() const { return num_points_ > 0 && (num_points_ >= min_sync_points_ || rate_kept_); }
     uint16_t GetNumSyncPoints() const { return num_points_; }
     int64_t GetRateErrorPPB() const { return rate_error_ppb_; }
     uint32_t GetLocalTicksPerUs() const { return kMLATTicksPerUs / mlat_ticks_per_local_tick_; }
@@ -119,6 +127,7 @@ class MLATTimeSync {
     uint32_t local_ = 0;
     uint64_t mlat_48mhz_counts_ = 0;
     int64_t rate_error_ppb_ = 0;  // MLAT clock rate relative to the nominal ratio, in parts per billion.
+    bool rate_kept_ = false;      // rate_error_ppb_ was measured before RestartKeepingRate().
 };
 
 /**

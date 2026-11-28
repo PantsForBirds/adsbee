@@ -16,6 +16,8 @@
  * The CompositeArray class solves this problem by providing a nice way to pass around a single buffer that contains
  * zero or more packets of each kind. The buffer starts with a CompositeArray::RawPackets::Header, which describes how
  * many packets of each type are present, followed by arrays of raw packets of each type.
+ *
+ * The UAT ADS-B section holds every short sub-GHz packet: UAT ADS-B and ADS-L, told apart by RawUATADSBPacket::protocol.
  */
 class CompositeArray {
    public:

@@ -401,9 +401,13 @@ bool ADSBeeServer::Update() {
                 }
             }
 
-            // UAT ADSB Packets
+            // UAT ADSB Packets, and ADS-L packets in the same section (protocol tag).
             for (uint16_t i = 0; i < raw_packets.header->num_uat_adsb_packets; i++) {
                 RawUATADSBPacket& raw_uat_adsb_packet = raw_packets.uat_adsb_packets[i];
+                if (raw_uat_adsb_packet.protocol == RawUATADSBPacket::kProtocolADSL) {
+                    aircraft_dictionary.IngestADSLPacket(RawADSLPacket(raw_uat_adsb_packet));
+                    continue;
+                }
                 DecodedUATADSBPacket decoded_packet = DecodedUATADSBPacket(raw_uat_adsb_packet);
                 if (!decoded_packet.is_valid) {
                     CONSOLE_ERROR("ADSBeeServer::Update", "Received invalid UAT ADSB packet.");
@@ -586,6 +590,12 @@ bool ADSBeeServer::ReportGDL90() {
                 return 0;  // Don't report drones without a valid position.
             }
             return gdl90.WriteGDL90TargetReportMessage(buf, buf_len, *remote_id_aircraft, false);
+        }
+        if (ADSLAircraft* adsl_aircraft = get_if<ADSLAircraft>(&(itr.second)); adsl_aircraft) {
+            if (!adsl_aircraft->HasBitFlag(ADSLAircraft::kBitFlagPositionValid)) {
+                return 0;
+            }
+            return gdl90.WriteGDL90TargetReportMessage(buf, buf_len, *adsl_aircraft, false);
         }
         if (log) {
             CONSOLE_WARNING("CommsManager::ReportGDL90", "Unknown aircraft type in dictionary for UID 0x%lx.",
@@ -1109,6 +1119,8 @@ void ADSBeeServer::SendNetworkMetricsMessage() {
     combined_metrics.valid_uat_adsb_frames = adsbee_server.rp2040_aircraft_dictionary_metrics.valid_uat_adsb_frames;
     combined_metrics.raw_uat_uplink_frames = adsbee_server.rp2040_aircraft_dictionary_metrics.raw_uat_uplink_frames;
     combined_metrics.valid_uat_uplink_frames = adsbee_server.rp2040_aircraft_dictionary_metrics.valid_uat_uplink_frames;
+    combined_metrics.raw_adsl_frames = adsbee_server.rp2040_aircraft_dictionary_metrics.raw_adsl_frames;
+    combined_metrics.valid_adsl_frames = adsbee_server.rp2040_aircraft_dictionary_metrics.valid_adsl_frames;
     // Bit error corrections happen on the RP2040.
     for (uint16_t i = 0; i < AircraftDictionary::kNumCorrectionKinds; i++) {
         combined_metrics.corrected_frames[i] = adsbee_server.rp2040_aircraft_dictionary_metrics.corrected_frames[i];

@@ -166,6 +166,37 @@ bool FLARMNMEAReporter::TargetFromAircraft(Target& target, const RemoteIDAircraf
     return true;
 }
 
+bool FLARMNMEAReporter::TargetFromAircraft(Target& target, const ADSLAircraft& aircraft) {
+    target = {};
+    if (!aircraft.HasBitFlag(ADSLAircraft::kBitFlagPositionValid)) return false;
+    target.id = aircraft.address & 0xFFFFFF;
+    switch (aircraft.address_mapping) {
+        case DecodedADSLPacket::kAddressMappingICAO:
+            break;
+        case DecodedADSLPacket::kAddressMappingFLARM:
+            target.id_type = kIDTypeFLARM;
+            break;
+        default:
+            target.id_type = kIDTypeRandom;
+            break;
+    }
+    target.source = kSourceNone;  // FTD-012 has no ADS-L source code.
+    target.distance_valid = aircraft.distance_m != Aircraft::kDistanceUnknown;
+    target.distance_m = aircraft.distance_m;
+    target.bearing_bam16 = aircraft.bearing_bam16;
+    target.geometric_altitude_valid = aircraft.HasBitFlag(ADSLAircraft::kBitFlagGNSSAltitudeValid);
+    target.geometric_altitude_ft = aircraft.gnss_altitude_ft;
+    target.track_valid = aircraft.HasBitFlag(ADSLAircraft::kBitFlagDirectionValid);
+    target.track_deg = aircraft.direction_deg;
+    target.speed_valid = aircraft.HasBitFlag(ADSLAircraft::kBitFlagHorizontalSpeedValid);
+    target.speed_kts = aircraft.speed_kts;
+    target.on_ground = aircraft.IsOnGround();
+    target.vertical_rate_valid = aircraft.HasBitFlag(ADSLAircraft::kBitFlagGNSSVerticalRateValid);
+    target.vertical_rate_fpm = aircraft.gnss_vertical_rate_fpm;
+    target.type = AircraftTypeFromEmitterCategory(aircraft.GetEmitterCategory());
+    return true;
+}
+
 bool FLARMNMEAReporter::Relative(const Ownship& own, const Target& target, RelativePosition& relative) {
     if (!target.distance_valid) return false;
     int32_t delta_ft;

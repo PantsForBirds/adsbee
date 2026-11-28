@@ -41,3 +41,19 @@ test('adsbee_1090_console has the same store', () => {
     assert.ok(merge(ADSBEE_SRC).includes('kTrueOnlyFields'));
     assert.strictEqual(merge(CONSOLE), merge(ADSBEE_SRC), 'Re-copy AircraftStore.ingest from adsbee.js');
 });
+
+test('ADS-L targets get their own source and key', () => {
+    const store = new AircraftStore();
+    store.ingest(report({ lat: 47.25, lon: 8.5 }));
+    store.ingest({ hex: 'acbe3e', type: 'adsl', link: 'adsl', adsl_amt: 5, lat: 47.26, lon: 8.51, alt_geom: 4924 });
+    store.ingest({ hex: '~acbe3e', type: 'adsl', link: 'adsl', adsl_amt: 6, lat: 47.3, lon: 8.6 });
+    store.ingest({ hex: '~acbe3e', type: 'adsl', link: 'adsl', adsl_amt: 7, lat: 47.4, lon: 8.7 });
+    assert.strictEqual(store.aircraft.get('acbe3e').src, 'adsb_1090');
+    const adsl = store.aircraft.get('adsl-5-acbe3e');
+    assert.strictEqual(adsl.src, 'adsl');
+    assert.strictEqual(adsl.srcLabel, 'ADS-L');
+    assert.strictEqual(adsl.alt_geom, 4924);
+    // A FLARM and an OGN address with the same 24 bits stay apart.
+    assert.strictEqual(store.aircraft.get('adsl-6-~acbe3e').lat, 47.3);
+    assert.strictEqual(store.aircraft.get('adsl-7-~acbe3e').lat, 47.4);
+});

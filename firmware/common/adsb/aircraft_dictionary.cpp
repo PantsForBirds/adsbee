@@ -1565,6 +1565,8 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
                 metrics_counter_.num_uat_aircraft++;
             } else if (std::holds_alternative<RemoteIDAircraft>(it->second)) {
                 metrics_counter_.num_remote_id_aircraft++;
+            } else if (std::holds_alternative<ADSLAircraft>(it->second)) {
+                metrics_counter_.num_adsl_aircraft++;
             } else {
                 // This should never happen.
                 CONSOLE_ERROR("AircraftDictionary::Update", "Encountered aircraft entry with unknown type.");
@@ -1609,6 +1611,8 @@ void AircraftDictionary::Update(uint32_t timestamp_ms) {
             } else if (std::holds_alternative<RemoteIDAircraft>(it->second)) {
                 // Remote ID drones fly low and close to the receiver, so they must not be used as the lowest-aircraft
                 // position reference (which assumes an aircraft roughly overhead). Leave has_valid_gnss_altitude false.
+            } else if (std::holds_alternative<ADSLAircraft>(it->second)) {
+                // ADS-L senders are mostly gliders, paragliders and drones close to the ground: not a reference either.
             } else {
                 CONSOLE_ERROR("AircraftDictionary::Update", "Encountered aircraft entry with unknown variant type.");
             }
@@ -1676,9 +1680,10 @@ bool AircraftDictionary::GetLowestAircraftPosition(uint32_t& latitude_awb, uint3
         speed_kts =
             aircraft->HasBitFlag(UATAircraft::BitFlag::kBitFlagHorizontalSpeedValid) ? aircraft->speed_kts : NAN;
         return true;
-    } else if (std::holds_alternative<RemoteIDAircraft>(*lowest_aircraft_entry)) {
-        // Remote ID drones are never used as a position reference (see AircraftDictionary::Update), so this should not
-        // normally be reached; guard defensively.
+    } else if (std::holds_alternative<RemoteIDAircraft>(*lowest_aircraft_entry) ||
+               std::holds_alternative<ADSLAircraft>(*lowest_aircraft_entry)) {
+        // Remote ID and ADS-L aircraft are never used as a position reference (see AircraftDictionary::Update), so this
+        // should not normally be reached; guard defensively.
         return false;
     } else {
         CONSOLE_ERROR("AircraftDictionary::GetLowestAircraftPosition",
@@ -1723,6 +1728,11 @@ AircraftDictionary::AddressSourceRank AircraftDictionary::GetAddressSourceRank(c
                 return kAddressSourceRankUnique;
         }
     }
+    if (const ADSLAircraft* ac = std::get_if<ADSLAircraft>(&entry);
+        ac && ac->address_mapping == DecodedADSLPacket::kAddressMappingICAO) {
+        icao_address = ac->address;
+        return kAddressSourceRankADSL;
+    }
     return kAddressSourceRankUnique;
 }
 
@@ -1739,12 +1749,13 @@ bool AircraftDictionary::IsPreferredReportForAddress(uint32_t uid, uint32_t time
     // Every entry that can carry this ICAO address. The UAT address qualifier is part of the UID.
     const uint32_t candidate_uids[] = {
         Aircraft::ICAOToUID(icao_address, Aircraft::kAircraftTypeModeS),
-        Aircraft::ICAOToUID(icao_address | (UATAircraft::kADSBTargetWithICAO24BitAddress
-                                            << Aircraft::kAddressQualifierBitShift),
-                            Aircraft::kAircraftTypeUAT),
-        Aircraft::ICAOToUID(icao_address | (UATAircraft::kTISBTargetWithICAO24BitAddress
-                                            << Aircraft::kAddressQualifierBitShift),
-                            Aircraft::kAircraftTypeUAT),
+        Aircraft::ICAOToUID(
+            icao_address | (UATAircraft::kADSBTargetWithICAO24BitAddress << Aircraft::kAddressQualifierBitShift),
+            Aircraft::kAircraftTypeUAT),
+        Aircraft::ICAOToUID(
+            icao_address | (UATAircraft::kTISBTargetWithICAO24BitAddress << Aircraft::kAddressQualifierBitShift),
+            Aircraft::kAircraftTypeUAT),
+        ADSLAircraft::AddressToUID(icao_address, DecodedADSLPacket::kAddressMappingICAO),
     };
     uint32_t best_uid = uid;
     bool best_fresh = false;
@@ -1763,6 +1774,9 @@ bool AircraftDictionary::IsPreferredReportForAddress(uint32_t uid, uint32_t time
             position_age_ms = timestamp_ms - ac->last_position_update_ms;
         } else if (const UATAircraft* ac = std::get_if<UATAircraft>(&candidate->second);
                    ac && ac->HasBitFlag(UATAircraft::BitFlag::kBitFlagPositionValid)) {
+            position_age_ms = timestamp_ms - ac->last_position_update_ms;
+        } else if (const ADSLAircraft* ac = std::get_if<ADSLAircraft>(&candidate->second);
+                   ac && ac->HasBitFlag(ADSLAircraft::BitFlag::kBitFlagPositionValid)) {
             position_age_ms = timestamp_ms - ac->last_position_update_ms;
         }
         bool fresh = position_age_ms <= kPreferredReportPositionFreshMs;
@@ -2851,3 +2865,107 @@ bool ModeSAircraft::SetCPRLatLon(uint32_t n_lat_cpr, uint32_t n_lon_cpr, bool od
 /**
  * Private functions and associated helpers.
  */
+
+void ADSLAircraft::ApplyTraffic(const DecodedADSLPacket& packet) {
+    const DecodedADSLPacket::Traffic& t = packet.traffic;
+    category = t.category;
+    flight_state = t.flight_state;
+    emergency = t.emergency;
+    navigation_integrity = t.navigation_integrity;
+    horizontal_accuracy = t.horizontal_accuracy;
+    vertical_accuracy = t.vertical_accuracy;
+    velocity_accuracy = t.velocity_accuracy;
+    source_integrity_level = t.source_integrity_level;
+    design_assurance = t.design_assurance;
+    WriteBitFlag(kBitFlagRelayed, packet.relayed);
+    WriteBitFlag(kBitFlagIsAirborne, t.flight_state == DecodedADSLPacket::kFlightStateAirborne);
+
+    uint32_t now_ms = get_time_since_boot_ms();
+    if (t.position_valid) {
+        latitude_awb = t.latitude_awb;
+        longitude_awb = t.longitude_awb;
+        last_position_update_ms = now_ms;
+    }
+    WriteBitFlag(kBitFlagPositionValid, t.position_valid);
+    if (t.altitude_valid) gnss_altitude_ft = MetersToFeet(t.altitude_wgs84_m);
+    WriteBitFlag(kBitFlagGNSSAltitudeValid, t.altitude_valid);
+    if (t.ground_speed_valid) {
+        speed_kts = static_cast<int32_t>(t.ground_speed_mps * 3600.0f / kMetersPerNauticalMile + 0.5f);
+        last_velocity_update_ms = now_ms;
+    }
+    WriteBitFlag(kBitFlagHorizontalSpeedValid, t.ground_speed_valid);
+    if (t.track_valid) direction_deg = t.track_deg;
+    WriteBitFlag(kBitFlagDirectionValid, t.track_valid);
+    if (t.vertical_rate_valid) {
+        float fpm = t.vertical_rate_mps * 60.0f * 3.28084f;
+        gnss_vertical_rate_fpm = static_cast<int32_t>(fpm < 0 ? fpm - 0.5f : fpm + 0.5f);
+    }
+    WriteBitFlag(kBitFlagGNSSVerticalRateValid, t.vertical_rate_valid);
+}
+
+ADSBTypes::EmitterCategory ADSLAircraft::GetEmitterCategory() const {
+    switch (category) {
+        case DecodedADSLPacket::kCategoryLightFixedWing:
+            return ADSBTypes::kEmitterCategoryLight;
+        case DecodedADSLPacket::kCategorySmallToHeavyFixedWing:
+            return ADSBTypes::kEmitterCategoryMedium1;
+        case DecodedADSLPacket::kCategoryLightRotorcraft:
+        case DecodedADSLPacket::kCategoryHeavyRotorcraft:
+        case DecodedADSLPacket::kCategoryGyrocopter:
+        case DecodedADSLPacket::kCategoryEVTOL:
+            return ADSBTypes::kEmitterCategoryRotorcraft;
+        case DecodedADSLPacket::kCategoryGlider:
+            return ADSBTypes::kEmitterCategoryGliderSailplane;
+        case DecodedADSLPacket::kCategoryLighterThanAir:
+            return ADSBTypes::kEmitterCategoryLighterThanAir;
+        case DecodedADSLPacket::kCategoryUltralight:
+        case DecodedADSLPacket::kCategoryParaglider:
+        case DecodedADSLPacket::kCategoryHangGlider:
+        case DecodedADSLPacket::kCategoryParamotor:
+            return ADSBTypes::kEmitterCategoryUltralightHangGliderParaglider;
+        case DecodedADSLPacket::kCategoryParachutist:
+            return ADSBTypes::kEmitterCategoryParachutistSkydiver;
+        case DecodedADSLPacket::kCategoryUASOpen:
+        case DecodedADSLPacket::kCategoryUASSpecific:
+        case DecodedADSLPacket::kCategoryUASCertified:
+        case DecodedADSLPacket::kCategoryModelPlane:
+            return ADSBTypes::kEmitterCategoryUnmannedAerialVehicle;
+        default:
+            return ADSBTypes::kEmitterCategoryNoCategoryInfo;
+    }
+}
+
+bool AircraftDictionary::IngestADSLPacket(const RawADSLPacket& packet) {
+    DecodedADSLPacket decoded(packet);
+    if (!decoded.is_valid) {
+        return false;
+    }
+    uint32_t uid = ADSLAircraft::AddressToUID(decoded.address, decoded.address_mapping);
+    bool traffic = decoded.payload_type == DecodedADSLPacket::kPayloadTypeTraffic;
+    if (!traffic && !ContainsAircraft(uid)) {
+        return false;  // Status and other payloads only update senders already known from Traffic.
+    }
+    ADSLAircraft* aircraft = GetAircraftPtr<ADSLAircraft>(uid);
+    if (aircraft == nullptr) {
+        CONSOLE_WARNING("AircraftDictionary::IngestADSLPacket", "Unable to find or create ADS-L aircraft 0x%08lx.", uid);
+        return false;
+    }
+    aircraft->address = decoded.address;
+    aircraft->address_mapping = decoded.address_mapping;
+    aircraft->last_message_timestamp_ms = get_time_since_boot_ms();
+    aircraft->last_message_signal_strength_dbm = packet.sigs_dbm < INT8_MIN ? INT8_MIN : packet.sigs_dbm;
+    aircraft->last_message_signal_quality_bits = packet.sigq_bits < 0 ? 0 : packet.sigq_bits;
+    aircraft->channel = packet.channel;
+    aircraft->protocol_version = decoded.protocol_version;
+    aircraft->IncrementNumFramesReceived();
+
+    if (traffic) {
+        PositionSnapshot position_before = PositionSnapshot::Of(*aircraft);
+        aircraft->ApplyTraffic(decoded);
+        UpdateDistanceAndBearingIfMoved(*aircraft, position_before);
+    } else if (decoded.payload_type == DecodedADSLPacket::kPayloadTypeStatus) {
+        aircraft->max_protocol_version = decoded.status.max_protocol_version;
+        aircraft->WriteBitFlag(ADSLAircraft::kBitFlagStatusValid, true);
+    }
+    return true;
+}

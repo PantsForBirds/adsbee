@@ -31,13 +31,15 @@ class UATPacketDecoder {
     }
 
     /**
-     * Decodes every waiting UAT ADS-B packet and at most one uplink, so that a queue of uplinks delays neither the
+     * Decodes every waiting UAT ADS-B (or ADS-L) packet and at most one uplink, so that a queue of uplinks delays neither the
      * ADS-B packets nor the rest of the main loop.
      */
     bool Update();
 
    private:
     void DecodeADSBPackets();
+    // ADS-L packets share the ADS-B queues (RawUATADSBPacket::protocol): erasure repair and CRC instead of FEC.
+    void DecodeADSLPacket(const RawUATADSBPacket& packet);
     void DecodeUplinkPacket();
 
     uint32_t num_raw_uat_uplink_packets_dropped_logged_ = 0;

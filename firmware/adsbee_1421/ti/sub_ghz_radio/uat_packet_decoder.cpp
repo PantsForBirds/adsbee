@@ -2,6 +2,7 @@
 
 #include <ti/drivers/dpl/HwiP.h>
 
+#include "adsl_packet.hh"
 #include "buffer_utils.hh"
 #include "comms.hh"
 #include "led.hh"
@@ -35,6 +36,10 @@ void UATPacketDecoder::DecodeADSBPackets() {
         if (!got_packet) {
             break;
         }
+        if (packet.protocol == RawUATADSBPacket::kProtocolADSL) {
+            DecodeADSLPacket(packet);
+            continue;
+        }
         uint16_t packet_len_bytes = packet.buffer_len_bytes;
         DecodedUATADSBPacket decoded_packet = DecodedUATADSBPacket(packet);
 
@@ -61,6 +66,35 @@ void UATPacketDecoder::DecodeADSBPackets() {
                 CONSOLE_INFO("UATPacketDecoder::Update", "-[     INVLD] len=%d buf=%s rssi=%d ts=%lu", packet_len_bytes,
                              raw_packet_buffer, packet.sigs_dbm, packet.mlat_48mhz_64bit_counts);
             }
+        }
+    }
+}
+
+void UATPacketDecoder::DecodeADSLPacket(const RawUATADSBPacket& packet) {
+    RawADSLPacket adsl_packet = RawADSLPacket(packet);
+    uint16_t num_erasures = adsl_packet.sigq_bits;
+    bool valid = adsl_packet.RepairErasures();
+    if (valid) {
+        leds.FlashLED(bsp.kSubGLEDPin, 50);
+        // The decoded queue carries ADS-L packets in raw (raw.protocol); nothing else of the UAT decode is used.
+        DecodedUATADSBPacket decoded_packet;
+        decoded_packet.raw = adsl_packet;
+        decoded_packet.is_valid = true;
+        if (!decoded_uat_adsb_packet_out_queue.Enqueue(decoded_packet)) {
+            CONSOLE_ERROR("UATPacketDecoder::Update", "UAT ADS-B decoded output queue overflowed.");
+        }
+    }
+    if (settings_manager.settings.log_level >= SettingsManager::LogLevel::kInfo) {
+        if (valid) {
+            char hex[2 * RawADSLPacket::kMaxPacketLenBytes + 1];
+            ByteBufferToHexString(hex, adsl_packet.buffer, adsl_packet.buffer_len_bytes);
+            CONSOLE_INFO("UATPacketDecoder::Update", "~[%dFIXD     ] len=%d buf=%s rssi=%d ch=%d ts=%lu",
+                         adsl_packet.sigq_bits, adsl_packet.buffer_len_bytes, hex, adsl_packet.sigs_dbm,
+                         adsl_packet.channel, (uint32_t)adsl_packet.mlat_48mhz_64bit_counts);
+        } else {
+            CONSOLE_INFO("UATPacketDecoder::Update", "~[     INVLD] len=%d erasures=%d rssi=%d ts=%lu",
+                         packet.buffer_len_bytes, num_erasures, packet.sigs_dbm,
+                         (uint32_t)packet.mlat_48mhz_64bit_counts);
         }
     }
 }
