@@ -66,6 +66,25 @@ class MlatTimebase {
     uint64_t gap_ticks_ = 0;
 };
 
+// Radio timer (RAT, 4 MHz) to capture counter. Both run from the 48 MHz crystal, so counter - 12 * rat stays constant
+// until either restarts. A RAT read is up to one tick old, so the smallest difference seen is that of a pair read right
+// after a tick edge. *min_offset: that difference, 24 bits; *seeded: false to start over. Returns how many counts past
+// the edge this pair was read. A difference over kRatReseedTicks above the minimum can't happen with both clocks
+// running, so the minimum starts over from it.
+static constexpr uint32_t kTicksPerRatTick = MlatTimebase::kTicksPerUs / 4;
+static constexpr int32_t kRatReseedTicks = 2 * kTicksPerRatTick;
+inline uint32_t UpdateRatOffset(uint32_t rat, uint32_t counter, uint32_t* min_offset, bool* seeded) {
+    const uint32_t offset = (counter - rat * kTicksPerRatTick) & MlatTimebase::kCounterMask;
+    // Signed 24-bit difference.
+    const int32_t past_edge = static_cast<int32_t>(((offset - *min_offset) & MlatTimebase::kCounterMask) << 8) >> 8;
+    if (!*seeded || past_edge < 0 || past_edge > kRatReseedTicks) {
+        *min_offset = offset;
+        *seeded = true;
+        return 0;
+    }
+    return static_cast<uint32_t>(past_edge);
+}
+
 class MlatPairer {
    public:
     static constexpr uint32_t kTicksPerUs = MlatTimebase::kTicksPerUs;

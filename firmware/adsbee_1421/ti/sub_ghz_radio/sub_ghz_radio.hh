@@ -193,6 +193,9 @@ public:
     // Counted from the RF callback (SWI context). Reported and reset via AT+RX_STATS.
     volatile uint32_t uat_len_mismatch_count = 0;
 
+    // RF client opens since boot. Each one restarts the radio timer at a new phase to the 48 MHz clocks.
+    uint32_t rf_open_count = 0;
+
 private:
     /**
      * Brings normal RX back up after Resume()/StopCWTest()/StopRssiScan() if the user has it enabled; otherwise
