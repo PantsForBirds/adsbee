@@ -190,6 +190,7 @@ bool SubGHzRadio::Init() {
         CONSOLE_ERROR("SubGHzRadio::Init", "Failed to open RF device.");
         return false;  // Failed to open RF handle.
     }
+    rf_open_count++;
 
     RF_EventMask ret = RF_runCmd(rf_handle_, (RF_Op*)&RF_cmdFs, RF_PriorityNormal, nullptr, 0);
     if (ret != RF_EventLastCmdDone) {

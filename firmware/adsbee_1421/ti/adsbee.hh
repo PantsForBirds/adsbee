@@ -227,6 +227,11 @@ class ADSBee {
     static constexpr uint32_t kMlatArmBusyWaitUs = 30;
     bool mlat_clock_was_crystal_ = false;
     MlatTimebase mlat_timebase_;
+    // Radio timer to capture counter offset (UpdateRatOffset()), refined every pass while MLAT is active. Starts over
+    // when either timer restarts.
+    uint32_t rat_offset_ = 0;
+    bool rat_offset_seeded_ = false;
+    uint32_t rat_offset_rf_opens_ = 0;
     MlatPairer mlat_pairer_;
     // Called with the LR2021 configured and its interrupt lines disarmed.
     void StartMlat();

@@ -285,3 +285,62 @@ TEST(MlatTimebase, ExtendsCapturesBeforeTheLastUpdate) {
                                 static_cast<uint32_t>((update - start) / kUs)));
     EXPECT_EQ(timebase.Extend(static_cast<uint32_t>(capture) & MlatTimebase::kCounterMask), capture);
 }
+
+// A radio timer read at counter value counter: the timer ticks every 12 counts, at counter = 12 * rat + edge_offset.
+static uint32_t RatAt(uint32_t counter, uint32_t edge_offset) { return (counter - edge_offset) / kTicksPerRatTick; }
+
+TEST(RatOffset, RandomReadPhasesConvergeOnTheTickEdge) {
+    // Reads at random phases: the smallest difference is the pair read right after an edge.
+    const uint32_t edge_offset = 5;
+    uint32_t min_offset = 0;
+    bool seeded = false;
+    uint32_t seed = 12345;
+    uint32_t counter = 1000;
+    for (int i = 0; i < 200; i++) {
+        seed = seed * 1103515245 + 12345;
+        counter += 1000 + (seed >> 16) % 997;
+        const uint32_t past_edge = UpdateRatOffset(RatAt(counter, edge_offset), counter & MlatTimebase::kCounterMask,
+                                                   &min_offset, &seeded);
+        EXPECT_LT(past_edge, kTicksPerRatTick);
+    }
+    EXPECT_EQ(min_offset, edge_offset);
+    // A read 7 counts after an edge is 7 counts past it.
+    const uint32_t c = 12 * 5000 + edge_offset + 7;
+    EXPECT_EQ(UpdateRatOffset(RatAt(c, edge_offset), c, &min_offset, &seeded), 7u);
+}
+
+TEST(RatOffset, ConvergesAcrossCounterAndTimerWraps) {
+    uint32_t min_offset = 0;
+    bool seeded = false;
+    // 32-bit radio timer near its wrap, and 24-bit counter wraps: 12 * 2^32 is a multiple of 2^24.
+    uint32_t rat = 0xFFFFFF00u;
+    const uint32_t edge_offset = 3;
+    for (uint32_t i = 0; i < 4 * 12; i++) {
+        const uint32_t phase = (i * 5 + 11) % 12;  // Starts late, then visits every phase.
+        rat += 0x10000;
+        const uint32_t counter = (rat * 12 + edge_offset + phase) & MlatTimebase::kCounterMask;
+        EXPECT_LE(UpdateRatOffset(rat, counter, &min_offset, &seeded), phase);
+    }
+    EXPECT_EQ(min_offset, edge_offset);
+}
+
+TEST(RatOffset, RestartsReseed) {
+    uint32_t min_offset = 0;
+    bool seeded = false;
+    UpdateRatOffset(100, 12 * 100 + 40, &min_offset, &seeded);
+    ASSERT_EQ(min_offset, 40u);
+    // A later phase within the reseed limit is a read past the edge, not a restart.
+    EXPECT_EQ(UpdateRatOffset(200, 12 * 200 + 40 + 20, &min_offset, &seeded), 20u);
+    EXPECT_EQ(min_offset, 40u);
+    // Lower is nearer the edge: taken.
+    EXPECT_EQ(UpdateRatOffset(300, 12 * 300 + 35, &min_offset, &seeded), 0u);
+    EXPECT_EQ(min_offset, 35u);
+    // More than 2 ticks above: a timer restarted, so the minimum starts over from it.
+    EXPECT_EQ(UpdateRatOffset(400, 12 * 400 + 35 + 25, &min_offset, &seeded), 0u);
+    EXPECT_EQ(min_offset, 60u);
+    // An explicit restart (radio reopened, MLAT timer restarted) takes the next read whatever it is.
+    seeded = false;
+    EXPECT_EQ(UpdateRatOffset(500, 12 * 500 + 70, &min_offset, &seeded), 0u);
+    EXPECT_EQ(min_offset, 70u);
+    EXPECT_TRUE(seeded);
+}
