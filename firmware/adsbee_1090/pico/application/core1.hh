@@ -12,7 +12,12 @@ extern CPUMonitor core_1_monitor;
 void RunPendingTestFunctionOnCore1();  // Defined in target_test/hardware_unit_tests.cc.
 #endif
 
-inline void main_core1() {
+// Core 1's main loop passes, and whether it runs: core 0 stops feeding the watchdog when they stop moving (main.cc).
+// Launching counts as a pass, so a restarted core 1 is not taken for stalled before its first pass.
+inline volatile uint32_t core1_passes = 0;
+inline volatile bool core1_running = false;
+
+inline void __not_in_flash_func(main_core1)() {
 #ifdef ISRS_ON_CORE1
     adsbee.InitISRs();
 #else
@@ -22,6 +27,7 @@ inline void main_core1() {
     core_1_monitor.TimeInterrupts();
 
     while (true) {
+        core1_passes = core1_passes + 1;
         core_1_monitor.BeginWork();  // Counted only if the pass demodulated or decoded something.
 #ifdef ISRS_ON_CORE1
         // Core 0 may try to toggle the 1090 receiver on and off. Keep an eye on it and turn it on and off here, since
@@ -29,12 +35,13 @@ inline void main_core1() {
         if (adsbee.Receiver1090IsEnabled() != adsbee.Receiver1090IRQIsEnabled()) {
             adsbee.SyncReceiver1090IRQEnable();
         }
+        adsbee.SyncPPSIRQEnable();
 #endif  // ISRS_ON_CORE1
 #ifdef HARDWARE_UNIT_TESTS
         RunPendingTestFunctionOnCore1();  // Lets hardware unit tests read core 1 state, e.g. its SysTick.
 #endif
 #ifdef ISRS_ON_CORE1
-        adsbee.sync_pulse_service.Service();  // Needs this core's MLAT counter.
+        adsbee.sync_pulse_service.Service(time_us_32());  // Needs this core's MLAT counter.
 #endif  // ISRS_ON_CORE1
         bool did_work = adsbee.DemodulateCaptures() || decoder.raw_mode_s_packet_in_queue.Length() > 0;
         decoder.UpdateDecoderLoop();
@@ -50,6 +57,8 @@ inline void LaunchCore1() {
     core1_launched = true;
     multicore_reset_core1();
     RAMMonitor::PaintCore1Stack();
+    core1_passes = core1_passes + 1;
+    core1_running = true;
     multicore_launch_core1(main_core1);
     adsbee.subg_radio_ll.AllowSyncPulsesInReset();  // With the CC1312 running, its next status read allows them.
 }
@@ -61,6 +70,7 @@ inline void StopCore1() {
     adsbee.sync_pulse_service.Block();  // Never stop core 1 in the middle of a sync pulse.
     adsbee.DeInitISRs();  // Clean up DMA channels and other ISR resources before stopping core
     core_1_monitor.StopTimingInterrupts();  // InitISRs() sets the handlers again on restart.
+    core1_running = false;
     multicore_reset_core1();
 }
 
@@ -69,6 +79,8 @@ inline void StartCore1() {
         return;
     }
     RAMMonitor::PaintCore1Stack();
+    core1_passes = core1_passes + 1;
+    core1_running = true;
     multicore_launch_core1(main_core1);
     adsbee.subg_radio_ll.AllowSyncPulsesInReset();  // With the CC1312 running, its next status read allows them.
 }

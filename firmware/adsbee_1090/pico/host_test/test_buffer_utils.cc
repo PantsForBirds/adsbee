@@ -346,3 +346,19 @@ TEST(BufferUtils, CalculateCRC16) {
         ASSERT_EQ(CalculateCRC16(buf, len), static_cast<uint16_t>((crc >> 8) | (crc << 8))) << "length " << len;
     }
 }
+
+TEST(BufferUtils, WriteTenths) {
+    char buf[16];
+    WriteTenths(buf, sizeof(buf), 123);
+    EXPECT_STREQ(buf, "12.3");
+    WriteTenths(buf, sizeof(buf), -123);
+    EXPECT_STREQ(buf, "-12.3");
+    WriteTenths(buf, sizeof(buf), 5);
+    EXPECT_STREQ(buf, "0.5");
+    WriteTenths(buf, sizeof(buf), -5);
+    EXPECT_STREQ(buf, "-0.5");
+    WriteTenths(buf, sizeof(buf), 0);
+    EXPECT_STREQ(buf, "0.0");  // Never "-0.0".
+    WriteTenths(buf, sizeof(buf), 3270);
+    EXPECT_STREQ(buf, "327.0");
+}

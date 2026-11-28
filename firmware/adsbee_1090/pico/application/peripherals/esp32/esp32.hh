@@ -39,8 +39,6 @@ class ESP32 : public SPICoprocessorSlaveInterface {
      * @retval True if successful, false if there was an error.
      */
     bool Update();
-    // Update at once when a sync pulse went out, so the ESP32 gets its MLAT count while the edge is recent.
-    bool UpdateIsDue() override;
 
     inline bool IsEnabled() { return bsp.has_esp32 && enabled_; }
     inline void SetEnable(bool enabled) {

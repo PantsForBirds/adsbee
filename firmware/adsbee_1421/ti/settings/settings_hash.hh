@@ -13,7 +13,7 @@ enum Scope : uint8_t {
 
 // Left out of kScopeFleet: the receiver position values and the ASTERIX SIC.
 inline uint32_t Compute(const SettingsManager::Settings& settings, Scope scope) {
-    static_assert(kSettingsVersion == 7 && sizeof(SettingsManager::Settings) == 79,
+    static_assert(kSettingsVersion == 8 && sizeof(SettingsManager::Settings) == 79,
                   "Settings changed: add the new fields below, then update this check.");
     ConfigHasher hasher;
 

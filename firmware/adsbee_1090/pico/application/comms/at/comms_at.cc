@@ -1,11 +1,14 @@
 #include <stdio.h>  // for printing
 
 #include <cctype>    // for isalnum
+#include <cmath>     // for sqrtf
 #include <cstring>   // for strcat
 #include <iostream>  // for AT command ingestion
 
 #include "adsbee.hh"
 #include "comms.hh"
+#include "geo_utils.hh"
+#include "hard_fault.hh"
 #include "core1.hh"  // For turning multiprocessor on / off during firmware flashing.
 #include "cpu_utils.hh"
 #include "eeprom.hh"
@@ -23,6 +26,7 @@
 #include "ram_monitor.hh"
 #include "feed_ram_budget.hh"
 #include "feed_receiver_id.hh"
+#include "ble_output_status.hh"
 #include "settings.hh"
 #include "settings_hash.hh"
 #include "static_ip_config.hh"
@@ -120,6 +124,33 @@ CPP_AT_CALLBACK(CommsManager::ATAutoUpdateCallback) {
     CPP_AT_ERROR("Operator '%c' not supported.", op);
 }
 
+CPP_AT_CALLBACK(CommsManager::ATBLEOutputCallback) {
+    switch (op) {
+        case '?':
+            CPP_AT_CMD_PRINTF("=%s(MODE),%s(STATUS)",
+                              SettingsManager::BLEOutputModeToStr(settings_manager.settings.ble_output_mode),
+                              BLEOutputStatusStr(esp32_ll.ble_output_status));
+            CPP_AT_SILENT_SUCCESS();
+            break;
+        case '=': {
+            char mode_str[16] = {0};
+            if (!CPP_AT_HAS_ARG(0) || args[0].size() >= sizeof(mode_str)) {
+                CPP_AT_ERROR("Requires a mode. AT+BLE_OUTPUT=<OFF|GDL90|FLARM_NMEA>");
+            }
+            memcpy(mode_str, args[0].data(), args[0].size());
+            SettingsManager::BLEOutputMode mode;
+            if (!SettingsManager::BLEOutputModeFromStr(mode_str, mode)) {
+                CPP_AT_ERROR("Invalid Bluetooth output mode '%s'. AT+BLE_OUTPUT=<OFF|GDL90|FLARM_NMEA>", mode_str);
+            }
+            settings_manager.settings.ble_output_mode = mode;
+            settings_manager.SyncToCoprocessors();  // The ESP32 runs the Bluetooth server.
+            CPP_AT_SUCCESS();
+            break;
+        }
+    }
+    CPP_AT_ERROR("Operator '%c' not supported.", op);
+}
+
 CPP_AT_CALLBACK(CommsManager::ATBaudRateCallback) {
     switch (op) {
         case '?':
@@ -144,6 +175,13 @@ CPP_AT_CALLBACK(CommsManager::ATBaudRateCallback) {
             }
             uint32_t baud_rate;
             CPP_AT_TRY_ARG2NUM(1, baud_rate);
+            if (iface == SettingsManager::kGNSSUART &&
+                (baud_rate < SettingsManager::Settings::kMinGNSSUARTBaudrate ||
+                 baud_rate > SettingsManager::Settings::kMaxGNSSUARTBaudrate)) {
+                CPP_AT_ERROR("GNSS_UART baud rate must be %lu-%lu.",
+                             (unsigned long)SettingsManager::Settings::kMinGNSSUARTBaudrate,
+                             (unsigned long)SettingsManager::Settings::kMaxGNSSUARTBaudrate);
+            }
             if (!SetBaudRate(iface, baud_rate)) {
                 CPP_AT_ERROR("Unable to set baud rate %d on interface %d.", baud_rate, iface);
             }
@@ -427,10 +465,18 @@ CPP_AT_CALLBACK(CommsManager::ATGNSSFixCallback) {
     if (fix.utc_time_valid) {
         snprintf(utc_time, sizeof(utc_time), "%02u:%02u:%02u", fix.utc_hour, fix.utc_minute, fix.utc_second);
     }
-    CPP_AT_CMD_PRINTF("=%d,%.6f,%.6f,%ld,%.1f,%ld,%u,%s,%lu", gnss->HasValidFix(), fix.latitude_deg,
-                      fix.longitude_deg, static_cast<long>(fix.altitude_ft), fix.heading_deg,
-                      static_cast<long>(fix.speed_kts), static_cast<unsigned int>(fix.num_satellites), utc_time,
-                      static_cast<unsigned long>(gnss->pps_count()));
+    // GNSS time on the MLAT counter: fresh PPS fit, MLAT counter rate vs GNSS time (ppm), last PPS residual and its RMS
+    // (ns).
+    const PPSClock& pps = gnss->pps_clock();
+    char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+    FormatAWBDeg(lat_str, sizeof(lat_str), fix.latitude_awb, 6);
+    FormatAWBDeg(lon_str, sizeof(lon_str), fix.longitude_awb, 6);
+    CPP_AT_CMD_PRINTF("=%d,%s,%s,%ld,%.1f,%ld,%u,%s,%lu,%d,%.3f,%ld,%lu", gnss->HasValidFix(), lat_str, lon_str,
+                      static_cast<long>(fix.altitude_ft), fix.heading_deg, static_cast<long>(fix.speed_kts),
+                      static_cast<unsigned int>(fix.num_satellites), utc_time,
+                      static_cast<unsigned long>(gnss->pps_count()), pps.IsFresh(time_us_32()),
+                      static_cast<double>(pps.GetRateErrorPPB()) / 1000.0, static_cast<long>(pps.GetLastResidualNs()),
+                      static_cast<unsigned long>(sqrtf(static_cast<float>(pps.GetMeanSquareResidualNs2()))));
     CPP_AT_SILENT_SUCCESS();
 }
 
@@ -487,8 +533,19 @@ CPP_AT_CALLBACK(CommsManager::ATDeviceInfoCallback) {
             CPP_AT_PRINTF("RP2040 RAM: %lu B heap, %lu B free, stack peak %lu B core 0, %lu B core 1\r\n",
                           (unsigned long)ram.heap_in_use_bytes, (unsigned long)ram.free_bytes,
                           (unsigned long)ram.core_0_stack_peak_bytes, (unsigned long)ram.core_1_stack_peak_bytes);
+            {
+                char fault_str[80];
+                FaultRecord::Format(HardFault::BootState(), fault_str, sizeof(fault_str));
+                CPP_AT_PRINTF("RP2040 Last Fault: %s\r\n", fault_str);
+            }
             CPP_AT_PRINTF("RP2040 Aircraft Dictionary: %u aircraft max\r\n",
                           (unsigned)AircraftDictionary::kMaxNumAircraft);
+            CPP_AT_PRINTF("RP2040 Report frames dropped:");
+            for (uint16_t iface = 0; iface < SettingsManager::kNumSerialInterfaces; iface++) {
+                CPP_AT_PRINTF(" %s %lu", SettingsManager::kSerialInterfaceStrs[iface],
+                              (unsigned long)tx_drop_count[iface]);
+            }
+            CPP_AT_PRINTF("\r\n");
 
             for (uint16_t i = 0; i < SettingsManager::DeviceInfo::kNumOTAKeys; i++) {
                 CPP_AT_PRINTF("OTA Key %d: %s\r\n", i, device_info.ota_keys[i]);
@@ -1841,8 +1898,7 @@ CPP_AT_CALLBACK(CommsManager::ATNetworkInfoCallback) {
 CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
     switch (op) {
         case '?':
-            // Print out reporting protocols for CONSOLE and COMMS_UART.
-            for (uint16_t iface = 0; iface < SettingsManager::SerialInterface::kGNSSUART; iface++) {
+            for (uint16_t iface = 0; iface < SettingsManager::SerialInterface::kNumSerialInterfaces; iface++) {
                 CPP_AT_CMD_PRINTF(
                     "=%s,%s", SettingsManager::kSerialInterfaceStrs[iface],
                     SettingsManager::kReportingProtocolStrs[settings_manager.settings.reporting_protocols[iface]]);
@@ -1855,9 +1911,9 @@ CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
                 CPP_AT_ERROR("Requires two arguments: AT+PROTOCOL=<iface>,<protocol>.");
             }
 
-            // Match the selected serial interface. Don't allow selection of the GNSS interface.
+            // Match the selected serial interface.
             SettingsManager::SerialInterface selected_iface = SettingsManager::SerialInterface::kNumSerialInterfaces;
-            for (uint16_t iface = 0; iface < SettingsManager::SerialInterface::kGNSSUART; iface++) {
+            for (uint16_t iface = 0; iface < SettingsManager::SerialInterface::kNumSerialInterfaces; iface++) {
                 if (args[0].compare(SettingsManager::kSerialInterfaceStrs[iface]) == 0) {
                     selected_iface = static_cast<SettingsManager::SerialInterface>(iface);
                     break;
@@ -1891,9 +1947,10 @@ CPP_AT_CALLBACK(CommsManager::ATProtocolOutCallback) {
 CPP_AT_HELP_CALLBACK(CommsManager::ATProtocolOutHelpCallback) {
     CPP_AT_PRINTF("\tSet the reporting protocol used on a given serial interface:\r\n");
     CPP_AT_PRINTF("\tAT+PROTOCOL_OUT=<iface>,<protocol>\r\n\t<iface> = ");
-    for (uint16_t iface = 0; iface < SettingsManager::kGNSSUART; iface++) {
+    for (uint16_t iface = 0; iface < SettingsManager::kNumSerialInterfaces; iface++) {
         CPP_AT_PRINTF("%s ", SettingsManager::kSerialInterfaceStrs[iface]);
     }
+    CPP_AT_PRINTF("\r\n\tWarning: A GNSS receiver installed on GNSS_UART will receive protocols being reported on GNSS_UART.");
     CPP_AT_PRINTF("\r\n\t<protocol> = ");
     for (uint16_t protocol = 0; protocol < SettingsManager::kNumProtocols; protocol++) {
         CPP_AT_PRINTF("\r\n\t\t%s ", SettingsManager::kReportingProtocolStrs[protocol]);
@@ -1979,21 +2036,23 @@ void ATRxPositionHelpCallback() {
 CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
     switch (op) {
         case '?': {
+            char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+            FormatAWBDeg(lat_str, sizeof(lat_str), adsbee.rx_position.latitude_awb, 6);
+            FormatAWBDeg(lon_str, sizeof(lon_str), adsbee.rx_position.longitude_awb, 6);
             CPP_AT_PRINTF(
                 "Receiver Position:\r\n"
                 "\tSource: %s [%s] \r\n"
-                "\tLatitude: %.6f deg\r\n"
-                "\tLongitude: %.6f deg\r\n"
+                "\tLatitude: %s deg\r\n"
+                "\tLongitude: %s deg\r\n"
                 "\tGNSS Altitude: %d ft\r\n"
                 "\tBarometric Altitude: %d ft\r\n"
                 "\tHeading: %.1f deg\r\n"
                 "\tSpeed: %d kts\r\n"
                 "\tICAO: 0x%06X [%s]\r\n",
                 SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
-                adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", adsbee.rx_position.latitude_deg,
-                adsbee.rx_position.longitude_deg, adsbee.rx_position.gnss_altitude_ft,
-                adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts,
-                adsbee.rx_position.icao_address,
+                adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", lat_str, lon_str,
+                adsbee.rx_position.gnss_altitude_ft, adsbee.rx_position.baro_altitude_ft,
+                adsbee.rx_position.heading_deg, adsbee.rx_position.speed_kts, adsbee.rx_position.icao_address,
                 adsbee.rx_position.source ==
                         SettingsManager::RxPosition::PositionSource::kPositionSourceAircraftMatchingICAO
                     ? "IN USE"
@@ -2024,21 +2083,27 @@ CPP_AT_CALLBACK(CommsManager::ATRxPositionCallback) {
 
                                 if (CPP_AT_HAS_ARG(1)) {
                                     // Set latitude.
-                                    float latitude_deg;
-                                    CPP_AT_TRY_ARG2NUM(1, latitude_deg);
-                                    if (latitude_deg < -90.0 || latitude_deg > 90.0) {
-                                        CPP_AT_ERROR("Latitude %.6f out of range (-90.0 to 90.0).", latitude_deg);
+                                    int32_t latitude_e7;
+                                    if (!ParseDegE7(args[1], latitude_e7)) {
+                                        CPP_AT_ERROR("Error converting argument 1.");
                                     }
-                                    adsbee.rx_position.latitude_deg = latitude_deg;
+                                    if (latitude_e7 < -900000000 || latitude_e7 > 900000000) {
+                                        CPP_AT_ERROR("Latitude %.*s out of range (-90.0 to 90.0).",
+                                                     static_cast<int>(args[1].size()), args[1].data());
+                                    }
+                                    adsbee.rx_position.latitude_awb = DegE7ToAWB(latitude_e7);
                                 }
                                 if (CPP_AT_HAS_ARG(2)) {
                                     // Set longitude.
-                                    float longitude_deg;
-                                    CPP_AT_TRY_ARG2NUM(2, longitude_deg);
-                                    if (longitude_deg < -180.0 || longitude_deg > 180.0) {
-                                        CPP_AT_ERROR("Longitude %.6f out of range (-180.0 to 180.0).", longitude_deg);
+                                    int32_t longitude_e7;
+                                    if (!ParseDegE7(args[2], longitude_e7)) {
+                                        CPP_AT_ERROR("Error converting argument 2.");
                                     }
-                                    adsbee.rx_position.longitude_deg = longitude_deg;
+                                    if (longitude_e7 < -1800000000 || longitude_e7 > 1800000000) {
+                                        CPP_AT_ERROR("Longitude %.*s out of range (-180.0 to 180.0).",
+                                                     static_cast<int>(args[2].size()), args[2].data());
+                                    }
+                                    adsbee.rx_position.longitude_awb = DegE7ToAWB(longitude_e7);
                                 }
                                 if (CPP_AT_HAS_ARG(3)) {
                                     // Set GNSS altitude.
@@ -2171,6 +2236,8 @@ static void PrintSettingsJSON() {
                   (unsigned long)s.baud_rates[SettingsManager::SerialInterface::kCommsUART],
                   (unsigned long)s.baud_rates[SettingsManager::SerialInterface::kGNSSUART]);
     CPP_AT_PRINTF("\"BIAS_TEE_ENABLE\":[%d,%d],", adsbee.BiasTeeIsEnabled(), s.subg_bias_tee_enabled);
+    CPP_AT_PRINTF("\"BLE_OUTPUT\":[\"%s\",\"%s\"],", SettingsManager::BLEOutputModeToStr(s.ble_output_mode),
+                  BLEOutputStatusStr(esp32_ll.ble_output_status));
     CPP_AT_PRINTF("\"ETHERNET\":[%d],", cns.ethernet_enabled);
     PrintStaticIPJSON("ETHERNET_IP", s.ethernet_ipv4, s.ethernet_ipv6);
     CPP_AT_PRINTF("\"ESP32_ENABLE\":[%d],", esp32.IsEnabled());
@@ -2194,9 +2261,10 @@ static void PrintSettingsJSON() {
     CPP_AT_PRINTF("\"LOG_LEVEL\":[\"%s\"],", SettingsManager::kConsoleLogLevelStrs[s.log_level]);
     CPP_AT_PRINTF("\"MAVLINK_ID\":[%d,%d],", s.mavlink_system_id, s.mavlink_component_id);
     CPP_AT_PRINTF("\"NTP_SERVER\":[\"%s\"],", s.ntp_server);
-    CPP_AT_PRINTF("\"PROTOCOL_OUT\":[\"%s\",\"%s\"],",
+    CPP_AT_PRINTF("\"PROTOCOL_OUT\":[\"%s\",\"%s\",\"%s\"],",
                   SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kConsole]],
-                  SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kCommsUART]]);
+                  SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kCommsUART]],
+                  SettingsManager::kReportingProtocolStrs[s.reporting_protocols[SettingsManager::kGNSSUART]]);
     CPP_AT_PRINTF("\"REMOTE_ID\":[%d,%u,\"0x%02X\",%d],", s.remote_id_rx_enabled, s.remote_id_transports,
                   esp32_ll.remote_id_status, RemoteIDAllowedTransports());
     CPP_AT_PRINTF("\"REMOTE_ID_TX\":[%d,%u,\"%s\",", s.remote_id_tx_enabled, s.remote_id_tx_transports,
@@ -2205,12 +2273,15 @@ static void PrintSettingsJSON() {
                   JSONEscapeStr(s.remote_id_tx_operator_id, esc, sizeof(esc)), esp32_ll.remote_id_status,
                   RemoteIDAllowedTransports());
     CPP_AT_PRINTF("\"RX_ENABLE\":[%d,%d],", adsbee.Receiver1090IsEnabled(), s.subg_rx_enabled);
-    CPP_AT_PRINTF("\"RX_POSITION\":[\"%s\",\"%s\",%.6f,%.6f,%d,%d,%.1f,%d,\"%06X\"],",
+    char rx_lat_str[kAWBDegStrMaxLen], rx_lon_str[kAWBDegStrMaxLen];
+    FormatAWBDeg(rx_lat_str, sizeof(rx_lat_str), adsbee.rx_position.latitude_awb, 6);
+    FormatAWBDeg(rx_lon_str, sizeof(rx_lon_str), adsbee.rx_position.longitude_awb, 6);
+    CPP_AT_PRINTF("\"RX_POSITION\":[\"%s\",\"%s\",%s,%s,%d,%d,%.1f,%d,\"%06X\"],",
                   SettingsManager::RxPosition::kPositionSourceStrs[adsbee.rx_position.source],
-                  adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", adsbee.rx_position.latitude_deg,
-                  adsbee.rx_position.longitude_deg, (int)adsbee.rx_position.gnss_altitude_ft,
-                  (int)adsbee.rx_position.baro_altitude_ft, adsbee.rx_position.heading_deg,
-                  (int)adsbee.rx_position.speed_kts, (unsigned)adsbee.rx_position.icao_address);
+                  adsbee.rx_position_available ? "OK" : "NOT AVAILABLE", rx_lat_str, rx_lon_str,
+                  (int)adsbee.rx_position.gnss_altitude_ft, (int)adsbee.rx_position.baro_altitude_ft,
+                  adsbee.rx_position.heading_deg, (int)adsbee.rx_position.speed_kts,
+                  (unsigned)adsbee.rx_position.icao_address);
     CPP_AT_PRINTF("\"SUBG_ENABLE\":[\"%s\"],",
                   SettingsManager::EnableStateToATValueStr(adsbee.subg_radio_ll.IsEnabledState()));
     CPP_AT_PRINTF("\"SUBG_MODE\":[\"%s\"],", SettingsManager::kSubGHzModeStrs[s.subg_mode]);
@@ -2628,8 +2699,9 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "BAUD_RATE",
      .min_args = 0,
      .max_args = 2,
-     .help_string = "AT+BAUD_RATE=<iface>,<baud_rate>\r\n\tSet the baud rate of a serial "
-                    "interface.\r\n\tAT+BAUD_RATE?\r\n\tQuery the baud rate of all serial interfaces.",
+     .help_string = "AT+BAUD_RATE=<iface>,<baud_rate>\r\n\tSet the baud rate of a serial interface. GNSS_UART: "
+                    "4800-921600, default 921600. A u-blox MAX-M10 is switched to it; set a GENERIC module's own rate "
+                    "(most power up at 9600).\r\n\tAT+BAUD_RATE?\r\n\tQuery the baud rate of all serial interfaces.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBaudRateCallback, comms_manager)},
     {.command = "BIAS_TEE_ENABLE",
      .min_args = 0,
@@ -2637,6 +2709,14 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .help_string = "AT+BIAS_TEE_ENABLE=<1090_bt_enabled>,<subg_bt_enabled>\r\n\tEnable or disable the bias "
                     "tees.\r\n\tBIAS_TEE_ENABLE?\r\n\tQuery the status of the bias tees.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBiasTeeEnableCallback, comms_manager)},
+    {.command = "BLE_OUTPUT",
+     .min_args = 0,
+     .max_args = 1,
+     .help_string = "AT+BLE_OUTPUT=<OFF|GDL90|FLARM_NMEA>\r\n\tStream to one Bluetooth LE client (Nordic UART and HM-10 "
+                    "serial services). GDL90: the GDL90 sent to WiFi clients. FLARM_NMEA: FLARM data port sentences "
+                    "(PFLAU, PFLAA, GPRMC, GPGGA); traffic needs ownship (AT+RX_POSITION GNSS or ICAO). Off by default. Without PSRAM it needs the WiFi "
+                    "access point, WiFi station and Remote ID over Bluetooth off.\r\n\tAT+BLE_OUTPUT?\r\n\tQuery the mode and its state.",
+     .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATBLEOutputCallback, comms_manager)},
     {.command = "BOOT_USB_UF2",
      .min_args = 0,
      .max_args = 1,
@@ -2658,8 +2738,8 @@ const CppAT::ATCommandDef_t at_command_list[] = {
     {.command = "DEVICE_INFO",
      .min_args = 0,
      .max_args = 5,  // TODO: check this value.
-     .help_string = "AT+DEVICE_INFO?\r\n\tQuery device information, including RP2040 RAM use and aircraft "
-                    "dictionary size.",
+     .help_string = "AT+DEVICE_INFO?\r\n\tQuery device information, including RP2040 RAM use, aircraft "
+                    "dictionary size and report frames dropped per serial interface.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATDeviceInfoCallback, comms_manager)},
     {.command = "ETHERNET",
      .min_args = 0,
@@ -2770,8 +2850,10 @@ const CppAT::ATCommandDef_t at_command_list[] = {
      .min_args = 0,
      .max_args = 0,
      .help_string = "AT+GNSS_FIX?\r\n\tReturn fix validity, latitude and longitude in degrees, altitude in feet, "
-                    "heading in degrees true, groundspeed in knots, active satellites, UTC time, and PPS count "
-                    "since the last GNSS enable or disable operation.",
+                    "heading in degrees true, groundspeed in knots, active satellites, UTC time, PPS count "
+                    "since the last GNSS enable or disable operation, then GNSS time on the MLAT counter: PPS valid "
+                    "(1: UTC timestamps available), MLAT clock rate vs GNSS time in ppm, last PPS residual in ns and "
+                    "its RMS in ns.",
      .callback = CPP_AT_BIND_MEMBER_CALLBACK(CommsManager::ATGNSSFixCallback, comms_manager)},
     {.command = "HOSTNAME",
      .min_args = 0,

@@ -2,12 +2,14 @@
 #include <cstring>
 #include <string>
 
+#include "awb_test_utils.hh"
+#include "geo_utils.hh"
 #include "gtest/gtest.h"
 #include "settings.hh"
 #include "settings_migration.hh"
 
 // Settings blobs written by each release's own Settings struct (settings_blobs/gen.cc), with a WiFi station, hostname,
-// AP, Ethernet and a feed configured. Main must keep all of them across an upgrade.
+// AP, Ethernet, a feed and a fixed receiver position configured. Main must keep all of them across an upgrade.
 
 namespace {
 
@@ -21,6 +23,7 @@ const ReleaseBlob kReleaseBlobs[] = {
     {"0.9.0-rc4", 10, false}, {"0.9.0-rc9", 11, false}, {"0.9.0-rc19", 12, true},
     {"0.9.0", 12, true},      {"0.9.1-rc2", 14, true},  {"0.9.1-rc6", 15, true},
     {"0.9.1-rc7", 17, true},  {"0.9.1-rc8", 18, true},  {"0.9.1-rc11", 19, true},
+    {"0.10.0-rc1", 20, true},
 };
 
 // Reads a blob the way Load() does: sizeof(Settings) bytes, the tail past the old struct left as erased EEPROM.
@@ -73,6 +76,7 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         EXPECT_EQ(out.settings_version, kSettingsVersion);
         ExpectCoreNetworkSettingsKept(out.core_network_settings);
         EXPECT_FALSE(out.auto_update_enabled);  // Opt-in: off after every upgrade.
+        EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
         EXPECT_EQ(out.ip_mode, SettingsManager::kIPModeDual);
         EXPECT_FALSE(out.ethernet_ipv4.is_static);
         EXPECT_FALSE(out.wifi_sta_ipv4.is_static);
@@ -89,6 +93,9 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         EXPECT_EQ(static_cast<int>(out.log_level), 3);
         EXPECT_EQ(static_cast<int>(out.reporting_protocols[1]), 2);
         EXPECT_EQ(out.baud_rates[1], 921600u);
+        // GNSS receiver type NONE: the stored GNSS baud stays (the default only moves for a u-blox MAX-M10).
+        EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverNone);
+        EXPECT_EQ(out.baud_rates[2], 9600u);
         EXPECT_TRUE(out.feeds_enabled);
         EXPECT_STREQ(out.feed_uris[1], "feed.adsb.lol");
         EXPECT_EQ(out.feed_ports[1], 30004);
@@ -97,5 +104,23 @@ TEST(SettingsReleaseBlobs, EveryReleaseKeepsItsNetworkSettings) {
         EXPECT_EQ(out.feed_receiver_ids[1][7], 0xA7);
         EXPECT_EQ(out.mavlink_system_id, 9);
         EXPECT_EQ(out.mavlink_component_id, 200);
+        // Float degrees before v21, AWB since.
+        EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
+        EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(-34.603722f));
+        EXPECT_EQ(out.rx_position.longitude_awb, FloatDegToAWB(-158.381592f));
+        EXPECT_NEAR(AWBToDeg(out.rx_position.latitude_awb), -34.603722, 1e-6);
+        EXPECT_NEAR(AWBToDeg(out.rx_position.longitude_awb), -158.381592, 1e-5);
     }
+}
+
+// The 0.10.0-rc1 blob with a u-blox MAX-M10 selected: its GNSS baud, 9600 (the old default), moves to the new default.
+TEST(SettingsReleaseBlobs, MaxM10At9600MovesToNewGNSSBaudDefault) {
+    static uint8_t raw[sizeof(SettingsManager::Settings)];
+    ASSERT_TRUE(ReadBlob("0.10.0-rc1", raw, sizeof(raw)));
+    raw[offsetof(SettingsManager::Settings, gnss_receiver_type)] = SettingsManager::kGNSSReceiverUBXMIA;
+    SettingsManager::Settings out;
+    ASSERT_TRUE(SettingsMigrator::Migrate(raw, sizeof(raw), 20, out));
+    EXPECT_EQ(out.gnss_receiver_type, SettingsManager::kGNSSReceiverUBXMIA);
+    EXPECT_EQ(out.baud_rates[2], SettingsManager::Settings::kDefaultGNSSUARTBaudrate);
+    EXPECT_EQ(out.baud_rates[1], 921600u);
 }

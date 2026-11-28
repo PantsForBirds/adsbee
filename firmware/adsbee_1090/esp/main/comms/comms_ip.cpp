@@ -54,6 +54,9 @@ static const uint32_t kFeedBacklogFlushIntervalMs = 5;
 // Bytes a server sends back on a Beast feed are read in chunks of this size, a bounded number per pass.
 static const uint16_t kFeedRecvChunkBytes = 64;
 static const uint16_t kFeedRecvMaxChunksPerPass = 16;
+// While the capabilities answer can still arrive, a feed's socket is read on every pass. After that it is only drained
+// (pings, a late answer) at this interval: a recv() per feed per pass cost CPU time the 5-feed throughput needs.
+static const uint32_t kFeedRecvDrainIntervalMs = 1000;
 
 // #define ENABLE_TCP_SOCKET_RATE_LIMITING
 #ifdef ENABLE_TCP_SOCKET_RATE_LIMITING
@@ -123,6 +126,19 @@ static void* FeedBacklogAlloc(size_t num_bytes) {
     }
     // Internal RAM is shared with WiFi, lwIP and the web server: a feed without a backlog drops whole batches.
     if (HardwareCapabilities::GetInternalFreeBytes() < kFeedBacklogMinInternalFreeBytes) {
+        return nullptr;
+    }
+    return heap_caps_malloc(num_bytes, MALLOC_CAP_8BIT);
+}
+
+// Room reserved for a batch before it is sent, to hold its tail if the socket takes only part (FeedSendBuffer). It may
+// go below kFeedBacklogMinInternalFreeBytes, down to the heap floor that drops all feed batches. Without it the batch
+// is dropped whole: the stream never carries a cut frame, and low memory never closes the feed.
+static void* FeedBacklogTailAlloc(size_t num_bytes) {
+    if (HardwareCapabilities::HasPSRAM()) {
+        return heap_caps_malloc(num_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (HardwareCapabilities::GetInternalFreeBytes() < kHeapBackPressureThresholdBytes + num_bytes) {
         return nullptr;
     }
     return heap_caps_malloc(num_bytes, MALLOC_CAP_8BIT);
@@ -592,6 +608,15 @@ void CommsManager::IPWANTask(void* pvParameters) {
         if (!UpdateReporting(active_report_sinks, num_active_report_sinks, &reporting_composite_array)) {
             CONSOLE_ERROR("CommsManager::IPWANTask", "Error during UpdateReporting for feeds.");
         }
+        // The SPI task overwrites the status while we copy it: use a copy whose seq didn't change across it.
+        const volatile uint8_t& status_seq = object_dictionary.composite_device_status.rp2040.pps_time.seq;
+        uint8_t seq = status_seq;
+        ObjectDictionary::PPSTime pps_time;
+        memcpy(&pps_time, &object_dictionary.composite_device_status.rp2040.pps_time, sizeof(pps_time));
+        if (pps_time.seq == seq && status_seq == seq &&
+            !ReportGPSTime(active_report_sinks, num_active_report_sinks, pps_time)) {
+            CONSOLE_ERROR("CommsManager::IPWANTask", "Error sending the GPS time frame.");
+        }
     }
 
     // Close all sockets while exiting.
@@ -614,7 +639,9 @@ uint32_t CommsManager::FeedConfigCRC(uint16_t feed_index) {
                            crc);
     crc = crc32_ieee_802_3(reinterpret_cast<const uint8_t*>(&s.feed_transports[feed_index]),
                            sizeof(s.feed_transports[0]), crc);
-    return crc32_ieee_802_3(s.feed_receiver_ids[feed_index], sizeof(s.feed_receiver_ids[0]), crc);
+    crc = crc32_ieee_802_3(s.feed_receiver_ids[feed_index], sizeof(s.feed_receiver_ids[0]), crc);
+    // GNSS on or off changes the capabilities a Beast feed offers (kBeastCapGPSTime): reconnect to ask again.
+    return crc32_ieee_802_3(reinterpret_cast<const uint8_t*>(&s.gnss_enabled), sizeof(s.gnss_enabled), crc);
 }
 
 void CommsManager::CloseFeedSocket(uint16_t feed_index) {
@@ -762,7 +789,7 @@ bool CommsManager::ConnectFeedUDP(uint16_t feed_index) {
 bool CommsManager::SendFeedDatagrams(uint16_t feed_index, const char* buf, uint16_t buf_len, uint16_t num_msgs) {
     feed_send_heap_is_low_ = FeedSendHeapIsLow();
     if (feed_send_heap_is_low_) {
-        feed_num_dropped_msgs_[feed_index] += num_msgs;
+        CountFeedDrops(feed_index, num_msgs);
         return true;
     }
     SettingsManager::ReportingProtocol protocol = settings_manager.settings.feed_protocols[feed_index];
@@ -773,7 +800,7 @@ bool CommsManager::SendFeedDatagrams(uint16_t feed_index, const char* buf, uint1
         if (send(feed_sock_[feed_index], bytes + offset, datagram_len, MSG_DONTWAIT) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM) {
                 // lwIP is briefly out of buffers: the rest of the batch is lost, like a dropped datagram.
-                feed_num_dropped_msgs_[feed_index] += num_msgs;
+                CountFeedDrops(feed_index, num_msgs);
                 return true;
             }
             CONSOLE_ERROR("CommsManager::SendBuf", "Closing UDP feed %d (%s:%d): errno %d (%s).", feed_index,
@@ -829,6 +856,7 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
          .backlog_capacity_bytes =
              HardwareCapabilities::HasPSRAM() ? kFeedBacklogBytesPSRAM : kFeedBacklogBytesInternal,
          .alloc = FeedBacklogAlloc,
+         .alloc_tail = FeedBacklogTailAlloc,
          .dealloc = heap_caps_free},
         get_time_since_boot_ms());
     feed_wait_budget_ms_[feed_index] = kFeedWaitBudgetMs;
@@ -868,9 +896,9 @@ bool CommsManager::FinishFeedSocketConnect(uint16_t feed_index) {
 }
 
 uint16_t CommsManager::BeastCapsToOffer() {
-    uint16_t offer = 0;
-    if (settings_manager.settings.remote_id_rx_enabled) offer |= BeastReporter::kBeastCapRemoteID;
-    return offer & BeastReporter::kBeastCapsSendable;
+    // Every ADSBee 1090 board with an ESP32 has a GNSS PPS input (BSP gnss_pps_pin), so GNSS on is enough.
+    return BeastReporter::CapsToOffer(settings_manager.settings.remote_id_rx_enabled,
+                                      settings_manager.settings.gnss_enabled);
 }
 
 void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {
@@ -878,8 +906,12 @@ void CommsManager::ReceiveFeedSocket(uint16_t feed_index) {
     BeastReporter::CapsSession& caps = feed_caps_[feed_index];
     const bool was_waiting = caps.state() == BeastReporter::CapsSession::kWaiting;
     uint32_t timestamp_ms = get_time_since_boot_ms();
+    if (!was_waiting && timestamp_ms - feed_rx_last_drain_timestamp_ms_[feed_index] < kFeedRecvDrainIntervalMs) {
+        return;
+    }
+    feed_rx_last_drain_timestamp_ms_[feed_index] = timestamp_ms;
     uint8_t buf[kFeedRecvChunkBytes];
-    // Drain every pass, also after the check, so pings can't fill the receive window.
+    // Also drained after the check, so pings can't fill the receive window.
     for (uint16_t chunk = 0; chunk < kFeedRecvMaxChunksPerPass; chunk++) {
         int len = recv(feed_sock_[feed_index], buf, sizeof(buf), MSG_DONTWAIT);
         if (len <= 0) {
@@ -960,16 +992,13 @@ bool CommsManager::SendBuf(uint16_t iface, const char* buf, uint16_t buf_len, ui
         case FeedSendBuffer::kDropped:
             // This feed is behind. Its messages are counted and logged by UpdateFeedSendBuffers(); other feeds carry
             // on.
-            feed_num_dropped_msgs_[iface] += num_msgs;
+            CountFeedDrops(iface, num_msgs);
             break;
         case FeedSendBuffer::kError:
         default:
-            // Either the socket failed, or it took part of a batch and there was no memory to keep the rest.
-            CONSOLE_ERROR("CommsManager::SendBuf",
-                          "Closing feed %d (%s:%d): socket error or no backlog memory for a cut %d byte batch (last "
-                          "errno %d, %s).",
-                          iface, settings_manager.settings.feed_uris[iface],
-                          settings_manager.settings.feed_ports[iface], buf_len, errno, strerror(errno));
+            CONSOLE_ERROR("CommsManager::SendBuf", "Closing feed %d (%s:%d): socket error, errno %d (%s).", iface,
+                          settings_manager.settings.feed_uris[iface], settings_manager.settings.feed_ports[iface], errno,
+                          strerror(errno));
             CloseFeedSocket(iface);
             return false;
     }

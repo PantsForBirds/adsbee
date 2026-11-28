@@ -41,6 +41,9 @@ class CommsManager {
     // ~80 ms at 1 Mbaud. Must be a power of two.
     static constexpr uint16_t kUartTxRingBytes = 8192;
     static_assert((kUartTxRingBytes & (kUartTxRingBytes - 1)) == 0, "kUartTxRingBytes must be a power of two.");
+    // Largest piece of the ring handed to one UART2_write. Ring space is freed only when a write completes, so small
+    // pieces free it steadily and keep the bounded wait for space accurate (256 B = 2.6 ms at 1 Mbaud).
+    static constexpr uint16_t kUartTxSegmentMaxBytes = 256;
 
     struct CommsManagerConfig {
         uint8_t uart_index = bsp.kSubGUARTIndex;
@@ -330,6 +333,8 @@ class CommsManager {
     uint16_t mavlink1_report_uid_index_ = 0;
     uint16_t mavlink2_report_uid_index_ = 0;
     uint16_t gdl90_report_uid_index_ = 0;
+    // Ownship of the round (AircraftDictionary::OwnshipICAOAddress()), set with its ownship report.
+    uint32_t gdl90_ownship_icao_ = UINT32_MAX;
     uint16_t aircraftjson_report_uid_index_ = 0;
     uint16_t asterix_report_uid_index_ = 0;
 

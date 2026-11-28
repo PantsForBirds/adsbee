@@ -1,4 +1,5 @@
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "awb_utils.h"
 #include "decode_utils.hh"  // For lat/lon wrapping utils.
 #include "gtest/gtest.h"
@@ -661,8 +662,8 @@ TEST(NASACPR, AirborneGlobalDecode) {
 
         // rpos0 reflects the result when the even message is most recent.
         if (result_valid) {
-            EXPECT_EQ(result.lat_deg, awb2lat(test.rpos0_lat_awb));
-            EXPECT_EQ(result.lon_deg, awb2lon(test.rpos0_lon_awb));
+            EXPECT_EQ(result.lat_awb, test.rpos0_lat_awb);
+            EXPECT_EQ(result.lon_awb, test.rpos0_lon_awb);
         }
 
         // Test with odd message most recent (rpos1).
@@ -674,8 +675,8 @@ TEST(NASACPR, AirborneGlobalDecode) {
         EXPECT_EQ(result_valid, test.rpos0_valid);
 
         if (result_valid) {
-            EXPECT_EQ(result.lat_deg, awb2lat(test.rpos1_lat_awb));
-            EXPECT_EQ(result.lon_deg, awb2lon(test.rpos1_lon_awb));
+            EXPECT_EQ(result.lat_awb, test.rpos1_lat_awb);
+            EXPECT_EQ(result.lon_awb, test.rpos1_lon_awb);
         }
     }
 }
@@ -683,14 +684,11 @@ TEST(NASACPR, AirborneGlobalDecode) {
 /**
  * The NASA CPR decoder doesn't handle longitude zone mapping, so this function allows any of the four possible logitude
  * zone solutions for a given result to match the output of the decoder.
- * @param[in] lon_deg Longitude in degrees, properly mapped to a given longitude quadrant (-180, 180).
- * @param[in] unmapped_lon_deg Longitude in degrees, in the first quadrant (0, 90).
+ * @param[in] lon_awb Longitude in AWB, properly mapped to a given longitude quadrant.
+ * @param[in] unmapped_lon_awb Longitude in AWB, in the first quadrant (0, 90 deg).
  */
-void ExpectEqLonDegToUnmappedLonDeg(float lon_deg, float unmapped_lon_deg) {
-    if (lon_deg < 0.0f) {
-        lon_deg += 360.0f;
-    }
-    EXPECT_NEAR(fmodf(lon_deg, 90.0f), unmapped_lon_deg, 0.0001f);
+void ExpectEqLonAWBToUnmappedLonAWB(uint32_t lon_awb, uint32_t unmapped_lon_awb) {
+    EXPECT_EQ(lon_awb % (1u << 30), unmapped_lon_awb);
 }
 
 TEST(NASACPR, SurfaceGlobalDecode) {
@@ -711,8 +709,8 @@ TEST(NASACPR, SurfaceGlobalDecode) {
 
         // rpos0 reflects the result when the even message is most recent.
         if (result_valid) {
-            EXPECT_EQ(result.lat_deg, awb2lat(test.rpos0_lat_awb));
-            ExpectEqLonDegToUnmappedLonDeg(result.lon_deg, awb2lon(test.rpos0_lon_awb));
+            EXPECT_EQ(result.lat_awb, test.rpos0_lat_awb);
+            ExpectEqLonAWBToUnmappedLonAWB(result.lon_awb, test.rpos0_lon_awb);
         }
 
         // Test with odd message most recent (rpos1).
@@ -725,8 +723,8 @@ TEST(NASACPR, SurfaceGlobalDecode) {
         EXPECT_EQ(result_valid, test.rpos0_valid);
 
         if (result_valid) {
-            EXPECT_EQ(result.lat_deg, awb2lat(test.rpos1_lat_awb));
-            ExpectEqLonDegToUnmappedLonDeg(result.lon_deg, awb2lon(test.rpos1_lon_awb));
+            EXPECT_EQ(result.lat_awb, test.rpos1_lat_awb);
+            ExpectEqLonAWBToUnmappedLonAWB(result.lon_awb, test.rpos1_lon_awb);
         }
     }
 }
@@ -748,8 +746,26 @@ TEST(NASACPR, AircraftDictionary) {
         aircraft_ptr->SetCPRLatLon(test.enc_odd_lat, test.enc_odd_lon, true, 2);
         // printf("Aircraft %d: %u %u\r\n", i, test.enc_evn_lat, test.enc_evn_lon);
         EXPECT_TRUE(aircraft_ptr->DecodeAirbornePosition());
-        EXPECT_NEAR(aircraft_ptr->latitude_deg, WrapCPRDecodeLatitude(awb2lat(test.rpos1_lat_awb)), 1e-4);
-        EXPECT_NEAR(aircraft_ptr->longitude_deg, WrapCPRDecodeLongitude(awb2lon(test.rpos1_lon_awb)), 1e-4);
+        EXPECT_EQ(aircraft_ptr->latitude_awb, test.rpos1_lat_awb);
+        EXPECT_EQ(aircraft_ptr->longitude_awb, test.rpos1_lon_awb);
+
+        // Same position as the float degrees the dictionary held before AWB, within float resolution: awb2lat() and
+        // awb2lon() went through 0..360 deg in float, one ulp of which is 2^-15 deg. The 5-decimal text matches within
+        // that plus rounding.
+        float lat_float = WrapCPRDecodeLatitude(awb2lat(test.rpos1_lat_awb));
+        float lon_float = WrapCPRDecodeLongitude(awb2lon(test.rpos1_lon_awb));
+        constexpr double kFloatPathUlpDeg = 1.0 / 32768.0;
+        EXPECT_NEAR(AWBToDeg(aircraft_ptr->latitude_awb), lat_float, kFloatPathUlpDeg);
+        EXPECT_NEAR(AWBToDeg(aircraft_ptr->longitude_awb), lon_float, kFloatPathUlpDeg);
+        char awb_text[kAWBDegStrMaxLen], float_text[16];
+        FormatAWBDeg(awb_text, sizeof(awb_text), aircraft_ptr->latitude_awb, 5);
+        snprintf(float_text, sizeof(float_text), "%.5f", lat_float);
+        EXPECT_NEAR(strtod(awb_text, nullptr), strtod(float_text, nullptr), kFloatPathUlpDeg + 1.01e-5)
+            << awb_text << " " << float_text;
+        FormatAWBDeg(awb_text, sizeof(awb_text), aircraft_ptr->longitude_awb, 5);
+        snprintf(float_text, sizeof(float_text), "%.5f", lon_float);
+        EXPECT_NEAR(strtod(awb_text, nullptr), strtod(float_text, nullptr), kFloatPathUlpDeg + 1.01e-5)
+            << awb_text << " " << float_text;
         dictionary.RemoveAircraft(Aircraft::ICAOToUID(0, Aircraft::kAircraftTypeModeS));
     }
 }

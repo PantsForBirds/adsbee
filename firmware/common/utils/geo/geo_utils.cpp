@@ -1,5 +1,8 @@
 #include "geo_utils.hh"
 
+#include <cstdio>  // snprintf
+#include <cstring>  // memcpy
+
 #include "awb_utils.h"
 #include "fixedmath/fixed_math.hpp"
 #include "macros.hh"
@@ -32,6 +35,7 @@ inline int32_t MulQ30(int32_t a, int32_t b) {
 constexpr int32_t kSin1 = 1073741821, kSin3 = -178956794, kSin5 = 8946435, kSin7 = -209400;
 constexpr int32_t kCos0 = 1073741824, kCos2 = -536870908, kCos4 = 44739189, kCos6 = -1491064, kCos8 = 26178;
 constexpr int32_t kHalfPiQ30 = 1686629713;
+constexpr int32_t kSmallAngleSquaredQ30 = 1 << 22;  // (1/16 rad)^2: half the angle of 700 km at the equator.
 
 // atan(2^-i) in AWB, for CORDIC (coordinate rotation digital computer) vectoring.
 constexpr int kCordicIterations = 15;
@@ -102,6 +106,9 @@ inline int32_t Shift(int32_t v, int shift) { return shift >= 0 ? v * (1 << shift
 constexpr int32_t kSemiMajorAxisMeters = 6378137;
 constexpr int32_t kMeridianRadiusEquatorMeters = 6335439;  // a (1 - e^2).
 constexpr int32_t kEccentricitySquaredQ30 = 7188036;
+constexpr int32_t kSecondEccentricitySquaredQ30 = 7236480;  // e^2 / (1 - e^2).
+constexpr int32_t kSecondEccentricitySquaredAWBQ6 = 71983;  // e'^2 2^32 / (2 pi) / 64: e'^2 in AWB per radian, / 64.
+constexpr int32_t kQ15PerAWBQ6 = 201;  // 64 AWB in Q15 radians, Q16: 2 pi 2^6 / 2^32 * 2^15 * 2^16 (201.06).
 constexpr uint32_t kHalfMeridianMeters = 20003931;  // Pole to pole.
 constexpr uint32_t kTwoPiQ28 = 1686629713;  // 2 * pi in Q28.
 
@@ -113,8 +120,15 @@ void SinCosQ30(uint32_t angle_awb, int32_t &sin_out, int32_t &cos_out) {
     int32_t remainder = static_cast<int32_t>(angle_awb - (quadrant << 30));  // AWB, |remainder| <= 2^29.
     int32_t x = MulQ30(remainder, kHalfPiQ30);                                 // Radians, Q30.
     int32_t x2 = MulQ30(x, x);
-    int32_t s = MulQ30(x, kSin1 + MulQ30(x2, kSin3 + MulQ30(x2, kSin5 + MulQ30(x2, kSin7))));
-    int32_t c = kCos0 + MulQ30(x2, kCos2 + MulQ30(x2, kCos4 + MulQ30(x2, kCos6 + MulQ30(x2, kCos8))));
+    int32_t s, c;
+    if (x2 < kSmallAngleSquaredQ30) {
+        // The terms left out are below 0.1 LSB here. Distances to aircraft take this path for both of their angles.
+        s = MulQ30(x, kSin1 + MulQ30(x2, kSin3 + MulQ30(x2, kSin5)));
+        c = kCos0 + MulQ30(x2, kCos2 + MulQ30(x2, kCos4));
+    } else {
+        s = MulQ30(x, kSin1 + MulQ30(x2, kSin3 + MulQ30(x2, kSin5 + MulQ30(x2, kSin7))));
+        c = kCos0 + MulQ30(x2, kCos2 + MulQ30(x2, kCos4 + MulQ30(x2, kCos6 + MulQ30(x2, kCos8))));
+    }
     switch (quadrant & 3) {
         case 0:
             sin_out = s;
@@ -141,8 +155,14 @@ void GeoReference::Set(uint32_t lat_awb_in, uint32_t lon_awb_in) {
     SinCosQ30(lat_awb, sin_lat_q30, cos_lat_q30);
 }
 
-void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, uint32_t &distance_m,
-                                 uint16_t &bearing_bam16) {
+namespace {
+
+/**
+ * CalculateDistanceAndBearing before rounding.
+ * @param[out] distance_q37_m Distance in 2^-37 m.
+ */
+void DistanceAndBearingAWB(const GeoReference& ref, uint32_t lat_awb, uint32_t lon_awb, uint64_t& distance_q37_m,
+                           uint32_t& bearing_awb_out) {
     // Point B in the reference's east-north-up frame on a unit sphere. Written with half-angle sines so nearby points
     // don't lose precision to cancellation. Signed differences wrap across the antimeridian.
     int32_t dlat = static_cast<int32_t>(lat_awb - ref.lat_awb);
@@ -163,8 +183,8 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
                                       2u * static_cast<uint32_t>(MulQ30(ref.cos_lat_q30, half_t)));
 
     if (east == 0 && north == 0) {
-        distance_m = up > 0 ? 0 : kHalfMeridianMeters;  // Same point or antipode.
-        bearing_bam16 = 0;
+        distance_q37_m = up > 0 ? 0 : static_cast<uint64_t>(kHalfMeridianMeters) << 37;  // Same point or antipode.
+        bearing_awb_out = 0;
         return;
     }
 
@@ -177,9 +197,25 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
         y = -y;
         bearing_awb = 0x80000000u;
     }
-    int32_t north_n = x, east_n = y;  // Normalized, for the direction's share of north-south below.
+    // The direction's squared cosine and sine, and their product, from the normalized vector, Q15. The divisor is at
+    // least 2^11: 0.05% is plenty for both uses.
+    int32_t n16 = x >> 13, e16 = y >> 13;  // |.| < 2^15.
+    uint32_t nn = static_cast<uint32_t>(n16 * n16), ee = static_cast<uint32_t>(e16 * e16);
+    uint32_t cos2_q15 = (nn >> 2) / (((nn + ee) >> 17) | 1);
+    int32_t sin2_q15 = (1 << 15) - static_cast<int32_t>(cos2_q15);
+    int32_t sin_cos_q15 = (n16 * e16) / static_cast<int32_t>(((nn + ee) >> 15) | 1);  // Divisor >= 2^13: 0.01%.
     bearing_awb += CordicAtan2(x, y);
-    bearing_bam16 = static_cast<uint16_t>((bearing_awb + 0x8000u) >> 16);
+    // That is the azimuth on a sphere through both geodetic latitudes. On the ellipsoid a meter east spans 1 + k times
+    // the angle of a meter north (k = e'^2 cos^2(mid latitude) = N / M - 1), so the azimuth is atan2((1 + k) s, c) for
+    // the spherical one's sine s and cosine c: larger by atan(k s c / (1 + k s^2)) = k s c (1 - k s^2), to 1e-8 rad.
+    // The correction is at most 0.2 deg, so 32-bit products of a few significant bits each keep it to 1e-5 deg.
+    int32_t sin_mid_lat = MulQ30(ref.sin_lat_q30, cos_half_dlat) + MulQ30(ref.cos_lat_q30, sin_half_dlat);
+    int32_t sin2_mid_lat = MulQ30(sin_mid_lat, sin_mid_lat);
+    int32_t k_awb_q6 = MulQ30(kSecondEccentricitySquaredAWBQ6, kQ30One - sin2_mid_lat);  // k 2^32 / (2 pi) / 64.
+    int32_t delta_awb = (k_awb_q6 * sin_cos_q15) >> 9;                                   // k s c, AWB.
+    int32_t k_sin2_q15 = (((k_awb_q6 * (sin2_q15 >> 1)) >> 14) * kQ15PerAWBQ6) >> 16;    // k s^2, Q15 (< 2^8).
+    delta_awb -= (delta_awb * k_sin2_q15) >> 15;
+    bearing_awb_out = bearing_awb + static_cast<uint32_t>(delta_awb);
 
     // Central angle = atan2(horizontal, up), with both scaled by the CORDIC gain and kept below 2^30.
     int32_t horizontal = Shift(x, -shift - 1);  // gain * |(north, east)|, Q29.
@@ -199,21 +235,36 @@ void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint
 
     // Radius of curvature in the direction of travel at the mid latitude: N - (N - M) cos^2(bearing), where M (meridian)
     // and N (prime vertical) come from a second order series in w = e^2 sin^2(mid latitude).
-    int32_t sin_mid_lat = MulQ30(ref.sin_lat_q30, cos_half_dlat) + MulQ30(ref.cos_lat_q30, sin_half_dlat);
-    int32_t w = MulQ30(MulQ30(sin_mid_lat, sin_mid_lat), kEccentricitySquaredQ30);  // < 2^23
+    int32_t w = MulQ30(sin2_mid_lat, kEccentricitySquaredQ30);                         // < 2^23
     int32_t w_m = MulQ30(w, kSemiMajorAxisMeters);                                     // a w, meters (< 43 km).
     int32_t w2_m = MulQ30(w, w_m);                                                     // a w^2, meters.
     int32_t prime_vertical_m = kSemiMajorAxisMeters + w_m / 2 + (3 * w2_m) / 8;
     int32_t meridian_m = kMeridianRadiusEquatorMeters + MulQ30(w, kMeridianRadiusEquatorMeters) * 3 / 2 +
                          MulQ30(MulQ30(w, w), kMeridianRadiusEquatorMeters) * 15 / 8;
-    int32_t n16 = north_n >> 13, e16 = east_n >> 13;  // |.| < 2^15.
-    uint32_t nn = static_cast<uint32_t>(n16 * n16), ee = static_cast<uint32_t>(e16 * e16);
-    uint32_t cos2_q15 = (nn >> 2) / (((nn + ee) >> 17) | 1);  // Divisor >= 2^11: 0.05% is plenty here.
     int32_t radius_m = prime_vertical_m - static_cast<int32_t>(((prime_vertical_m - meridian_m) * cos2_q15) >> 15);
 
     // distance = central angle (rad) * radius = central_angle_awb * 2 pi / 2^32 * radius.
     uint32_t radius_2pi_q5 = static_cast<uint32_t>((static_cast<uint64_t>(radius_m) * kTwoPiQ28) >> 23);  // < 2^31
-    distance_m = static_cast<uint32_t>((static_cast<uint64_t>(central_angle_awb) * radius_2pi_q5 + (1ull << 36)) >> 37);
+    distance_q37_m = static_cast<uint64_t>(central_angle_awb) * radius_2pi_q5;
+}
+
+}  // namespace
+
+void CalculateDistanceAndBearing(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb, uint32_t &distance_m,
+                                 uint16_t &bearing_bam16) {
+    uint64_t distance_q37_m;
+    uint32_t bearing_awb;
+    DistanceAndBearingAWB(ref, lat_awb, lon_awb, distance_q37_m, bearing_awb);
+    distance_m = static_cast<uint32_t>((distance_q37_m + (1ull << 36)) >> 37);
+    bearing_bam16 = static_cast<uint16_t>((bearing_awb + 0x8000u) >> 16);
+}
+
+void SplitNorthEastMeters(uint32_t distance_m, uint16_t bearing_bam16, int32_t &north_m, int32_t &east_m) {
+    int32_t sin_q30, cos_q30;
+    SinCosQ30(static_cast<uint32_t>(bearing_bam16) << 16, sin_q30, cos_q30);
+    // Arithmetic shifts round halves up for both signs.
+    north_m = static_cast<int32_t>((static_cast<int64_t>(distance_m) * cos_q30 + (1ll << 29)) >> 30);
+    east_m = static_cast<int32_t>((static_cast<int64_t>(distance_m) * sin_q30 + (1ll << 29)) >> 30);
 }
 
 uint32_t CalculateDistanceMeters(const GeoReference &ref, uint32_t lat_awb, uint32_t lon_awb) {
@@ -249,16 +300,6 @@ bool IsDistanceGreaterThan(uint32_t lat_a_awb, uint32_t lon_a_awb, uint32_t lat_
     return CalculateGeoidalDistanceMetersAWB(lat_a_awb, lon_a_awb, lat_b_awb, lon_b_awb) > threshold_m;
 }
 
-uint32_t CalculateGeoidalDistanceMetersDeg(float lat_a_deg, float lon_a_deg, float lat_b_deg, float lon_b_deg) {
-    // Cast floats to signed ints, then to unsigned ints, to avoid undefined behavior with negative floats.
-    uint32_t lat_a_awb = safe_cast_float_to_uint32(INV_RESOLUTION * lat_a_deg);
-    uint32_t lon_a_awb = safe_cast_float_to_uint32(INV_RESOLUTION * lon_a_deg);
-    uint32_t lat_b_awb = safe_cast_float_to_uint32(INV_RESOLUTION * lat_b_deg);
-    uint32_t lon_b_awb = safe_cast_float_to_uint32(INV_RESOLUTION * lon_b_deg);
-
-    return CalculateGeoidalDistanceMetersAWB(lat_a_awb, lon_a_awb, lat_b_awb, lon_b_awb);
-}
-
 #ifndef HAS_FPU
 inline fixedmath::fixed_t wrapped_atan2(fixedmath::fixed_t y, fixedmath::fixed_t x) {
     fixedmath::fixed_t val = fixedmath::func::atan2(y, x);
@@ -288,4 +329,126 @@ void CalculateTrackAndSpeedFromNEVelocities(int32_t n_vel_kts, int32_t e_vel_kts
     }
     speed_kts = static_cast<int16_t>(speed_kts_fixed);
 #endif
+}
+
+static constexpr uint32_t kPowersOf10[] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000};
+
+// |awb| (read as signed) in degrees times 10^decimals, rounded. At most 1.8e9.
+static uint32_t AWBMagnitudeToScaledDeg(uint32_t magnitude, uint8_t decimals) {
+    const uint32_t units_per_turn = 360u * kPowersOf10[decimals];  // At most 3.6e9.
+    return static_cast<uint32_t>((static_cast<uint64_t>(magnitude) * units_per_turn + (1ull << 31)) >> 32);
+}
+
+int32_t AWBToScaledDeg(uint32_t awb, uint8_t decimals) {
+    const bool negative = static_cast<int32_t>(awb) < 0;
+    const uint32_t units = AWBMagnitudeToScaledDeg(negative ? 0u - awb : awb, decimals);
+    return negative ? -static_cast<int32_t>(units) : static_cast<int32_t>(units);
+}
+
+uint32_t ScaledToAWB(int64_t value, uint64_t units_per_turn) {
+    const bool negative = value < 0;
+    const uint64_t magnitude = negative ? 0ull - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
+    // magnitude 2^32 / units_per_turn in two 16-bit steps, so no intermediate overflows.
+    const uint64_t high = magnitude << 16;
+    const uint64_t q1 = high / units_per_turn;
+    const uint64_t q2 = (((high - q1 * units_per_turn) << 16) + units_per_turn / 2) / units_per_turn;
+    const uint32_t awb = static_cast<uint32_t>((q1 << 16) + q2);
+    return negative ? 0u - awb : awb;
+}
+
+int FormatAWBDeg(char* buf, size_t len, uint32_t awb, uint8_t decimals) {
+    const bool negative = static_cast<int32_t>(awb) < 0;
+    const uint32_t units = AWBMagnitudeToScaledDeg(negative ? 0u - awb : awb, decimals);
+    const char* sign = negative && units != 0 ? "-" : "";
+    if (decimals == 0) {
+        return snprintf(buf, len, "%s%lu", sign, static_cast<unsigned long>(units));
+    }
+    return snprintf(buf, len, "%s%lu.%0*lu", sign, static_cast<unsigned long>(units / kPowersOf10[decimals]),
+                    static_cast<int>(decimals), static_cast<unsigned long>(units % kPowersOf10[decimals]));
+}
+
+bool ParseDegE7(std::string_view text, int32_t& deg_e7) {
+    size_t i = 0;
+    bool negative = false;
+    if (i < text.size() && (text[i] == '-' || text[i] == '+')) {
+        negative = text[i++] == '-';
+    }
+    // Significant digits (up to 18), and the decimal exponent of the last one kept.
+    uint64_t digits = 0;
+    int exponent = 0;
+    int num_digits = 0;
+    bool seen_point = false;
+    for (; i < text.size(); i++) {
+        const char c = text[i];
+        if (c == '.' && !seen_point) {
+            seen_point = true;
+        } else if (c >= '0' && c <= '9') {
+            num_digits++;
+            if (digits < 100000000000000000ull) {
+                digits = digits * 10 + static_cast<uint64_t>(c - '0');
+                exponent -= seen_point ? 1 : 0;
+            } else if (!seen_point) {
+                exponent++;  // Beyond 18 digits: an integer part this long is out of range anyway.
+            }
+        } else {
+            break;
+        }
+    }
+    if (num_digits == 0) {
+        return false;
+    }
+    if (i < text.size() && (text[i] == 'e' || text[i] == 'E')) {
+        i++;
+        bool exponent_negative = false;
+        if (i < text.size() && (text[i] == '-' || text[i] == '+')) {
+            exponent_negative = text[i++] == '-';
+        }
+        const size_t first = i;
+        int e = 0;
+        for (; i < text.size() && text[i] >= '0' && text[i] <= '9'; i++) {
+            e = e < 1000 ? e * 10 + (text[i] - '0') : e;
+        }
+        if (i == first) {
+            return false;
+        }
+        exponent += exponent_negative ? -e : e;
+    }
+    if (i != text.size()) {
+        return false;
+    }
+    // digits 10^exponent in units of 1e-7, rounded half away from zero.
+    constexpr uint64_t kMaxDegE7 = INT32_MAX;
+    int shift = exponent + 7;
+    for (; shift > 0 && digits != 0; shift--) {
+        if (digits > kMaxDegE7) {
+            return false;
+        }
+        digits *= 10;
+    }
+    if (shift < -19) {
+        digits = 0;  // Below 1e-26 deg (19 digits is more than digits holds).
+    }
+    uint64_t last_dropped = 0;
+    for (; shift < 0; shift++) {
+        last_dropped = digits % 10;
+        digits /= 10;
+    }
+    digits += last_dropped >= 5 ? 1 : 0;
+    if (digits > kMaxDegE7) {
+        return false;
+    }
+    deg_e7 = negative ? -static_cast<int32_t>(digits) : static_cast<int32_t>(digits);
+    return true;
+}
+
+void WriteNMEALatLon(char* buf, size_t len, uint32_t awb, bool is_lat) {
+    const bool negative = static_cast<int32_t>(awb) < 0;
+    const char hemisphere = is_lat ? (negative ? 'S' : 'N') : (negative ? 'W' : 'E');
+    const uint32_t magnitude = negative ? 0u - awb : awb;
+    // Ten-thousandths of a minute (360 * 60 * 10000 per turn), rounded once so the carry reaches the degrees.
+    const uint32_t units = static_cast<uint32_t>((static_cast<uint64_t>(magnitude) * 216000000u + (1ull << 31)) >> 32);
+    const unsigned long whole_deg = units / 600000u;
+    const unsigned long rem = units % 600000u;
+    snprintf(buf, len, is_lat ? "%02lu%02lu.%04lu,%c" : "%03lu%02lu.%04lu,%c", whole_deg, rem / 10000, rem % 10000,
+             hemisphere);
 }

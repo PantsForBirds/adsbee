@@ -53,24 +53,32 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_adsl_packet.cc
         test_adsl_aircraft.cc
         test_aircraft_dictionary_contact_modes.cc
+        test_aircraft_dictionary_corrections.cc
         test_aircraft_dictionary_mode_s.cc
         test_aircraft_dictionary_air_ground.cc
         test_aircraft_dictionary_allocator.cc
         test_ble_adv_watchdog.cc
+        test_ble_output_status.cc
         test_ble_scan_watchdog.cc
         test_broadcast_ring.cc
         test_buffer_utils.cc
         # test_adsbee.cc
         test_composite_array.cc
         test_esp32_firmware_check.cc
+        test_fault_record.cc
+        test_gdl90_ble_stream.cc
+        test_ble_output_buffers.cc
         test_cpu_utils.cc
         test_crc.cc
         test_mlat_time_sync.cc
+        test_pps_clock.cc
+        test_pps_labeling_replay.cc
         test_sync_pulse_service.cc
         test_data_structures.cc
         test_decode_utils.cc
         test_fixedmath.cc
         test_geo_utils.cc
+        test_awb_positions.cc
         test_idle_session_tracker.cc
         test_ipv4_config.cc
         test_ipv6_config.cc
@@ -87,6 +95,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_reporting_asterix.cc
         test_reporting_beast.cc
         test_reporting_beast_caps.cc
+        test_beast_gps_time.cc
         test_reporting_csbee.cc
         test_reporting_gdl90.cc
         test_reporting_mavlink.cc
@@ -101,6 +110,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         test_auto_update.cc
         test_wifi_network_selector.cc
         test_feed_datagram.cc
+        test_flarm_nmea.cc
         test_swarm.cc
         test_feed_send_buffer.cc
         test_feed_receiver_id.cc
@@ -127,6 +137,7 @@ foreach(_test_tgt IN ITEMS host_test host_test_fpu)
         ${CMAKE_SOURCE_DIR}/../esp/main/remote_id # ble_adv_watchdog.hh, ble_scan_watchdog.hh
         ${CMAKE_SOURCE_DIR}/../esp/main/mlat_sync # esp32_clock_math.hh
         ${CMAKE_SOURCE_DIR}/application/peripherals # sync_pulse_service.hh
+        ${CMAKE_SOURCE_DIR}/../esp/main/ble # gdl90_ble_stream.hh, ble_output_buffers.hh
         .
         mocks
     )

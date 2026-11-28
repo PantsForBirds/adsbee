@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "macros.hh"  // DivRound
+
 /**
  * 1090MHz receiver: conversions from the RF power detector voltage (AD8313 behind two LNAs, read on the RSSI ADC input
  * through a 10k / 1nF low pass) to dBm at the antenna connector.
@@ -29,11 +31,6 @@ struct CurvePoint {
 static constexpr CurvePoint kCurve[] = {{1137, -80}, {1489, -60}, {1680, -50},    {1715, -48},
                                         {1740, -46}, {1759, -44}, {1770, kMaxdBm}};
 static constexpr int kNumCurvePoints = sizeof(kCurve) / sizeof(kCurve[0]);
-
-// Integer division rounded to nearest (denominator > 0).
-static constexpr int DivRound(int numerator, int denominator) {
-    return (numerator + (numerator >= 0 ? denominator : -denominator) / 2) / denominator;
-}
 
 /**
  * Original conversion (AD8313 datasheet slope, 44dB LNA gain). Only kept for the AT+TL_OFFSET text, which the

@@ -174,6 +174,14 @@ class ADSBeeServer {
     bool ReportGDL90();
 
     /**
+     * Sends a 1 Hz FLARM data port report to the Bluetooth client: GPRMC, PGRMZ and GPGGA when ownship is known, the
+     * PFLAU heartbeat, then PFLAA for each aircraft, nearest first. Without ownship only PFLAU goes out, with GPS 0.
+     * Runs right after the dictionary's Update(), whose distances and bearings it reports, with the receiver position
+     * that Update() measured them from.
+     */
+    void ReportFLARMNMEA(const SettingsManager::RxPosition& rx_position, bool rx_position_available);
+
+    /**
      * Sends a GDL90 uplink packet to connected WiFi clients. Does not provide traffic reports.
      * @param[in] uplink_packet Decoded UAT uplink packet to send.
      * @retval True if successful, false on error.
@@ -203,8 +211,6 @@ class ADSBeeServer {
      * while clients are connected.
      */
     void UpdateUplinkBroadcast();
-
-    void SetOwnshipPosition(float latitude_deg, float longitude_deg);
 
     /**
      * Sets up the TCPServerTask as well as the WebSocket handlers and HTTP server.

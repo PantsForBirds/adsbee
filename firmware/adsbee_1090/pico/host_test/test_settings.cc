@@ -1,4 +1,5 @@
 #include <cstring>
+#include "awb_test_utils.hh"
 #include <string_view>
 #include <vector>
 
@@ -211,7 +212,7 @@ TEST(SettingsMigration, V14ToV15PreservesAllFieldsAndDefaultsFeedsEnabled) {
     EXPECT_EQ(out.mavlink_component_id, 42);
 
     EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
-    EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
+    EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(37.5f));
     EXPECT_EQ(out.rx_position.icao_address, 0xABCDEFu);
 }
 
@@ -712,7 +713,7 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
     size_t ntp = dump.find("AT+NTP_SERVER=pool.ntp.org");
     ASSERT_NE(ntp, std::string::npos);
     EXPECT_LT(asterix, ntp);
-    // Then the altitude filter, swarm reports, and static IPv4 and IPv6 last.
+    // Then the altitude filter, swarm reports, static IPv4 and IPv6, and GDL90 over Bluetooth last.
     EXPECT_LT(ntp, filter_altitude);
     size_t swarm = dump.find("AT+SWARM=0,https://adsbee.aero,-\r\n");
     ASSERT_NE(swarm, std::string::npos);
@@ -726,11 +727,94 @@ TEST(Settings, AutoUpdateDefaultsOffAndDumpsAfterTheNetworkLines) {
         EXPECT_EQ(dump.find("AT+", prev + 1), at) << ip_line;
         prev = at;
     }
-    EXPECT_EQ(dump.find("AT+", prev + 1), std::string::npos);
+    size_t ble_output = dump.find("AT+BLE_OUTPUT=OFF\r\n");
+    ASSERT_NE(ble_output, std::string::npos);
+    EXPECT_EQ(dump.find("AT+", prev + 1), ble_output);
+    EXPECT_EQ(dump.find("AT+", ble_output + 1), std::string::npos);
 
     uint8_t raw = 0x5A;
     memcpy(&manager.settings.auto_update_enabled, &raw, 1);
     EXPECT_TRUE(manager.Sanitize());
+}
+
+TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndLeavesBLEOutputOff) {
+    // A v19 blob as rc10 and rc11 wrote it, 0xFF after it as Load() reads erased flash there.
+    static SettingsManager::Settings v19;
+    v19 = SettingsManager::Settings();
+    v19.settings_version = 19;
+    strcpy(v19.core_network_settings.hostname, "hangar-bee");
+    v19.core_network_settings.UpdateCRC32();
+    v19.filter_distance_enabled = true;
+    v19.filter_distance_deci_nm = 1234;
+    v19.feed_transports[2] = SettingsManager::kFeedTransportMQTT;
+    strcpy(v19.mqtt_broker.host, "broker.example.com");
+    v19.asterix_sic = 7;
+    v19.filter_altitude_mode = kAltitudeFilterBetween;
+    v19.swarm_enabled = true;
+    strcpy(v19.swarm_token, "tok-1234");
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memset(blob, 0xFF, sizeof(blob));
+    memcpy(blob, &v19, offsetof(settings_v19::Settings, swarm_token) + sizeof(settings_v19::Settings::swarm_token));
+
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
+    EXPECT_TRUE(out.core_network_settings.IsValid());
+    EXPECT_STREQ(out.core_network_settings.hostname, "hangar-bee");
+    EXPECT_TRUE(out.filter_distance_enabled);
+    EXPECT_EQ(out.filter_distance_deci_nm, 1234u);
+    EXPECT_EQ(out.feed_transports[2], SettingsManager::kFeedTransportMQTT);
+    EXPECT_STREQ(out.mqtt_broker.host, "broker.example.com");
+    EXPECT_EQ(out.asterix_sic, 7);
+    EXPECT_EQ(out.filter_altitude_mode, kAltitudeFilterBetween);
+    EXPECT_TRUE(out.swarm_enabled);
+    EXPECT_STREQ(out.swarm_token, "tok-1234");
+    settings_manager.settings = out;
+    EXPECT_FALSE(settings_manager.Sanitize());
+}
+
+TEST(SettingsMigration, V18ToCurrentLeavesBLEOutputOff) {
+    settings_v18::Settings v18;
+    memset(&v18, 0, sizeof(v18));
+    v18.settings_version = 18;
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
+    ASSERT_TRUE(SettingsMigrator::Migrate(reinterpret_cast<const uint8_t*>(&v18), sizeof(v18), 18, out));
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);
+}
+
+TEST(Settings, BLEOutputDefaultsOffAndRoundTripsItsModeNames) {
+    SettingsManager::Settings s;
+    EXPECT_EQ(s.ble_output_mode, SettingsManager::kBLEOutputOff);
+    // Stored values are append-only: they must never move.
+    EXPECT_EQ(SettingsManager::kBLEOutputOff, 0);
+    EXPECT_EQ(SettingsManager::kBLEOutputGDL90, 1);
+    EXPECT_EQ(SettingsManager::kBLEOutputFLARMNMEA, 2);
+    for (uint8_t i = 0; i < SettingsManager::kNumBLEOutputModes; i++) {
+        SettingsManager::BLEOutputMode mode;
+        ASSERT_TRUE(SettingsManager::BLEOutputModeFromStr(SettingsManager::BLEOutputModeToStr(i), mode));
+        EXPECT_EQ(mode, i);
+    }
+    SettingsManager::BLEOutputMode mode = SettingsManager::kBLEOutputGDL90;
+    EXPECT_TRUE(SettingsManager::BLEOutputModeFromStr("gdl90", mode));
+    EXPECT_FALSE(SettingsManager::BLEOutputModeFromStr("NMEA", mode));
+    EXPECT_EQ(mode, SettingsManager::kBLEOutputGDL90);
+}
+
+TEST(SettingsManager, SanitizeTurnsAnUnknownBLEOutputModeOff) {
+    SettingsManager::Settings& s = settings_manager.settings;
+    s = SettingsManager::Settings{};
+    s.core_network_settings.UpdateCRC32();
+    s.ble_output_mode = static_cast<SettingsManager::BLEOutputMode>(SettingsManager::kNumBLEOutputModes);
+    EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_EQ(s.ble_output_mode, SettingsManager::kBLEOutputOff);
+    // Erased flash in the tail padding, as v20 (0.10.0-rc1) left it.
+    uint8_t erased = 0xFF;
+    memcpy(&s.ble_output_mode, &erased, 1);
+    EXPECT_TRUE(settings_manager.Sanitize());
+    EXPECT_EQ(s.ble_output_mode, SettingsManager::kBLEOutputOff);
 }
 
 TEST(SettingsMigration, V15ToCurrentPreservesAllFieldsAndDefaultsIPMode) {
@@ -957,8 +1041,8 @@ TEST(SettingsMigration, V14ShippedRc2BlobMigrates) {
     EXPECT_EQ(out.mavlink_system_id, 9);
     EXPECT_EQ(out.mavlink_component_id, 190);
     EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
-    EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
-    EXPECT_FLOAT_EQ(out.rx_position.longitude_deg, -122.25f);
+    EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(37.5f));
+    EXPECT_EQ(out.rx_position.longitude_awb, FloatDegToAWB(-122.25f));
     EXPECT_EQ(out.rx_position.gnss_altitude_ft, 1111);
     EXPECT_EQ(out.rx_position.baro_altitude_ft, 2222);
     EXPECT_FLOAT_EQ(out.rx_position.heading_deg, 270.5f);
@@ -1106,8 +1190,8 @@ TEST(SettingsMigration, V12ToCurrentPreservesAllFields) {
 
     // Receiver position preserved.
     EXPECT_EQ(out.rx_position.source, SettingsManager::RxPosition::kPositionSourceFixed);
-    EXPECT_FLOAT_EQ(out.rx_position.latitude_deg, 37.5f);
-    EXPECT_FLOAT_EQ(out.rx_position.longitude_deg, -122.3f);
+    EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(37.5f));
+    EXPECT_EQ(out.rx_position.longitude_awb, FloatDegToAWB(-122.3f));
     EXPECT_EQ(out.rx_position.gnss_altitude_ft, 111);
     EXPECT_EQ(out.rx_position.baro_altitude_ft, 222);
     EXPECT_FLOAT_EQ(out.rx_position.heading_deg, 90.0f);
@@ -1268,6 +1352,9 @@ TEST(Settings, ProtocolInUseCountsSerialOutputsAndActiveFeeds) {
     s.reporting_protocols[SettingsManager::kCommsUART] = SettingsManager::kASTERIX;
     EXPECT_TRUE(SettingsManager::ProtocolInUse(s, SettingsManager::kASTERIX));
     s.reporting_protocols[SettingsManager::kCommsUART] = SettingsManager::kNoReports;
+    s.reporting_protocols[SettingsManager::kGNSSUART] = SettingsManager::kASTERIX;
+    EXPECT_TRUE(SettingsManager::ProtocolInUse(s, SettingsManager::kASTERIX));
+    s.reporting_protocols[SettingsManager::kGNSSUART] = SettingsManager::kNoReports;
 
     s.feed_protocols[2] = SettingsManager::kASTERIX;
     s.feed_is_active[2] = false;
@@ -1323,6 +1410,7 @@ TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
     SettingsManager::Settings out;
     out.ethernet_ipv4.is_static = true;  // Stale: must not survive.
     out.wifi_sta_ipv6.is_static = true;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;
     ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 19, out));
     EXPECT_EQ(out.settings_version, kSettingsVersion);
     EXPECT_EQ(memcmp(&out.core_network_settings, &v19.core_network_settings, sizeof(v19.core_network_settings)), 0);
@@ -1356,11 +1444,129 @@ TEST(SettingsMigration, V19ToCurrentKeepsEverythingAndUsesDHCP) {
     IPv6Config slaac;
     EXPECT_EQ(memcmp(&out.ethernet_ipv6, &slaac, sizeof(slaac)), 0);
     EXPECT_EQ(memcmp(&out.wifi_sta_ipv6, &slaac, sizeof(slaac)), 0);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);  // New in v21.
 
     SettingsManager manager;
     manager.settings = out;
     EXPECT_FALSE(manager.Sanitize());
     EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v19::Settings) - 1, 19, out));
+}
+
+TEST(SettingsMigration, V20ToCurrentKeepsEverythingAndLeavesBLEOutputOff) {
+    // A v20 blob as 0.10.0-rc1 wrote it, with static IPs and the tail padding byte as erased flash.
+    static SettingsManager::Settings v20;
+    v20 = SettingsManager::Settings();
+    v20.settings_version = 20;
+    strcpy(v20.core_network_settings.hostname, "hangar-bee");
+    v20.core_network_settings.UpdateCRC32();
+    v20.feeds_enabled = true;
+    strcpy(v20.feed_uris[1], "feed.example.com");
+    v20.swarm_enabled = true;
+    strcpy(v20.swarm_token, "tok-1234");
+    IPv4Config& ip4 = v20.wifi_sta_ipv4;
+    ip4.is_static = true;
+    ASSERT_TRUE(ParseIPv4Addr("192.168.1.42", 12, ip4.ip));
+    ASSERT_TRUE(ParseIPv4Addr("255.255.255.0", 13, ip4.netmask));
+    ASSERT_TRUE(ParseIPv4Addr("192.168.1.1", 11, ip4.gateway));
+    IPv6Config& ip6 = v20.ethernet_ipv6;
+    ip6.is_static = true;
+    ip6.prefix_len = 64;
+    ASSERT_TRUE(ParseIPv6Addr("fd00::7", 7, ip6.ip));
+    ASSERT_EQ(ValidateIPv4Config(ip4), nullptr);
+    ASSERT_EQ(ValidateIPv6Config(ip6), nullptr);
+    uint8_t blob[sizeof(SettingsManager::Settings)];
+    memcpy(blob, &v20, sizeof(blob));
+    blob[offsetof(SettingsManager::Settings, ble_output_mode)] = 0xFF;
+    // v20 stored the receiver position in float degrees.
+    settings_v20::RxPosition rx = {};
+    rx.source = SettingsManager::RxPosition::kPositionSourceFixed;
+    rx.latitude_deg = -34.603722f;
+    rx.longitude_deg = 151.2099f;
+    rx.gnss_altitude_ft = 82;
+    rx.heading_deg = 271.5f;
+    rx.icao_address = 0xBEE001;
+    const size_t rx_offset = offsetof(settings_v20::Settings, rx_position);
+    memcpy(blob + rx_offset, &rx, sizeof(rx));
+
+    static SettingsManager::Settings out;
+    out.ble_output_mode = SettingsManager::kBLEOutputGDL90;  // Stale: must not survive.
+    ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), 20, out));
+    EXPECT_EQ(out.settings_version, kSettingsVersion);
+    EXPECT_EQ(out.ble_output_mode, SettingsManager::kBLEOutputOff);  // New in v21.
+    // AWB since v21, in the same bytes.
+    EXPECT_EQ(out.rx_position.latitude_awb, FloatDegToAWB(-34.603722f));
+    EXPECT_EQ(out.rx_position.longitude_awb, FloatDegToAWB(151.2099f));
+    EXPECT_NEAR(AWBToDeg(out.rx_position.latitude_awb), -34.603722, 1e-6);
+    EXPECT_NEAR(AWBToDeg(out.rx_position.longitude_awb), 151.2099, 1e-5);
+    // Every other v20 byte after the version is kept.
+    const size_t lat_lon_offset = rx_offset + offsetof(settings_v20::RxPosition, latitude_deg);
+    const size_t lat_lon_end = rx_offset + offsetof(settings_v20::RxPosition, gnss_altitude_ft);
+    const size_t v20_end = offsetof(settings_v20::Settings, wifi_sta_ipv6) + sizeof(settings_v20::IPv6Config);
+    const uint8_t* out_bytes = reinterpret_cast<const uint8_t*>(&out);
+    EXPECT_EQ(memcmp(out_bytes + 4, blob + 4, lat_lon_offset - 4), 0);
+    EXPECT_EQ(memcmp(out_bytes + lat_lon_end, blob + lat_lon_end, v20_end - lat_lon_end), 0);
+    EXPECT_EQ(out.rx_position.icao_address, 0xBEE001u);
+    EXPECT_FLOAT_EQ(out.rx_position.heading_deg, 271.5f);
+    EXPECT_STREQ(out.core_network_settings.hostname, "hangar-bee");
+    EXPECT_TRUE(out.wifi_sta_ipv4.is_static);
+    EXPECT_EQ(out.wifi_sta_ipv4.ip[3], 42);
+    EXPECT_TRUE(out.ethernet_ipv6.is_static);
+    EXPECT_EQ(out.ethernet_ipv6.prefix_len, 64);
+    EXPECT_STREQ(out.swarm_token, "tok-1234");
+
+    SettingsManager manager;
+    manager.settings = out;
+    EXPECT_FALSE(manager.Sanitize());
+    EXPECT_FALSE(SettingsMigrator::Migrate(blob, sizeof(settings_v20::Settings) - 1, 20, out));
+}
+
+// GNSS UART baud on upgrade: a u-blox MAX-M10 (commanded to the setting) at 9600, the old default, moves to the new
+// default; any other stored rate, and any rate for GENERIC or NONE receivers (which must match their module), is kept.
+TEST(SettingsMigration, GNSSBaudMovesFromOldDefaultOnlyForMaxM10) {
+    struct Case {
+        SettingsManager::GNSSReceiverType type;
+        uint32_t stored, expected;
+    };
+    const uint32_t kNew = SettingsManager::Settings::kDefaultGNSSUARTBaudrate;
+    const Case cases[] = {
+        {SettingsManager::kGNSSReceiverUBXMIA, 9600, kNew},     {SettingsManager::kGNSSReceiverUBXMIA, 38400, 38400},
+        {SettingsManager::kGNSSReceiverUBXMIA, 4800, 4800},     {SettingsManager::kGNSSReceiverUBXMIA, 115200, 115200},
+        {SettingsManager::kGNSSReceiverUBXMIA, 921600, 921600}, {SettingsManager::kGNSSReceiverGeneric, 9600, 9600},
+        {SettingsManager::kGNSSReceiverGeneric, 38400, 38400},  {SettingsManager::kGNSSReceiverNone, 9600, 9600},
+    };
+    for (const Case& c : cases) {
+        for (uint32_t from : {19u, 20u}) {  // From the newest frozen version and through the older chain.
+            SCOPED_TRACE(testing::Message() << "type " << int(c.type) << " stored " << c.stored << " from v" << from);
+            static SettingsManager::Settings old_settings;
+            old_settings = SettingsManager::Settings();
+            old_settings.settings_version = from;
+            old_settings.gnss_enabled = true;
+            old_settings.gnss_receiver_type = c.type;
+            old_settings.baud_rates[SettingsManager::kCommsUART] = 57600;
+            old_settings.baud_rates[SettingsManager::kGNSSUART] = c.stored;
+            uint8_t blob[sizeof(SettingsManager::Settings)];
+            memset(blob, 0xFF, sizeof(blob));
+            memcpy(blob, &old_settings,
+                   from == 20 ? sizeof(settings_v20::Settings)
+                              : offsetof(settings_v19::Settings, swarm_token) + sizeof(settings_v19::Settings::swarm_token));
+            static SettingsManager::Settings out;
+            ASSERT_TRUE(SettingsMigrator::Migrate(blob, sizeof(blob), from, out));
+            EXPECT_EQ(out.gnss_receiver_type, c.type);
+            EXPECT_EQ(out.baud_rates[SettingsManager::kGNSSUART], c.expected);
+            EXPECT_EQ(out.baud_rates[SettingsManager::kCommsUART], 57600u);
+        }
+    }
+}
+
+// New units and AT+SETTINGS=RESET start at the new GNSS baud default, inside the range AT+BAUD_RATE accepts.
+TEST(Settings, GNSSBaudDefault) {
+    SettingsManager::Settings s;
+    EXPECT_EQ(s.baud_rates[SettingsManager::kGNSSUART], SettingsManager::Settings::kDefaultGNSSUARTBaudrate);
+    EXPECT_EQ(s.baud_rates[SettingsManager::kCommsUART], SettingsManager::Settings::kDefaultCommsUARTBaudrate);
+    EXPECT_GE(SettingsManager::Settings::kDefaultGNSSUARTBaudrate, SettingsManager::Settings::kMinGNSSUARTBaudrate);
+    EXPECT_LE(SettingsManager::Settings::kDefaultGNSSUARTBaudrate, SettingsManager::Settings::kMaxGNSSUARTBaudrate);
+    EXPECT_NE(SettingsManager::Settings::kDefaultGNSSUARTBaudrate,
+              SettingsManager::Settings::kOldDefaultGNSSUARTBaudrate);
 }
 
 TEST(SettingsMigration, V18ToCurrentUsesDHCPAndV19Defaults) {

@@ -5,11 +5,17 @@
 
 #include "cpu_utils.hh"
 #include "esp32.hh"
+#include "gnss_receiver.hh"
+#include "hardware/irq.h"
+#include "pico/printf.h"  // For vfctprintf.
 #include "pico/stdlib.h"
 #include "spi_coprocessor.hh"
 
+extern GNSSReceiver* gnss;  // The selected GNSS receiver (gnss_interface.hh).
+
 static const CommsManager::ReportSink kReportingSinks[] = {SettingsManager::SerialInterface::kConsole,
-                                                           SettingsManager::SerialInterface::kCommsUART};
+                                                           SettingsManager::SerialInterface::kCommsUART,
+                                                           SettingsManager::SerialInterface::kGNSSUART};
 static const uint16_t kNumReportingSinks = sizeof(kReportingSinks) / sizeof(CommsManager::ReportSink);
 
 // The serial sinks with their protocols from the settings. Serial interfaces have no capabilities check: beast_caps 0.
@@ -29,10 +35,16 @@ bool CommsManager::Init() {
     uart_set_translate_crlf(config_.comms_uart_handle, false);
     uart_init(config_.comms_uart_handle, SettingsManager::Settings::kDefaultCommsUARTBaudrate);
 
-    gpio_set_function(config_.gnss_uart_tx_pin, GPIO_FUNC_UART);
-    gpio_set_function(config_.gnss_uart_rx_pin, GPIO_FUNC_UART);
-    uart_set_translate_crlf(config_.gnss_uart_handle, false);
-    uart_init(config_.gnss_uart_handle, SettingsManager::Settings::kDefaultGNSSUARTBaudrate);
+    InitGNSSUART();
+
+    for (UARTTx& uart : uart_tx_) {
+        // TX interrupt when the FIFO drops to 4 bytes, so each one refills most of it.
+        hw_write_masked(&uart_get_hw(uart.handle)->ifls, 0 << UART_UARTIFLS_TXIFLSEL_LSB, UART_UARTIFLS_TXIFLSEL_BITS);
+        irq_set_exclusive_handler(UART_IRQ_NUM(uart.handle), OnUARTIRQ);
+        irq_set_enabled(UART_IRQ_NUM(uart.handle), true);
+    }
+    // Lowest priority: output can wait. The GNSS UART keeps the default, since its interrupt also reads GNSS input.
+    irq_set_priority(UART_IRQ_NUM(config_.comms_uart_handle), PICO_LOWEST_IRQ_PRIORITY);
 
     // Don't mess with ESP32 enable / reset GPIOs here, since they need to be toggled by the programmer. Only initialize
     // them if no programming is required. Don't mess with ESP32 wifi pin until we're ready to try firmware updates.
@@ -41,6 +53,13 @@ bool CommsManager::Init() {
     stdio_set_translate_crlf(&stdio_usb, false);
 
     return true;
+}
+
+void CommsManager::InitGNSSUART() {
+    gpio_set_function(config_.gnss_uart_tx_pin, GPIO_FUNC_UART);
+    gpio_set_function(config_.gnss_uart_rx_pin, GPIO_FUNC_UART);
+    uart_set_translate_crlf(config_.gnss_uart_handle, false);
+    uart_init(config_.gnss_uart_handle, settings_manager.settings.baud_rates[SettingsManager::kGNSSUART]);
 }
 
 bool CommsManager::Update() {
@@ -171,10 +190,35 @@ int CommsManager::iface_printf(SettingsManager::SerialInterface iface, const cha
 
 int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const char* format, va_list args) {
     char buf[kPrintfBufferMaxSize];
+    va_list args_again;
+    va_copy(args_again, args);
 
     CPUMonitor::WorkScope work;
     // Formatted print to buffer.
     int res = vsnprintf(buf, kPrintfBufferMaxSize, format, args);
+    if (res >= kPrintfBufferMaxSize) {
+        // Too long for buf: format it again with the SDK's streaming printf, writing out buf each time it fills.
+        struct Sink {
+            SettingsManager::SerialInterface iface;
+            char* buf;
+            uint16_t len;
+            bool ok;
+        } sink = {iface, buf, 0, true};
+        vfctprintf(
+            [](char c, void* arg) {
+                Sink* s = static_cast<Sink*>(arg);
+                s->buf[s->len++] = c;
+                if (s->len == kPrintfBufferMaxSize) {
+                    s->ok = comms_manager.iface_write(s->iface, s->buf, s->len) && s->ok;
+                    s->len = 0;
+                }
+            },
+            &sink, format, args_again);
+        va_end(args_again);
+        sink.ok = iface_write(iface, buf, sink.len) && sink.ok;
+        return sink.ok && comms_manager.UpdateNetworkConsole() ? res : -1;
+    }
+    va_end(args_again);
     if (res <= 0) {
         return res;  // vsnprintf failed.
     }
@@ -186,15 +230,72 @@ int CommsManager::iface_vprintf(SettingsManager::SerialInterface iface, const ch
     return -1;  // puts failed.
 }
 
+CommsManager::UARTTx* CommsManager::GetUARTTx(SettingsManager::SerialInterface iface) {
+    switch (iface) {
+        case SettingsManager::kCommsUART:
+            return &uart_tx_[0];
+        case SettingsManager::kGNSSUART:
+            return &uart_tx_[1];
+        default:
+            return nullptr;
+    }
+}
+
+// Shared by both UART interrupts. The GNSS UART's also carries GNSS receiver input.
+void CommsManager::OnUARTIRQ() {
+    uint irq_num = __get_current_exception() - VTABLE_FIRST_IRQ;
+    for (UARTTx& uart : comms_manager.uart_tx_) {
+        if (UART_IRQ_NUM(uart.handle) == irq_num) {
+            comms_manager.FillUARTTxFIFO(uart);
+        }
+    }
+    if (irq_num == UART_IRQ_NUM(comms_manager.config_.gnss_uart_handle)) {
+        GNSSReceiver::RxIRQHandler();
+    }
+}
+
+void CommsManager::ApplyGNSSUARTBaudRate() {
+    if (gnss != nullptr) {
+        gnss->ApplyBaudRateSetting();
+    } else {
+        uart_set_baudrate(config_.gnss_uart_handle, settings_manager.settings.baud_rates[SettingsManager::kGNSSUART]);
+    }
+}
+
+bool CommsManager::FlushUARTTx(SettingsManager::SerialInterface iface, uint32_t timeout_ms) {
+    UARTTx* uart = GetUARTTx(iface);
+    if (uart == nullptr) return false;
+    uint32_t start_ms = get_time_since_boot_ms();
+    while (!uart->queue.IsEmpty()) {
+        FillUARTTxFIFO(*uart);
+        if (get_time_since_boot_ms() - start_ms > timeout_ms) return false;
+    }
+    uart_tx_wait_blocking(uart->handle);  // At most a FIFO (32 bytes) on the wire.
+    return true;
+}
+
+void CommsManager::FillUARTTxFIFO(UARTTx& uart) {
+    uart_hw_t* uart_hw = uart_get_hw(uart.handle);
+    uint32_t interrupts = save_and_disable_interrupts();  // Keeps the TX interrupt out when called from core 0 code.
+    char c;
+    while (uart_is_writable(uart.handle) && uart.queue.Dequeue(c)) {
+        uart_hw->dr = c;
+    }
+    // The interrupt fires when the FIFO level falls through the threshold. Bytes left over mean the FIFO is full, so it
+    // will fire again.
+    if (uart.queue.IsEmpty()) {
+        hw_clear_bits(&uart_hw->imsc, UART_UARTIMSC_TXIM_BITS);
+    } else {
+        hw_set_bits(&uart_hw->imsc, UART_UARTIMSC_TXIM_BITS);
+    }
+    restore_interrupts(interrupts);
+}
+
 bool CommsManager::iface_putc(SettingsManager::SerialInterface iface, char c) {
     switch (iface) {
         case SettingsManager::kCommsUART:
-            uart_putc_raw(config_.comms_uart_handle, c);
-            return true;  // Function is void so we won't know if it succeeds.
-            break;
         case SettingsManager::kGNSSUART:
-            uart_putc_raw(config_.gnss_uart_handle, c);
-            return true;  // Function is void so we won't know if it succeeds.
+            return iface_write(iface, &c, 1);
             break;
         case SettingsManager::kConsole:
             return putchar(c) >= 0 && (!MirrorToNetworkConsole() || network_console_putc(c) >= 0);
@@ -207,7 +308,28 @@ bool CommsManager::iface_putc(SettingsManager::SerialInterface iface, char c) {
     return false;  // Should never get here.
 }
 
-bool CommsManager::iface_write(SettingsManager::SerialInterface iface, const char* buf, uint16_t len) {
+bool CommsManager::iface_write(SettingsManager::SerialInterface iface, const char* buf, uint16_t len, bool wait) {
+    UARTTx* uart = GetUARTTx(iface);
+    if (uart != nullptr) {
+        if (!wait && len > uart->queue.MaxNumElements() - uart->queue.Length()) {
+            return false;  // No room for the whole buffer.
+        }
+        for (uint16_t i = 0; i < len; i++) {
+            if (uart->queue.Enqueue(buf[i])) {
+                continue;
+            }
+            // Queue full: make sure it is draining, then wait for space unless the UART has stalled.
+            uint32_t wait_start_ms = get_time_since_boot_ms();
+            do {
+                FillUARTTxFIFO(*uart);
+                if (get_time_since_boot_ms() - wait_start_ms > kUARTTxStallTimeoutMs) {
+                    return false;
+                }
+            } while (!uart->queue.Enqueue(buf[i]));
+        }
+        FillUARTTxFIFO(*uart);  // Starts the drain if the UART was idle.
+        return true;
+    }
     if (iface != SettingsManager::kConsole) {
         for (uint16_t i = 0; i < len; i++) {
             if (!iface_putc(iface, buf[i])) {
@@ -262,12 +384,8 @@ bool CommsManager::iface_getc(SettingsManager::SerialInterface iface, char& c) {
 bool CommsManager::iface_puts(SettingsManager::SerialInterface iface, const char* buf) {
     switch (iface) {
         case SettingsManager::kCommsUART:
-            uart_puts(config_.comms_uart_handle, buf);
-            return true;  // Function is void so we won't know if it succeeds.
-            break;
         case SettingsManager::kGNSSUART:
-            uart_puts(config_.gnss_uart_handle, buf);
-            return true;  // Function is void so we won't know if it succeeds.
+            return iface_write(iface, buf, strlen(buf));
             break;
         case SettingsManager::kConsole:
             // Note: Using fputs instead of standard puts, since puts adds a line feed.

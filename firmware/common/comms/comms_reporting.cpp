@@ -515,6 +515,19 @@ static uint16_t BuildBeastBatch(uint8_t* buf, size_t buf_size, const CompositeAr
 }
 #endif
 
+#ifdef ON_ESP32
+bool CommsManager::ReportGPSTime(const ReportSinkInfo* sinks, uint16_t num_sinks,
+                                 const ObjectDictionary::PPSTime& pps_time) {
+    static uint8_t last_seq = 0;  // IPWANTask only.
+    if (num_sinks > SettingsManager::kMaxNumReportSinks) num_sinks = SettingsManager::kMaxNumReportSinks;
+    ReportSink selected[SettingsManager::kMaxNumReportSinks];
+    auto send = [&](const ReportSink* to, uint16_t num_to, const uint8_t* buf, uint16_t len, uint16_t num_frames) {
+        return SendBufToSinks(to, num_to, reinterpret_cast<const char*>(buf), len, beast_tally, num_frames);
+    };
+    return BeastReporter::ReportGPSTimeFrame(sinks, num_sinks, pps_time, last_seq, selected, send);
+}
+#endif
+
 bool CommsManager::ReportBeast(const ReportSinkInfo* sinks, uint16_t num_sinks,
                                const CompositeArray::RawPackets& packets) {
     if (num_sinks > SettingsManager::kMaxNumReportSinks) num_sinks = SettingsManager::kMaxNumReportSinks;
@@ -805,15 +818,24 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
         const SettingsManager::RxPosition& rx_position = object_dictionary.composite_device_status.rp2040.rx_position;
         bool rx_position_available = object_dictionary.composite_device_status.rp2040.rx_position_available;
         bool gnss_utc_time_valid = object_dictionary.composite_device_status.rp2040.gnss_utc_time_valid;
+        bool gnss_geoid_separation_valid = object_dictionary.composite_device_status.rp2040.gnss_geoid_separation_valid;
+        int32_t gnss_geoid_separation_cm = object_dictionary.composite_device_status.rp2040.gnss_geoid_separation_cm;
+        bool gnss_altitude_std_dev_valid = object_dictionary.composite_device_status.rp2040.gnss_altitude_std_dev_valid;
+        int32_t gnss_altitude_std_dev_cm = object_dictionary.composite_device_status.rp2040.gnss_altitude_std_dev_cm;
 #else
         const SettingsManager::RxPosition& rx_position = adsbee.rx_position;
         bool rx_position_available = adsbee.rx_position_available;
         bool gnss_utc_time_valid = gnss != nullptr && gnss->fix().utc_time_valid;
+        bool gnss_geoid_separation_valid = gnss != nullptr && gnss->fix().geoid_separation_valid;
+        int32_t gnss_geoid_separation_cm = gnss != nullptr ? gnss->fix().geoid_separation_cm : 0;
+        int32_t gnss_altitude_std_dev_cm = 0;
+        bool gnss_altitude_std_dev_valid = gnss != nullptr && gnss->GetAltitudeStdDevCm(gnss_altitude_std_dev_cm);
 #endif
         // Build the ownship report up front: its validity also drives the heartbeat's GPS Position Valid flag.
         // Selecting RX_POSITION=GNSS routes the latest fresh GNSS fix populated by ADSBee::UpdateRxPosition().
         GDL90Reporter::GDL90TargetReportData ownship_data;
         bool have_position = GDL90Reporter::BuildOwnshipReportData(ownship_data, rx_position, rx_position_available);
+        gdl90_ownship_icao_ = AircraftDictionary::OwnshipICAOAddress(rx_position, rx_position_available);
 
         gdl90.gnss_position_valid = have_position;
         gdl90.utc_timing_is_valid = gnss_utc_time_valid;
@@ -839,6 +861,23 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
         } else {
             ret &= SendBufToSinks(sinks, num_sinks, (char*)buf, msg_len, gdl90_tally);
         }
+
+        // Ownship Geometric Altitude, right after the ownship report (GNSS ownship only).
+        GDL90Reporter::GDL90OwnshipGeometricAltitudeData geo_altitude_data;
+        if (GDL90Reporter::BuildOwnshipGeometricAltitudeData(
+                geo_altitude_data, rx_position, rx_position_available, gnss_geoid_separation_valid,
+                gnss_geoid_separation_cm,
+                gnss_altitude_std_dev_valid
+                    ? GDL90Reporter::VFOMFromAltitudeStdDevCm(gnss_altitude_std_dev_cm)
+                    : GDL90Reporter::GDL90OwnshipGeometricAltitudeData::kVFOMNotAvailable)) {
+            msg_len = gdl90.WriteGDL90OwnshipGeometricAltitudeMessage(buf, sizeof(buf), geo_altitude_data);
+            if (msg_len == 0) {
+                gdl90_tally.num_build_failures++;
+                ret = false;
+            } else {
+                ret &= SendBufToSinks(sinks, num_sinks, (char*)buf, msg_len, gdl90_tally);
+            }
+        }
     }
 
     // Send a traffic report for each aircraft within the time budget.
@@ -859,6 +898,9 @@ bool CommsManager::ReportGDL90(ReportSink* sinks, uint16_t num_sinks) {
         }
         if (!aircraft_dictionary.IsPreferredReportForAddress(uid, get_time_since_boot_ms())) {
             continue;  // Another entry (e.g. the aircraft's own ADS-B) is reported for this ICAO address.
+        }
+        if (AircraftDictionary::IsOwnship(uid, gdl90_ownship_icao_)) {
+            continue;  // Sent as the ownship report, like the ESP32's GDL90.
         }
 
         msg_len = 0;

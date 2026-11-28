@@ -58,6 +58,7 @@ bool ESP32::Update() {
         queued_log_messages_packed_size_bytes = device_status.queued_log_messages_packed_size_bytes;
         num_queued_sc_command_requests = device_status.num_queued_sc_command_requests;
         remote_id_status = device_status.remote_id_status;
+        ble_output_status = device_status.ble_output_status;
         hardware_capabilities = device_status.hardware_capabilities;
         psram_total_kb = device_status.psram_total_kb;
         psram_free_kb = device_status.psram_free_kb;
@@ -68,13 +69,8 @@ bool ESP32::Update() {
         network_utc_ms_of_day = device_status.network_utc_ms_of_day;
         network_utc_timestamp_ms = get_time_since_boot_ms();
         adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberESP32, device_status.mlat_sync_flags);
-        // A lost write only costs this sync point.
-        ObjectDictionary::SyncPulse pulse;
-        if (adsbee.sync_pulse_service.TakeNewPulse(SyncPulseService::kSubscriberESP32, pulse)) {
-            esp32.Write(ObjectDictionary::Address::kAddrSyncPulse, pulse);
-        }
     } else {
-        adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberESP32, 0);
+        adsbee.sync_pulse_service.ReportAbsent(SyncPulseService::kSubscriberESP32);
         if (!esp32.IsLinkDown()) {  // Don't repeat this every pass while the link is down.
             CONSOLE_ERROR("ESP32::Update", "Unable to read ESP32 status.");
         }
@@ -148,7 +144,21 @@ bool ESP32::Update() {
 
     // Send the RP2040's status to the ESP32.
     const NMEAParser::GNSSFix& gnss_fix = gnss->fix();
+    int32_t gnss_altitude_std_dev_cm = 0;
+    bool gnss_altitude_std_dev_valid = gnss->GetAltitudeStdDevCm(gnss_altitude_std_dev_cm);
     uint32_t status_timestamp_ms = get_time_since_boot_ms();
+    ObjectDictionary::PPSTime pps_time = {.seq = gnss->pps_time_seq()};
+    if (pps_time.seq != 0) {
+        uint64_t edge_counts = 0, utc_seconds = 0;  // Packed fields don't bind to references.
+        uint16_t edge_sub_counts = 0;
+        gnss->pps_clock().GetAnchor(edge_counts, edge_sub_counts, utc_seconds);
+        pps_time.edge_mlat_48mhz_counts = edge_counts;
+        pps_time.edge_sub_counts = edge_sub_counts;
+        pps_time.utc_seconds = utc_seconds;
+        int64_t rate_ppb = gnss->pps_clock().GetRateErrorPPB();  // Within +-PPSClock::kMaxRateErrorPPB.
+        pps_time.rate_ppb = static_cast<int32_t>(rate_ppb);
+        pps_time.step = gnss->pps_time_step();
+    }
     // UTC at the time of this status, so the ESP32 can read it as its current time.
     static constexpr uint32_t kMsPerDay = 86400000;
     uint32_t utc_ms_of_day =
@@ -167,8 +177,8 @@ bool ESP32::Update() {
                 .rx_position_available = adsbee.rx_position_available,
                 .gnss_enabled = gnss->IsActive(),
                 .gnss_fix_valid = gnss->HasValidFix(),
-                .gnss_latitude_deg = gnss_fix.latitude_deg,
-                .gnss_longitude_deg = gnss_fix.longitude_deg,
+                .gnss_latitude_awb = gnss_fix.latitude_awb,
+                .gnss_longitude_awb = gnss_fix.longitude_awb,
                 .gnss_altitude_ft = gnss_fix.altitude_ft,
                 .gnss_heading_deg = gnss_fix.heading_deg,
                 .gnss_speed_kts = gnss_fix.speed_kts,
@@ -178,12 +188,18 @@ bool ESP32::Update() {
                 .gnss_utc_minute = static_cast<uint8_t>(utc_ms_of_day / 60000 % 60),
                 .gnss_utc_second = static_cast<uint8_t>(utc_ms_of_day / 1000 % 60),
                 .gnss_utc_millisecond = static_cast<uint16_t>(utc_ms_of_day % 1000),
+                .gnss_geoid_separation_valid = gnss_fix.geoid_separation_valid,
+                .gnss_geoid_separation_cm = gnss_fix.geoid_separation_cm,
+                .gnss_altitude_std_dev_valid = gnss_altitude_std_dev_valid,
+                .gnss_altitude_std_dev_cm = gnss_altitude_std_dev_cm,
                 .noise_floor_mv = static_cast<uint16_t>(adsbee.GetNoiseFloorMilliVolts()),
                 .noise_floor_dbm = static_cast<int16_t>(adsbee.GetNoiseFloordBm()),
                 .r1090_rx_enabled = adsbee.Receiver1090IsEnabled(),
                 .subg_rx_enabled =
                     bsp.has_subg && adsbee.subg_radio_ll.IsEnabled() && settings_manager.settings.subg_rx_enabled,
                 .subg_mode = settings_manager.settings.subg_mode,
+                .sync_pulse = adsbee.sync_pulse_service.GetLastPulse(),
+                .pps_time = pps_time,
             },
         .subg = adsbee.subg_radio_ll.device_status,
     };
@@ -195,8 +211,6 @@ bool ESP32::Update() {
     last_update_timestamp_ms_ = get_time_since_boot_ms();
     return true;
 }
-
-bool ESP32::UpdateIsDue() { return adsbee.sync_pulse_service.HasNewPulse(SyncPulseService::kSubscriberESP32); }
 
 bool ESP32::SPIGetHandshakePinLevel() { return gpio_get(config_.spi_handshake_pin); }
 

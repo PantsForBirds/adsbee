@@ -147,6 +147,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND arm-none-eabi-objcopy -O binary 
     --gap-fill 0xff 
     ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.elf ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.bin
+    COMMAND ${CMAKE_COMMAND} -DBIN=${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.bin -P ${CMAKE_CURRENT_SOURCE_DIR}/check_ccfg.cmake
     COMMENT "Creating binary file"
 )
 

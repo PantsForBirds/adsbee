@@ -72,8 +72,8 @@ class GDL90Reporter {
         AddressType address_type =
             kAddressTypeADSBWithICAOAddress;  // Type of address conveyed in Participant Address field.
         uint32_t participant_address = 0;     // 24 bit ICAO address.
-        float latitude_deg = 0.0f;
-        float longitude_deg = 0.0f;
+        uint32_t latitude_awb = 0;            // AWB, see geo_utils.hh.
+        uint32_t longitude_awb = 0;
         int32_t altitude_ft = INT32_MIN;            // Encodes as 0xFFF (invalid) when out of [-1000, 101350] ft range.
         uint8_t misc_indicators = 0;                // Default: TT not valid, not extrapolated, not airborne.
         uint8_t navigation_integrity_category = 0;  // Navigation Integrity Category (NIC).
@@ -84,6 +84,17 @@ class GDL90Reporter {
         uint8_t emitter_category = 0;
         char callsign[9] = "        ";  // 8 ASCII chars + null terminator, 0-9 and A-Z
         EmergencyPriorityCode emergency_priority_code = kEmergencyPriorityCodeNoEmergency;  // 4 bits.
+    };
+
+    // Payload of the Ownship Geometric Altitude message (ID 11).
+    struct GDL90OwnshipGeometricAltitudeData {
+        // Vertical Figure of Merit sentinels, in meters.
+        static constexpr uint16_t kVFOMNotAvailable = 0x7FFF;
+        static constexpr uint16_t kVFOMMaxMeters = 0x7FFE;  // Means "more than 32766 m".
+
+        int32_t geo_altitude_ft = 0;  // Geometric altitude, feet. Sent in 5 ft steps, clamped to the 16-bit field.
+        bool vertical_warning = false;
+        uint16_t vfom_m = kVFOMNotAvailable;
     };
 
     /**
@@ -192,6 +203,59 @@ class GDL90Reporter {
      */
     static bool BuildOwnshipReportData(GDL90TargetReportData& data, const SettingsManager::RxPosition& rx_position,
                                        bool rx_position_available);
+
+    /**
+     * Write a GDL90 Ownship Geometric Altitude message (ID 11).
+     * @param[out] to_buf Buffer to write to.
+     * @param[in] to_buf_num_bytes Size of the output buffer, in bytes.
+     * @param[in] data Geometric altitude and vertical metrics to send.
+     * @retval Number of Bytes written to to_buf.
+     */
+    uint16_t WriteGDL90OwnshipGeometricAltitudeMessage(uint8_t* to_buf, uint16_t to_buf_num_bytes,
+                                                       const GDL90OwnshipGeometricAltitudeData& data);
+
+    /**
+     * Convert a receiver's 1 sigma altitude error to a VFOM, which is a 95% bound (1.96 sigma for a normal error),
+     * rounded up to whole meters. Integer math only.
+     * @param[in] std_dev_cm Standard deviation of the altitude error, in centimeters.
+     * @retval VFOM in meters, kVFOMMaxMeters if it does not fit, kVFOMNotAvailable for a negative input.
+     */
+    static uint16_t VFOMFromAltitudeStdDevCm(int32_t std_dev_cm);
+
+    /**
+     * A GNSS receiver's height above the WGS-84 ellipsoid (HAE) from its altitude above MSL and its geoid separation
+     * (GGA field 11): HAE = MSL + geoid separation. Integer math only. Shared by the GDL90 Ownship Geometric Altitude
+     * message and the FLARM NMEA ownship, so both send the same altitude.
+     * @param[in] msl_altitude_ft GNSS altitude above MSL, feet.
+     * @param[in] geoid_separation_valid Whether the receiver reported a geoid separation.
+     * @param[in] geoid_separation_cm Geoid height above the WGS-84 ellipsoid, in centimeters.
+     * @param[out] hae_ft Height above the ellipsoid, feet.
+     * @retval False without a geoid separation, or with one outside the real +/-110 m (a bad sentence).
+     */
+    static bool GNSSHeightAboveEllipsoidFt(int32_t msl_altitude_ft, bool geoid_separation_valid,
+                                           int32_t geoid_separation_cm, int32_t& hae_ft);
+
+    /**
+     * Populate an Ownship Geometric Altitude message from a GNSS receiver position. Only a GNSS ownship gets one: the
+     * tracked aircraft source already reports that aircraft's pressure altitude in the ownship report.
+     *
+     * The ICD defines the field as height above the WGS-84 ellipsoid (HAE), and EFBs read it that way unless a
+     * ForeFlight ID message says otherwise (we send none). GNSS receivers report altitude above MSL plus the geoid
+     * separation (GGA), so HAE = MSL + geoid separation. Without a geoid separation no message is sent: an MSL value
+     * read as HAE would be off by the geoid height (about 30 m in the US). The vertical warning bit is left clear,
+     * as Stratux does: NMEA gives no fault detection status.
+     * @param[out] data Message data to fill.
+     * @param[in] rx_position Receiver position. gnss_altitude_ft is the GNSS altitude above MSL.
+     * @param[in] rx_position_available Whether rx_position currently holds a fresh position.
+     * @param[in] geoid_separation_valid Whether the receiver reported a geoid separation.
+     * @param[in] geoid_separation_cm Geoid height above the WGS-84 ellipsoid, in centimeters.
+     * @param[in] vfom_m Vertical Figure of Merit in meters, or kVFOMNotAvailable.
+     * @retval True if a message should be sent: GNSS ownship with a fresh fix and a geoid separation.
+     */
+    static bool BuildOwnshipGeometricAltitudeData(GDL90OwnshipGeometricAltitudeData& data,
+                                                  const SettingsManager::RxPosition& rx_position,
+                                                  bool rx_position_available, bool geoid_separation_valid,
+                                                  int32_t geoid_separation_cm, uint16_t vfom_m);
 
     /**
      * Write a GDL90 message for ownship or traffic data. This function calls the version that takes a

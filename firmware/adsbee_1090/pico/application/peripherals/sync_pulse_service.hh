@@ -4,13 +4,17 @@
 #include <cstdint>
 
 #include "comms.hh"
+#include "mlat_time_sync.hh"
 #include "object_dictionary.hh"
 
 /**
- * Sync pulses put coprocessor timestamps on the RP2040's 48 MHz MLAT clock. About once a second the RP2040 raises the
- * shared SYNC line (CC1312 DIO5, ESP32-S3 GPIO38) for ~1 us, then each subscriber driver writes the MLAT count of that
- * edge (ObjectDictionary::SyncPulse) over its own SPI link. Each coprocessor captures the edge on its own clock, fits
- * offset and rate, and sends packets already on the MLAT time base.
+ * Sync pulses put coprocessor timestamps on the RP2040's 48 MHz MLAT clock. The core that owns the MLAT counter raises
+ * the shared SYNC line (CC1312 DIO5, ESP32-S3 GPIO38) for ~1 us about every kIntervalMs, and as soon as the pulses
+ * are allowed again, and stores the MLAT count of the edge. Core 0 hands the latest count to each coprocessor
+ * (ObjectDictionary::SyncPulse) on traffic it already has: the ESP32 gets it in every RP2040 status write
+ * (GetLastPulse()), the CC1312 in one small un-acked write after its next status read (TakeNewPulse()). Each
+ * coprocessor pairs a count with one of the last two edges it captured (SyncPulsePairing), so a count may arrive late,
+ * twice or not at all.
  *
  * SYNC is also the CC1312 bootloader backdoor (high at reset = bootloader), so the CC1312 driver gates the pulses:
  * Allow() once its application has answered a status read or while it holds the CC1312 in reset, Block() before any
@@ -22,9 +26,11 @@ class SyncPulseService {
    public:
     enum Subscriber : uint8_t { kSubscriberCC1312 = 0, kSubscriberESP32, kNumSubscribers };
 
-    static constexpr uint32_t kIntervalMs = 1000;
-    static constexpr uint32_t kRequestTimeoutMs = 500;  // A request not served by then is dropped.
-    static_assert(ObjectDictionary::kSyncPulseMinIntervalMs > ObjectDictionary::kSyncPulseMaxAgeMs);
+    static constexpr uint32_t kIntervalMs = ObjectDictionary::kSyncPulseIntervalMs;
+    static constexpr uint32_t kIntervalUs = kIntervalMs * 1000;
+    static_assert(ObjectDictionary::kSyncPointMaxAgeMs * 1000ull <= MLATTimeSync::kMaxExtrapolationUs);
+    static_assert(ObjectDictionary::kSyncPointMaxAgeMs > 2 * kIntervalMs);
+    static_assert(SyncPulsePairing::kMaxFirstEdgeAgeUs < kIntervalUs);
 
     // Raises SYNC, returns the MLAT count of the rising edge, lowers SYNC. Runs with the pulse allowed.
     using Emitter = uint64_t (*)();
@@ -36,115 +42,100 @@ class SyncPulseService {
 
     void Allow() { allowed_ = true; }
 
-    // Stops pulses and returns once none is in flight.
+    // Stops pulses and returns once none is in flight. The next Service() after Allow() sends one.
     void Block() {
         allowed_ = false;
-        requested_ = false;
         Fence();
         while (busy_) {
         }
+        pulse_now_ = true;
+        // The CC1312 may restart: a count from before would reach it just after the next pulse's edge, which it would
+        // take for that count's (its first point needs only a young edge).
+        delivered_mlat_48mhz_counts_ = GetLastPulse().mlat_48mhz_counts;
     }
 
     bool IsAllowed() const { return allowed_; }
 
-    // Sends a requested pulse. Call from the core that owns the MLAT counter.
-    void Service() {
-        if (!requested_) {
+    // Sends a pulse when one is due. Call often from the core that owns the MLAT counter (timestamp_us: time_us_32()).
+    void Service(uint32_t timestamp_us) {
+        if (!allowed_ || emitter_ == nullptr ||
+            (!pulse_now_ && timestamp_us - last_pulse_timestamp_us_ < kIntervalUs)) {
             return;
         }
         // Checked against Block(): either this sees the pulse blocked, or Block() sees it busy and waits.
         busy_ = true;
         Fence();
-        if (allowed_ && emitter_ != nullptr) {
+        if (allowed_) {
             uint64_t mlat_48mhz_counts = emitter_();
-            last_mlat_48mhz_counts_ = mlat_48mhz_counts;
+            // Seqlock: core 0 reads the 64-bit count while seq_ is even and unchanged.
+            seq_ = seq_ + 1;
             Fence();
-            num_pulses_sent_ = num_pulses_sent_ + 1;
+            mlat_48mhz_counts_ = mlat_48mhz_counts;
+            Fence();
+            seq_ = seq_ + 1;
+            last_pulse_timestamp_us_ = timestamp_us;
+            pulse_now_ = false;
         }
-        requested_ = false;
         Fence();
         busy_ = false;
     }
 
-    // Schedules pulses and records sent ones. Call every main loop pass.
-    void Update(uint32_t timestamp_ms) {
-        uint32_t num_pulses_sent = num_pulses_sent_;
-        if (num_pulses_sent != last_pulse_.pulse_num) {
+    // The latest pulse (mlat_48mhz_counts 0: none yet), for the ESP32 status write.
+    ObjectDictionary::SyncPulse GetLastPulse() const {
+        ObjectDictionary::SyncPulse pulse;
+        uint32_t seq;
+        do {
+            seq = seq_;
             Fence();
-            last_pulse_ = {.mlat_48mhz_counts = last_mlat_48mhz_counts_, .pulse_num = num_pulses_sent};
-        }
-        if (!allowed_ || emitter_ == nullptr) {
-            return;
-        }
-        uint32_t ms_since_request = timestamp_ms - request_timestamp_ms_;
-        if (requested_) {
-            if (ms_since_request > kRequestTimeoutMs) {
-                requested_ = false;
-            }
-            return;
-        }
-        // A coprocessor whose clock restarted is back on the MLAT clock after one pulse: send it soon.
-        if (ms_since_request >= kIntervalMs ||
-            (AnyPulseWanted() && ms_since_request >= ObjectDictionary::kSyncPulseMinIntervalMs)) {
-            request_timestamp_ms_ = timestamp_ms;
+            pulse.mlat_48mhz_counts = mlat_48mhz_counts_;
             Fence();
-            requested_ = true;
-        }
+        } while ((seq & 1) || seq != seq_);
+        return pulse;
     }
 
-    // True if a pulse went out that this subscriber hasn't been given yet.
-    bool HasNewPulse(Subscriber subscriber) const {
-        return last_pulse_.pulse_num != delivered_pulse_num_[subscriber];
-    }
-
-    // Gets the last pulse for a subscriber to write to its coprocessor, once.
-    bool TakeNewPulse(Subscriber subscriber, ObjectDictionary::SyncPulse& pulse) {
-        if (!HasNewPulse(subscriber)) {
-            return false;
-        }
-        pulse = last_pulse_;
-        delivered_pulse_num_[subscriber] = pulse.pulse_num;
+    // Gets a pulse not given yet, for the CC1312 write.
+    bool TakeNewPulse(ObjectDictionary::SyncPulse& pulse) {
+        pulse = GetLastPulse();
+        if (pulse.mlat_48mhz_counts == 0 || pulse.mlat_48mhz_counts == delivered_mlat_48mhz_counts_) return false;
+        delivered_mlat_48mhz_counts_ = pulse.mlat_48mhz_counts;
         return true;
     }
 
-    const ObjectDictionary::SyncPulse& GetLastPulse() const { return last_pulse_; }
-
-    // ObjectDictionary::MLATSyncFlag bits from the subscriber's last status, or 0 when it can't be read.
+    // ObjectDictionary::MLATSyncFlag bits from the subscriber's last status read.
     void ReportFlags(Subscriber subscriber, uint8_t flags) {
-        bool synced = flags & ObjectDictionary::kMLATSyncFlagSynced;
-        if (synced != static_cast<bool>(flags_[subscriber] & ObjectDictionary::kMLATSyncFlagSynced)) {
-            CONSOLE_INFO("SyncPulseService::ReportFlags", "%s timestamps %s.", kSubscriberNames[subscriber],
-                         synced ? "on the MLAT clock" : "stopped until the next sync pulses");
-        }
+        LogSyncChange(subscriber, flags);
         flags_[subscriber] = flags;
     }
 
-    uint8_t GetFlags(Subscriber subscriber) const { return flags_[subscriber]; }
+    // The subscriber's status can't be read (link down, coprocessor disabled or resetting): its sync doesn't count.
+    void ReportAbsent(Subscriber subscriber) { ReportFlags(subscriber, 0); }
 
    private:
     static constexpr const char* kSubscriberNames[kNumSubscribers] = {"Sub-GHz", "Remote ID"};
 
     static void Fence() { std::atomic_thread_fence(std::memory_order_seq_cst); }
 
-    bool AnyPulseWanted() const {
-        for (uint8_t flags : flags_) {
-            if (flags & ObjectDictionary::kMLATSyncFlagPulseWanted) return true;
+    void LogSyncChange(Subscriber subscriber, uint8_t flags) {
+        bool synced = flags & ObjectDictionary::kMLATSyncFlagSynced;
+        if (synced != static_cast<bool>(flags_[subscriber] & ObjectDictionary::kMLATSyncFlagSynced)) {
+            CONSOLE_INFO("SyncPulseService::ReportFlags", "%s timestamps %s.", kSubscriberNames[subscriber],
+                         synced ? "on the MLAT clock" : "stopped until the next sync pulses");
         }
-        return false;
     }
 
     Emitter emitter_;
 
-    // Shared with the core that sends pulses.
+    // Shared between the cores.
     volatile bool allowed_ = false;
-    volatile bool requested_ = false;
-    volatile bool busy_ = false;
-    volatile uint32_t num_pulses_sent_ = 0;
-    volatile uint64_t last_mlat_48mhz_counts_ = 0;  // Of the last pulse sent; valid once its count is seen.
+    volatile bool busy_ = false;               // Service() is past its allowed_ check.
+    volatile bool pulse_now_ = true;           // Send the next pulse at once (the pulses were blocked).
+    volatile uint32_t seq_ = 0;                // Odd while mlat_48mhz_counts_ is written.
+    volatile uint64_t mlat_48mhz_counts_ = 0;  // Of the last pulse.
+
+    // Pulse core only.
+    uint32_t last_pulse_timestamp_us_ = 0;
 
     // Core 0 only.
-    uint32_t request_timestamp_ms_ = 0;
-    ObjectDictionary::SyncPulse last_pulse_;
-    uint32_t delivered_pulse_num_[kNumSubscribers] = {};
+    uint64_t delivered_mlat_48mhz_counts_ = 0;  // Last count given to the CC1312.
     uint8_t flags_[kNumSubscribers] = {};
 };

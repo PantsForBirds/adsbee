@@ -116,8 +116,8 @@ class Aircraft {
     uint32_t last_position_update_ms = 0;
     uint32_t last_velocity_update_ms = 0;  // Local time of the last velocity, 0 until one arrives.
 
-    float latitude_deg = 0.0f;
-    float longitude_deg = 0.0f;
+    uint32_t latitude_awb = 0;   // AWB, see geo_utils.hh.
+    uint32_t longitude_awb = 0;  // AWB.
 
     int32_t baro_altitude_ft = 0;
     int32_t gnss_altitude_ft = 0;
@@ -571,7 +571,7 @@ class ModeSAircraft : public Aircraft {
 
 #ifdef FILTER_CPR_POSITIONS
     // Position in Angular Weighted Binary. This gets set to a candidate position which may not match the actual
-    // displayed latitude_deg and logitude_deg. Format is in AWB to enable fast fixed point operations for screening
+    // displayed latitude_awb and longitude_awb. Format is in AWB to enable fast fixed point operations for screening
     // candidate positions.
     uint32_t last_filter_received_timestamp_ms_ =
         0;  // received_timestamp_ms for the last packet that was fed to the filter.
@@ -817,7 +817,7 @@ class UATAircraft : public Aircraft {
 
 #ifdef FILTER_CPR_POSITIONS
     // Position in Angular Weighted Binary. This gets set to a candidate position which may not match the actual
-    // displayed latitude_deg and logitude_deg. Format is in AWB to enable fast fixed point operations for screening
+    // displayed latitude_awb and longitude_awb. Format is in AWB to enable fast fixed point operations for screening
     // candidate positions.
     uint32_t last_filter_received_timestamp_ms_ =
         0;  // received_timestamp_ms for the last packet that was fed to the filter.
@@ -913,8 +913,8 @@ class RemoteIDAircraft : public Aircraft {
 
     int32_t height_above_takeoff_ft = 0;  // UA height above takeoff or ground per height_type. Valid iff flag set.
 
-    float operator_latitude_deg = 0.0f;
-    float operator_longitude_deg = 0.0f;
+    uint32_t operator_latitude_awb = 0;  // AWB.
+    uint32_t operator_longitude_awb = 0;
     int32_t operator_altitude_geo_ft = 0;  // Operator (System message) geometric altitude, WGS84.
 
     Metrics metrics;
@@ -1528,8 +1528,8 @@ class AircraftDictionary {
     /**
      * Get the position of the lowest aircraft in the dictionary with a valid GNSS altitude. This can be used to
      * approximate the receiver position.
-     * @param[out] latitude_deg Latitude of the lowest aircraft, in degrees.
-     * @param[out] longitude_deg Longitude of the lowest aircraft, in degrees.
+     * @param[out] latitude_awb Latitude of the lowest aircraft, in AWB.
+     * @param[out] longitude_awb Longitude of the lowest aircraft, in AWB.
      * @param[out] gnss_altitude_ft GNSS altitude of the lowest aircraft, in feet.
      * @param[out] baro_altitude_ft Barometric altitude of the lowest aircraft, in feet.
      * @param[out] heading_deg Heading of the lowest aircraft, in degrees. NAN if not available.
@@ -1537,7 +1537,7 @@ class AircraftDictionary {
      * @retval True if a lowest aircraft was found, false if no aircraft with a valid GNSS altitude exists in the
      * dictionary.
      */
-    bool GetLowestAircraftPosition(float& latitude_deg, float& longitude_deg, int32_t& gnss_altitude_ft,
+    bool GetLowestAircraftPosition(uint32_t& latitude_awb, uint32_t& longitude_awb, int32_t& gnss_altitude_ft,
                                    int32_t& baro_altitude_ft, float& heading_deg, int32_t& speed_kts);
 
     /**
@@ -1575,6 +1575,62 @@ class AircraftDictionary {
      * @retval True if the entry should be reported, false if another entry for the same address is preferred.
      */
     bool IsPreferredReportForAddress(uint32_t uid, uint32_t timestamp_ms) const;
+
+    // No ownship among the tracked aircraft: IsOwnship() never matches it.
+    static constexpr uint32_t kNoOwnshipICAOAddress = UINT32_MAX;
+
+    /**
+     * ICAO address of the tracked aircraft that is ownship: the one RX_POSITION=ICAO follows, while it gives the
+     * receiver position. Else kNoOwnshipICAOAddress (GNSS, fixed or lowest-aircraft position, or no position).
+     * @param[in] rx_position SettingsManager::RxPosition (either product's).
+     * @param[in] rx_position_available True while rx_position holds a position.
+     */
+    template <typename RxPositionT>
+    static uint32_t OwnshipICAOAddress(const RxPositionT& rx_position, bool rx_position_available) {
+        return rx_position_available && rx_position.source == RxPositionT::kPositionSourceAircraftMatchingICAO
+                   ? rx_position.icao_address & 0xFFFFFF
+                   : kNoOwnshipICAOAddress;
+    }
+
+    /**
+     * Whether a dictionary entry is ownship: an entry that carries ownship's ICAO address (Mode S from ADS-B, ADS-R,
+     * TIS-B or Mode S replies, or UAT ADS-B or TIS-B). Remote ID and entries without an ICAO address (anonymous,
+     * self-assigned, track files) never are, and nothing is for kNoOwnshipICAOAddress.
+     * @param[in] uid UID of the entry.
+     * @param[in] ownship_icao_address From OwnshipICAOAddress().
+     */
+    static bool IsOwnship(uint32_t uid, uint32_t ownship_icao_address) {
+        if (ownship_icao_address > 0xFFFFFF) return false;
+        const uint32_t address = Aircraft::UIDToICAOAddress(uid);
+        if ((address & 0xFFFFFF) != ownship_icao_address) return false;
+        const uint32_t qualifier = (address & Aircraft::kAddressQualifierMask) >> Aircraft::kAddressQualifierBitShift;
+        switch (Aircraft::UIDToAircraftType(uid)) {
+            case Aircraft::kAircraftTypeModeS:
+                return qualifier == 0;  // AddressToUID() puts non-ICAO address types in the qualifier.
+            case Aircraft::kAircraftTypeUAT:
+                return qualifier == UATAircraft::kADSBTargetWithICAO24BitAddress ||
+                       qualifier == UATAircraft::kTISBTargetWithICAO24BitAddress;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Whether a traffic report (GDL90, FLARM NMEA) covers a dictionary entry: it isn't ownship, the report filter
+     * (AT+FILTER_DISTANCE_NM, AT+FILTER_ALTITUDE_FT) keeps it, and it is the entry reported for its ICAO address.
+     * Whether it has a position is up to the report.
+     * @param[in] uid UID of the entry.
+     * @param[in] entry The entry.
+     * @param[in] timestamp_ms Current local time, in ms.
+     * @param[in] filter From GetReportFilter().
+     * @param[in] ownship_icao_address From OwnshipICAOAddress().
+     */
+    bool IsReportedTraffic(uint32_t uid, const AircraftEntry& entry, uint32_t timestamp_ms,
+                           const AircraftReportFilter& filter, uint32_t ownship_icao_address) const {
+        if (IsOwnship(uid, ownship_icao_address)) return false;
+        if (std::visit([&filter](const auto& a) { return filter.Excludes(a); }, entry)) return false;
+        return IsPreferredReportForAddress(uid, timestamp_ms);
+    }
 
     /**
      * Resolves the aircraft report filters for a reporting round. kAltitudeFilterNearRx uses the receiver
@@ -1632,10 +1688,10 @@ class AircraftDictionary {
     /**
      * Sets a reference position used when decoding Mode S surface position packets. Should be called whenever the
      * reference position (i.e. the receiver location) changes.
-     * @param[in] latitude_deg Latitude of the reference position, in degrees.
-     * @param[in] longitude_deg Longitude of the reference position, in degrees.
+     * @param[in] latitude_awb Latitude of the reference position, in AWB.
+     * @param[in] longitude_awb Longitude of the reference position, in AWB.
      */
-    void SetReferencePosition(float latitude_deg, float longitude_deg);
+    void SetReferencePosition(uint32_t latitude_awb, uint32_t longitude_awb);
 
     /**
      * Marks the reference position as unavailable. While the reference is invalid, Mode S surface position packets
@@ -1662,6 +1718,21 @@ class AircraftDictionary {
      * @retval True if SetReferencePosition has been called and not subsequently cleared.
      */
     inline bool ReferencePositionValid() const { return reference_position_valid_; }
+
+    // Whether the dictionary measures distance and bearing from this position (AWB).
+    inline bool DistanceReferenceIs(uint32_t lat_awb, uint32_t lon_awb) const {
+        return reference_position_valid_ && distance_reference_.lat_awb == lat_awb &&
+               distance_reference_.lon_awb == lon_awb;
+    }
+
+    /**
+     * Whether an entry's distance_m and bearing_bam16 are measured from the current reference position and its current
+     * position. Update() makes every entry current; until the next one, a new position or reference makes it stale.
+     */
+    inline bool DistanceIsCurrent(const AircraftEntry &entry) const {
+        return std::visit(
+            [this](const auto &aircraft) { return aircraft.distance_reference_epoch == reference_epoch_; }, entry);
+    }
 
     /**
      * Check if the CPR position filter is enabled.
@@ -1784,10 +1855,11 @@ class AircraftDictionary {
     // Helper functions for ingesting specific ADS-B packet types, called by IngestModeSADSBPacket.
 
     /**
-     * Whether an extended squitter with corrected bits may update the dictionary: its aircraft must be tracked, a one
-     * bit correction must not disagree with the track, and a two bit correction must agree with it.
+     * Whether an extended squitter with corrected bits is kept (forwarded): its aircraft must be tracked, a one bit
+     * correction must not disagree with the track, and a two bit correction must agree with it. A kept frame changes
+     * the aircraft only when the track agrees with it; otherwise this sets RawModeSPacket::kFlagSkipAircraftDictionary.
      */
-    bool AcceptCorrectedExtendedSquitter(const DecodedModeSPacket& packet);
+    bool AcceptCorrectedExtendedSquitter(DecodedModeSPacket& packet);
 
     enum TrackFit : uint8_t { kTrackFits, kTrackDisagrees, kTrackUnknown };
     /**
@@ -1828,16 +1900,12 @@ class AircraftDictionary {
     // update. This ensures that the public metrics struct always has valid data.
     Metrics metrics_counter_;
 
-    // Reference position for decoding Mode S surface position packets, in angular weighted binary format.
-    uint32_t reference_latitude_awb32_ = 0;
-    uint32_t reference_longitude_awb32_ = 0;
     bool reference_position_valid_ = false;  // Set by SetReferencePosition, cleared by ClearReferencePosition.
     int32_t reference_altitude_ft_ = 0;
     bool reference_altitude_valid_ = false;  // Set by SetReferenceAltitudeFt, cleared by ClearReferencePosition.
-    // Receiver position for aircraft distance and bearing. Moving it more than kReferenceMoveThresholdMeters or
-    // clearing it bumps reference_epoch_, and Update() recomputes every aircraft computed in an older epoch or marked
-    // stale by a move.
-    static constexpr uint32_t kReferenceMoveThresholdMeters = 500;
+    // Receiver position for aircraft distance and bearing and Mode S surface position decoding. Moving it at all (to
+    // another AWB) or clearing it bumps reference_epoch_, and Update() recomputes every aircraft computed in an older
+    // epoch or marked stale by a move.
     // Epoch value that marks an aircraft's distance as stale; reference_epoch_ never takes it.
     static constexpr uint16_t kDistanceEpochStale = UINT16_MAX;
     GeoReference distance_reference_;
@@ -1845,12 +1913,12 @@ class AircraftDictionary {
 
     // Position and validity of an aircraft before a packet is applied, to tell whether its distance needs updating.
     struct PositionSnapshot {
-        float latitude_deg;
-        float longitude_deg;
+        uint32_t latitude_awb;
+        uint32_t longitude_awb;
         bool valid;
         template <typename T>
         static PositionSnapshot Of(const T &aircraft) {
-            return {aircraft.latitude_deg, aircraft.longitude_deg, aircraft.HasBitFlag(T::kBitFlagPositionValid)};
+            return {aircraft.latitude_awb, aircraft.longitude_awb, aircraft.HasBitFlag(T::kBitFlagPositionValid)};
         }
     };
 
@@ -1864,7 +1932,7 @@ class AircraftDictionary {
         PositionSnapshot after = PositionSnapshot::Of(aircraft);
         bool record_in_place = false;
         if constexpr (kRecordsRange<T>) {
-            bool moved = after.latitude_deg != before.latitude_deg || after.longitude_deg != before.longitude_deg;
+            bool moved = after.latitude_awb != before.latitude_awb || after.longitude_awb != before.longitude_awb;
             // Remote ID repeats a hovering drone's position unchanged, so every Location message with one counts.
             bool decoded = std::is_same_v<T, RemoteIDAircraft> ? position_message : !before.valid || moved;
             if (!after.valid) {
@@ -1880,10 +1948,15 @@ class AircraftDictionary {
         if (after.valid != before.valid || (after.valid && aircraft.distance_m == Aircraft::kDistanceUnknown)) {
             UpdateDistanceAndBearing(aircraft, after.valid);
             RecordRange(aircraft);
-        } else if (after.latitude_deg != before.latitude_deg || after.longitude_deg != before.longitude_deg) {
+        } else if (after.latitude_awb != before.latitude_awb || after.longitude_awb != before.longitude_awb) {
             aircraft.distance_reference_epoch = kDistanceEpochStale;
-        } else if (record_in_place && aircraft.distance_reference_epoch == reference_epoch_) {
-            RecordRange(aircraft);  // Confirmed or heard again in place: the distance won't be recomputed.
+        } else if (record_in_place) {
+            // Confirmed or heard again in place. After a receiver move Update() records it with the new distance.
+            if (aircraft.distance_reference_epoch == reference_epoch_) {
+                RecordRange(aircraft);
+            } else {
+                aircraft.distance_reference_epoch = kDistanceEpochStale;
+            }
         }
     }
 
@@ -1964,7 +2037,7 @@ class AircraftDictionary {
     /**
      * Recomputes an aircraft's distance and bearing from the receiver.
      * @param[in,out] aircraft Aircraft to update.
-     * @param[in] position_valid Whether the aircraft's latitude_deg and longitude_deg hold a position.
+     * @param[in] position_valid Whether the aircraft's latitude_awb and longitude_awb hold a position.
      */
     void UpdateDistanceAndBearing(Aircraft &aircraft, bool position_valid);
 

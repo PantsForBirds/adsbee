@@ -68,6 +68,19 @@ inline int16_t AppendAircraftJSONDistanceAndBearing(char buf[], int16_t n, int16
 }
 
 /**
+ * Appends ,"<lat_key>":<lat>,"<lon_key>":<lon> in degrees with 5 decimals.
+ * @retval New length of buf, clamped to max.
+ */
+inline int16_t AppendAircraftJSONLatLon(char buf[], int16_t n, int16_t max, const char* lat_key, const char* lon_key,
+                                        uint32_t lat_awb, uint32_t lon_awb) {
+    char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+    FormatAWBDeg(lat_str, sizeof(lat_str), lat_awb, 5);
+    FormatAWBDeg(lon_str, sizeof(lon_str), lon_awb, 5);
+    n += snprintf(buf + n, max - n, ",\"%s\":%s,\"%s\":%s", lat_key, lat_str, lon_key, lon_str);
+    return n < max ? n : max;
+}
+
+/**
  * Serializes a ModeSAircraft to a single-line readsb-compatible JSON object.
  * @param[out] buf Character array of at least kAircraftJSONMessageStrMaxLen bytes.
  * @param[in] aircraft Aircraft to serialize.
@@ -117,9 +130,7 @@ inline int16_t WriteAircraftJSONModeSAircraftStr(char buf[], const ModeSAircraft
 
     // lat / lon
     if (aircraft.HasBitFlag(ModeSAircraft::kBitFlagPositionValid)) {
-        n += snprintf(buf + n, max - n, ",\"lat\":%.5f,\"lon\":%.5f", aircraft.latitude_deg,
-                      aircraft.longitude_deg);
-        n = n < max ? n : max;
+        n = AppendAircraftJSONLatLon(buf, n, max, "lat", "lon", aircraft.latitude_awb, aircraft.longitude_awb);
     }
     n = AppendAircraftJSONDistanceAndBearing(buf, n, max, aircraft);
 
@@ -321,9 +332,7 @@ inline int16_t WriteAircraftJSONUATAircraftStr(char buf[], const UATAircraft& ai
 
     // lat / lon
     if (aircraft.HasBitFlag(UATAircraft::kBitFlagPositionValid)) {
-        n += snprintf(buf + n, max - n, ",\"lat\":%.5f,\"lon\":%.5f", aircraft.latitude_deg,
-                      aircraft.longitude_deg);
-        n = n < max ? n : max;
+        n = AppendAircraftJSONLatLon(buf, n, max, "lat", "lon", aircraft.latitude_awb, aircraft.longitude_awb);
     }
     n = AppendAircraftJSONDistanceAndBearing(buf, n, max, aircraft);
 
@@ -488,8 +497,7 @@ inline int16_t WriteAircraftJSONRemoteIDAircraftStr(char buf[], const RemoteIDAi
 
     // lat / lon
     if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagPositionValid)) {
-        n += snprintf(buf + n, max - n, ",\"lat\":%.5f,\"lon\":%.5f", aircraft.latitude_deg, aircraft.longitude_deg);
-        n = n < max ? n : max;
+        n = AppendAircraftJSONLatLon(buf, n, max, "lat", "lon", aircraft.latitude_awb, aircraft.longitude_awb);
     }
     n = AppendAircraftJSONDistanceAndBearing(buf, n, max, aircraft);
 
@@ -538,9 +546,8 @@ inline int16_t WriteAircraftJSONRemoteIDAircraftStr(char buf[], const RemoteIDAi
         n = n < max ? n : max;
     }
     if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagOperatorPositionValid)) {
-        n += snprintf(buf + n, max - n, ",\"rid_operator_lat\":%.5f,\"rid_operator_lon\":%.5f",
-                      aircraft.operator_latitude_deg, aircraft.operator_longitude_deg);
-        n = n < max ? n : max;
+        n = AppendAircraftJSONLatLon(buf, n, max, "rid_operator_lat", "rid_operator_lon",
+                                     aircraft.operator_latitude_awb, aircraft.operator_longitude_awb);
     }
     if (aircraft.HasBitFlag(RemoteIDAircraft::kBitFlagHeightValid)) {
         n += snprintf(buf + n, max - n,

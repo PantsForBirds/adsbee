@@ -1,4 +1,5 @@
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "aircraftjson_utils.hh"
 #include "gtest/gtest.h"
 
@@ -46,8 +47,8 @@ TEST(AircraftJSON, ModeSAircraftAllFields) {
     strcpy(ac.callsign, "UAL123");
     ac.squawk = 1234;
     ac.emitter_category = ADSBTypes::kEmitterCategoryMedium2;  // 3 → "A3"
-    ac.latitude_deg = 37.12345f;
-    ac.longitude_deg = -122.54321f;
+    ac.latitude_awb = DegToAWB(37.12345f);
+    ac.longitude_awb = DegToAWB(-122.54321f);
     ac.baro_altitude_ft = 35000;
     ac.gnss_altitude_ft = 35200;
     ac.speed_kts = 450;
@@ -234,8 +235,8 @@ TEST(AircraftJSON, UATAircraftAllFields) {
     strcpy(ac.callsign, "AAL456");
     ac.squawk = 7654;
     ac.emitter_category = ADSBTypes::kEmitterCategoryGliderSailplane;  // 9 → "B1"
-    ac.latitude_deg = 40.0f;
-    ac.longitude_deg = -75.0f;
+    ac.latitude_awb = DegToAWB(40.0f);
+    ac.longitude_awb = DegToAWB(-75.0f);
     ac.baro_altitude_ft = 10000;
     ac.gnss_altitude_ft = 10200;
     ac.speed_kts = 200;

@@ -35,7 +35,10 @@
 
 // Apply cap-array delta
 #define SET_CCFG_MODE_CONF_XOSC_CAP_MOD                 0x0
-#define SET_CCFG_MODE_CONF_XOSC_CAPARRAY_DELTA          0xec
+#define SET_CCFG_MODE_CONF_XOSC_CAPARRAY_DELTA          0xfd
+
+// Linear cap-array delta on parts with factory trim 0x701F0 (hand edit, no SysConfig option).
+#define SET_CCFG_SIZE_AND_DIS_FLAGS_DIS_LINEAR_CAPARRAY_DELTA_WORKAROUND 0x0
 
 //#####################################
 // Special HF clock source setting

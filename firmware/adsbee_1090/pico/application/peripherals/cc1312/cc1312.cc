@@ -113,6 +113,7 @@ bool CC1312::Init(bool spi_already_initialized) {
 }
 
 bool CC1312::Update() {
+    last_poll_timestamp_ms_ = get_time_since_boot_ms();
     more_raw_packets_pending_ = false;
     raw_packets_arriving_ = false;
     // Report a lost link once; reads fail fast and quietly while it stays down (see SPILinkGate).
@@ -142,28 +143,34 @@ bool CC1312::Update() {
         if (!in_bootloader_ && IsEnabled()) {
             adsbee.sync_pulse_service.Allow();  // The application just answered a status read.
         }
-        // A lost write only costs this sync point.
+        // A new sync pulse's count, once, in one small un-acked write: there is no RP2040 -> CC1312 status write to
+        // carry it. A lost write only costs this sync point.
         ObjectDictionary::SyncPulse pulse;
-        if (adsbee.sync_pulse_service.TakeNewPulse(SyncPulseService::kSubscriberCC1312, pulse)) {
+        if (adsbee.sync_pulse_service.TakeNewPulse(pulse)) {
             adsbee.subg_radio.Write(ObjectDictionary::Address::kAddrSyncPulse, pulse);
         }
 
-        // Read one array of packets from the queues. The CC1312 fills it with as many packets as fit.
-        uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
-        if (!adsbee.subg_radio.Read(
-                ObjectDictionary::Address::kAddrCompositeArrayRawPackets, read_buf,
-                CompositeArray::RawPackets::ReadLenBytes(device_status.pending_raw_packets_len_bytes))) {
-            CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 raw packet array.");
-            return false;
-        }
+        // Nothing queued: skip the packet array read, so an idle poll is one status read (as on the ESP32).
         more_raw_packets_pending_ = CompositeArray::RawPackets::MorePending(device_status.pending_raw_packets_len_bytes);
         raw_packets_arriving_ =
             device_status.pending_raw_packets_len_bytes > sizeof(CompositeArray::RawPackets::Header);
-        if (!CompositeArray::UnpackRawPacketsBufferToQueues(read_buf, sizeof(read_buf), nullptr,
-                                                            &adsbee.raw_uat_adsb_packet_queue,
-                                                            &adsbee.raw_uat_uplink_packet_queue)) {
-            CONSOLE_ERROR("CC1312::Update", "Failed to unpack raw packets from CC1312.");
-            return false;
+        if (raw_packets_arriving_) {
+            // Read one array of packets from the queues. The CC1312 fills it with as many packets as fit.
+            uint8_t read_buf[CompositeArray::RawPackets::kMaxLenBytes] = {0};
+            if (!adsbee.subg_radio.Read(
+                    ObjectDictionary::Address::kAddrCompositeArrayRawPackets, read_buf,
+                    CompositeArray::RawPackets::ReadLenBytes(device_status.pending_raw_packets_len_bytes))) {
+                more_raw_packets_pending_ = false;
+                raw_packets_arriving_ = false;
+                CONSOLE_ERROR("CC1312::Update", "Unable to read CC1312 raw packet array.");
+                return false;
+            }
+            if (!CompositeArray::UnpackRawPacketsBufferToQueues(read_buf, sizeof(read_buf), nullptr,
+                                                                &adsbee.raw_uat_adsb_packet_queue,
+                                                                &adsbee.raw_uat_uplink_packet_queue)) {
+                CONSOLE_ERROR("CC1312::Update", "Failed to unpack raw packets from CC1312.");
+                return false;
+            }
         }
 
     } else {
@@ -178,7 +185,7 @@ bool CC1312::Update() {
 
 void CC1312::BlockSyncPulses() {
     adsbee.sync_pulse_service.Block();
-    adsbee.sync_pulse_service.ReportFlags(SyncPulseService::kSubscriberCC1312, 0);
+    adsbee.sync_pulse_service.ReportAbsent(SyncPulseService::kSubscriberCC1312);
 }
 
 void CC1312::AllowSyncPulsesInReset() {
@@ -186,8 +193,6 @@ void CC1312::AllowSyncPulsesInReset() {
         adsbee.sync_pulse_service.Allow();
     }
 }
-
-bool CC1312::SyncPulseDue() const { return adsbee.sync_pulse_service.HasNewPulse(SyncPulseService::kSubscriberCC1312); }
 
 bool CC1312::ApplicationIsUpToDate() {
     // Verify application binary.

@@ -3,12 +3,15 @@
 #include <cstring>  // memcpy
 #include <new>      // placement new
 
-// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v20 and extend the chain
+#include "geo_utils.hh"  // FloatDegToAWB
+
+// The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v21 and extend the chain
 // (see settings_migration.hh).
-static_assert(kSettingsVersion == 20, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
+static_assert(kSettingsVersion == 21, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
 static_assert(sizeof(settings_v12::Settings) == 1088 && sizeof(settings_v14::Settings) == 1140 &&
                   sizeof(settings_v15::Settings) == 1144 && sizeof(settings_v17::Settings) == 1340 &&
-                  sizeof(settings_v18::Settings) == 1340 && sizeof(settings_v19::Settings) == 1792,
+                  sizeof(settings_v18::Settings) == 1340 && sizeof(settings_v19::Settings) == 1792 &&
+                  sizeof(settings_v20::Settings) == 1964,
               "A frozen settings snapshot changed size. Frozen snapshots must never be edited.");
 
 // The frozen nested layouts must stay byte-identical to the live ones for the raw copies below to be valid. If a future
@@ -274,12 +277,10 @@ void SettingsMigrator::MigrateV18ToV19(const settings_v18::Settings& in, setting
     strncpy(out.swarm_server, "https://adsbee.aero", settings_v19::kSwarmServerMaxLen);
 }
 
-void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, SettingsManager::Settings& out) {
-    // Start from a fresh, fully-defaulted current struct: Ethernet and WiFi station IPv4 and IPv6 (new in v20) use DHCP
-    // and AUTO.
-    new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
-
-    out.settings_version = kSettingsVersion;
+void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, settings_v20::Settings& out) {
+    // Ethernet and WiFi station IPv4 and IPv6 (new in v20) are all zeros: DHCP and AUTO.
+    memset(&out, 0, sizeof(out));
+    out.settings_version = 20;
 
     memcpy(&out.core_network_settings, &in.core_network_settings, sizeof(in.core_network_settings));
 
@@ -290,19 +291,19 @@ void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, Setting
     out.led_enabled = in.led_enabled;
     out.feeds_enabled = in.feeds_enabled;
     out.gnss_enabled = in.gnss_enabled;
-    out.gnss_receiver_type = static_cast<SettingsManager::GNSSReceiverType>(in.gnss_receiver_type);
+    out.gnss_receiver_type = in.gnss_receiver_type;
     out.gnss_notify = in.gnss_notify;
 
-    out.log_level = static_cast<SettingsManager::LogLevel>(in.log_level);
-    for (uint16_t i = 0; i < SettingsManager::SerialInterface::kNumSerialInterfaces; i++) {
-        out.reporting_protocols[i] = static_cast<SettingsManager::ReportingProtocol>(in.reporting_protocols[i]);
+    out.log_level = in.log_level;
+    for (uint16_t i = 0; i < settings_v20::kNumSerialInterfaces; i++) {
+        out.reporting_protocols[i] = in.reporting_protocols[i];
         out.baud_rates[i] = in.baud_rates[i];
     }
 
-    out.subg_enabled = static_cast<SettingsManager::EnableState>(in.subg_enabled);
+    out.subg_enabled = in.subg_enabled;
     out.subg_rx_enabled = in.subg_rx_enabled;
     out.subg_bias_tee_enabled = in.subg_bias_tee_enabled;
-    out.subg_mode = static_cast<SettingsManager::SubGHzRadioMode>(in.subg_mode);
+    out.subg_mode = in.subg_mode;
 
     out.remote_id_rx_enabled = in.remote_id_rx_enabled;
     out.remote_id_transports = in.remote_id_transports;
@@ -317,8 +318,8 @@ void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, Setting
     memcpy(out.feed_uris, in.feed_uris, sizeof(in.feed_uris));
     memcpy(out.feed_ports, in.feed_ports, sizeof(in.feed_ports));
     memcpy(out.feed_is_active, in.feed_is_active, sizeof(in.feed_is_active));
-    for (uint16_t i = 0; i < SettingsManager::Settings::kMaxNumFeeds; i++) {
-        out.feed_protocols[i] = static_cast<SettingsManager::ReportingProtocol>(in.feed_protocols[i]);
+    for (uint16_t i = 0; i < settings_v20::kMaxNumFeeds; i++) {
+        out.feed_protocols[i] = in.feed_protocols[i];
     }
     memcpy(out.feed_receiver_ids, in.feed_receiver_ids, sizeof(in.feed_receiver_ids));
 
@@ -326,13 +327,13 @@ void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, Setting
     out.mavlink_component_id = in.mavlink_component_id;
 
     memcpy(&out.rx_position, &in.rx_position, sizeof(in.rx_position));
-    out.ip_mode = static_cast<SettingsManager::IPMode>(in.ip_mode);
+    out.ip_mode = in.ip_mode;
     memcpy(out.wifi_sta_extra_networks, in.wifi_sta_extra_networks, sizeof(in.wifi_sta_extra_networks));
     out.auto_update_enabled = in.auto_update_enabled;
     out.filter_distance_enabled = in.filter_distance_enabled;
     out.filter_distance_deci_nm = in.filter_distance_deci_nm;
-    for (uint16_t i = 0; i < SettingsManager::Settings::kMaxNumFeeds; i++) {
-        out.feed_transports[i] = static_cast<SettingsManager::FeedTransport>(in.feed_transports[i]);
+    for (uint16_t i = 0; i < settings_v20::kMaxNumFeeds; i++) {
+        out.feed_transports[i] = in.feed_transports[i];
     }
     memcpy(&out.mqtt_broker, &in.mqtt_broker, sizeof(in.mqtt_broker));
     out.asterix_sac = in.asterix_sac;
@@ -346,11 +347,32 @@ void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, Setting
     memcpy(out.swarm_token, in.swarm_token, sizeof(in.swarm_token));
 }
 
+void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, SettingsManager::Settings& out) {
+    // v21 added ble_output_mode in v20's tail padding (Bluetooth output off), holds the receiver latitude and longitude
+    // as AWB instead of float degrees, in the same bytes, and raised the GNSS UART default baud rate.
+    static_assert(sizeof(in) == sizeof(out), "v21 must keep v20's size: ble_output_mode sits in its tail padding.");
+    static_assert(offsetof(settings_v20::Settings, rx_position) == offsetof(SettingsManager::Settings, rx_position) &&
+                      sizeof(settings_v20::RxPosition) == sizeof(SettingsManager::RxPosition),
+                  "v21 must keep v20's RxPosition layout.");
+    new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
+    memcpy(static_cast<void*>(&out), &in, sizeof(in));
+    out.settings_version = kSettingsVersion;
+    out.ble_output_mode = SettingsManager::kBLEOutputOff;
+    out.rx_position.latitude_awb = FloatDegToAWB(in.rx_position.latitude_deg);
+    out.rx_position.longitude_awb = FloatDegToAWB(in.rx_position.longitude_deg);
+    // The GNSS UART default went up from 9600. A MAX-M10 (commanded to this rate) at 9600 only had it as the default.
+    if (in.gnss_receiver_type == SettingsManager::kGNSSReceiverUBXMIA &&
+        in.baud_rates[SettingsManager::kGNSSUART] == SettingsManager::Settings::kOldDefaultGNSSUARTBaudrate) {
+        out.baud_rates[SettingsManager::kGNSSUART] = SettingsManager::Settings::kDefaultGNSSUARTBaudrate;
+    }
+}
+
 bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t from_version,
                                SettingsManager::Settings& out) {
     // Each case enters the chain at its own version and runs the remaining steps to the current version. The chain only
-    // has shipped versions (12, 14, 15, 17, 18, 19), so a step can span an unshipped one.
-    // v14 and v15 are no longer needed once v17 exists, so v19 shares their stack space.
+    // has shipped versions (12, 14, 15, 17, 18, 19, 20), so a step can span an unshipped one.
+    // v14 and v15 are no longer needed once v17 exists, so v19 shares their stack space; v17 and v18 are no longer
+    // needed once v19 exists, so v20 shares theirs.
     union {
         struct {
             settings_v14::Settings v14;
@@ -358,11 +380,19 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
         } early;
         settings_v19::Settings v19;
     } snapshots;
+    union {
+        struct {
+            settings_v17::Settings v17;
+            settings_v18::Settings v18;
+        } mid;
+        settings_v20::Settings v20;
+    } later;
     settings_v14::Settings& v14 = snapshots.early.v14;
     settings_v15::Settings& v15 = snapshots.early.v15;
     settings_v19::Settings& v19 = snapshots.v19;
-    settings_v17::Settings v17;
-    settings_v18::Settings v18;
+    settings_v17::Settings& v17 = later.mid.v17;
+    settings_v18::Settings& v18 = later.mid.v18;
+    settings_v20::Settings& v20 = later.v20;
 
     switch (from_version) {
         case 12: {
@@ -398,7 +428,8 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             memcpy(&v17, blob, sizeof(v17));
             MigrateV17ToV18(v17, v18);
             MigrateV18ToV19(v18, v19);
-            MigrateV19ToV20(v19, out);
+            MigrateV19ToV20(v19, v20);
+            MigrateV20ToV21(v20, out);
             return true;
         }
         case 18: {
@@ -407,7 +438,8 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
             }
             memcpy(&v18, blob, sizeof(v18));
             MigrateV18ToV19(v18, v19);
-            MigrateV19ToV20(v19, out);
+            MigrateV19ToV20(v19, v20);
+            MigrateV20ToV21(v20, out);
             return true;
         }
         case 19: {
@@ -415,7 +447,16 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
                 return false;
             }
             memcpy(&v19, blob, sizeof(v19));
-            MigrateV19ToV20(v19, out);
+            MigrateV19ToV20(v19, v20);
+            MigrateV20ToV21(v20, out);
+            return true;
+        }
+        case 20: {
+            if (blob_len < sizeof(settings_v20::Settings)) {
+                return false;
+            }
+            memcpy(&v20, blob, sizeof(v20));
+            MigrateV20ToV21(v20, out);
             return true;
         }
         default:
@@ -426,6 +467,7 @@ bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t 
     MigrateV15ToV17(v15, v17);  // Last read of v14/v15: v19 may overwrite them from here on.
     MigrateV17ToV18(v17, v18);
     MigrateV18ToV19(v18, v19);
-    MigrateV19ToV20(v19, out);  // Final step: v19 is the newest frozen version, so this lands on the live struct.
+    MigrateV19ToV20(v19, v20);
+    MigrateV20ToV21(v20, out);  // Final step: v20 is the newest frozen version, so this lands on the live struct.
     return true;
 }

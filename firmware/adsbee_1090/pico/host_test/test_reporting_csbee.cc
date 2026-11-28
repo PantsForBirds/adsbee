@@ -1,4 +1,5 @@
 #include "aircraft_dictionary.hh"
+#include "awb_test_utils.hh"
 #include "csbee_utils.hh"
 #include "gtest/gtest.h"
 
@@ -32,8 +33,8 @@ TEST(CSBeeUtils, ModeSAircraftToCSBeeString) {
     aircraft.baro_altitude_ft = 1000;
     aircraft.gnss_altitude_ft = 997;
     aircraft.altitude_source = ADSBTypes::kAltitudeSourceBaro;
-    aircraft.latitude_deg = -120.654321;
-    aircraft.longitude_deg = -80.123456;
+    aircraft.latitude_awb = DegToAWB(-120.654321);
+    aircraft.longitude_awb = DegToAWB(-80.123456);
     aircraft.direction_deg = 300.5678;
     aircraft.speed_kts = 123.45;
     aircraft.speed_source = ADSBTypes::kSpeedSourceAirspeedTrue;
@@ -114,8 +115,8 @@ TEST(CSBeeUtils, UATAircraftToCSBeeString) {
     aircraft.emitter_category = ADSBTypes::kEmitterCategoryGliderSailplane;
     aircraft.baro_altitude_ft = 1000;
     aircraft.gnss_altitude_ft = 997;
-    aircraft.latitude_deg = -120.654321;
-    aircraft.longitude_deg = -80.123456;
+    aircraft.latitude_awb = DegToAWB(-120.654321);
+    aircraft.longitude_awb = DegToAWB(-80.123456);
     aircraft.direction_deg = 300.5678;
     aircraft.speed_kts = 123.45;
     aircraft.baro_vertical_rate_fpm = -200;

@@ -97,7 +97,7 @@ void SwarmManager::Update() {
     const ObjectDictionary::RP2040DeviceStatus& rp2040 = object_dictionary.composite_device_status.rp2040;
     SettingsManager::RxPosition::PositionSource source = rp2040.rx_position.source;
     bool range_valid = SwarmReporter::UsablePosition(rp2040.rx_position_available, source,
-                                                     rp2040.rx_position.latitude_deg, rp2040.rx_position.longitude_deg);
+                                                     rp2040.rx_position.latitude_awb, rp2040.rx_position.longitude_awb);
     live_->record_range = range_valid;
     if (range_valid) live_->SetReceiverAltitude(FeetToMeters(rp2040.rx_position.FilterAltitudeFt()));
 
@@ -121,8 +121,8 @@ void SwarmManager::Update() {
     SwarmReporter::DeviceState state;
     state.auto_update = settings.auto_update_enabled;
     state.rx_position_valid = range_valid;
-    state.latitude_deg = rp2040.rx_position.latitude_deg;
-    state.longitude_deg = rp2040.rx_position.longitude_deg;
+    state.latitude_awb = rp2040.rx_position.latitude_awb;
+    state.longitude_awb = rp2040.rx_position.longitude_awb;
     state.altitude_m = FeetToMeters(rp2040.rx_position.FilterAltitudeFt());
     char source_str[SettingsManager::RxPosition::kPositionSourceStrMaxLen] = {0};
     if (source < SettingsManager::RxPosition::kNumPositionSources) {
