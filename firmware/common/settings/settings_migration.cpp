@@ -3,6 +3,8 @@
 #include <cstring>  // memcpy
 #include <new>      // placement new
 
+#include "geo_utils.hh"  // FloatDegToAWB
+
 // The migration chain must end at the live version. When kSettingsVersion is bumped, freeze v21 and extend the chain
 // (see settings_migration.hh).
 static_assert(kSettingsVersion == 21, "kSettingsVersion changed: freeze the previous layout and add a migration step.");
@@ -346,12 +348,23 @@ void SettingsMigrator::MigrateV19ToV20(const settings_v19::Settings& in, setting
 }
 
 void SettingsMigrator::MigrateV20ToV21(const settings_v20::Settings& in, SettingsManager::Settings& out) {
-    // v21 only added ble_output_mode in v20's tail padding: same bytes, with Bluetooth output off.
+    // v21 added ble_output_mode in v20's tail padding (Bluetooth output off), holds the receiver latitude and longitude
+    // as AWB instead of float degrees, in the same bytes, and raised the GNSS UART default baud rate.
     static_assert(sizeof(in) == sizeof(out), "v21 must keep v20's size: ble_output_mode sits in its tail padding.");
+    static_assert(offsetof(settings_v20::Settings, rx_position) == offsetof(SettingsManager::Settings, rx_position) &&
+                      sizeof(settings_v20::RxPosition) == sizeof(SettingsManager::RxPosition),
+                  "v21 must keep v20's RxPosition layout.");
     new (&out) SettingsManager::Settings();  // In place: a temporary would take another struct of stack.
     memcpy(static_cast<void*>(&out), &in, sizeof(in));
     out.settings_version = kSettingsVersion;
     out.ble_output_mode = SettingsManager::kBLEOutputOff;
+    out.rx_position.latitude_awb = FloatDegToAWB(in.rx_position.latitude_deg);
+    out.rx_position.longitude_awb = FloatDegToAWB(in.rx_position.longitude_deg);
+    // The GNSS UART default went up from 9600. A MAX-M10 (commanded to this rate) at 9600 only had it as the default.
+    if (in.gnss_receiver_type == SettingsManager::kGNSSReceiverUBXMIA &&
+        in.baud_rates[SettingsManager::kGNSSUART] == SettingsManager::Settings::kOldDefaultGNSSUARTBaudrate) {
+        out.baud_rates[SettingsManager::kGNSSUART] = SettingsManager::Settings::kDefaultGNSSUARTBaudrate;
+    }
 }
 
 bool SettingsMigrator::Migrate(const uint8_t* blob, uint16_t blob_len, uint32_t from_version,

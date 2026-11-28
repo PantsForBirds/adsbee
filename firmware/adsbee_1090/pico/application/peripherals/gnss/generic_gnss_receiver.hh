@@ -13,8 +13,6 @@ class GenericGNSSReceiver : public GNSSReceiver {
     bool Init() override;
 
    protected:
-    uint32_t GetDefaultBaudrate() const override {
-        return settings_manager.settings.baud_rates[SettingsManager::kGNSSUART];
-    }
+    uint32_t GetLinkBaudrate() const override { return BaudRateSetting(); }
     bool SendInitCommands() override { return true; }
 };

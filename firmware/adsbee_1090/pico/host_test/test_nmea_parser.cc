@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "awb_test_utils.hh"
 #include "gtest/gtest.h"
 #include "nmea_parser.hh"
 
@@ -31,8 +32,8 @@ TEST(NMEAParser, ParsesGPGGA) {
     EXPECT_TRUE(fix.valid);
     EXPECT_EQ(fix.num_satellites, 8);
     EXPECT_EQ(fix.fix_quality, 1);
-    EXPECT_NEAR(fix.latitude_deg, 48.1173f, 0.001f);
-    EXPECT_NEAR(fix.longitude_deg, 11.5167f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(fix.latitude_awb), 48.1173f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(fix.longitude_awb), 11.5167f, 0.001f);
     EXPECT_NEAR(fix.altitude_ft, static_cast<int32_t>(545.4f * 3.28084f), 2);
     EXPECT_EQ(fix.last_update_timestamp_ms, 1000u);
     EXPECT_TRUE(fix.utc_time_valid);
@@ -107,8 +108,8 @@ TEST(NMEAParser, ParsesGPRMC) {
 
     const NMEAParser::GNSSFix& fix = parser.fix();
     EXPECT_TRUE(fix.valid);
-    EXPECT_NEAR(fix.latitude_deg, 48.1173f, 0.001f);
-    EXPECT_NEAR(fix.longitude_deg, 11.5167f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(fix.latitude_awb), 48.1173f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(fix.longitude_awb), 11.5167f, 0.001f);
     EXPECT_EQ(fix.speed_kts, 22);          // 022.4 knots truncated to int.
     EXPECT_NEAR(fix.heading_deg, 84.4f, 0.1f);
 }
@@ -120,7 +121,7 @@ TEST(NMEAParser, TalkerIdAgnostic) {
         parser, "$GNRMC,123519,A,4807.038,N,01131.000,E,010.0,090.0,230394,,,A*66\r\n");
     EXPECT_EQ(type, NMEAParser::kSentenceRMC);
     EXPECT_TRUE(parser.fix().valid);
-    EXPECT_NEAR(parser.fix().latitude_deg, 48.1173f, 0.001f);
+    EXPECT_NEAR(AWBToDeg(parser.fix().latitude_awb), 48.1173f, 0.001f);
 }
 
 // CASIC AT6558 receivers identify themselves with GPTXT and then emit multi-constellation
@@ -177,14 +178,14 @@ TEST(NMEAParser, RejectsBadChecksum) {
     // Establish a known-good fix first.
     FeedSentence(parser, "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n");
     ASSERT_TRUE(parser.fix().valid);
-    float good_lat = parser.fix().latitude_deg;
+    uint32_t good_lat = parser.fix().latitude_awb;
 
     // Now feed a sentence with a deliberately wrong checksum (*00); it must be rejected.
     auto type = FeedSentence(
         parser, "$GPGGA,123519,0000.000,S,00000.000,W,1,08,0.9,1.0,M,46.9,M,,*00\r\n");
     EXPECT_EQ(type, NMEAParser::kSentenceChecksumFail);
     // Fix must be unchanged by the rejected sentence.
-    EXPECT_EQ(parser.fix().latitude_deg, good_lat);
+    EXPECT_EQ(parser.fix().latitude_awb, good_lat);
 }
 
 // A GGA reporting no fix (quality 0) must mark the fix invalid.
@@ -200,4 +201,51 @@ TEST(NMEAParser, UnknownSentenceType) {
     NMEAParser parser;
     auto type = FeedSentence(parser, "$GPVTG,084.4,T,,M,022.4,N,041.5,K*6C\r\n");
     EXPECT_EQ(type, NMEAParser::kSentenceUnknown);
+}
+
+TEST(NMEAParser, RMCUnixSeconds) {
+    NMEAParser parser;
+    uint64_t unix_seconds = 0;
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));  // No RMC yet.
+    EXPECT_EQ(FeedSentence(parser, "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A\r\n"),
+              NMEAParser::kSentenceRMC);
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 764426119u);  // 1994-03-23 12:35:19 UTC.
+
+    // Year end, and the next second in the next year.
+    FeedSentence(parser, "$GNRMC,235959.00,A,4807.038,N,01131.000,E,0.0,,311226,,,A*68\r\n");
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 1798761599u);
+    FeedSentence(parser, "$GNRMC,000000.00,A,4807.038,N,01131.000,E,0.0,,010127,,,A*69\r\n");
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 1798761600u);
+    EXPECT_FALSE(parser.RMCIsLeapSecond());
+
+    // February 29 in a leap year; years 00-79 are 2000-2079.
+    FeedSentence(parser, "$GNRMC,120000.00,A,4807.038,N,01131.000,E,0.0,,290228,,,A*6C\r\n");
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 1835438400u);
+    FeedSentence(parser, "$GNRMC,120000.00,A,4807.038,N,01131.000,E,0.0,,010179,,,A*61\r\n");
+    ASSERT_TRUE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_EQ(unix_seconds, 3439800000u);
+}
+
+TEST(NMEAParser, RMCUnixSecondsNeedsFixDateAndWholeSecond) {
+    NMEAParser parser;
+    uint64_t unix_seconds = 0;
+    // No fix (status V), even with a time and date.
+    EXPECT_EQ(FeedSentence(parser, "$GNRMC,120000.00,V,,,,,,,231126,,,N*65\r\n"), NMEAParser::kSentenceRMC);
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    // Not a whole second: it can't label a PPS edge.
+    FeedSentence(parser, "$GNRMC,120000.50,A,4807.038,N,01131.000,E,0.0,,231126,,,A*6F\r\n");
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    // February 29 in a year that has none, and no date at all.
+    FeedSentence(parser, "$GNRMC,120000.00,A,4807.038,N,01131.000,E,0.0,,290226,,,A*62\r\n");
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    FeedSentence(parser, "$GNRMC,120000.00,A,4807.038,N,01131.000,E,0.0,,,,,A*6F\r\n");
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    // A leap second has no POSIX time.
+    FeedSentence(parser, "$GNRMC,235960.00,A,4807.038,N,01131.000,E,0.0,,311226,,,A*62\r\n");
+    EXPECT_FALSE(parser.GetRMCUnixSeconds(unix_seconds));
+    EXPECT_TRUE(parser.RMCIsLeapSecond());
 }

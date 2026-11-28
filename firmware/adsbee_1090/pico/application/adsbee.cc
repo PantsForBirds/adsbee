@@ -63,6 +63,10 @@ constexpr uint32_t kShortCaptureAlarmDelayUs = 17;  // From the mid-message inte
 constexpr int32_t kTimestampAfterDataStart48MHzCounts = 56 * 48;
 // The sampler takes its first sample one PIO cycle after the FIFO pull that latches the timestamp.
 constexpr int32_t kFirstSampleDelay48MHzCounts = 1;
+// From a PPS rising edge to the MLAT counter read in OnDemodBegin(), when no other interrupt holds it up: ~267 clk_sys
+// cycles, 232-240 to the jitter counter read (bench, t-1336: the same with or without Mode S traffic and whatever core 0
+// does, since the GPIO IRQ dispatcher runs from RAM) plus ~30 to the SysTick read (disassembly).
+constexpr int32_t kPPSCaptureDelay48MHzCounts = 102;
 
 constexpr float kInt16MaxRecip = 1.0f / INT16_MAX;
 
@@ -369,13 +373,14 @@ void ADSBee::UpdateRxPosition() {
         case SettingsManager::RxPosition::PositionSource::kPositionSourceLowestAircraft:
             // Use position of lowest aircraft in dictionary.
             // Make variables to write into since we can't bind directly to the packed struct members.
-            float latitude_deg, longitude_deg, heading_deg;
+            uint32_t latitude_awb, longitude_awb;
+            float heading_deg;
             int32_t gnss_altitude_ft, baro_altitude_ft, speed_kts;
             if (aircraft_dictionary.GetLowestAircraftPosition(
-                    latitude_deg, longitude_deg, reinterpret_cast<int32_t&>(gnss_altitude_ft),
+                    latitude_awb, longitude_awb, reinterpret_cast<int32_t&>(gnss_altitude_ft),
                     reinterpret_cast<int32_t&>(baro_altitude_ft), heading_deg, speed_kts)) {
-                rx_position.latitude_deg = latitude_deg;
-                rx_position.longitude_deg = longitude_deg;
+                rx_position.latitude_awb = latitude_awb;
+                rx_position.longitude_awb = longitude_awb;
                 rx_position.gnss_altitude_ft = gnss_altitude_ft;
                 rx_position.baro_altitude_ft = baro_altitude_ft;
                 rx_position.heading_deg = heading_deg;
@@ -390,8 +395,8 @@ void ADSBee::UpdateRxPosition() {
             // Use the position reported by the GNSS receiver, if it has a valid, fresh fix.
             if (gnss->HasValidFix()) {
                 const NMEAParser::GNSSFix& gnss_fix = gnss->fix();
-                rx_position.latitude_deg = gnss_fix.latitude_deg;
-                rx_position.longitude_deg = gnss_fix.longitude_deg;
+                rx_position.latitude_awb = gnss_fix.latitude_awb;
+                rx_position.longitude_awb = gnss_fix.longitude_awb;
                 rx_position.gnss_altitude_ft = gnss_fix.altitude_ft;
                 rx_position.heading_deg = gnss_fix.heading_deg;
                 rx_position.speed_kts = gnss_fix.speed_kts;
@@ -433,8 +438,8 @@ void ADSBee::UpdateRxPosition() {
             }
 
             if (selected_aircraft) {
-                rx_position.latitude_deg = selected_aircraft->latitude_deg;
-                rx_position.longitude_deg = selected_aircraft->longitude_deg;
+                rx_position.latitude_awb = selected_aircraft->latitude_awb;
+                rx_position.longitude_awb = selected_aircraft->longitude_awb;
                 rx_position.gnss_altitude_ft = selected_aircraft->gnss_altitude_ft;
                 rx_position.baro_altitude_ft = selected_aircraft->baro_altitude_ft;
                 rx_position.heading_deg = selected_aircraft->direction_deg;
@@ -453,7 +458,7 @@ void ADSBee::UpdateRxPosition() {
 
     // Update the aircraft dictionary's reference location.
     if (rx_position_available) {
-        aircraft_dictionary.SetReferencePosition(rx_position.latitude_deg, rx_position.longitude_deg);
+        aircraft_dictionary.SetReferencePosition(rx_position.latitude_awb, rx_position.longitude_awb);
         aircraft_dictionary.SetReferenceAltitudeFt(rx_position.FilterAltitudeFt());
     } else {
         aircraft_dictionary.ClearReferenceAltitude();
@@ -468,6 +473,9 @@ void __time_critical_func(ADSBee::OnDemodBegin)(uint gpio) {
 
     uint16_t sm_index = gpio < NUM_BANK0_GPIOS ? demod_pin_to_sm_index_[gpio] : kNoDemodStateMachine;
     if (sm_index == kNoDemodStateMachine) {
+        if (gpio == pps_pin_) {
+            RecordPPSEdge(mlat_48mhz_64bit_counts);
+        }
         return;  // Ignore; wasn't the start of a demod interval for a known SM.
     }
     // Demodulation period is beginning! Store the MLAT counter.
@@ -499,6 +507,43 @@ void __time_critical_func(ADSBee::OnDemodBegin)(uint gpio) {
     capture_begin_us_[sm_index] = now_us;
     capture_is_short_[sm_index] = false;
     capture_active_[sm_index] = true;
+}
+
+void __time_critical_func(ADSBee::RecordPPSEdge)(uint64_t mlat_48mhz_counts) {
+    uint32_t num_edges = pps_num_edges_;
+    PPSClock::Edge& edge = pps_edges_[num_edges % kNumPPSEdges];
+    edge.mlat_48mhz_counts = mlat_48mhz_counts - kPPSCaptureDelay48MHzCounts;
+    edge.time_us = time_us_32();
+    __dmb();  // The edge is written before it is counted.
+    pps_num_edges_ = num_edges + 1;
+}
+
+uint32_t ADSBee::GetPPSEdges(PPSClock::Edge& latest, PPSClock::Edge& previous) {
+    uint32_t num_edges;
+    do {
+        num_edges = pps_num_edges_;
+        __dmb();
+        latest = pps_edges_[(num_edges - 1) % kNumPPSEdges];
+        previous = pps_edges_[(num_edges - 2) % kNumPPSEdges];
+        __dmb();
+    } while (num_edges != pps_num_edges_);  // An edge came in while reading: read again.
+    return num_edges;
+}
+
+void ADSBee::ApplyPPSPin() {
+    uint16_t pin = pps_pin_requested_;
+    pps_pin_request_applied_ = pin;
+    if (pps_pin_ < NUM_BANK0_GPIOS) {
+        gpio_set_irq_enabled(pps_pin_, GPIO_IRQ_EDGE_RISE, false);
+    }
+    // A demod pin can't be the PPS pin: its interrupt starts a capture.
+    if (pin < NUM_BANK0_GPIOS && demod_pin_to_sm_index_[pin] == kNoDemodStateMachine) {
+        pps_pin_ = pin;
+        // The demod pins already set this core's GPIO callback (on_demod_pin_change()) and enabled the bank interrupt.
+        gpio_set_irq_enabled(pin, GPIO_IRQ_EDGE_RISE, true);
+    } else {
+        pps_pin_ = UINT16_MAX;
+    }
 }
 
 void __time_critical_func(ADSBee::OnDemodMid)() {

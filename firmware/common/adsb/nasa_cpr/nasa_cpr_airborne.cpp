@@ -1,5 +1,4 @@
 #include "airborne/cpr.hh"
-#include "awb_utils.h"
 #include "comms.hh"
 #include "nasa_cpr.hh"
 
@@ -7,11 +6,11 @@ bool NASACPRDecoder::DecodeAirborneLocalCPR(const DecodedPosition& reference_pos
                                             DecodedPosition& decoded_position) {
     // For some reason local_dec doesn't use the struct message format field, so we need to manually tell it whether the
     // incoming packet is odd or even.
-    nasa_cpr::airborne::recovered_position result = nasa_cpr::airborne::local_dec(
-        message.odd, lat2awb(reference_position.lat_deg), lon2awb(reference_position.lon_deg),
-        {.format = message.odd, .yz = message.lat_cpr, .xz = message.lon_cpr});
-    decoded_position.lat_deg = awb2lat(result.lat_awb);
-    decoded_position.lon_deg = awb2lon(result.lon_awb);
+    nasa_cpr::airborne::recovered_position result =
+        nasa_cpr::airborne::local_dec(message.odd, reference_position.lat_awb, reference_position.lon_awb,
+                                      {.format = message.odd, .yz = message.lat_cpr, .xz = message.lon_cpr});
+    decoded_position.lat_awb = result.lat_awb;
+    decoded_position.lon_awb = result.lon_awb;
     return result.valid;
 };
 
@@ -27,8 +26,6 @@ bool NASACPRDecoder::DecodeAirborneGlobalCPR(const CPRMessage& even_message, con
         odd_message.received_timestamp_ms > even_message.received_timestamp_ms,
         {.format = even_message.odd, .yz = even_message.lat_cpr, .xz = even_message.lon_cpr},
         {.format = odd_message.odd, .yz = odd_message.lat_cpr, .xz = odd_message.lon_cpr});
-    decoded_position.lat_deg = awb2lat(result.lat_awb);
-    decoded_position.lon_deg = awb2lon(result.lon_awb);
     decoded_position.lat_awb = result.lat_awb;
     decoded_position.lon_awb = result.lon_awb;
 #ifdef VERBOSE_NASA_CPR_DEBUG

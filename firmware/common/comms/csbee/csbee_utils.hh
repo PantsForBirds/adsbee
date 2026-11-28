@@ -41,6 +41,10 @@ inline int16_t WriteCSBeeModeSAircraftMessageStr(char message_buf[], const ModeS
     acdims |= (static_cast<int8_t>(aircraft.gnss_antenna_offset_right_of_reference_point_m) << 16);
     acdims |= (static_cast<int8_t>(0) << 24);
 
+    char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+    FormatAWBDeg(lat_str, sizeof(lat_str), aircraft.latitude_awb, 5);
+    FormatAWBDeg(lon_str, sizeof(lon_str), aircraft.longitude_awb, 5);
+
     int16_t num_chars =  // Print everything except CRC into string buffer.
         snprintf(message_buf, kCSBeeMessageStrMaxLen - kCRCMaxNumChars - 1,
 #if defined(ON_PICO) || defined(ON_HOST)
@@ -49,8 +53,8 @@ inline int16_t WriteCSBeeModeSAircraftMessageStr(char message_buf[], const ModeS
                  "%s,"       // CALL, e.g. N61ZP
                  "%s,"       // SQUAWK, e.g. 7232
                  "%d,"       // ECAT, e.g. 14
-                 "%.5f,"     // LAT, e.g. 57.57634
-                 "%.5f,"     // LON, e.g. 17.59554
+                 "%s,"       // LAT, e.g. 57.57634
+                 "%s,"       // LON, e.g. 17.59554
                  "%d,"       // BARO_ALT, e.g. 5000
                  "%d,"       // GNSS_ALT, e.g. 5000
                  "%.0f,"     // DIR, e.g. 35
@@ -71,8 +75,8 @@ inline int16_t WriteCSBeeModeSAircraftMessageStr(char message_buf[], const ModeS
                  "%s,"        // CALL, e.g. N61ZP
                  "%s,"        // SQUAWK, e.g. 7232
                  "%d,"        // ECAT, e.g. 14
-                 "%.5f,"      // LAT, e.g. 57.57634
-                 "%.5f,"      // LON, e.g. 17.59554
+                 "%s,"        // LAT, e.g. 57.57634
+                 "%s,"        // LON, e.g. 17.59554
                  "%ld,"       // BARO_ALT, e.g. 5000
                  "%ld,"       // GNSS_ALT, e.g. 5000
                  "%.0f,"      // DIR, e.g. 35
@@ -92,8 +96,8 @@ inline int16_t WriteCSBeeModeSAircraftMessageStr(char message_buf[], const ModeS
                  aircraft.callsign,                               // CALL
                  squawk_str,                                      // SQUAWK
                  aircraft.emitter_category,                       // ECAT
-                 aircraft.latitude_deg,                           // LAT
-                 aircraft.longitude_deg,                          // LON
+                 lat_str,                                         // LAT
+                 lon_str,                                         // LON
                  aircraft.baro_altitude_ft,                       // BARO_ALT
                  aircraft.gnss_altitude_ft,                       // GNSS_ALT
                  aircraft.direction_deg,                          // DIR
@@ -150,6 +154,10 @@ inline int16_t WriteCSBeeUATAircraftMessageStr(char message_buf[], const UATAirc
     acdims |= (static_cast<int8_t>(aircraft.gnss_antenna_offset_right_of_reference_point_m) << 16);
     acdims |= (static_cast<int8_t>(aircraft.gnss_antenna_offset_forward_of_reference_point_m) << 24);
 
+    char lat_str[kAWBDegStrMaxLen], lon_str[kAWBDegStrMaxLen];
+    FormatAWBDeg(lat_str, sizeof(lat_str), aircraft.latitude_awb, 5);
+    FormatAWBDeg(lon_str, sizeof(lon_str), aircraft.longitude_awb, 5);
+
     int16_t num_chars =  // Print everything except CRC into string buffer.
         snprintf(message_buf, kCSBeeMessageStrMaxLen - kCRCMaxNumChars - 1,
 #if defined(ON_PICO) || defined(ON_HOST)
@@ -158,8 +166,8 @@ inline int16_t WriteCSBeeUATAircraftMessageStr(char message_buf[], const UATAirc
                  "%s,"       // CALL, e.g. N61ZP
                  "%s,"       // SQUAWK, e.g. 7232
                  "%d,"       // ECAT, e.g. 14
-                 "%.5f,"     // LAT, e.g. 57.57634
-                 "%.5f,"     // LON, e.g. 17.59554
+                 "%s,"       // LAT, e.g. 57.57634
+                 "%s,"       // LON, e.g. 17.59554
                  "%d,"       // BARO_ALT, e.g. 5000
                  "%d,"       // GNSS_ALT, e.g. 5000
                  "%.0f,"     // DIR, e.g. 35
@@ -180,8 +188,8 @@ inline int16_t WriteCSBeeUATAircraftMessageStr(char message_buf[], const UATAirc
                  "%s,"        // CALL, e.g. N61ZP
                  "%s,"        // SQUAWK, e.g. 7232
                  "%d,"        // ECAT, e.g. 14
-                 "%.5f,"      // LAT, e.g. 57.57634
-                 "%.5f,"      // LON, e.g. 17.59554
+                 "%s,"        // LAT, e.g. 57.57634
+                 "%s,"        // LON, e.g. 17.59554
                  "%ld,"       // BARO_ALT, e.g. 5000
                  "%ld,"       // GNSS_ALT, e.g. 5000
                  "%.0f,"      // DIR, e.g. 35
@@ -201,8 +209,8 @@ inline int16_t WriteCSBeeUATAircraftMessageStr(char message_buf[], const UATAirc
                  aircraft.callsign,                          // CALL
                  squawk_str,                                 // SQUAWK
                  aircraft.emitter_category,                  // ECAT
-                 aircraft.latitude_deg,                      // LAT
-                 aircraft.longitude_deg,                     // LON
+                 lat_str,                                    // LAT
+                 lon_str,                                    // LON
                  aircraft.baro_altitude_ft,                  // BARO_ALT
                  aircraft.gnss_altitude_ft,                  // GNSS_ALT
                  aircraft.direction_deg,                     // DIR

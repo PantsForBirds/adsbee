@@ -1,9 +1,15 @@
 #pragma once
 
 #include <cstddef>
+#include <string_view>
 
-#include "fixedmath/fixed_math.hpp"
 #include "stdint.h"
+
+/**
+ * Latitudes and longitudes are held as uint32_t Angular Weighted Binary (AWB) everywhere in firmware: 2^32 per turn,
+ * read as int32_t for the sign. Latitude -90..90 deg is -2^30..2^30, longitude -180..180 deg is -2^31..2^31 (east and
+ * north positive). Degrees appear only at human or decimal-protocol edges, converted with the integer helpers below.
+ */
 
 /**
  * Distance and bearing on the WGS-84 ellipsoid in 32-bit fixed point, without lookup tables or floating point (the
@@ -113,6 +119,53 @@ inline uint32_t FloatDegToAWB(float deg) {
     }
     return (bits >> 31) ? 0u - awb : awb;
 }
+
+// Whether an AWB latitude lies within -90..90 deg.
+inline bool AWBIsLatitude(uint32_t lat_awb) {
+    const int32_t lat = static_cast<int32_t>(lat_awb);
+    return lat >= -(1 << 30) && lat <= (1 << 30);
+}
+
+/**
+ * An AWB angle in degrees times 10^decimals, rounded to nearest (half away from zero), -180..180 deg.
+ * @param[in] decimals 0 to 7.
+ */
+int32_t AWBToScaledDeg(uint32_t awb, uint8_t decimals);
+
+// An AWB angle in 1e-7 degrees (MAVLink, Remote ID).
+inline int32_t AWBToDegE7(uint32_t awb) { return AWBToScaledDeg(awb, 7); }
+
+// An angle in 1e-7 degrees as AWB, exactly rounded to nearest. Negative angles wrap.
+inline uint32_t DegE7ToAWB(int32_t deg_e7) {
+    // deg_e7 2^32 / 3.6e9 = deg_e7 2^22 / 3515625. The divisor is odd, so there are no ties.
+    constexpr int64_t kDivisor = 3515625;
+    const int64_t scaled = static_cast<int64_t>(deg_e7) * (1 << 22);
+    return static_cast<uint32_t>((scaled + (scaled >= 0 ? kDivisor / 2 : -(kDivisor / 2))) / kDivisor);
+}
+
+/**
+ * An angle in units_per_turn steps as AWB, exactly rounded to nearest. Negative angles wrap.
+ * @param[in] value Angle, |value| < units_per_turn.
+ * @param[in] units_per_turn Steps per full circle, < 2^47.
+ */
+uint32_t ScaledToAWB(int64_t value, uint64_t units_per_turn);
+
+// Buffer size for FormatAWBDeg: "-180.0000000" and the terminator.
+static constexpr size_t kAWBDegStrMaxLen = 13;
+
+/**
+ * Writes an AWB angle as signed decimal degrees, like printf("%.<decimals>f") of the exact value.
+ * @param[in] decimals 0 to 7.
+ * @retval Characters written (excluding the terminator), as snprintf.
+ */
+int FormatAWBDeg(char* buf, size_t len, uint32_t awb, uint8_t decimals);
+
+/**
+ * Parses decimal degrees ("-122.3", "37", "1e-7") to 1e-7 degrees, rounded to nearest.
+ * @param[out] deg_e7 Angle in 1e-7 degrees. Unchanged on failure.
+ * @retval False if the text is not a number or does not fit (beyond +/-214 deg).
+ */
+bool ParseDegE7(std::string_view text, int32_t& deg_e7);
 
 /**
  * Distance from a reference point to another point, in meters. Same accuracy as CalculateDistanceAndBearing.

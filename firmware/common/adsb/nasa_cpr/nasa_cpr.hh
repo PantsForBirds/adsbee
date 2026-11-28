@@ -5,11 +5,8 @@
 
 class NASACPRDecoder {
    public:
+    // Position in Angular Weighted Binary (see geo_utils.hh).
     struct DecodedPosition {
-        float lat_deg;
-        float lon_deg;
-        // Also provide position result in Angular Weighted Binary format for use in additional fixed point
-        // operations.
         uint32_t lat_awb;
         uint32_t lon_awb;
     };

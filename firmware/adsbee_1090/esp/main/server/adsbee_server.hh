@@ -212,8 +212,6 @@ class ADSBeeServer {
      */
     void UpdateUplinkBroadcast();
 
-    void SetOwnshipPosition(float latitude_deg, float longitude_deg);
-
     /**
      * Sets up the TCPServerTask as well as the WebSocket handlers and HTTP server.
      */

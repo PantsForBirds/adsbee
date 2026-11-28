@@ -3,6 +3,8 @@
 #include <cstdlib>  // For strtol, strtof, atoi.
 #include <cstring>  // For strlen, strncmp.
 
+#include "geo_utils.hh"
+
 namespace {
 
 // Convert a single hex character to its nibble value, or -1 if not a hex digit.
@@ -14,27 +16,47 @@ int8_t HexCharToNibble(char c) {
 }
 
 // Parse an NMEA latitude/longitude field in ddmm.mmmm / dddmm.mmmm format plus a hemisphere
-// character ('N'/'S'/'E'/'W') into signed decimal degrees. Returns false if either field is empty.
-bool ParseLatLon(const char* coord, const char* hemi, float& out_deg) {
+// character ('N'/'S'/'E'/'W') into AWB. Returns false if either field is empty or not a coordinate.
+bool ParseLatLon(const char* coord, const char* hemi, uint32_t& out_awb) {
     if (coord == nullptr || coord[0] == '\0' || hemi == nullptr || hemi[0] == '\0') {
         return false;
     }
     // Degrees are all digits before the decimal point except the last two (which are minutes).
     const char* dot = strchr(coord, '.');
     uint16_t int_digits = dot ? static_cast<uint16_t>(dot - coord) : static_cast<uint16_t>(strlen(coord));
-    if (int_digits < 3) return false;  // Need at least dd + mm.
-    uint16_t deg_digits = int_digits - 2;
+    if (int_digits < 3 || int_digits > 5) return false;  // Need dd + mm, at most ddd + mm.
 
-    char deg_str[4] = {0};
-    if (deg_digits >= sizeof(deg_str)) return false;
-    memcpy(deg_str, coord, deg_digits);
+    // Minutes in units of 1e-7 minute, rounded on the eighth decimal.
+    constexpr int kMinuteDecimals = 7;
+    int32_t whole_minutes = 0;  // Degrees and minutes, in minutes.
+    for (uint16_t i = 0; i < int_digits; i++) {
+        if (coord[i] < '0' || coord[i] > '9') return false;
+        // The last two digits are minutes; each degree digit before them is worth 60 of its place.
+        const int32_t digit = coord[i] - '0';
+        whole_minutes = i + 2 < int_digits ? whole_minutes * 10 + digit * 60
+                                           : whole_minutes + digit * (i + 2 == int_digits ? 10 : 1);
+    }
+    int64_t fraction = 0;
+    int num_fraction_digits = 0;
+    bool round_up = false;
+    if (dot) {
+        for (const char* p = dot + 1; *p != '\0'; p++) {
+            if (*p < '0' || *p > '9') return false;
+            if (num_fraction_digits < kMinuteDecimals) {
+                fraction = fraction * 10 + (*p - '0');
+                num_fraction_digits++;
+            } else if (num_fraction_digits == kMinuteDecimals) {
+                round_up = *p >= '5';
+                num_fraction_digits++;
+            }
+        }
+    }
+    for (int i = num_fraction_digits; i < kMinuteDecimals; i++) fraction *= 10;
+    const int64_t minutes_e7 = static_cast<int64_t>(whole_minutes) * 10000000 + fraction + (round_up ? 1 : 0);
 
-    float degrees = static_cast<float>(atoi(deg_str));
-    float minutes = strtof(coord + deg_digits, nullptr);
-    float value = degrees + minutes / 60.0f;
-
-    if (hemi[0] == 'S' || hemi[0] == 'W') value = -value;
-    out_deg = value;
+    constexpr uint64_t kMinutesE7PerTurn = 360ull * 60 * 10000000;
+    const bool negative = hemi[0] == 'S' || hemi[0] == 'W';
+    out_awb = ScaledToAWB(negative ? -minutes_e7 : minutes_e7, kMinutesE7PerTurn);
     return true;
 }
 
@@ -92,6 +114,29 @@ bool ParseUTCTime(const char* field, NMEAParser::GNSSFix& fix) {
     fix.utc_second = second;
     fix.utc_millisecond = millisecond;
     fix.utc_time_valid = true;
+    return true;
+}
+
+// Parse an RMC date (ddmmyy) into days since 1970-01-01. From PR #451 (Mark Paluch).
+bool ParseUTCDate(const char* field, uint32_t& days_since_epoch) {
+    if (strlen(field) != 6) return false;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (field[i] < '0' || field[i] > '9') return false;
+    }
+    uint8_t day = (field[0] - '0') * 10 + field[1] - '0';
+    uint8_t month = (field[2] - '0') * 10 + field[3] - '0';
+    uint16_t year = (field[4] - '0') * 10 + field[5] - '0';
+    // NMEA's two-digit year is interpreted within the GNSS era, 1980-2079.
+    year += year >= 80 ? 1900 : 2000;
+    auto leap_year = [](uint16_t y) { return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0); };
+    static constexpr uint8_t month_days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month < 1 || month > 12 || day < 1 || day > month_days[month - 1] + (month == 2 && leap_year(year))) {
+        return false;
+    }
+    days_since_epoch = 0;
+    for (uint16_t y = 1970; y < year; y++) days_since_epoch += leap_year(y) ? 366 : 365;
+    for (uint8_t m = 1; m < month; m++) days_since_epoch += month_days[m - 1] + (m == 2 && leap_year(year));
+    days_since_epoch += day - 1;
     return true;
 }
 
@@ -207,10 +252,10 @@ NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t
     // An empty field means the receiver does not know the geoid; older receivers end the sentence before it.
     fix_.geoid_separation_valid = num_fields > 11 && ParseHundredths(fields[11], fix_.geoid_separation_cm);
 
-    float lat, lon;
+    uint32_t lat, lon;
     if (fix_quality > 0 && ParseLatLon(fields[2], fields[3], lat) && ParseLatLon(fields[4], fields[5], lon)) {
-        fix_.latitude_deg = lat;
-        fix_.longitude_deg = lon;
+        fix_.latitude_awb = lat;
+        fix_.longitude_awb = lon;
         fix_.valid = true;
         fix_.last_update_timestamp_ms = timestamp_ms_;
     } else if (fix_quality == 0) {
@@ -223,10 +268,20 @@ NMEAParser::SentenceType NMEAParser::ParseGGA(const char* const* fields, uint8_t
 //   0: address  1: UTC time  2: status (A=valid, V=void)  3: lat  4: N/S  5: lon  6: E/W
 //   7: speed over ground (knots)  8: course over ground (deg)  9: date  ... (trailing fields vary)
 NMEAParser::SentenceType NMEAParser::ParseRMC(const char* const* fields, uint8_t num_fields) {
+    rmc_time_valid_ = false;
+    rmc_leap_second_ = false;
     if (num_fields < 10) return kSentenceMalformed;
 
     bool status_valid = (fields[2][0] == 'A');
-    ParseUTCTime(fields[1], fix_);
+    bool time_valid = ParseUTCTime(fields[1], fix_) && status_valid;
+    uint32_t days_since_epoch = 0;
+    rmc_leap_second_ = time_valid && fix_.utc_second == 60;
+    rmc_time_valid_ = time_valid && fix_.utc_second < 60 && fix_.utc_millisecond == 0 &&
+                      ParseUTCDate(fields[9], days_since_epoch);
+    if (rmc_time_valid_) {
+        rmc_unix_seconds_ = static_cast<uint64_t>(days_since_epoch) * 86400 + fix_.utc_hour * 3600 +
+                            fix_.utc_minute * 60 + fix_.utc_second;
+    }
 
     if (fields[7][0] != '\0') {
         fix_.speed_kts = static_cast<int32_t>(strtof(fields[7], nullptr));
@@ -235,10 +290,10 @@ NMEAParser::SentenceType NMEAParser::ParseRMC(const char* const* fields, uint8_t
         fix_.heading_deg = strtof(fields[8], nullptr);
     }
 
-    float lat, lon;
+    uint32_t lat, lon;
     if (status_valid && ParseLatLon(fields[3], fields[4], lat) && ParseLatLon(fields[5], fields[6], lon)) {
-        fix_.latitude_deg = lat;
-        fix_.longitude_deg = lon;
+        fix_.latitude_awb = lat;
+        fix_.longitude_awb = lon;
         fix_.valid = true;
         fix_.last_update_timestamp_ms = timestamp_ms_;
     } else if (!status_valid) {

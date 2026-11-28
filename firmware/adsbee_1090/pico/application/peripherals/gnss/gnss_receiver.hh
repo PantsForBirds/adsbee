@@ -4,6 +4,7 @@
 #include "hardware/irq.h"
 #include "hardware/uart.h"  // For uart_inst_t and UART bring-up in Init().
 #include "nmea_parser.hh"
+#include "pps_clock.hh"
 #include "pico/stdlib.h"  // For gpio_* and tight_loop_contents() used by subclasses/impl.
 #include "settings.hh"
 
@@ -33,10 +34,13 @@ class GNSSReceiver {
     // ProbeLiveness()'s initial window), retry it periodically from Update() rather than leaving
     // healthy_ permanently false until the next reboot. Bounded by kMaxUnhealthyRetries so a
     // genuinely absent module doesn't stall the main loop indefinitely -- each retry costs up to
-    // SendInitCommands()'s own worst-case blocking time (see UbloxMAXM10::kProbeAttempts /
+    // SendInitCommands()'s own worst-case blocking time (see UbloxMAXM10::kProbeRounds /
     // kProbeTimeoutMs).
     static constexpr uint32_t kUnhealthyRetryIntervalMs = 5000;
     static constexpr uint32_t kMaxUnhealthyRetries = 5;
+    // Longest wait for queued TX bytes to leave before a baud change (a UBX command is a few ms; protocol output queued
+    // on the GNSS UART can be more, and is cut off rather than waited for).
+    static constexpr uint32_t kUartTxFlushTimeoutMs = 250;
     static constexpr uint16_t kRxBufferSize = 2048;
     static constexpr uint16_t kRxBufferMask = kRxBufferSize - 1;
     static_assert((kRxBufferSize & kRxBufferMask) == 0, "GNSS RX buffer size must be a power of two.");
@@ -120,11 +124,51 @@ class GNSSReceiver {
     /** @retval Number of PPS rising edges observed since GNSS was last enabled or disabled. */
     uint32_t pps_count() const { return pps_count_; }
 
+    // GNSS time on the MLAT counter, from the PPS edges (see PPSClock).
+    const PPSClock& pps_clock() const { return pps_clock_; }
+
+    // + 1 (skipping 0) each time an RMC labels an edge while the fit is in sync: a new pps_clock() anchor for the
+    // ESP32's GPS time frame (0xe6). pps_time_step(): the fit restarted since the previous seq.
+    static uint8_t pps_time_seq() { return pps_time_seq_; }
+    static bool pps_time_step() { return pps_time_step_; }
+
+    /**
+     * Converts a 48 MHz MLAT count (a Mode S, UAT or Remote ID timestamp) to UTC.
+     * @param[out] unix_seconds UTC seconds since 1970 without leap seconds (POSIX).
+     * @param[out] ns Nanoseconds into that second.
+     * @retval False without a PPS fit, or if the count is more than PPSClock::kHoldoverSeconds from the last PPS.
+     */
+    bool MLATCountsToUTC(uint64_t mlat_48mhz_counts, uint64_t& unix_seconds, uint32_t& ns) const {
+        return pps_clock_.ToUTC(mlat_48mhz_counts, unix_seconds, ns);
+    }
+
+    /**
+     * Programs the GNSS UART for the stored GNSS baud setting (settings.baud_rates[kGNSSUART]); CommsManager calls it
+     * whenever that setting is set. The default runs the UART at GetLinkBaudrate(). A receiver that sets its module's
+     * baud rate (UbloxMAXM10) overrides it to command the module to the setting too.
+     * No-op while the UART is handed over to the ESP32 flasher.
+     */
+    virtual void ApplyBaudRateSetting();
+
+    /** @retval The baud rate the GNSS UART runs at for this receiver (shared by protocol output on that UART). */
+    uint32_t link_baudrate() const { return GetLinkBaudrate(); }
+
    protected:
     /**
-     * @retval Receiver-specific default UART baud rate (e.g. factory default for the module).
+     * @retval The baud rate our UART runs at for this receiver: the GNSS baud setting, or for UbloxMAXM10 the rate its
+     *         module answered at (the setting unless switching to it failed).
      */
-    virtual uint32_t GetDefaultBaudrate() const = 0;
+    virtual uint32_t GetLinkBaudrate() const = 0;
+
+    /** @retval The GNSS baud setting (settings.baud_rates[kGNSSUART]). */
+    static uint32_t BaudRateSetting() { return settings_manager.settings.baud_rates[SettingsManager::kGNSSUART]; }
+
+    /**
+     * Changes our UART's baud rate: waits for queued TX bytes to leave at the old rate, reprograms the UART, then drops
+     * whatever was received so far (bytes from before the change are framed at the wrong rate). For receivers that
+     * renegotiate the link (UbloxMAXM10). The caller keeps GetLinkBaudrate() in step.
+     */
+    void SetUartBaudrate(uint32_t baudrate);
 
     /**
      * Send receiver-specific configuration (e.g. UBX-CFG-VALSET for u-blox). Called by Init()
@@ -143,13 +187,19 @@ class GNSSReceiver {
 
     /**
      * Route the GNSS UART pins (GPIO 0/1) to uart0 and (re)initialize the peripheral to the
-     * receiver's default baud. Interrupt reception is enabled separately after final baud setup.
+     * receiver's link baud (GetLinkBaudrate()). Interrupt reception is enabled separately after final baud setup.
      */
     void ClaimUart();
 
     /** Start/stop interrupt-driven UART reception and reset the software RX ring buffer. */
     void EnableRxInterrupt();
     void DisableRxInterrupt();
+
+    // Labels the latest PPS edge with the RMC sentence just parsed.
+    void LabelPPSEdge();
+
+    /** Drop every byte received so far, in the hardware FIFO and the software ring. */
+    void FlushRx();
 
     /** Pop one byte captured by the UART RX interrupt. */
     bool ReadBufferedByte(char& c);
@@ -194,6 +244,11 @@ class GNSSReceiver {
     // Shared by all dynamically selected receiver instances and reset on every SetEnable() call.
     // Updated from the main loop, so no atomic access is required.
     static inline uint32_t pps_count_ = 0;
+    PPSClock pps_clock_;
+    // Shared by all receiver instances like pps_count_, so a receiver swap doesn't repeat a seq.
+    static inline uint8_t pps_time_seq_ = 0;
+    static inline bool pps_time_step_ = false;
+    static inline bool pps_restarted_ = true;  // The fit restarted since the last seq.
 
     // Single-producer (UART ISR), single-consumer (main loop) ring buffer. Monotonic 16-bit indices
     // make all 2048 slots usable; unsigned subtraction remains valid across index wrap.

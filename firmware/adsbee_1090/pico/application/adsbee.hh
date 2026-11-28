@@ -14,6 +14,7 @@
 #include "main.hh"    // For ISR core assignment.
 #include "mode_s_packet.hh"
 #include "mode_s_soft_demod.hh"
+#include "pps_clock.hh"
 #include "r1090_rssi.hh"
 #include "settings.hh"
 #include "spi_coprocessor.hh"
@@ -270,9 +271,27 @@ class ADSBee {
     inline uint32_t GetWatchdogTimeoutSec() { return watchdog_timeout_sec_; }
 
     /**
-     * ISR for the rising edge of a demod pin: a preamble matcher found a preamble and its sampler started.
+     * ISR for the rising edge of a demod pin: a preamble matcher found a preamble and its sampler started. Also stamps
+     * the GNSS PPS pin's rising edge, with the same reads as a message.
      */
     void OnDemodBegin(uint gpio);
+
+    /**
+     * Arms the PPS edge interrupt on a pin, or none (UINT16_MAX). Any core: the receiver core applies it in its loop
+     * (SyncPPSIRQEnable()), since a GPIO interrupt is enabled per core.
+     */
+    void SetPPSPin(uint16_t pin) { pps_pin_requested_ = pin; }
+
+    // Receiver core: applies SetPPSPin().
+    inline void SyncPPSIRQEnable() {
+        if (pps_pin_requested_ != pps_pin_request_applied_) ApplyPPSPin();
+    }
+
+    /**
+     * Last two PPS edges, stamped on the MLAT counter (the edge itself: the capture delay is taken off). Core 0.
+     * @retval Number of edges stamped so far (0: latest and previous are not set).
+     */
+    uint32_t GetPPSEdges(PPSClock::Edge& latest, PPSClock::Edge& previous);
 
     /**
      * ISR for PIO0 IRQ0: a preamble matcher is about 43us into a message. Samples RSSI, drops captures of noise and
@@ -620,6 +639,16 @@ class ADSBee {
     uint32_t demod_pins_mask_ = 0;  // GPIO bitmask of the demod pins, built in Init(). HI = demodulation in progress.
     // Written by OnDemodBegin() (ISR core), read by UpdateNoiseFloor() (main loop) to reject contaminated samples.
     volatile uint32_t last_demod_begin_timestamp_us_ = 0;
+
+    // PPS edges: OnDemodBegin() (receiver core) writes the slot after the last one, then counts it. Core 0 reads.
+    static constexpr uint16_t kNumPPSEdges = 4;
+    volatile uint16_t pps_pin_requested_ = UINT16_MAX;
+    uint16_t pps_pin_request_applied_ = UINT16_MAX;
+    volatile uint16_t pps_pin_ = UINT16_MAX;  // Armed on the receiver core.
+    PPSClock::Edge pps_edges_[kNumPPSEdges];
+    volatile uint32_t pps_num_edges_ = 0;
+    void ApplyPPSPin();
+    void RecordPPSEdge(uint64_t mlat_48mhz_counts);
 
     /** 978MHz Receiver Parameters **/
 };

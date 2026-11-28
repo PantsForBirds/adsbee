@@ -8,6 +8,7 @@
 #include "crc.hh"
 #include "macros.hh"
 #include "altitude_filter.hh"
+#include "geo_utils.hh"  // FloatDegToAWB
 #include "unit_conversions.hh"  // DeciNmToMeters
 #include "stdio.h"
 #include "stdlib.h"  // for strtoull
@@ -17,7 +18,7 @@
 #endif
 
 // Change this when settings format changes! A mismatched version resets all settings to factory defaults on boot.
-static constexpr uint32_t kSettingsVersion = 7;
+static constexpr uint32_t kSettingsVersion = 8;
 static constexpr uint32_t kDeviceInfoVersion = 2;
 
 // Leading word of a valid settings blob. Deliberately not 0x00000000 or 0xFFFFFFFF so that blank,
@@ -102,8 +103,8 @@ class SettingsManager {
         static const char kPositionSourceStrs[kNumPositionSources][kPositionSourceStrMaxLen];
 
         PositionSource source = kPositionSourceLowestAircraft;
-        float latitude_deg = 0.0;      // Degrees, WGS84
-        float longitude_deg = 0.0;     // Degrees, WGS84
+        uint32_t latitude_awb = 0;   // WGS84, AWB (see geo_utils.hh)
+        uint32_t longitude_awb = 0;  // WGS84, AWB
         // Feet. GNSS source: above MSL (GGA altitude). Aircraft sources: the aircraft's geometric altitude, which
         // ADS-B references to the WGS-84 ellipsoid. Fixed source: as entered.
         int32_t gnss_altitude_ft = 0;
@@ -270,27 +271,29 @@ class SettingsManager {
 
     // Older settings versions are today's fields up to a cutoff, then the CRC. Version 6 appended
     // filter_distance_enabled, filter_distance_deci_nm, asterix_sac, asterix_sic and filter_altitude_*; version 7
-    // appended led_enabled.
+    // appended led_enabled. Version 8 holds the receiver latitude and longitude as AWB instead of float degrees, in
+    // the same bytes.
     static constexpr uint16_t kVersion5SettingsSize = 62;
     static constexpr uint16_t kVersion6SettingsSize = 78;
-    static_assert(kSettingsVersion == 7 &&
+    static constexpr uint16_t kVersion7SettingsSize = 79;
+    static_assert(kSettingsVersion == 8 &&
                       offsetof(Settings, filter_distance_enabled) == kVersion5SettingsSize - sizeof(uint32_t) &&
                       offsetof(Settings, led_enabled) == kVersion6SettingsSize - sizeof(uint32_t) &&
-                      sizeof(Settings) == kVersion6SettingsSize + 1,
+                      sizeof(Settings) == kVersion7SettingsSize,
                   "Settings changed: update MigrateFromOlderVersion.");
 
     /**
-     * Converts a version 5 or 6 settings blob, so a firmware update keeps the user's settings. Fields added since
+     * Converts a version 5, 6 or 7 settings blob, so a firmware update keeps the user's settings. Fields added since
      * take their defaults.
      * @param[in] blob Stored bytes, at least sizeof(Settings) long.
      * @param[out] out Migrated and stamped settings. Untouched unless the blob is an intact older blob.
-     * @retval Version migrated from, or 0 if the blob is not an intact version 5 or 6 blob.
+     * @retval Version migrated from, or 0 if the blob is not an intact version 5, 6 or 7 blob.
      */
     static uint32_t MigrateFromOlderVersion(const uint8_t *blob, Settings &out) {
         static constexpr struct {
             uint32_t version;
             uint16_t size;
-        } kOlderVersions[] = {{5, kVersion5SettingsSize}, {6, kVersion6SettingsSize}};
+        } kOlderVersions[] = {{5, kVersion5SettingsSize}, {6, kVersion6SettingsSize}, {7, kVersion7SettingsSize}};
         uint32_t magic, version;
         memcpy(&magic, blob, sizeof(magic));
         memcpy(&version, blob + sizeof(magic), sizeof(version));
@@ -309,6 +312,13 @@ class SettingsManager {
             }
             out = Settings();
             memcpy(static_cast<void *>(&out), blob, field_bytes);
+            float latitude_deg, longitude_deg;
+            const size_t lat_offset = offsetof(Settings, rx_position) + offsetof(RxPosition, latitude_awb);
+            const size_t lon_offset = offsetof(Settings, rx_position) + offsetof(RxPosition, longitude_awb);
+            memcpy(&latitude_deg, blob + lat_offset, sizeof(latitude_deg));
+            memcpy(&longitude_deg, blob + lon_offset, sizeof(longitude_deg));
+            out.rx_position.latitude_awb = FloatDegToAWB(latitude_deg);
+            out.rx_position.longitude_awb = FloatDegToAWB(longitude_deg);
             out.Stamp();
             return older.version;
         }
