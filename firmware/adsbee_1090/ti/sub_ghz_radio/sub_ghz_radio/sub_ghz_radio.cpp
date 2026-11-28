@@ -260,9 +260,9 @@ bool SubGHzRadio::Init() {
 }
 
 void SubGHzRadio::StartSyncCapture() {
-    // The RAT restarts with the RF client: the fit starts again from the next pulses.
+    // The RAT restarts with the RF client (AT+SUBG_MODE switch): keep the measured rate, so the next pulse re-syncs.
     uintptr_t key = HwiP_disable();
-    time_sync_.Restart();
+    time_sync_.RestartKeepingRate();
     sync_pulse_pairing_.Clear();
     HwiP_restore(key);
     rat_start_timestamp_ms_ = get_time_since_boot_ms();

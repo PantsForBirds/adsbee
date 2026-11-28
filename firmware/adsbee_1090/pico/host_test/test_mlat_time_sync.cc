@@ -120,6 +120,39 @@ TEST(MLATTimeSync, ARestartWaitsForTwoNewPoints) {
     EXPECT_NEAR(sync.GetRateErrorPPB(), -30'000, 1);
 }
 
+TEST(MLATTimeSync, ARestartKeepingTheRateNeedsOneNewPoint) {
+    // The CC1312 re-opens its RF client on an AT+SUBG_MODE switch: the radio timer steps, its crystal doesn't change.
+    TwoClocks clocks = {-30.0, 0, 1'000'000};
+    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    for (int pulse = 0; pulse < 10; pulse++) sync.AddSyncPoint(clocks.Local(pulse * 1e6), clocks.Mlat(pulse * 1e6));
+    ASSERT_TRUE(sync.IsSynced());
+    sync.RestartKeepingRate();
+    EXPECT_FALSE(sync.IsSynced());
+    EXPECT_EQ(sync.ToMLAT48MHzCounts(clocks.Local(9.5e6)), 0u);
+    clocks.local_start = 0x12345678;
+    EXPECT_TRUE(sync.AddSyncPoint(clocks.Local(10.2e6), clocks.Mlat(10.2e6)));
+    EXPECT_TRUE(sync.IsSynced());
+    EXPECT_LE(AbsError(sync.ToMLAT48MHzCounts(clocks.Local(10.9e6)), clocks.Mlat(10.9e6)), 3);
+    // The next point is checked against the kept rate.
+    EXPECT_TRUE(sync.AddSyncPoint(clocks.Local(11.2e6), clocks.Mlat(11.2e6)));
+    EXPECT_NEAR(sync.GetRateErrorPPB(), -30'000, 1);
+}
+
+TEST(MLATTimeSync, ARestartKeepingTheRateBeforeOneWasMeasuredWaitsForTwoPoints) {
+    MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
+    sync.AddSyncPoint(0, 0);
+    sync.RestartKeepingRate();
+    sync.AddSyncPoint(4'000'000, 48'000'000);
+    EXPECT_FALSE(sync.IsSynced());
+    // A plain restart forgets a kept rate too.
+    sync.AddSyncPoint(8'000'000, 96'000'000);
+    ASSERT_TRUE(sync.IsSynced());
+    sync.RestartKeepingRate();
+    sync.Restart();
+    sync.AddSyncPoint(12'000'000, 144'000'000);
+    EXPECT_FALSE(sync.IsSynced());
+}
+
 TEST(MLATTimeSync, ARateBeyond200PPMStartsTheFitAgain) {
     MLATTimeSync sync(MLATTimeSync::kMLATTicksPerRATTick, 2);
     EXPECT_TRUE(sync.AddSyncPoint(0, 0));
