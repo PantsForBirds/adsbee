@@ -616,8 +616,8 @@ inline int16_t WriteAircraftJSONADSLAircraftStr(char buf[], const ADSLAircraft& 
     }
     n = AppendAircraftJSONDistanceAndBearing(buf, n, max, aircraft);
 
-    if (aircraft.flight_state == DecodedADSLPacket::kFlightStateOnGround) {
-        n += snprintf(buf + n, max - n, ",\"on_ground\":true");
+    if (aircraft.IsOnGround()) {
+        n += snprintf(buf + n, max - n, ",\"on_ground\":1");
         n = n < max ? n : max;
     }
     if (aircraft.HasBitFlag(ADSLAircraft::kBitFlagGNSSAltitudeValid)) {
